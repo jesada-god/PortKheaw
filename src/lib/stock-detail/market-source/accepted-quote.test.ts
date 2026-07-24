@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Quote } from '@/src/lib/market-data/types';
-import { buildAcceptedResource, candidateFromUpdate, labelFromAccepted } from './accepted-quote';
+import { buildAcceptedResource, candidateFromUpdate, labelFromAccepted, regularComparisonClose } from './accepted-quote';
 import type { AcceptedPriceCandidate } from './accepted-price';
 import type { MarketUpdate } from './types';
 
@@ -14,6 +14,45 @@ function history(price: number, ts: string, mode: AcceptedPriceCandidate['mode']
 }
 
 describe('buildAcceptedResource — the header and chart price line share one value/timestamp', () => {
+  it('recovers a provider-verifiable previous close when Polygon omitted prevDay', () => {
+    const withoutPreviousClose = {
+      ...baseQuote,
+      price: 233.66,
+      previousClose: null,
+      change: -11.19,
+      changePercent: -4.5705,
+    };
+    expect(regularComparisonClose(withoutPreviousClose)).toBeCloseTo(244.85, 2);
+    const accepted: AcceptedPriceCandidate = {
+      price: 233.66,
+      source: 'aggregate-fallback',
+      exchangeTimestamp: '2026-07-21T15:00:00.000Z',
+      mode: 'REAL-TIME',
+      provider: 'alpaca:iex',
+      realtime: true,
+    };
+    const resource = buildAcceptedResource({
+      accepted,
+      snapshotResource: null,
+      baseQuote: withoutPreviousClose,
+      symbol: 'AAPL',
+    });
+    expect(resource.data).toMatchObject({
+      previousClose: expect.closeTo(244.85, 2),
+      change: expect.closeTo(-11.19, 2),
+      changePercent: expect.closeTo(-4.57, 2),
+    });
+  });
+
+  it('rejects inconsistent provider change fields instead of guessing a base', () => {
+    expect(regularComparisonClose({
+      ...baseQuote,
+      previousClose: null,
+      change: -11.19,
+      changePercent: 12,
+    })).toBeNull();
+  });
+
   it('exposes exactly the accepted price and exchange timestamp for a history fallback', () => {
     const accepted = history(42.5, '2026-07-20T20:00:00.000Z');
     const resource = buildAcceptedResource({ accepted, snapshotResource: null, baseQuote, symbol: 'AAPL' });

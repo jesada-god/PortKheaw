@@ -13,9 +13,9 @@ const MODEL_LABELS: Record<ModelId | 'blended', string> = {
   ddm: 'DDM',
   relative: 'Relative',
   'asset-based': 'Asset',
-  'ev-sales': 'EV/Sales',
+  'ev-sales': 'Forward EV/Sales',
   'ev-ebitda': 'EV/EBITDA',
-  pe: 'P/E',
+  pe: 'Forward P/E',
   peg: 'PEG',
   pb: 'P/B',
   blended: 'Blended',
@@ -93,11 +93,33 @@ export function fairValueUnavailableLabel(
       : failureKind === 'rate-limited'
         ? 'provider-rate-limited'
         : failureKind === 'server-error' ? 'calculation-error' : failureKind;
-  return FAILURE_LABELS[normalized][language];
+  if (language === 'th') {
+    const thaiLabels: Record<FairValueFailureKind, string> = {
+      'insufficient-periods': 'งบการเงินจริงไม่เพียงพอ',
+      'currency-mismatch': 'สกุลเงินของข้อมูลไม่ตรงกัน',
+      'stale-fundamentals': 'งบการเงินเก่าเกินเกณฑ์',
+      'provider-unavailable': 'ผู้ให้บริการไม่มีข้อมูล',
+      'missing-field': 'ข้อมูลจริงไม่ผ่านเกณฑ์ขั้นต่ำ',
+      'mapping-error': 'ไม่สามารถจับคู่ข้อมูล provider ได้',
+      'provider-rate-limited': 'ผู้ให้บริการจำกัดคำขอชั่วคราว',
+      'calculation-error': 'เซิร์ฟเวอร์ประมวลผลไม่สำเร็จ',
+    };
+    return thaiLabels[normalized];
+  }
+  return FAILURE_LABELS[normalized].en;
 }
 
 function missingFieldLabel(field: string, language: 'th' | 'en'): string {
   const normalized = field.toLowerCase();
+  if (normalized.includes('forwardestimate') || normalized.includes('targetforward')) {
+    return 'Forward Estimates';
+  }
+  if (normalized.includes('wacc') || normalized.includes('riskfree') || normalized.includes('equityrisk') || normalized.includes('beta')) {
+    return language === 'th' ? 'ข้อมูลจริงสำหรับ WACC' : 'traceable WACC inputs';
+  }
+  if (normalized.includes('peer')) {
+    return language === 'th' ? 'peer ที่ผ่านเกณฑ์อย่างน้อย 4 บริษัท' : 'at least four valid peers';
+  }
   const labels = language === 'th'
     ? {
         fcf: 'FCF',

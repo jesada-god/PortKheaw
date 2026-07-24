@@ -40,6 +40,8 @@ function toRawReport(dataset: DatasetName, row: RawRow): RawReport {
       operatingIncome: row.operatingIncome,
       ebitda: row.ebitda,
       netIncome: row.netIncome,
+      incomeBeforeTax: row.incomeBeforeTax,
+      incomeTaxExpense: row.incomeTaxExpense,
       // FMP's diluted EPS/share fields are the true period-average diluted figures
       // (unlike Alpha Vantage, which only exposes point-in-time outstanding shares).
       dilutedEPS: row.epsDiluted ?? row.epsdiluted,

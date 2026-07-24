@@ -1,8 +1,8 @@
 import type { AnalyticsSourceType } from '../fundamentals/types';
 import type { DataFreshness, HistoricalPrice } from '@/src/lib/market-data/types';
 
-export const METHODOLOGY_VERSION = 'nexora-fv-v1' as const;
-export const SECTOR_RULE_VERSION = 'nexora-sector-valuation-v1' as const;
+export const METHODOLOGY_VERSION = 'nexora-fv-v2' as const;
+export const SECTOR_RULE_VERSION = 'nexora-dcf-forward-multiples-v2' as const;
 export type FairValueFailureKind =
   | 'provider-unavailable'
   | 'provider-rate-limited'
@@ -34,6 +34,8 @@ export interface FinancialPeriod {
   totalAssets: number;
   totalLiabilities: number;
   dilutedShares: number;
+  incomeBeforeTax?: number | null;
+  incomeTaxExpense?: number | null;
   grossProfit?: number | null;
   ebitda?: number | null;
   dilutedEps?: number | null;
@@ -46,16 +48,23 @@ export interface ValuationInput {
   currency: string;
   marketPrice: number;
   priceAsOf: string;
+  marketPriceSource?: string | null;
   source: string;
   sourceType: AnalyticsSourceType;
   sector: string;
   industry: string;
   marketCapitalization?: number | null;
+  sharesOutstanding?: number | null;
+  sharesOutstandingAsOf?: string | null;
+  dilutedSharesSource?: 'diluted' | 'shares-outstanding-fallback' | null;
   periods: FinancialPeriod[];
   historicalPrices: HistoricalPrice[];
   historySource: string;
   historyFreshness: DataFreshness;
   assumptions?: DcfAssumptions;
+  analystEstimates?: AnalystEstimate[] | null;
+  peerObservations?: PeerObservation[] | null;
+  waccMarketInputs?: WaccMarketInputs | null;
   forwardEpsGrowth?: {
     value: number;
     unit: 'decimal';
@@ -85,6 +94,41 @@ export interface ValuationInput {
     status: 'live' | 'cached' | 'stale';
   } | null;
   calculatedAt?: string;
+}
+
+export interface AnalystEstimate {
+  periodEnd: string;
+  estimatedRevenue: number | null;
+  estimatedEps: number | null;
+  revenueAnalystCount: number | null;
+  epsAnalystCount: number | null;
+  provider: string;
+  asOf: string;
+}
+
+export interface PeerObservation {
+  symbol: string;
+  sector: string | null;
+  industry: string | null;
+  price: number | null;
+  priceAsOf: string | null;
+  enterpriseValue: number | null;
+  enterpriseValueAsOf: string | null;
+  forwardEps: number | null;
+  forwardRevenue: number | null;
+  estimatePeriod: string | null;
+  estimateAsOf: string | null;
+  provider: string;
+}
+
+export interface WaccMarketInputs {
+  beta: number | null;
+  betaAsOf: string | null;
+  riskFreeRate: number | null;
+  riskFreeAsOf: string | null;
+  equityRiskPremium: number | null;
+  equityRiskPremiumAsOf: string | null;
+  provider: string;
 }
 
 export interface DcfAssumptions {
@@ -157,6 +201,7 @@ export interface FairValueAvailable {
   fundamentalQuality: QualityScore;
   dataQuality: { score: number; completeness: number; freshness: number; periodConsistency: number; currencyConsistency: number };
   modelReliability: ReliabilityResult;
+  dataQualityLabel: 'High' | 'Medium' | 'Low';
   reliabilityReasons: string[];
   missingInputs: string[];
   dataStatus: Exclude<FairValueDataStatus, 'unavailable'>;

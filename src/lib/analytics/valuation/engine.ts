@@ -1,13 +1,14 @@
-import { calculateTechnicalAnalysis } from '../technical/calculations';
-import { calculateSupportResistance } from '../support-resistance/calculations';
 import { classifyCompany } from './classification';
-import { compositeValuation } from './formulas';
-import { fundamentalQuality, modelReliability } from './quality';
+import {
+  calculateDeterministicDcf,
+  calculateDeterministicWacc,
+  calculateForwardMultiples,
+} from './formulas';
 import { createFairValueUnavailable } from './result';
-import { selectSectorModels } from './sector-selection';
 import {
   METHODOLOGY_VERSION,
   SECTOR_RULE_VERSION,
+  type AnalystEstimate,
   type FairValueResult,
   type FinancialPeriod,
   type ModelResult,
@@ -15,358 +16,517 @@ import {
   type ValuationInputDisclosure,
 } from './types';
 
+const PERPETUAL_GROWTH = 0.025;
+const DCF_WEIGHT = 0.6;
+const MULTIPLES_WEIGHT = 0.4;
+const MINIMUM_VALID_PEERS = 4;
+const MAX_ESTIMATE_AGE_MS = 7 * 86_400_000;
+const MAX_PEER_PRICE_AGE_MS = 7 * 86_400_000;
+const MAX_PEER_ENTERPRISE_VALUE_AGE_MS = 550 * 86_400_000;
+
 function finite(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function allFinite(period: FinancialPeriod) {
-  return Object.entries(period).every(([key, value]) =>
-    key === 'periodEnd'
-    || key === 'currency'
-    || key === 'restated'
-    || (['dividendsPaid', 'grossProfit', 'ebitda', 'dilutedEps', 'totalEquity', 'changeInWorkingCapital'].includes(key) && (value === null || value === undefined))
-    || (typeof value === 'number' && Number.isFinite(value)),
-  );
+function positive(value: number | null | undefined): value is number {
+  return finite(value) && value > 0;
 }
 
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function dateWithinAge(value: string | null, now: number, maximumAgeMs: number): boolean {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  const age = now - timestamp;
+  return age >= -86_400_000 && age <= maximumAgeMs;
+}
+
+function latestPeriod(periods: FinancialPeriod[]): FinancialPeriod | null {
+  return [...periods].toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd)).at(-1) ?? null;
+}
+
+function unavailableReason(missingFields: string[]): string {
+  if (missingFields.some((field) => /forwardEstimates|targetForward/i.test(field))) {
+    return 'ยังคำนวณ Fair Value ไม่ได้ เพราะขาด Forward Estimates';
+  }
+  if (missingFields.some((field) => /peer/i.test(field))) {
+    return 'ยังคำนวณ Fair Value ไม่ได้ เพราะมี peer ที่ผ่านเกณฑ์ไม่ถึง 4 บริษัท';
+  }
+  if (missingFields.some((field) => /wacc|beta|riskFree|equityRisk|taxRate|costDebt/i.test(field))) {
+    return 'ยังคำนวณ Fair Value ไม่ได้ เพราะข้อมูลจริงสำหรับ WACC ไม่ครบ';
+  }
+  return `ยังคำนวณ Fair Value ไม่ได้ เพราะขาดข้อมูลสำคัญ: ${missingFields.join(', ')}`;
+}
+
+function unavailable(input: ValuationInput, calculatedAt: string, missingFields: string[]): FairValueResult {
+  const fields = unique(missingFields);
+  const marketModelFailure = fields.some((field) =>
+    /forward|peer|wacc|beta|riskFree|equityRisk/i.test(field));
+  const provider = marketModelFailure
+    ? input.waccMarketInputs?.provider
+      ?? input.analystEstimates?.at(0)?.provider
+      ?? input.peerObservations?.at(0)?.provider
+      ?? input.source
+    : input.source;
+  return createFairValueUnavailable({
+    failureKind: fields.some((field) => field === 'historicalFinancials')
+      ? 'insufficient-periods'
+      : 'missing-field',
+    symbol: input.symbol,
+    currency: input.currency || null,
+    provider: provider || null,
+    reason: unavailableReason(fields),
+    missingFields: fields,
+    asOf: input.priceAsOf || calculatedAt,
+    calculatedAt,
+    limitations: [
+      'No analyst estimate, WACC input, peer, multiple, financial value, or fallback assumption is fabricated.',
+    ],
+  });
+}
+
+/** Critical-input gate for nexora-fv-v2. Historical chart rows and sector-model
+ * assumptions are deliberately absent because neither belongs in the valuation. */
 export function dataSufficiency(input: Partial<ValuationInput>, now = Date.now()) {
   const missingInputs: string[] = [];
   const staleInputs: string[] = [];
   if (!input.symbol) missingInputs.push('symbol');
-  if (!input.currency) missingInputs.push('currency');
-  if (input.currency && input.currency !== 'USD') missingInputs.push('valuationInputsNormalizedToUSD');
-  if (input.marketPrice == null || !Number.isFinite(input.marketPrice) || input.marketPrice <= 0) missingInputs.push('marketPrice>0');
+  if (input.currency !== 'USD') missingInputs.push('valuationInputsNormalizedToUSD');
+  if (!positive(input.marketPrice)) missingInputs.push('marketPrice');
   if (!input.priceAsOf) missingInputs.push('priceAsOf');
-  if (!input.sector) missingInputs.push('sector');
-  if (!input.industry) missingInputs.push('industry');
-  if (!input.periods || input.periods.length < 3) missingInputs.push('historicalFinancials>=3Periods');
-  if (!input.historicalPrices || input.historicalPrices.length < 50) missingInputs.push('historicalOHLCV>=50DailyPeriods');
-  if (input.priceAsOf && now - new Date(input.priceAsOf).valueOf() > 7 * 86_400_000) staleInputs.push('marketPrice');
-  const periods = input.periods ?? [];
-  const dates = periods.map((period) => period.periodEnd);
-  if (new Set(dates).size !== dates.length) missingInputs.push('duplicateFiscalPeriodsMustBeResolved');
-  if (periods.some((period) => period.currency !== input.currency)) missingInputs.push('currencyNormalization');
-  if (periods.some((period) => !allFinite(period) || period.dilutedShares <= 0 || period.totalAssets < 0 || period.totalDebt < 0 || period.cash < 0)) missingInputs.push('validFiniteNormalizedFinancialValues');
-  if (periods.some((period, index) => index > 0 && period.periodEnd <= periods[index - 1].periodEnd)) missingInputs.push('orderedUniqueFiscalPeriods');
-  return { ok: missingInputs.length === 0, missingInputs: [...new Set(missingInputs)], staleInputs };
+  if (!latestPeriod(input.periods ?? [])) missingInputs.push('historicalFinancials');
+  if (!input.analystEstimates?.length) missingInputs.push('forwardEstimates');
+  if (!input.waccMarketInputs) missingInputs.push('waccMarketInputs');
+  if (!input.peerObservations?.length) missingInputs.push('peerObservations');
+  if (input.priceAsOf && now - Date.parse(input.priceAsOf) > 7 * 86_400_000) {
+    staleInputs.push('marketPrice');
+  }
+  return { ok: missingInputs.length === 0, missingInputs: unique(missingInputs), staleInputs };
 }
 
-/** Relative multiples that rest on a versioned assumption, not intrinsic cash flows. */
-const RELATIVE_ASSUMPTION_MODELS = new Set<ModelResult['model']>(['ev-sales', 'ev-ebitda', 'pe', 'peg', 'pb']);
-
-/** Count of finite, positive, verifiable peer multiples actually supplied (never fabricated). */
+/** Kept as a small public utility for callers that disclose real peer coverage. */
 export function verifiablePeerCount(input: Partial<ValuationInput>): number {
-  return (input.peerMultiples ?? []).filter((peer) => Number.isFinite(peer.multiple) && peer.multiple > 0).length;
+  if (input.peerObservations) {
+    return input.peerObservations.filter((peer) =>
+      positive(peer.price)
+      && (positive(peer.forwardEps)
+        || (positive(peer.enterpriseValue) && positive(peer.forwardRevenue)))).length;
+  }
+  return (input.peerMultiples ?? []).filter((peer) => positive(peer.multiple)).length;
 }
 
-/**
- * Refuses to publish a valuation that would rest ONLY on a versioned assumption
- * multiple (EV/Sales) for a growth / pre-profit company, when no verifiable peer
- * set (>= 5) and no forward/NTM revenue exist to justify a growth multiple.
- *
- * This is the direct fix for the RKLB `$3.92 / -94%` incident: negative
- * EPS/EBITDA/FCF correctly exclude P/E, PEG, EV/EBITDA and DCF, leaving EV/Sales
- * as the SOLE survivor — i.e. a model selected only because it is the one left.
- * Applying a mature-sector multiple to trailing revenue then produces a
- * misleadingly precise point estimate. Rather than fabricate peers or a forward
- * revenue, we surface an honest "cannot value reliably yet" with the exact
- * missing inputs. A future real peer-data source (>= 5 peers) or a provider
- * forward revenue lifts the gate automatically.
- */
+/** Backward-compatible public gate; nexora-fv-v2 itself uses the stricter,
+ * branch-specific four-peer validator in calculateForwardMultiples. */
 export function meaningfulModelGate(
   input: Pick<ValuationInput, 'periods' | 'peerMultiples' | 'forwardRevenue'>,
   models: readonly ModelResult[],
 ): { ok: true } | { ok: false; reason: string; missingFields: string[] } {
-  const soleAssumptionRelative = models.length === 1 && RELATIVE_ASSUMPTION_MODELS.has(models[0].model);
-  if (!soleAssumptionRelative) return { ok: true };
-  const latest = input.periods.at(-1);
-  const preProfit = !!latest && (
-    latest.netIncome <= 0
-    || latest.freeCashFlow <= 0
-    || (finite(latest.dilutedEps) && latest.dilutedEps <= 0)
-  );
-  if (!preProfit) return { ok: true };
-  const hasPeers = verifiablePeerCount(input) >= 5;
-  const hasForwardRevenue = !!input.forwardRevenue && Number.isFinite(input.forwardRevenue.value) && input.forwardRevenue.value > 0;
-  if (hasPeers || hasForwardRevenue) return { ok: true };
+  const latest = latestPeriod(input.periods);
+  const soleRelative = models.length === 1 && ['relative', 'ev-sales', 'pe'].includes(models[0].model);
+  const preProfit = latest ? latest.netIncome <= 0 || latest.freeCashFlow <= 0 : true;
+  const peers = (input.peerMultiples ?? []).filter((peer) => positive(peer.multiple)).length;
+  const forwardRevenue = positive(input.forwardRevenue?.value);
+  if (!soleRelative || !preProfit || peers >= 5 || forwardRevenue) return { ok: true };
   return {
     ok: false,
-    reason: 'ประเมินจาก EV/Sales เพียงตัวเดียวโดยใช้ multiple สมมติ และบริษัทยังขาดทุน จึงไม่มี peer set (>=5) หรือ forward revenue ที่ระบุงวดมายืนยัน multiple การเติบโต — ไม่เผยแพร่ค่าประเมินที่ดูแม่นยำเกินจริง',
+    reason: 'A pre-profit relative valuation requires real peers or forward revenue.',
     missingFields: ['verifiablePeerSet>=5', 'forwardRevenueWithPeriod'],
+  };
+}
+
+function validFutureEstimates(
+  estimates: AnalystEstimate[],
+  actualPeriodEnd: string,
+  now: number,
+): AnalystEstimate[] {
+  return estimates
+    .filter((estimate) =>
+      estimate.periodEnd > actualPeriodEnd
+      && dateWithinAge(estimate.asOf, now, MAX_ESTIMATE_AGE_MS)
+      && positive(estimate.estimatedRevenue)
+      && estimate.estimatedEps !== null
+      && Number.isFinite(estimate.estimatedEps)
+      && (estimate.revenueAnalystCount === null || estimate.revenueAnalystCount > 0)
+      && (estimate.epsAnalystCount === null || estimate.epsAnalystCount > 0))
+    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
+}
+
+function annualGrowthRates(
+  latestRevenue: number,
+  latestPeriodEnd: string,
+  estimates: AnalystEstimate[],
+): { rates: number[]; method: 'annual-consensus' | 'consensus-cagr'; estimates: AnalystEstimate[] } {
+  const revenueEstimates = estimates
+    .filter((estimate): estimate is AnalystEstimate & { estimatedRevenue: number } =>
+      estimate.periodEnd > latestPeriodEnd && positive(estimate.estimatedRevenue))
+    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
+  if (!revenueEstimates.length) throw new RangeError('forwardEstimates are required');
+  if (revenueEstimates.length >= 5) {
+    const selected = revenueEstimates.slice(0, 5);
+    let previousRevenue = latestRevenue;
+    const rates = selected.map((estimate) => {
+      const rate = estimate.estimatedRevenue / previousRevenue - 1;
+      previousRevenue = estimate.estimatedRevenue;
+      return rate;
+    });
+    return { rates, method: 'annual-consensus', estimates: selected };
+  }
+  if (revenueEstimates.length !== 1) {
+    throw new RangeError(
+      'DCF requires five annual consensus estimates or one provider-derived consensus growth rate',
+    );
+  }
+  const terminalEstimate = revenueEstimates[0];
+  const actual = Date.parse(latestPeriodEnd);
+  const terminal = Date.parse(terminalEstimate.periodEnd);
+  const years = Math.max(1, Math.round((terminal - actual) / (365.25 * 86_400_000)));
+  const cagr = (terminalEstimate.estimatedRevenue / latestRevenue) ** (1 / years) - 1;
+  if (!Number.isFinite(cagr) || cagr <= -1) throw new RangeError('consensus CAGR is invalid');
+  return { rates: [cagr], method: 'consensus-cagr', estimates: [terminalEstimate] };
+}
+
+function inputDetail(input: {
+  field: string;
+  value: number | string;
+  currency?: string | null;
+  period: string;
+  provider: string;
+  asOf: string;
+  origin?: ValuationInputDisclosure['origin'];
+  status?: ValuationInputDisclosure['status'];
+}): ValuationInputDisclosure {
+  return {
+    field: input.field,
+    value: input.value,
+    currency: input.currency ?? null,
+    period: input.period,
+    provider: input.provider,
+    asOf: input.asOf,
+    status: input.status ?? 'available',
+    origin: input.origin ?? 'provider',
   };
 }
 
 export function calculateFairValue(input: ValuationInput, now = Date.now()): FairValueResult {
   const calculatedAt = input.calculatedAt ?? new Date(now).toISOString();
   const gate = dataSufficiency(input, now);
-  if (!gate.ok) {
-    return createFairValueUnavailable({
-      failureKind: gate.missingInputs.includes('historicalFinancials>=3Periods') ? 'insufficient-periods' : gate.missingInputs.includes('currencyNormalization') ? 'currency-mismatch' : 'missing-field',
-      symbol: input.symbol,
-      currency: input.currency || null,
-      provider: input.source || null,
-      reason: 'ข้อมูลจริงไม่เพียงพอหรือไม่ผ่าน Data Sufficiency Gate จึงไม่สร้าง Fair Value',
-      missingFields: gate.missingInputs,
-      staleInputs: gate.staleInputs,
-      asOf: input.priceAsOf || calculatedAt,
-      calculatedAt,
-      limitations: ['No defaults or synthetic financial statements are inserted.'],
+  if (!gate.ok) return unavailable(input, calculatedAt, gate.missingInputs);
+  const latest = latestPeriod(input.periods)!;
+  const futureEstimates = validFutureEstimates(input.analystEstimates ?? [], latest.periodEnd, now);
+  const targetEstimate = futureEstimates.at(0);
+  const marketWacc = input.waccMarketInputs;
+  const missing: string[] = [];
+  if (!positive(latest.freeCashFlow)) missing.push('latestRealFreeCashFlow');
+  if (!positive(latest.revenue)) missing.push('latestRealRevenue');
+  if (!targetEstimate) missing.push('forwardEstimates');
+  if (!positive(input.marketCapitalization)) missing.push('marketCapitalization');
+  if (!marketWacc || !positive(marketWacc.beta)) missing.push('beta');
+  if (!marketWacc || !positive(marketWacc.riskFreeRate)) missing.push('riskFreeRate');
+  if (!marketWacc || !positive(marketWacc.equityRiskPremium)) missing.push('equityRiskPremium');
+  if (!finite(latest.incomeBeforeTax) || latest.incomeBeforeTax <= 0) missing.push('incomeBeforeTax');
+  if (!finite(latest.incomeTaxExpense) || latest.incomeTaxExpense < 0) missing.push('incomeTaxExpense');
+  if (!finite(latest.interestExpense) || latest.interestExpense < 0) missing.push('interestExpense');
+  if (!finite(latest.cash) || latest.cash < 0) missing.push('cash');
+  if (!finite(latest.totalDebt) || latest.totalDebt < 0) missing.push('totalDebt');
+  const dilutedShares = positive(latest.dilutedShares) ? latest.dilutedShares : null;
+  const fallbackShares = positive(input.sharesOutstanding) ? input.sharesOutstanding : null;
+  const shares = dilutedShares ?? fallbackShares;
+  if (!shares) missing.push('dilutedSharesOrSharesOutstanding');
+  if (missing.length) return unavailable(input, calculatedAt, missing);
+
+  let growth;
+  try {
+    growth = annualGrowthRates(latest.revenue, latest.periodEnd, futureEstimates);
+  } catch {
+    return unavailable(input, calculatedAt, ['forwardRevenueEstimates']);
+  }
+  const taxRate = latest.incomeTaxExpense! / latest.incomeBeforeTax!;
+  const costDebt = latest.totalDebt === 0 ? 0 : Math.abs(latest.interestExpense) / latest.totalDebt;
+  let wacc;
+  try {
+    wacc = calculateDeterministicWacc({
+      riskFreeRate: marketWacc!.riskFreeRate!,
+      beta: marketWacc!.beta!,
+      equityRiskPremium: marketWacc!.equityRiskPremium!,
+      costDebt,
+      taxRate,
+      equityValue: input.marketCapitalization!,
+      debt: latest.totalDebt,
     });
+  } catch {
+    return unavailable(input, calculatedAt, ['validWaccInputs']);
+  }
+  if (!(wacc.wacc > PERPETUAL_GROWTH)) {
+    return unavailable(input, calculatedAt, ['WACC>perpetualGrowth']);
   }
 
-  const selection = selectSectorModels(input);
-  const meaningful = meaningfulModelGate(input, selection.models);
-  if (!meaningful.ok) {
-    return createFairValueUnavailable({
-      failureKind: 'missing-field',
-      symbol: input.symbol,
-      currency: input.currency,
-      provider: input.source,
-      reason: meaningful.reason,
-      missingFields: meaningful.missingFields,
-      staleInputs: gate.staleInputs,
-      asOf: input.priceAsOf,
-      calculatedAt,
-      limitations: [
-        'A model is never forced onto an unsuitable company.',
-        'ค่าประเมินจะไม่ถูกเผยแพร่หากอ้างอิงเพียง multiple สมมติโดยไม่มี peer set ที่ตรวจสอบได้',
-      ],
+  let dcf;
+  try {
+    dcf = calculateDeterministicDcf({
+      latestFreeCashFlow: latest.freeCashFlow,
+      growthRates: growth.rates,
+      cash: latest.cash,
+      debt: latest.totalDebt,
+      shares: shares!,
+      wacc: wacc.wacc,
+      perpetualGrowth: PERPETUAL_GROWTH,
     });
-  }
-  if (!selection.models.length) {
-    return createFairValueUnavailable({
-      failureKind: 'missing-field',
-      symbol: input.symbol,
-      currency: input.currency,
-      provider: input.source,
-      reason: 'ข้อมูลจริงผ่านเกณฑ์พื้นฐาน แต่ไม่มี valuation model ที่มีความหมายและผ่าน validation สำหรับบริษัทนี้',
-      missingFields: selection.excludedModels.map((item) => `${item.model}: ${item.reason}`),
-      staleInputs: gate.staleInputs,
-      asOf: input.priceAsOf,
-      calculatedAt,
-      limitations: ['A model is never forced onto an unsuitable company.'],
-    });
+  } catch {
+    return unavailable(input, calculatedAt, ['validDcfCalculation']);
   }
 
-  const baseClassification = classifyCompany(input.sector, input.industry, input.periods);
-  const classification = {
-    ...baseClassification,
-    eligibleModels: selection.models.map((model) => model.model),
-    excludedModels: selection.excludedModels,
-    evidence: [
-      ...baseClassification.evidence,
-      `Company stage (${selection.stage.stage}): ${selection.stage.reason}`,
-      `Sector rule ${selection.rule.ruleId} selected from fundamentals-gated sector/industry`,
-      ...selection.models.map((model) => `${model.model}: ${model.reason ?? 'model-specific validation passed'}`),
-    ],
-  };
-  const quality = fundamentalQuality(input.periods);
-  const rawWeights = Object.fromEntries(selection.models.map((model) => [model.model, selection.rule.modelWeights[model.model] ?? 0]));
-  const composite = compositeValuation(selection.models, rawWeights);
-  const uncertainty = Math.min(0.45, 0.12 + composite.dispersion * 0.5 + (100 - quality.score) / 400);
-  const periodConsistency = 100;
-  const completeness = Math.max(0, 100 - selection.excludedModels.length * 8);
-  const freshness = gate.staleInputs.length ? 35 : input.providerStatus === 'cached' ? 75 : 100;
-  const currencyConsistency = 100;
-  const peerSampleSize = verifiablePeerCount(input);
-  const reliabilityRaw = modelReliability({
-    completeness,
-    freshness,
-    periodConsistency,
-    modelCount: composite.models.length,
-    dispersion: composite.dispersion,
-    cashFlowStability: Math.min(100, quality.score),
-    peerSampleSize,
-    currencyConsistency,
-    sensitivity: uncertainty,
-  });
-  // A single relative multiple resting on a versioned ASSUMPTION with no
-  // verifiable peer set is not a Moderate/High-confidence estimate no matter how
-  // complete the statements are — the multiple itself is unvalidated. Cap it to
-  // Low so the header never overstates confidence ("ห้าม hardcode ปานกลาง"). This
-  // only bites the assumption-only single-model case; blended/peer-backed and
-  // cash-flow-anchored (DCF/DDM) valuations keep their computed level.
-  const singleAssumptionMultiple = composite.models.length === 1
-    && RELATIVE_ASSUMPTION_MODELS.has(composite.models[0].model)
-    && peerSampleSize < 5;
-  const reliability = singleAssumptionMultiple && (reliabilityRaw.level === 'High' || reliabilityRaw.level === 'Moderate')
-    ? {
-        ...reliabilityRaw,
-        level: 'Low' as const,
-        explanation: `${reliabilityRaw.explanation} ระดับถูกจำกัดที่ Low เพราะใช้ multiple สมมติเพียงตัวเดียวและไม่มี peer set ที่ตรวจสอบได้ (>=5).`,
-      }
-    : reliabilityRaw;
-
-  const scenarioFor = (index: number) => composite.models[index].scenarios ?? {
-    conservative: composite.models[index].fairValue,
-    base: composite.models[index].fairValue,
-    optimistic: composite.models[index].fairValue,
-  };
-  const blendedScenario = (scenario: 'conservative' | 'base' | 'optimistic') =>
-    composite.models.reduce((sum, model, index) => sum + scenarioFor(index)[scenario] * model.weight, 0);
-  const conservative = blendedScenario('conservative');
-  const base = blendedScenario('base');
-  const optimistic = blendedScenario('optimistic');
-  if (!(conservative <= base && base <= optimistic) || ![conservative, base, optimistic].every(Number.isFinite)) {
-    return createFairValueUnavailable({
-      failureKind: 'calculation-error',
-      symbol: input.symbol,
-      currency: input.currency,
-      provider: input.source,
-      reason: 'Scenario validation failed; Fair Value was not published.',
-      missingFields: ['conservative<=base<=optimistic'],
-      staleInputs: gate.staleInputs,
-      asOf: input.priceAsOf,
-      calculatedAt,
-      limitations: ['Scenario results are validated, never silently sorted.'],
+  let multiples;
+  try {
+    const positiveTargetEps = targetEstimate!.estimatedEps! > 0;
+    const currentPeers = (input.peerObservations ?? []).filter((peer) =>
+      peer.estimatePeriod !== null
+      && peer.estimatePeriod > latest.periodEnd
+      && dateWithinAge(peer.estimateAsOf, now, MAX_ESTIMATE_AGE_MS)
+      && (
+        positiveTargetEps
+          ? dateWithinAge(peer.priceAsOf, now, MAX_PEER_PRICE_AGE_MS)
+          : dateWithinAge(
+              peer.enterpriseValueAsOf,
+              now,
+              MAX_PEER_ENTERPRISE_VALUE_AGE_MS,
+            )
+      ));
+    multiples = calculateForwardMultiples({
+      targetForwardEps: targetEstimate!.estimatedEps,
+      targetForwardRevenue: targetEstimate!.estimatedRevenue,
+      cash: latest.cash,
+      debt: latest.totalDebt,
+      shares: shares!,
+      peers: currentPeers.map((peer) => ({
+        symbol: peer.symbol,
+        price: peer.price,
+        forwardEps: peer.forwardEps,
+        enterpriseValue: peer.enterpriseValue,
+        forwardRevenue: peer.forwardRevenue,
+      })),
+      minimumPeers: MINIMUM_VALID_PEERS,
     });
+  } catch {
+    return unavailable(input, calculatedAt, ['validForwardPeers>=4']);
   }
-  const range = (scenario: 'conservative' | 'base' | 'optimistic') => ({
-    low: Math.min(...composite.models.map((model, index) => scenarioFor(index)[scenario])),
-    high: Math.max(...composite.models.map((model, index) => scenarioFor(index)[scenario])),
-  });
-  const ranges = {
-    conservative: range('conservative'),
-    base: range('base'),
-    optimistic: range('optimistic'),
-    centralEstimate: base,
-    dispersion: composite.dispersion,
-  };
-  const technical = technicalMarketContext(input, ranges.base);
-  const latest = input.periods.at(-1)!;
-  const detail = (field: string, value: number | string, currency: string | null, origin: ValuationInputDisclosure['origin'] = 'provider'): ValuationInputDisclosure => ({
-    field,
-    value,
-    currency,
-    period: latest.periodEnd,
-    provider: input.source,
-    asOf: latest.periodEnd,
-    status: gate.staleInputs.length ? 'stale' : 'available',
-    origin,
-  });
-  const inputDetails = [
-    detail('Current Price', input.marketPrice, 'USD'),
-    // Revenue basis is truthfully the latest completed fiscal period (trailing annual),
-    // never a forward/NTM estimate — no analyst-estimate source is used here.
-    ...(composite.models.some((model) => model.model === 'ev-sales' || model.model === 'fcff-dcf') ? [detail('Revenue (trailing, latest FY)', latest.revenue, 'USD')] : []),
-    ...(composite.models.some((model) => model.model === 'ev-ebitda') ? [detail('EBITDA', latest.ebitda ?? latest.operatingIncome + latest.depreciationAmortization, 'USD', latest.ebitda == null ? 'derived' : 'provider')] : []),
-    ...(composite.models.some((model) => model.model === 'pe' || model.model === 'peg') && latest.dilutedEps != null ? [detail('Diluted EPS', latest.dilutedEps, 'USD')] : []),
-    ...(composite.models.some((model) => model.model === 'pb') ? [detail('Total Equity', latest.totalEquity ?? latest.totalAssets - latest.totalLiabilities, 'USD', latest.totalEquity == null ? 'derived' : 'provider')] : []),
-    ...(composite.models.some((model) => model.model === 'ddm') && latest.dividendsPaid != null ? [detail('Dividend per Share', Math.abs(latest.dividendsPaid) / latest.dilutedShares, 'USD', 'derived')] : []),
-    ...(composite.models.some((model) => model.model === 'fcff-dcf') ? [
-      detail('Operating Cash Flow', latest.operatingCashFlow, 'USD'),
-      detail('Capital Expenditure', latest.capitalExpenditure, 'USD'),
-      detail('Free Cash Flow', latest.freeCashFlow, 'USD', 'derived'),
-    ] : []),
-    ...(composite.models.some((model) => ['ev-sales', 'ev-ebitda', 'fcff-dcf'].includes(model.model)) ? [
-      detail('Total Debt', latest.totalDebt, 'USD'),
-      detail('Cash & Equivalents', latest.cash, 'USD'),
-    ] : []),
-    ...(composite.models.some((model) => ['ev-sales', 'ev-ebitda', 'fcff-dcf', 'pb', 'ddm'].includes(model.model)) ? [detail('Diluted Shares Outstanding', latest.dilutedShares, null)] : []),
-    ...(composite.models.some((model) => model.model === 'ev-sales' || model.model === 'ev-ebitda') && finite(input.marketCapitalization) ? [detail('Market Cap', input.marketCapitalization, 'USD')] : []),
+
+  const centralEstimate = dcf.fairValue * DCF_WEIGHT + multiples.fairValue * MULTIPLES_WEIGHT;
+  const dispersion = Math.sqrt(
+    DCF_WEIGHT * ((dcf.fairValue - centralEstimate) ** 2)
+    + MULTIPLES_WEIGHT * ((multiples.fairValue - centralEstimate) ** 2),
+  ) / centralEstimate;
+  if (!positive(centralEstimate) || !Number.isFinite(dispersion)) {
+    return unavailable(input, calculatedAt, ['finiteCombinedFairValue']);
+  }
+  const modelResults: Array<ModelResult & { weight: number }> = [
+    {
+      model: 'fcff-dcf',
+      fairValue: dcf.fairValue,
+      weight: DCF_WEIGHT,
+      configuredWeight: DCF_WEIGHT,
+      normalizedWeight: DCF_WEIGHT,
+      methodology: 'Five-year FCFF DCF from latest reported FCF and provider-derived consensus revenue growth; Gordon terminal value.',
+      inputs: {
+        latestFreeCashFlow: latest.freeCashFlow,
+        growthRates: growth.rates.join(','),
+        growthMethod: growth.method,
+        forecastFreeCashFlows: dcf.forecastFreeCashFlows.join(','),
+        presentValueFreeCashFlows: dcf.presentValueFreeCashFlows,
+        terminalValue: dcf.terminalValue,
+        presentValueTerminalValue: dcf.presentValueTerminalValue,
+        enterpriseValue: dcf.enterpriseValue,
+        cash: latest.cash,
+        debt: latest.totalDebt,
+        equityValue: dcf.equityValue,
+        shares: shares!,
+      },
+      assumptions: {
+        perpetualGrowth: PERPETUAL_GROWTH,
+        wacc: wacc.wacc,
+      },
+      limitations: ['DCF is sensitive to provider consensus growth and WACC inputs.'],
+    },
+    {
+      model: multiples.method === 'forward-pe' ? 'pe' : 'ev-sales',
+      fairValue: multiples.fairValue,
+      weight: MULTIPLES_WEIGHT,
+      configuredWeight: MULTIPLES_WEIGHT,
+      normalizedWeight: MULTIPLES_WEIGHT,
+      methodology: multiples.method === 'forward-pe'
+        ? 'Target forward EPS × median valid peer forward P/E.'
+        : 'Target forward revenue × median valid peer forward EV/Sales, then EV-to-equity bridge.',
+      inputs: {
+        targetForwardEps: targetEstimate!.estimatedEps!,
+        targetForwardRevenue: targetEstimate!.estimatedRevenue!,
+        estimatePeriod: targetEstimate!.periodEnd,
+        peers: multiples.peers.map((peer) => peer.symbol).join(','),
+        peerMultiples: multiples.peers.map((peer) => `${peer.symbol}:${peer.multiple}`).join(','),
+        medianMultiple: multiples.medianMultiple,
+        targetEnterpriseValue: multiples.targetEnterpriseValue ?? 'not-applicable',
+        targetEquityValue: multiples.targetEquityValue ?? 'not-applicable',
+        shares: shares!,
+      },
+      assumptions: {},
+      limitations: ['Only positive, finite multiples with current forward estimates are retained.'],
+    },
   ];
-  const upsideAmount = base - input.marketPrice;
-  const upsidePercent = (upsideAmount / input.marketPrice) * 100;
+  const lowerModel = Math.min(dcf.fairValue, multiples.fairValue);
+  const upperModel = Math.max(dcf.fairValue, multiples.fairValue);
+  const estimateCoverage = growth.method === 'annual-consensus' ? 30 : 22;
+  const peerCoverage = multiples.peers.length >= 5 ? 30 : 24;
+  const shareCoverage = dilutedShares ? 15 : 10;
+  const qualityScore = estimateCoverage + peerCoverage + 25 + shareCoverage;
+  const dataQualityLabel = qualityScore >= 90 ? 'High' as const
+    : qualityScore >= 75 ? 'Medium' as const : 'Low' as const;
+  const modelReliability = {
+    level: dataQualityLabel === 'High' ? 'High' as const
+      : dataQualityLabel === 'Medium' ? 'Moderate' as const : 'Low' as const,
+    score: qualityScore,
+    components: {
+      estimateCoverage,
+      peerCoverage,
+      waccTraceability: 25,
+      shareCoverage,
+    },
+    explanation: 'Data Quality measures input coverage and traceability, not the probability of an investment return.',
+  };
+  const classification = classifyCompany(input.sector, input.industry, input.periods);
+  const estimateProvider = targetEstimate!.provider;
+  const peerProvider = input.peerObservations?.at(0)?.provider ?? estimateProvider;
+  const sharesSource = dilutedShares
+    ? input.dilutedSharesSource === 'shares-outstanding-fallback'
+      ? 'Shares Outstanding (financial-statement fallback)'
+      : 'Diluted Shares Outstanding'
+    : 'Shares Outstanding (provider fallback)';
+  const sharesAsOf = dilutedShares ? latest.periodEnd : input.sharesOutstandingAsOf ?? latest.periodEnd;
+  const inputDetails: ValuationInputDisclosure[] = [
+    inputDetail({ field: 'Current Price', value: input.marketPrice, currency: 'USD', period: input.priceAsOf, provider: input.marketPriceSource ?? input.source, asOf: input.priceAsOf }),
+    inputDetail({ field: 'Latest Real FCF', value: latest.freeCashFlow, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
+    ...growth.estimates.map((estimate) => inputDetail({
+      field: `Consensus Revenue ${estimate.periodEnd}`,
+      value: estimate.estimatedRevenue!,
+      currency: 'USD',
+      period: estimate.periodEnd,
+      provider: estimate.provider,
+      asOf: estimate.asOf,
+    })),
+    inputDetail({ field: 'Consensus Growth Rates', value: growth.rates.join(','), period: growth.method, provider: estimateProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
+    inputDetail({ field: 'Risk-free Rate', value: marketWacc!.riskFreeRate!, period: '10Y Treasury', provider: marketWacc!.provider, asOf: marketWacc!.riskFreeAsOf ?? calculatedAt }),
+    inputDetail({ field: 'Beta', value: marketWacc!.beta!, period: 'latest profile', provider: marketWacc!.provider, asOf: marketWacc!.betaAsOf ?? calculatedAt }),
+    inputDetail({ field: 'Equity Risk Premium', value: marketWacc!.equityRiskPremium!, period: 'United States', provider: marketWacc!.provider, asOf: marketWacc!.equityRiskPremiumAsOf ?? calculatedAt }),
+    inputDetail({ field: 'Cost of Debt', value: costDebt, period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd, origin: 'derived' }),
+    inputDetail({ field: 'Tax Rate', value: taxRate, period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd, origin: 'derived' }),
+    inputDetail({ field: 'WACC', value: wacc.wacc, period: 'current capital structure', provider: `${marketWacc!.provider}+${input.source}`, asOf: calculatedAt, origin: 'derived' }),
+    inputDetail({ field: 'Cash', value: latest.cash, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
+    inputDetail({ field: 'Total Debt', value: latest.totalDebt, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
+    inputDetail({ field: sharesSource, value: shares!, period: sharesAsOf, provider: dilutedShares ? input.source : estimateProvider, asOf: sharesAsOf }),
+    inputDetail({ field: 'Peer List', value: multiples.peers.map((peer) => peer.symbol).join(','), period: targetEstimate!.periodEnd, provider: peerProvider, asOf: targetEstimate!.asOf }),
+    inputDetail({ field: 'Peer Multiples', value: multiples.peers.map((peer) => `${peer.symbol}:${peer.multiple}`).join(','), period: multiples.method, provider: peerProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
+    inputDetail({ field: 'Median Peer Multiple', value: multiples.medianMultiple, period: multiples.method, provider: peerProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
+  ];
+  const upsideAmount = centralEstimate - input.marketPrice;
+  const upsidePercent = upsideAmount / input.marketPrice * 100;
   const dataStatus = gate.staleInputs.length || input.providerStatus === 'stale'
-      ? 'stale'
-      : input.providerStatus === 'cached'
-        ? 'cached'
-        : input.providerStatus === 'delayed'
-          ? 'delayed'
-          : 'limited';
-  const reliabilityReasons = [
-    `${input.periods.length} normalized financial periods available`,
-    `${composite.models.length} model(s) passed validation`,
-    'Versioned model assumptions reduce reliability versus verified peer or analyst observations',
-    ...(gate.staleInputs.length ? [`Stale inputs: ${gate.staleInputs.join(', ')}`] : []),
-    ...selection.excludedModels.map((model) => `${model.model} excluded: ${model.reason}`),
-  ];
+    ? 'stale' as const
+    : input.providerStatus === 'cached'
+      ? 'cached' as const
+      : input.providerStatus === 'delayed' ? 'delayed' as const : 'live' as const;
+  const latestDataAt = [
+    input.priceAsOf,
+    latest.periodEnd,
+    targetEstimate!.asOf,
+    marketWacc!.riskFreeAsOf ?? '',
+  ].filter(Boolean).toSorted().at(-1)!;
 
   return {
     status: 'available',
     symbol: input.symbol,
     currency: 'USD',
-    marketPrice: { value: input.marketPrice, asOf: input.priceAsOf, source: input.source, sourceType: input.sourceType },
-    companyClassification: classification,
-    modelResults: composite.models,
-    excludedModels: selection.excludedModels,
-    fundamentalFairValue: ranges,
-    technicalContext: technical,
-    fundamentalQuality: quality,
-    dataQuality: { score: (completeness + freshness + periodConsistency + currencyConsistency) / 4, completeness, freshness, periodConsistency, currencyConsistency },
-    modelReliability: reliability,
-    reliabilityReasons,
-    missingInputs: selection.excludedModels.map((model) => `${model.model}: ${model.reason}`),
+    marketPrice: {
+      value: input.marketPrice,
+      asOf: input.priceAsOf,
+      source: input.marketPriceSource ?? input.source,
+      sourceType: input.sourceType,
+    },
+    companyClassification: {
+      ...classification,
+      eligibleModels: modelResults.map((model) => model.model),
+      excludedModels: [],
+      evidence: [...classification.evidence, 'nexora-fv-v2 requires both DCF and Forward Multiples.'],
+    },
+    modelResults,
+    excludedModels: [],
+    fundamentalFairValue: {
+      conservative: { low: lowerModel, high: lowerModel },
+      base: { low: centralEstimate, high: centralEstimate },
+      optimistic: { low: upperModel, high: upperModel },
+      centralEstimate,
+      dispersion,
+    },
+    technicalContext: {
+      status: 'unavailable',
+      reason: 'Technical indicators are intentionally excluded from Fair Value.',
+    },
+    fundamentalQuality: {
+      score: qualityScore,
+      categories: [],
+      limitation: 'Quality reflects provider coverage and traceability only.',
+    },
+    dataQuality: {
+      score: qualityScore,
+      completeness: qualityScore,
+      freshness: dataStatus === 'stale' ? 35 : dataStatus === 'cached' ? 75 : 100,
+      periodConsistency: 100,
+      currencyConsistency: 100,
+    },
+    modelReliability,
+    dataQualityLabel,
+    reliabilityReasons: [
+      `${growth.estimates.length} consensus revenue estimate period(s) support DCF growth.`,
+      `${multiples.peers.length} peers passed finite-positive and outlier gates.`,
+      `Shares basis: ${sharesSource}.`,
+      'Both DCF and Forward Multiples passed validation before Base Fair Value was published.',
+    ],
+    missingInputs: [],
     dataStatus,
-    selectedModel: composite.models.length > 1 ? 'blended' : composite.models[0].model,
+    selectedModel: 'blended',
     upsideAmount,
     upsidePercent,
     sector: input.sector,
     industry: input.industry,
-    sectorRuleId: selection.rule.ruleId,
+    sectorRuleId: 'deterministic-dcf-forward-multiples',
     sectorRuleVersion: SECTOR_RULE_VERSION,
     inputDetails,
-    assumptionDetails: selection.assumptions,
-    displayFx: input.displayFx ?? null,
-    inputs: { periods: input.periods, historicalPriceRows: input.historicalPrices.length },
-    assumptions: { sectorRule: selection.rule.ruleId, version: SECTOR_RULE_VERSION, details: selection.assumptions },
-    sources: [
-      { name: input.source, asOf: input.priceAsOf, sourceType: input.sourceType },
-      { name: input.historySource, asOf: input.historicalPrices.at(-1)!.date, sourceType: 'provider-supplied' },
+    assumptionDetails: [
+      { field: 'Perpetual Growth', value: PERPETUAL_GROWTH, source: 'model-assumption', ruleVersion: SECTOR_RULE_VERSION },
+      { field: 'DCF Weight', value: DCF_WEIGHT, source: 'model-assumption', ruleVersion: SECTOR_RULE_VERSION },
+      { field: 'Forward Multiples Weight', value: MULTIPLES_WEIGHT, source: 'model-assumption', ruleVersion: SECTOR_RULE_VERSION },
     ],
-    latestDataAt: [input.priceAsOf, ...input.periods.map((period) => period.periodEnd), input.historicalPrices.at(-1)!.date].toSorted().at(-1)!,
+    displayFx: input.displayFx ?? null,
+    inputs: {
+      latestPeriod: latest,
+      analystEstimates: input.analystEstimates,
+      peerObservations: input.peerObservations,
+      waccMarketInputs: input.waccMarketInputs,
+    },
+    assumptions: {
+      perpetualGrowth: PERPETUAL_GROWTH,
+      weights: { dcf: DCF_WEIGHT, forwardMultiples: MULTIPLES_WEIGHT },
+    },
+    sources: [
+      { name: input.source, asOf: latest.periodEnd, sourceType: input.sourceType },
+      { name: estimateProvider, asOf: targetEstimate!.asOf, sourceType: 'provider-supplied' },
+    ],
+    latestDataAt,
     calculatedAt,
     methodologyVersion: METHODOLOGY_VERSION,
     limitations: [
-      'Model estimate — not a market quote',
-      'เป็นค่าประเมินจากแบบจำลอง ไม่ใช่ราคาตลาดหรือคำแนะนำในการลงทุน',
-      'Technical indicators do not alter the fundamental fair value.',
-      'Versioned relative multiples are model assumptions, not provider data or fabricated peer observations.',
+      'Fair Value is a deterministic model output, not a market quote or investment recommendation.',
+      'USD is the calculation source of truth.',
+      'No unavailable model is reweighted and no missing input receives a numeric fallback.',
     ],
-  };
-}
-
-function technicalMarketContext(input: ValuationInput, fairValue: { low: number; high: number }) {
-  const rows = input.historicalPrices;
-  const latest = rows.at(-1)!;
-  const closes = rows.map((row) => row.close);
-  const high = Math.max(...rows.slice(-252).map((row) => row.high));
-  const low = Math.min(...rows.slice(-252).map((row) => row.low));
-  const peak = Math.max(...closes);
-  const returns = closes.slice(1).map((close, index) => Math.log(close / closes[index]));
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const volatility = Math.sqrt(returns.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / Math.max(1, returns.length - 1)) * Math.sqrt(252);
-  const analysis = calculateTechnicalAnalysis(rows, { symbol: input.symbol, source: input.historySource, freshness: input.historyFreshness, calculatedAt: input.calculatedAt });
-  const supportResistance = calculateSupportResistance(rows, { symbol: input.symbol, source: input.historySource, freshness: input.historyFreshness, calculatedAt: input.calculatedAt });
-  const metric = (key: 'sma' | 'sma50' | 'ema' | 'rsi' | 'macd' | 'atr' | 'averageVolume') =>
-    analysis.status === 'available' && analysis.indicators[key].status === 'available' ? analysis.indicators[key].latest.value : null;
-  const sma20 = metric('sma');
-  const sma50 = metric('sma50');
-  const ema20 = metric('ema');
-  const averageVolume = metric('averageVolume');
-  const midpoint = (fairValue.low + fairValue.high) / 2;
-  return {
-    status: 'available' as const,
-    trendState: sma20 != null && sma50 != null
-      ? latest.close > sma20 && sma20 > sma50
-        ? 'uptrend-structure'
-        : latest.close < sma20 && sma20 < sma50 ? 'downtrend-structure' : 'mixed'
-      : 'insufficient-long-term-structure',
-    smaEmaStructure: `close=${latest.close}; SMA20=${sma20 ?? 'unavailable'}; SMA50=${sma50 ?? 'unavailable'}; EMA20=${ema20 ?? 'unavailable'}`,
-    rsi: metric('rsi'),
-    macd: metric('macd'),
-    atr: metric('atr'),
-    realizedVolatility: Number.isFinite(volatility) ? volatility : null,
-    relativeVolume: averageVolume && averageVolume > 0 && latest.volume != null ? latest.volume / averageVolume : null,
-    drawdown: peak > 0 ? latest.close / peak - 1 : 0,
-    fiftyTwoWeekHigh: high,
-    fiftyTwoWeekLow: low,
-    distanceFromHigh: high > 0 ? latest.close / high - 1 : 0,
-    distanceFromLow: low > 0 ? latest.close / low - 1 : 0,
-    distanceFromFairValueRange: midpoint !== 0 ? latest.close / midpoint - 1 : 0,
-    supportResistance,
-    source: input.historySource,
-    asOf: latest.date,
-    limitations: ['Historical market context only; it does not change intrinsic value.', 'No future candles or order book data are used.'],
   };
 }

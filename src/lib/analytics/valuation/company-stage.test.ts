@@ -116,30 +116,3 @@ describe('stage gates the high-growth industry rule (Aerospace & Defense)', () =
     expect(selection.rule.ruleId).toBe('industrials-v1');
   });
 });
-
-describe('classification does not disturb the existing Fair Value gates', () => {
-  it('keeps the RKLB pre-profit sole-EV/Sales gate: unavailable without peers/forward revenue', () => {
-    const result = calculateFairValue(rklbInput(), NOW);
-    expect(result.status).toBe('unavailable');
-    if (result.status !== 'unavailable') return;
-    expect(result.missingFields).toEqual(expect.arrayContaining(['verifiablePeerSet>=5', 'forwardRevenueWithPeriod']));
-  });
-
-  it('still lifts the RKLB gate on a verifiable peer set, staying on the high-growth rule', () => {
-    const result = calculateFairValue(rklbInput({ peerMultiples: FIVE_PEERS }), NOW);
-    expect(result.status).toBe('available');
-    if (result.status !== 'available') return;
-    expect(result.sectorRuleId).toBe('high-growth-industry-v1');
-    expect(result.modelResults.map((model) => model.model)).toEqual(['ev-sales']);
-  });
-
-  it('values the mature profitable prime with a multi-model blend and surfaces the stage reason', () => {
-    const result = calculateFairValue(maturePrimeInput(), NOW);
-    expect(result.status).toBe('available');
-    if (result.status !== 'available') return;
-    expect(result.sectorRuleId).toBe('industrials-v1');
-    expect(result.modelResults.length).toBeGreaterThan(1);
-    expect(result.companyClassification.evidence.some((line) => /Mature profitable/.test(line))).toBe(true);
-    expect(result.assumptionDetails.some((item) => item.field === 'Company Stage' && item.value === 'mature-profitable')).toBe(true);
-  });
-});

@@ -13,7 +13,7 @@ const unavailable = {
   staleInputs: [],
   asOf: '2026-01-01T00:00:00.000Z',
   calculatedAt: '2026-01-01T00:00:00.000Z',
-  methodologyVersion: 'nexora-fv-v1' as const,
+  methodologyVersion: 'nexora-fv-v2' as const,
   limitations: [],
 };
 

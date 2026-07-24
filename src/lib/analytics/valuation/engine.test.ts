@@ -1,50 +1,187 @@
 import { describe, expect, it } from 'vitest';
 import { calculateFairValue, dataSufficiency } from './engine';
-import { classifyCompany } from './classification';
-import { modelReliability } from './quality';
 import type { FinancialPeriod, ValuationInput } from './types';
-const periods: FinancialPeriod[] = [2023, 2024, 2025].map((year, index) => ({ periodEnd: `${year}-12-31`, currency: 'USD', revenue: 800 + index * 100, operatingIncome: 160 + index * 20, netIncome: 100 + index * 10, depreciationAmortization: 30, capitalExpenditure: 40, changeInWorkingCapital: 10, operatingCashFlow: 160, freeCashFlow: 120, dividendsPaid: -20, interestExpense: 10, totalDebt: 200, cash: 100, totalAssets: 1500, totalLiabilities: 700, dilutedShares: 100 }));
-const historicalPrices = Array.from({ length: 60 }, (_, index) => ({ date: new Date(Date.UTC(2025, 9, index + 1)).toISOString().slice(0, 10), open: 10 + index * .1, high: 11 + index * .1, low: 9 + index * .1, close: 10.5 + index * .1, volume: 1000 + index * 10 }));
-const input: ValuationInput = { symbol: 'TEST', currency: 'USD', marketPrice: 20, priceAsOf: '2026-01-02T00:00:00.000Z', source: 'verified-fixture', sourceType: 'provider-supplied', sector: 'Technology', industry: 'Software', periods, historicalPrices, historySource: 'verified-history', historyFreshness: { status: 'end-of-day', asOf: '2025-11-29T00:00:00.000Z', maxAgeSeconds: 86400 }, assumptions: { forecastHorizon: 5, revenueGrowth: .05, operatingMargin: .2, taxRate: .2, depreciationPercentRevenue: .03, capexPercentRevenue: .04, workingCapitalPercentRevenue: .01, wacc: .1, terminalGrowth: .03, dilutionRate: 0 }, calculatedAt: '2026-01-03T00:00:00.000Z' };
-describe('Nexora Composite Fair Value engine', () => {
-  it('enforces sufficiency, duplicate periods, currency normalization and stale inputs', () => { expect(dataSufficiency(input, Date.parse('2026-01-03')).ok).toBe(true); expect(dataSufficiency({ ...input, periods: periods.slice(0, 2) }, Date.parse('2026-01-03')).missingInputs).toContain('historicalFinancials>=3Periods'); expect(dataSufficiency({ ...input, periods: [periods[0], periods[0], periods[2]] }, Date.parse('2026-01-03')).missingInputs).toContain('duplicateFiscalPeriodsMustBeResolved'); expect(dataSufficiency({ ...input, priceAsOf: '2020-01-01T00:00:00.000Z' }, Date.parse('2026-01-03')).staleInputs).toContain('marketPrice'); });
-  it('classifies from evidence and exposes model eligibility/exclusions', () => { const result = classifyCompany('Technology', 'Software', periods); expect(result.classification).toContain('profitable-growth'); expect(result.eligibleModels).toContain('fcff-dcf'); expect(result.excludedModels.some((item) => item.model === 'relative')).toBe(true); });
-  it('is versioned/reproducible and technical context cannot alter intrinsic value', () => { const a = calculateFairValue(input, Date.parse('2026-01-03')); const b = calculateFairValue({ ...input, historicalPrices: historicalPrices.map((row) => ({ ...row, close: row.close * 2, open: row.open * 2, high: row.high * 2, low: row.low * 2 })) }, Date.parse('2026-01-03')); expect(a.status).toBe('available'); expect(b.status).toBe('available'); if (a.status === 'available' && b.status === 'available') { expect(a.methodologyVersion).toBe('nexora-fv-v1'); expect(a.technicalContext.status).toBe('available'); expect(a.fundamentalFairValue).toEqual(b.fundamentalFairValue); expect(Number.isFinite(a.fundamentalFairValue.centralEstimate)).toBe(true); } });
-  it('returns typed unavailable rather than defaults when inputs are insufficient', () => { const result = calculateFairValue({ ...input, periods: [] }, Date.parse('2026-01-03')); expect(result).toMatchObject({ status: 'unavailable', failureKind: 'insufficient-periods', provider: 'verified-fixture', missingFields: expect.any(Array), asOf: input.priceAsOf, methodologyVersion: 'nexora-fv-v1' }); if (result.status === 'unavailable') expect(result.missingInputs.length).toBeGreaterThan(0); });
-  it('calculates Nexora Model Reliability as model/data quality, not return probability', () => { const result = modelReliability({ completeness: 90, freshness: 90, periodConsistency: 90, modelCount: 3, dispersion: .1, cashFlowStability: 80, peerSampleSize: 8, currencyConsistency: 100, sensitivity: .2 }); expect(result.level).not.toBe('Unavailable'); expect(result.explanation).toContain('not the probability'); });
-  it('calculates ordered scenarios, normalized weights, and upside from the USD base value', () => {
-    const enriched = periods.map((period) => ({ ...period, ebitda: period.operatingIncome + period.depreciationAmortization, dilutedEps: period.netIncome / period.dilutedShares, totalEquity: period.totalAssets - period.totalLiabilities }));
-    const result = calculateFairValue({ ...input, marketCapitalization: 2000, periods: enriched }, Date.parse('2026-01-03'));
+
+const latest: FinancialPeriod = {
+  periodEnd: '2025-12-31',
+  currency: 'USD',
+  revenue: 1_000,
+  operatingIncome: 200,
+  netIncome: 140,
+  incomeBeforeTax: 180,
+  incomeTaxExpense: 36,
+  depreciationAmortization: 40,
+  capitalExpenditure: 50,
+  changeInWorkingCapital: 10,
+  operatingCashFlow: 170,
+  freeCashFlow: 120,
+  dividendsPaid: -20,
+  interestExpense: 12,
+  totalDebt: 200,
+  cash: 100,
+  totalAssets: 1_500,
+  totalLiabilities: 700,
+  dilutedShares: 100,
+  dilutedEps: 1.4,
+};
+
+const input: ValuationInput = {
+  symbol: 'TEST',
+  currency: 'USD',
+  marketPrice: 20,
+  marketPriceSource: 'polygon',
+  marketCapitalization: 2_000,
+  priceAsOf: '2026-07-24T20:00:00.000Z',
+  source: 'financial-modeling-prep',
+  sourceType: 'provider-supplied',
+  sector: 'Technology',
+  industry: 'Software',
+  periods: [latest],
+  historicalPrices: [],
+  historySource: '',
+  historyFreshness: { status: 'unavailable', asOf: null, maxAgeSeconds: null },
+  analystEstimates: [2026, 2027, 2028, 2029, 2030].map((year, index) => ({
+    periodEnd: `${year}-12-31`,
+    estimatedRevenue: 1_000 * (1.08 ** (index + 1)),
+    estimatedEps: 2 + index * 0.2,
+    revenueAnalystCount: 8,
+    epsAnalystCount: 8,
+    provider: 'financial-modeling-prep',
+    asOf: '2026-07-25T00:00:00.000Z',
+  })),
+  peerObservations: [10, 11, 12, 13, 1000].map((multiple, index) => ({
+    symbol: `P${index + 1}`,
+    sector: 'Technology',
+    industry: 'Software',
+    price: multiple * 2,
+    priceAsOf: '2026-07-24T20:00:00.000Z',
+    enterpriseValue: multiple * 100,
+    enterpriseValueAsOf: '2026-06-30',
+    forwardEps: 2,
+    forwardRevenue: 100,
+    estimatePeriod: '2026-12-31',
+    estimateAsOf: '2026-07-25T00:00:00.000Z',
+    provider: 'financial-modeling-prep',
+  })),
+  waccMarketInputs: {
+    beta: 1.2,
+    betaAsOf: '2026-07-25T00:00:00.000Z',
+    riskFreeRate: 0.04,
+    riskFreeAsOf: '2026-07-23',
+    equityRiskPremium: 0.05,
+    equityRiskPremiumAsOf: '2026-07-25T00:00:00.000Z',
+    provider: 'financial-modeling-prep',
+  },
+  dilutedSharesSource: 'diluted',
+  providerStatus: 'live',
+  calculatedAt: '2026-07-25T00:00:00.000Z',
+};
+
+describe('Nexora deterministic Fair Value engine', () => {
+  it('requires real estimates, WACC inputs, peers, and USD', () => {
+    expect(dataSufficiency(input, Date.parse('2026-07-25')).ok).toBe(true);
+    expect(dataSufficiency({ ...input, analystEstimates: null }).missingInputs).toContain('forwardEstimates');
+    expect(dataSufficiency({ ...input, waccMarketInputs: null }).missingInputs).toContain('waccMarketInputs');
+    expect(dataSufficiency({ ...input, peerObservations: null }).missingInputs).toContain('peerObservations');
+    expect(dataSufficiency({ ...input, currency: 'THB' }).missingInputs).toContain('valuationInputsNormalizedToUSD');
+  });
+
+  it('publishes Base Fair Value only after both models pass and applies explicit 60/40 weights', () => {
+    const result = calculateFairValue(input, Date.parse('2026-07-25'));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    const dcf = result.modelResults.find((model) => model.model === 'fcff-dcf')!;
+    const multiples = result.modelResults.find((model) => model.model === 'pe')!;
+    expect(dcf.weight).toBe(0.6);
+    expect(multiples.weight).toBe(0.4);
+    expect(result.fundamentalFairValue.centralEstimate).toBeCloseTo(
+      dcf.fairValue * 0.6 + multiples.fairValue * 0.4,
+    );
+    expect(result.upsidePercent).toBeCloseTo(
+      (result.fundamentalFairValue.centralEstimate - input.marketPrice) / input.marketPrice * 100,
+    );
+    expect(result.currency).toBe('USD');
+    expect(result.inputDetails.map((detail) => detail.field)).toEqual(expect.arrayContaining([
+      'Latest Real FCF',
+      'WACC',
+      'Peer List',
+      'Peer Multiples',
+      'Median Peer Multiple',
+      'Diluted Shares Outstanding',
+    ]));
+  });
+
+  it('uses shares outstanding only as a disclosed fallback', () => {
+    const result = calculateFairValue({
+      ...input,
+      sharesOutstanding: 120,
+      sharesOutstandingAsOf: '2026-06-30',
+      periods: [{ ...latest, dilutedShares: 0 }],
+    }, Date.parse('2026-07-25'));
     expect(result.status).toBe('available');
     if (result.status === 'available') {
-      expect(result.modelResults.reduce((sum, model) => sum + model.weight, 0)).toBeCloseTo(1);
-      expect(result.fundamentalFairValue.conservative.high).toBeLessThanOrEqual(result.fundamentalFairValue.base.high);
-      expect(result.fundamentalFairValue.base.low).toBeLessThanOrEqual(result.fundamentalFairValue.optimistic.low);
-      expect(result.upsideAmount).toBeCloseTo(result.fundamentalFairValue.centralEstimate - input.marketPrice);
-      expect(result.upsidePercent).toBeCloseTo((result.upsideAmount / input.marketPrice) * 100);
-      expect(result.currency).toBe('USD');
+      expect(result.inputDetails.some((detail) =>
+        detail.field === 'Shares Outstanding (provider fallback)' && detail.value === 120)).toBe(true);
     }
   });
-  it('does not let missing working-capital data block other model-specific gates', () => {
-    const partial = periods.map((period) => ({
-      ...period,
-      changeInWorkingCapital: null,
-      ebitda: period.operatingIncome + period.depreciationAmortization,
-      dilutedEps: period.netIncome / period.dilutedShares,
-      totalEquity: period.totalAssets - period.totalLiabilities,
-    }));
-    const result = calculateFairValue({ ...input, assumptions: undefined, marketCapitalization: 2000, periods: partial }, Date.parse('2026-01-03'));
-    expect(result.status).toBe('available');
-    if (result.status === 'available') {
-      expect(result.modelResults.length).toBeGreaterThan(0);
-      expect(result.excludedModels).toContainEqual(expect.objectContaining({ model: 'fcff-dcf' }));
-    }
+
+  it('returns unavailable for missing estimates, insufficient peers, WACC failure, or non-finite input', () => {
+    const missingEstimates = calculateFairValue({ ...input, analystEstimates: [] }, Date.parse('2026-07-25'));
+    expect(missingEstimates).toMatchObject({
+      status: 'unavailable',
+      missingFields: expect.arrayContaining(['forwardEstimates']),
+    });
+    const peers = calculateFairValue({
+      ...input,
+      peerObservations: input.peerObservations!.slice(0, 3),
+    }, Date.parse('2026-07-25'));
+    expect(peers).toMatchObject({
+      status: 'unavailable',
+      provider: 'financial-modeling-prep',
+      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+    });
+    const wacc = calculateFairValue({
+      ...input,
+      waccMarketInputs: { ...input.waccMarketInputs!, beta: null },
+    }, Date.parse('2026-07-25'));
+    expect(wacc).toMatchObject({ status: 'unavailable', missingFields: expect.arrayContaining(['beta']) });
+    const nonFinite = calculateFairValue({
+      ...input,
+      periods: [{ ...latest, freeCashFlow: Number.POSITIVE_INFINITY }],
+    }, Date.parse('2026-07-25'));
+    expect(nonFinite).toMatchObject({ status: 'unavailable' });
   });
-  it('publishes real stale data as stale and rejects non-positive shares', () => {
-    const stale = calculateFairValue({ ...input, priceAsOf: '2020-01-01T00:00:00.000Z' }, Date.parse('2026-01-03'));
-    expect(stale.status).toBe('available');
-    if (stale.status === 'available') expect(stale.dataStatus).toBe('stale');
-    const invalidShares = calculateFairValue({ ...input, periods: periods.map((period) => ({ ...period, dilutedShares: 0 })) }, Date.parse('2026-01-03'));
-    expect(invalidShares.status).toBe('unavailable');
+
+  it('rejects stale peers and incomplete multi-year consensus instead of extending them', () => {
+    const stalePeers = calculateFairValue({
+      ...input,
+      peerObservations: input.peerObservations!.map((peer) => ({
+        ...peer,
+        priceAsOf: '2026-06-01T00:00:00.000Z',
+        estimateAsOf: '2026-06-01T00:00:00.000Z',
+      })),
+    }, Date.parse('2026-07-25'));
+    expect(stalePeers).toMatchObject({
+      status: 'unavailable',
+      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+    });
+
+    const incompleteConsensus = calculateFairValue({
+      ...input,
+      analystEstimates: input.analystEstimates!.slice(0, 3),
+    }, Date.parse('2026-07-25'));
+    expect(incompleteConsensus).toMatchObject({
+      status: 'unavailable',
+      missingFields: expect.arrayContaining(['forwardRevenueEstimates']),
+    });
+  });
+
+  it('never fabricates a numeric fallback when a critical model is unavailable', () => {
+    const result = calculateFairValue({
+      ...input,
+      peerObservations: [],
+    }, Date.parse('2026-07-25'));
+    expect(result.status).toBe('unavailable');
+    expect(result).not.toHaveProperty('fundamentalFairValue');
   });
 });

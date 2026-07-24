@@ -48,6 +48,38 @@ export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidat
 }
 
 /**
+ * Resolve a real regular comparison close already present in the accepted
+ * pipeline. A direct `previousClose` wins. If Polygon supplied only the
+ * authoritative daily `change` + `changePercent`, both fields must independently
+ * imply the same positive close before it is accepted. No open/high/low, cached
+ * price, or arbitrary fallback is used.
+ */
+export function regularComparisonClose(quote: Quote | null): number | null {
+  if (!quote) return null;
+  if (quote.previousClose != null && Number.isFinite(quote.previousClose) && quote.previousClose > 0) {
+    return quote.previousClose;
+  }
+  if (
+    !Number.isFinite(quote.price)
+    || quote.price <= 0
+    || quote.change == null
+    || !Number.isFinite(quote.change)
+    || quote.changePercent == null
+    || !Number.isFinite(quote.changePercent)
+    || quote.changePercent <= -100
+  ) {
+    return null;
+  }
+  const fromAmount = quote.price - quote.change;
+  const fromPercent = quote.price / (1 + quote.changePercent / 100);
+  if (!Number.isFinite(fromAmount) || !Number.isFinite(fromPercent) || fromAmount <= 0 || fromPercent <= 0) {
+    return null;
+  }
+  const relativeDifference = Math.abs(fromAmount - fromPercent) / Math.max(fromAmount, fromPercent);
+  return relativeDifference <= 0.001 ? fromAmount : null;
+}
+
+/**
  * Build the displayed quote resource from the single accepted price. A snapshot
  * keeps its full verified quote; an aggregate/history fallback refines only the
  * price and recomputes the derived change against the known previous close — no
@@ -64,11 +96,11 @@ export function buildAcceptedResource(input: {
   const { accepted, snapshotResource, baseQuote, symbol } = input;
   if (accepted.source === 'snapshot' && snapshotResource) return snapshotResource;
 
-  const previousClose = baseQuote?.previousClose ?? null;
+  const previousClose = regularComparisonClose(baseQuote);
   const change = previousClose != null ? accepted.price - previousClose : null;
   const changePercent = previousClose ? (change! / previousClose) * 100 : null;
   const data: Quote = baseQuote
-    ? { ...baseQuote, price: accepted.price, change, changePercent }
+    ? { ...baseQuote, price: accepted.price, previousClose, change, changePercent }
     : {
       symbol,
       currency: null,

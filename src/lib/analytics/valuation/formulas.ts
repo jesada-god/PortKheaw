@@ -166,3 +166,240 @@ export function capitalStructureSensitivity(input: DcfInput, netDebtValues: read
   if (netDebtValues.length * dilutionRates.length > 81) throw new RangeError('Sensitivity workload exceeds 81 cells');
   return netDebtValues.map((netDebt) => dilutionRates.map((dilutionRate) => ({ netDebt, dilutionRate, fairValue: fcffDcf({ ...input, netDebt, assumptions: { ...input.assumptions, dilutionRate } }).fairValue })));
 }
+
+export interface DeterministicWaccInput {
+  riskFreeRate: number;
+  beta: number;
+  equityRiskPremium: number;
+  costDebt: number;
+  taxRate: number;
+  equityValue: number;
+  debt: number;
+}
+
+export interface DeterministicWaccResult {
+  costOfEquity: number;
+  afterTaxCostOfDebt: number;
+  equityWeight: number;
+  debtWeight: number;
+  wacc: number;
+}
+
+/** CAPM + after-tax debt WACC. Every input is supplied by the caller; no default
+ * rate, beta, premium, capital weight, or tax assumption exists in this function. */
+export function calculateDeterministicWacc(input: DeterministicWaccInput): DeterministicWaccResult {
+  assertFinite({
+    riskFreeRate: input.riskFreeRate,
+    beta: input.beta,
+    equityRiskPremium: input.equityRiskPremium,
+    costDebt: input.costDebt,
+    taxRate: input.taxRate,
+    equityValue: input.equityValue,
+    debt: input.debt,
+  });
+  positive(input.riskFreeRate, 'riskFreeRate');
+  positive(input.beta, 'beta');
+  positive(input.equityRiskPremium, 'equityRiskPremium');
+  positive(input.equityValue, 'equityValue');
+  if (input.debt < 0) throw new RangeError('debt must be non-negative');
+  if (input.costDebt < 0) throw new RangeError('costDebt must be non-negative');
+  if (input.taxRate < 0 || input.taxRate > 1) throw new RangeError('taxRate must be between zero and one');
+  const capital = input.equityValue + input.debt;
+  positive(capital, 'totalCapital');
+  const costOfEquity = input.riskFreeRate + input.beta * input.equityRiskPremium;
+  const afterTaxCostOfDebt = input.costDebt * (1 - input.taxRate);
+  const equityWeight = input.equityValue / capital;
+  const debtWeight = input.debt / capital;
+  const wacc = equityWeight * costOfEquity + debtWeight * afterTaxCostOfDebt;
+  assertFinite({ costOfEquity, afterTaxCostOfDebt, equityWeight, debtWeight, wacc });
+  positive(wacc, 'wacc');
+  return { costOfEquity, afterTaxCostOfDebt, equityWeight, debtWeight, wacc };
+}
+
+export interface DeterministicDcfInput {
+  latestFreeCashFlow: number;
+  /** Exactly one provider-derived compound rate, or five provider-derived annual rates. */
+  growthRates: readonly number[];
+  cash: number;
+  debt: number;
+  shares: number;
+  wacc: number;
+  perpetualGrowth: number;
+}
+
+export interface DeterministicDcfResult {
+  fairValue: number;
+  forecastFreeCashFlows: number[];
+  presentValueFreeCashFlows: number;
+  terminalValue: number;
+  presentValueTerminalValue: number;
+  enterpriseValue: number;
+  equityValue: number;
+}
+
+/** Five-year FCFF DCF required by nexora-fv-v2. Growth is never generated here:
+ * callers must provide either five annual consensus rates or one consensus CAGR. */
+export function calculateDeterministicDcf(input: DeterministicDcfInput): DeterministicDcfResult {
+  assertFinite({
+    latestFreeCashFlow: input.latestFreeCashFlow,
+    cash: input.cash,
+    debt: input.debt,
+    shares: input.shares,
+    wacc: input.wacc,
+    perpetualGrowth: input.perpetualGrowth,
+  });
+  positive(input.latestFreeCashFlow, 'latestFreeCashFlow');
+  positive(input.shares, 'shares');
+  if (input.cash < 0 || input.debt < 0) throw new RangeError('cash and debt must be non-negative');
+  if (input.growthRates.length !== 1 && input.growthRates.length !== 5) {
+    throw new RangeError('growthRates must contain one consensus CAGR or five annual consensus rates');
+  }
+  if (input.growthRates.some((rate) => !Number.isFinite(rate) || rate <= -1)) {
+    throw new RangeError('growthRates must be finite and greater than -100%');
+  }
+  if (!(input.wacc > input.perpetualGrowth)) {
+    throw new RangeError('WACC must be greater than perpetual growth');
+  }
+  const rates = input.growthRates.length === 1
+    ? Array<number>(5).fill(input.growthRates[0])
+    : [...input.growthRates];
+  const forecastFreeCashFlows: number[] = [];
+  let freeCashFlow = input.latestFreeCashFlow;
+  let presentValueFreeCashFlows = 0;
+  for (let year = 1; year <= 5; year += 1) {
+    freeCashFlow *= 1 + rates[year - 1];
+    if (!Number.isFinite(freeCashFlow) || freeCashFlow <= 0) {
+      throw new RangeError(`forecastFreeCashFlowYear${year} must be finite and positive`);
+    }
+    forecastFreeCashFlows.push(freeCashFlow);
+    presentValueFreeCashFlows += freeCashFlow / ((1 + input.wacc) ** year);
+  }
+  const terminalValue = forecastFreeCashFlows[4] * (1 + input.perpetualGrowth)
+    / (input.wacc - input.perpetualGrowth);
+  const presentValueTerminalValue = terminalValue / ((1 + input.wacc) ** 5);
+  const enterpriseValue = presentValueFreeCashFlows + presentValueTerminalValue;
+  const equityValue = enterpriseValue + input.cash - input.debt;
+  const fairValue = equityValue / input.shares;
+  assertFinite({
+    presentValueFreeCashFlows,
+    terminalValue,
+    presentValueTerminalValue,
+    enterpriseValue,
+    equityValue,
+    fairValue,
+  });
+  positive(fairValue, 'fairValue');
+  return {
+    fairValue,
+    forecastFreeCashFlows,
+    presentValueFreeCashFlows,
+    terminalValue,
+    presentValueTerminalValue,
+    enterpriseValue,
+    equityValue,
+  };
+}
+
+export interface ForwardMultiplePeer {
+  symbol: string;
+  price: number | null;
+  forwardEps: number | null;
+  enterpriseValue: number | null;
+  forwardRevenue: number | null;
+}
+
+export interface ForwardMultiplesResult {
+  method: 'forward-pe' | 'forward-ev-sales';
+  fairValue: number;
+  medianMultiple: number;
+  peers: Array<{ symbol: string; multiple: number }>;
+  targetEnterpriseValue: number | null;
+  targetEquityValue: number | null;
+}
+
+function retainedPeerMultiples(peers: Array<{ symbol: string; multiple: number }>, minimumPeers: number) {
+  const valid = peers.filter((peer) => Number.isFinite(peer.multiple) && peer.multiple > 0);
+  if (valid.length < minimumPeers) throw new RangeError(`At least ${minimumPeers} valid peers are required`);
+  const initialMedian = median(valid.map((peer) => peer.multiple));
+  const ratioFiltered = valid.filter((peer) =>
+    peer.multiple >= initialMedian / 5 && peer.multiple <= initialMedian * 5);
+  if (ratioFiltered.length < minimumPeers) throw new RangeError(`At least ${minimumPeers} peers must remain after outlier filtering`);
+  const sorted = ratioFiltered.map((peer) => peer.multiple).toSorted((a, b) => a - b);
+  const lower = sorted.slice(0, Math.floor(sorted.length / 2));
+  const upper = sorted.slice(Math.ceil(sorted.length / 2));
+  const q1 = median(lower);
+  const q3 = median(upper);
+  const iqr = q3 - q1;
+  const retained = ratioFiltered.filter((peer) =>
+    peer.multiple >= q1 - 1.5 * iqr && peer.multiple <= q3 + 1.5 * iqr);
+  if (retained.length < minimumPeers) throw new RangeError(`At least ${minimumPeers} peers must remain after outlier filtering`);
+  return retained;
+}
+
+/** Forward P/E for positive target EPS, otherwise Forward EV/Sales. The branch is
+ * driven only by the real target estimate; missing target EPS is not treated as
+ * negative and therefore never triggers a silent EV/Sales fallback. */
+export function calculateForwardMultiples(input: {
+  targetForwardEps: number | null;
+  targetForwardRevenue: number | null;
+  cash: number;
+  debt: number;
+  shares: number;
+  peers: ForwardMultiplePeer[];
+  minimumPeers?: number;
+}): ForwardMultiplesResult {
+  assertFinite({ cash: input.cash, debt: input.debt, shares: input.shares });
+  if (input.targetForwardEps === null || !Number.isFinite(input.targetForwardEps)) {
+    throw new RangeError('targetForwardEps is required');
+  }
+  positive(input.shares, 'shares');
+  if (input.cash < 0 || input.debt < 0) throw new RangeError('cash and debt must be non-negative');
+  const minimumPeers = input.minimumPeers ?? 4;
+  if (!Number.isInteger(minimumPeers) || minimumPeers < 4) throw new RangeError('minimumPeers must be at least four');
+
+  if (input.targetForwardEps > 0) {
+    const retained = retainedPeerMultiples(input.peers.map((peer) => ({
+      symbol: peer.symbol,
+      multiple: peer.price != null && peer.forwardEps != null && peer.price > 0 && peer.forwardEps > 0
+        ? peer.price / peer.forwardEps
+        : Number.NaN,
+    })), minimumPeers);
+    const medianMultiple = median(retained.map((peer) => peer.multiple));
+    const fairValue = input.targetForwardEps * medianMultiple;
+    assertFinite({ medianMultiple, fairValue });
+    positive(fairValue, 'fairValue');
+    return {
+      method: 'forward-pe',
+      fairValue,
+      medianMultiple,
+      peers: retained,
+      targetEnterpriseValue: null,
+      targetEquityValue: null,
+    };
+  }
+
+  if (input.targetForwardRevenue === null || !Number.isFinite(input.targetForwardRevenue) || input.targetForwardRevenue <= 0) {
+    throw new RangeError('targetForwardRevenue is required when targetForwardEps is non-positive');
+  }
+  const retained = retainedPeerMultiples(input.peers.map((peer) => ({
+    symbol: peer.symbol,
+    multiple: peer.enterpriseValue != null && peer.forwardRevenue != null
+      && peer.enterpriseValue > 0 && peer.forwardRevenue > 0
+      ? peer.enterpriseValue / peer.forwardRevenue
+      : Number.NaN,
+  })), minimumPeers);
+  const medianMultiple = median(retained.map((peer) => peer.multiple));
+  const targetEnterpriseValue = input.targetForwardRevenue * medianMultiple;
+  const targetEquityValue = targetEnterpriseValue + input.cash - input.debt;
+  const fairValue = targetEquityValue / input.shares;
+  assertFinite({ medianMultiple, targetEnterpriseValue, targetEquityValue, fairValue });
+  positive(fairValue, 'fairValue');
+  return {
+    method: 'forward-ev-sales',
+    fairValue,
+    medianMultiple,
+    peers: retained,
+    targetEnterpriseValue,
+    targetEquityValue,
+  };
+}

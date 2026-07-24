@@ -1,266 +1,236 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MarketDataError } from '@/src/lib/market-data/errors';
 import type { ValuationInput } from './types';
 
 const mocks = vi.hoisted(() => ({
   getFundamentalsProvider: vi.fn(),
   getMarketDataProvider: vi.fn(),
-  getHistoricalMarketDataService: vi.fn(),
-  getFxRate: vi.fn(),
+  getFmpValuationProvider: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/src/lib/market-data', () => ({
-  getFundamentalsProvider: mocks.getFundamentalsProvider,
-  getHistoricalMarketDataService: mocks.getHistoricalMarketDataService,
   getMarketDataProvider: mocks.getMarketDataProvider,
-}));
-vi.mock('@/src/lib/market-data/fx/service', () => ({
-  getFxRate: mocks.getFxRate,
 }));
 vi.mock('../fundamentals/provider', () => ({
   getFundamentalsProvider: mocks.getFundamentalsProvider,
 }));
+vi.mock('./providers/financial-modeling-prep', () => ({
+  getFmpValuationProvider: mocks.getFmpValuationProvider,
+}));
 
 import { calculateFairValueSafely, loadFairValue } from './orchestration';
 
-// A PROFITABLE multi-model fixture: these orchestration tests exercise provider
-// provenance and FX independence, not the meaningful-model gate. A profitable
-// company keeps several models eligible (EV/Sales, EV/EBITDA, P/E, DCF), so the
-// result is a genuine blended `available` valuation — never the assumption-only
-// single-EV/Sales case that the pre-profit gate now (correctly) marks unavailable.
-const periods = [2023, 2024, 2025].map((year, index) => ({
-  periodEnd: `${year}-12-31`,
+const financialPeriod = {
+  periodEnd: '2025-12-31',
   currency: 'USD',
-  revenue: 800 + index * 100,
-  operatingIncome: 120,
-  netIncome: 90,
-  depreciationAmortization: 10,
-  capitalExpenditure: -40,
-  changeInWorkingCapital: 5,
-  operatingCashFlow: 130,
-  freeCashFlow: 90,
-  dividendsPaid: null,
-  interestExpense: 10,
+  revenue: 1_000,
+  operatingIncome: 200,
+  netIncome: 140,
+  incomeBeforeTax: 180,
+  incomeTaxExpense: 36,
+  depreciationAmortization: 40,
+  capitalExpenditure: 50,
+  changeInWorkingCapital: 10,
+  operatingCashFlow: 170,
+  freeCashFlow: 120,
+  dividendsPaid: -20,
+  interestExpense: 12,
   totalDebt: 200,
   cash: 100,
-  totalAssets: 1200,
+  totalAssets: 1_500,
   totalLiabilities: 700,
   dilutedShares: 100,
-  ebitda: 150,
-  dilutedEps: 0.8,
-  totalEquity: 500,
-}));
-const history = Array.from({ length: 60 }, (_, index) => ({
-  date: new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10),
-  open: 10,
-  high: 11,
-  low: 9,
-  close: 10,
-  volume: 1_000,
-}));
+  dilutedEps: 1.4,
+};
 
-function arrangeRequiredProviderData() {
+function arrangeProviders() {
+  mocks.getMarketDataProvider.mockReturnValue({
+    id: 'polygon',
+    getQuote: vi.fn().mockResolvedValue({
+      data: { symbol: 'AAPL', currency: 'USD', price: 20 },
+      freshness: {
+        status: 'realtime',
+        asOf: '2026-07-24T20:00:00.000Z',
+        maxAgeSeconds: 60,
+      },
+      provider: 'polygon',
+    }),
+    getCompanyProfile: vi.fn().mockResolvedValue({
+      data: {
+        symbol: 'AAPL',
+        currency: 'USD',
+        sector: 'Technology',
+        industry: 'Consumer Electronics',
+        marketCapitalization: 2_000,
+      },
+      freshness: {
+        status: 'cached',
+        asOf: '2026-07-24T00:00:00.000Z',
+        maxAgeSeconds: 86_400,
+      },
+      provider: 'polygon',
+    }),
+  });
   mocks.getFundamentalsProvider.mockReturnValue({
-    id: 'alpha-vantage',
+    id: 'financial-modeling-prep',
     getFinancialPeriods: vi.fn().mockResolvedValue({
-      symbol: 'RKLB',
-      periods,
+      symbol: 'AAPL',
+      periods: [financialPeriod],
       quarterlyPeriods: [],
       annualRecords: [],
       quarterlyRecords: [],
       asOf: '2025-12-31',
-      fetchedAt: '2026-07-20T00:00:00.000Z',
+      fetchedAt: '2026-07-24T00:00:00.000Z',
       currency: 'USD',
       dilutedEpsTtm: null,
       dilutedEpsAsOf: null,
       missingInputs: [],
       datasetErrors: {},
       diagnostics: {
-        provider: 'alpha-vantage',
+        provider: 'financial-modeling-prep',
         capabilities: [],
         datasets: {},
         cache: { income: 'miss', balance: 'miss', cashFlow: 'miss' },
         datasetFetchedAt: {},
         latencyMs: 1,
-        normalizedPeriodCount: { annual: 3, quarterly: 0 },
+        normalizedPeriodCount: { annual: 1, quarterly: 0 },
       },
     }),
   });
-  mocks.getMarketDataProvider.mockReturnValue({
-    id: 'alpha-vantage',
-    getQuote: vi.fn().mockResolvedValue({
-      data: { symbol: 'RKLB', price: 10, volume: 1_000 },
-      freshness: { status: 'end-of-day', asOf: '2026-07-17T00:00:00.000Z', maxAgeSeconds: 86_400 },
-      provider: 'alpha-vantage',
-    }),
-    getCompanyProfile: vi.fn().mockResolvedValue({
-      data: {
-        symbol: 'RKLB',
-        name: 'Rocket Lab USA, Inc.',
-        currency: 'USD',
-        sector: 'Industrials',
-        industry: 'Aerospace & Defense',
-        marketCapitalization: 1_000,
+  mocks.getFmpValuationProvider.mockReturnValue({
+    id: 'financial-modeling-prep',
+    getValuationDataset: vi.fn().mockResolvedValue({
+      provider: 'financial-modeling-prep',
+      marketPrice: 20,
+      marketPriceAsOf: '2026-07-24T20:00:00.000Z',
+      currency: 'USD',
+      estimates: [2026, 2027, 2028, 2029, 2030].map((year, index) => ({
+        periodEnd: `${year}-12-31`,
+        estimatedRevenue: 1_000 * (1.08 ** (index + 1)),
+        estimatedEps: 2 + index * 0.2,
+        revenueAnalystCount: 8,
+        epsAnalystCount: 8,
+        provider: 'financial-modeling-prep',
+        asOf: '2026-07-25T00:00:00.000Z',
+      })),
+      peers: [10, 11, 12, 13, 1000].map((multiple, index) => ({
+        symbol: `P${index + 1}`,
+        sector: 'Technology',
+        industry: 'Consumer Electronics',
+        price: multiple * 2,
+        priceAsOf: '2026-07-24T20:00:00.000Z',
+        enterpriseValue: multiple * 100,
+        enterpriseValueAsOf: '2026-06-30',
+        forwardEps: 2,
+        forwardRevenue: 100,
+        estimatePeriod: '2026-12-31',
+        estimateAsOf: '2026-07-25T00:00:00.000Z',
+        provider: 'financial-modeling-prep',
+      })),
+      waccMarketInputs: {
+        beta: 1.2,
+        betaAsOf: '2026-07-25T00:00:00.000Z',
+        riskFreeRate: 0.04,
+        riskFreeAsOf: '2026-07-24',
+        equityRiskPremium: 0.05,
+        equityRiskPremiumAsOf: '2026-07-25T00:00:00.000Z',
+        provider: 'financial-modeling-prep',
       },
-      freshness: { status: 'cached', asOf: '2025-12-31T00:00:00.000Z', maxAgeSeconds: 86_400 },
-      provider: 'alpha-vantage',
-    }),
-  });
-  mocks.getHistoricalMarketDataService.mockReturnValue({
-    getHistoricalPrices: vi.fn().mockResolvedValue({
-      data: { symbol: 'RKLB', range: '1y', prices: history },
-      freshness: { status: 'end-of-day', asOf: '2026-03-01T00:00:00.000Z', maxAgeSeconds: 86_400 },
-      provider: 'nasdaq',
+      marketCapitalization: 2_000,
+      sharesOutstanding: 100,
+      sharesOutstandingAsOf: '2026-06-30',
+      sector: 'Technology',
+      industry: 'Consumer Electronics',
+      asOf: '2026-07-25T00:00:00.000Z',
+      cacheStatus: 'miss',
     }),
   });
 }
 
-describe('Fair Value orchestration failures', () => {
+describe('Fair Value orchestration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    arrangeProviders();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
   });
 
-  it('distinguishes a missing financial-statements provider from insufficient inputs', async () => {
-    mocks.getFundamentalsProvider.mockReturnValue(null);
-    const log = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
+  it('combines independently sourced market, financial, estimate, peer, and WACC inputs', async () => {
     const result = await loadFairValue('AAPL');
-    const entry = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toEqual(['fcff-dcf', 'pe']);
+    expect(result.marketPrice.source).toBe('polygon');
+    expect(result.sources.map((source) => source.name))
+      .toEqual(expect.arrayContaining(['financial-modeling-prep']));
+    expect(result.currency).toBe('USD');
+    expect(result.displayFx).toBeNull();
+  });
 
+  it('maps provider throttling to a typed unavailable result', async () => {
+    mocks.getFmpValuationProvider.mockReturnValue({
+      id: 'financial-modeling-prep',
+      getValuationDataset: vi.fn().mockRejectedValue(
+        new MarketDataError('rate-limited', 'provider throttled'),
+      ),
+    });
+    const result = await loadFairValue('AAPL');
+    expect(result).toMatchObject({
+      status: 'unavailable',
+      failureKind: 'provider-rate-limited',
+      provider: 'financial-modeling-prep',
+      missingFields: ['forwardEstimates'],
+    });
+  });
+
+  it('uses the traceable FMP quote when the primary market quote is throttled', async () => {
+    const market = mocks.getMarketDataProvider();
+    market.getQuote.mockRejectedValue(new MarketDataError('rate-limited', 'primary throttled'));
+    const result = await loadFairValue('AAPL');
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.marketPrice).toMatchObject({
+      value: 20,
+      source: 'financial-modeling-prep',
+    });
+    expect(result.inputDetails).toContainEqual(expect.objectContaining({
+      field: 'Current Price',
+      provider: 'financial-modeling-prep',
+    }));
+  });
+
+  it('does not calculate when the server-only FMP provider is not configured', async () => {
+    mocks.getFmpValuationProvider.mockReturnValue(null);
+    const result = await loadFairValue('AAPL');
     expect(result).toMatchObject({
       status: 'unavailable',
       failureKind: 'provider-unavailable',
-      provider: null,
-      missingFields: expect.arrayContaining(['incomeStatement', 'balanceSheet', 'cashFlowStatement']),
-      missingInputs: expect.arrayContaining(['incomeStatement', 'balanceSheet', 'cashFlowStatement']),
-      asOf: expect.any(String),
-      methodologyVersion: 'nexora-fv-v1',
+      missingFields: expect.arrayContaining(['forwardEstimates', 'stockPeers', 'waccMarketInputs']),
     });
     expect(mocks.getMarketDataProvider).not.toHaveBeenCalled();
-    expect(entry).toMatchObject({
-      event: 'fair_value_evaluation',
-      status: 'unavailable',
-      failureKind: 'provider-unavailable',
-    });
   });
 
-  it('reports provider-rate-limited (not insufficient-data) when the fundamentals provider is throttled', async () => {
-    arrangeRequiredProviderData();
-    mocks.getFundamentalsProvider.mockReturnValue({
-      id: 'alpha-vantage',
-      getFinancialPeriods: vi.fn().mockResolvedValue({
-        symbol: 'RKLB', periods: [], quarterlyPeriods: [], annualRecords: [], quarterlyRecords: [],
-        asOf: '2025-12-31', fetchedAt: '2026-07-20T00:00:00.000Z', currency: 'USD',
-        dilutedEpsTtm: null, dilutedEpsAsOf: null,
-        missingInputs: ['dataset:income-statement', 'dataset:balance-sheet', 'dataset:cash-flow'],
-        datasetErrors: { 'income-statement': 'rate-limited', 'balance-sheet': 'rate-limited', 'cash-flow': 'rate-limited' },
-        diagnostics: { provider: 'alpha-vantage', capabilities: [], datasets: {}, cache: {}, datasetFetchedAt: {}, latencyMs: 1, normalizedPeriodCount: { annual: 0, quarterly: 0 } },
-      }),
-    });
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    const result = await loadFairValue('RKLB');
-    expect(result).toMatchObject({ status: 'unavailable', failureKind: 'provider-rate-limited' });
-  });
-
-  it('converts a calculation exception to a safe typed failure without logging secrets', () => {
+  it('redacts calculation exceptions and exposes no numeric fallback', () => {
     const logger = vi.fn();
     const input = {
       symbol: 'AAPL',
       currency: 'USD',
-      source: 'alpha-vantage',
-      calculatedAt: '2026-07-20T00:00:00.000Z',
+      source: 'financial-modeling-prep',
+      calculatedAt: '2026-07-25T00:00:00.000Z',
     } as ValuationInput;
-    const calculate = vi.fn(() => {
+    const result = calculateFairValueSafely(input, () => {
       throw Object.assign(new Error('apikey=must-not-appear'), {
         code: 'internal-error',
         apiKey: 'must-not-appear',
       });
-    });
-
-    const result = calculateFairValueSafely(input, calculate, logger);
-
+    }, logger);
     expect(result).toMatchObject({
       status: 'unavailable',
       failureKind: 'calculation-error',
-      reason: expect.stringContaining('ล้มเหลว'),
-      provider: 'alpha-vantage',
       missingFields: ['valuationCalculation'],
-      missingInputs: ['valuationCalculation'],
-      asOf: expect.any(String),
-      methodologyVersion: 'nexora-fv-v1',
     });
-    expect(logger).toHaveBeenCalledWith({
-      event: 'fair_value_evaluation',
-      status: 'unavailable',
-      symbol: 'AAPL',
-      provider: 'alpha-vantage',
-      failureKind: 'calculation-error',
-      missingInputCount: 1,
-      errorCode: 'internal-error',
-    });
+    expect(result).not.toHaveProperty('fundamentalFairValue');
     expect(JSON.stringify(logger.mock.calls)).not.toContain('must-not-appear');
-  });
-
-  it('keeps USD valuation available when display-only FX fails', async () => {
-    arrangeRequiredProviderData();
-    mocks.getFxRate.mockRejectedValue(new Error('FX offline'));
-
-    const result = await loadFairValue('RKLB');
-
-    expect(result.status).toBe('available');
-    if (result.status === 'available') {
-      // A profitable name keeps EV/Sales among several eligible models (blended),
-      // so it is never the gated assumption-only single-EV/Sales case.
-      expect(result.modelResults.some((model) => model.model === 'ev-sales')).toBe(true);
-      expect(result.modelResults.length).toBeGreaterThan(1);
-      expect(result.displayFx).toBeNull();
-    }
-  });
-
-  it('reports the truthful provider used when a secondary provider supplied the fundamentals', async () => {
-    arrangeRequiredProviderData();
-    mocks.getFundamentalsProvider.mockReturnValue({
-      id: 'alpha-vantage',
-      getFinancialPeriods: vi.fn().mockResolvedValue({
-        symbol: 'RKLB', periods, quarterlyPeriods: [], annualRecords: [], quarterlyRecords: [],
-        asOf: '2025-12-31', fetchedAt: '2026-07-20T00:00:00.000Z', currency: 'USD',
-        dilutedEpsTtm: null, dilutedEpsAsOf: null, missingInputs: [], datasetErrors: {},
-        diagnostics: { provider: 'financial-modeling-prep', capabilities: [], datasets: {}, cache: { income: 'miss' }, datasetFetchedAt: {}, latencyMs: 1, normalizedPeriodCount: { annual: 3, quarterly: 0 } },
-        primaryProvider: 'alpha-vantage', providerUsed: 'financial-modeling-prep', fallbackUsed: true, fallbackReason: 'PRIMARY_RATE_LIMITED',
-      }),
-    });
-
-    const result = await loadFairValue('RKLB');
-    expect(result.status).toBe('available');
-    if (result.status === 'available') {
-      expect(result.marketPrice.source).toBe('financial-modeling-prep');
-      expect(result.sources.some((source) => source.name.includes('financial-modeling-prep'))).toBe(true);
-    }
-  });
-
-  it('produces an identical fundamental fair value regardless of which provider supplied identical periods', async () => {
-    arrangeRequiredProviderData();
-    const alphaResult = await loadFairValue('RKLB');
-
-    arrangeRequiredProviderData();
-    mocks.getFundamentalsProvider.mockReturnValue({
-      id: 'alpha-vantage',
-      getFinancialPeriods: vi.fn().mockResolvedValue({
-        symbol: 'RKLB', periods, quarterlyPeriods: [], annualRecords: [], quarterlyRecords: [],
-        asOf: '2025-12-31', fetchedAt: '2026-07-20T00:00:00.000Z', currency: 'USD',
-        dilutedEpsTtm: null, dilutedEpsAsOf: null, missingInputs: [], datasetErrors: {},
-        diagnostics: { provider: 'financial-modeling-prep', capabilities: [], datasets: {}, cache: { income: 'miss' }, datasetFetchedAt: {}, latencyMs: 1, normalizedPeriodCount: { annual: 3, quarterly: 0 } },
-        primaryProvider: 'alpha-vantage', providerUsed: 'financial-modeling-prep', fallbackUsed: true, fallbackReason: 'PRIMARY_RATE_LIMITED',
-      }),
-    });
-    const fmpResult = await loadFairValue('RKLB');
-
-    expect(alphaResult.status).toBe('available');
-    expect(fmpResult.status).toBe('available');
-    if (alphaResult.status === 'available' && fmpResult.status === 'available') {
-      expect(fmpResult.fundamentalFairValue.centralEstimate).toBe(alphaResult.fundamentalFairValue.centralEstimate);
-      expect(fmpResult.methodologyVersion).toBe(alphaResult.methodologyVersion);
-    }
   });
 });

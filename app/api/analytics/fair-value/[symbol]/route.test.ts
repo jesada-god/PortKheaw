@@ -27,7 +27,7 @@ const unavailable = {
   staleInputs: [],
   asOf: '2026-07-20T00:00:00.000Z',
   calculatedAt: '2026-07-20T00:00:00.000Z',
-  methodologyVersion: 'nexora-fv-v1' as const,
+  methodologyVersion: 'nexora-fv-v2' as const,
   limitations: [],
 };
 
@@ -79,7 +79,7 @@ describe('GET /api/analytics/fair-value/[symbol]', () => {
       missingFields: [],
       reason: expect.any(String),
       asOf: expect.any(String),
-      methodologyVersion: 'nexora-fv-v1',
+      methodologyVersion: 'nexora-fv-v2',
     });
     expect(mocks.loadFairValue).not.toHaveBeenCalled();
   });

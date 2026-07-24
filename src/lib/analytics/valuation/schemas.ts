@@ -118,6 +118,7 @@ const availableSchema = z.object({
     components: z.record(z.string(), finite),
     explanation: z.string(),
   }),
+  dataQualityLabel: z.enum(['High', 'Medium', 'Low']),
   reliabilityReasons: z.array(z.string()),
   missingInputs: z.array(z.string()),
   dataStatus: z.enum(['live', 'delayed', 'cached', 'stale', 'limited']),

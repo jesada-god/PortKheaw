@@ -119,6 +119,8 @@ function fields(i: RawReport, b: RawReport, c: RawReport, previousBalance: RawRe
     operatingIncome,
     ebitda: reportedEbitda ?? (operatingIncome !== null && depreciationAmortization !== null ? operatingIncome + depreciationAmortization : null),
     netIncome: safeNumber(i.netIncome),
+    incomeBeforeTax: firstNumber(i, ['incomeBeforeTax', 'incomeBeforeTaxExpense']),
+    incomeTaxExpense: firstNumber(i, ['incomeTaxExpense', 'incomeTaxExpenseBenefit']),
     dilutedEps: safeNumber(i.dilutedEPS),
     depreciationAmortization,
     capitalExpenditure,
@@ -158,7 +160,7 @@ function normalizeFrequency(income: RawStatementPayload, balance: RawStatementPa
     const values = fields(i, b, c, previousBalance);
     const fiscalYear = safeNumber(i.fiscalYear);
     records.push({ fiscalPeriod: frequency === 'annual' ? 'FY' : text(i.fiscalPeriod) ?? 'quarter', fiscalYear: fiscalYear !== null && Number.isInteger(fiscalYear) ? fiscalYear : Number(periodEnd.slice(0, 4)), periodEnd, filingDate: text(i.filingDate ?? i.reportedDate), currency, frequency, source, fetchedAt, values: Object.fromEntries(Object.entries(values).map(([name, value]) => [name, value === null ? { status: 'unavailable', value: null } : { status: 'available', value }])) });
-    const optionalFields = new Set(['dividendsPaid', 'grossProfit', 'ebitda', 'dilutedEps', 'totalEquity', 'changeInWorkingCapital']);
+    const optionalFields = new Set(['dividendsPaid', 'grossProfit', 'ebitda', 'dilutedEps', 'totalEquity', 'changeInWorkingCapital', 'incomeBeforeTax', 'incomeTaxExpense']);
     const absent = Object.entries(values).filter(([name, value]) => value === null && !optionalFields.has(name)).map(([name]) => name);
     if (absent.length || !currency) { absent.forEach((name) => missing.add(`${frequency}:${periodEnd}:${name}`)); continue; }
     periods.push({ periodEnd, currency, ...(values as Omit<FinancialPeriod, 'periodEnd' | 'currency'>) });
