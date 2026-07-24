@@ -12,8 +12,13 @@ function history(price: number, ts = '2026-07-20T20:00:00.000Z', mode: AcceptedP
 }
 
 describe('resolveAcceptedPrice — shared accepted-price priority', () => {
-  it('prefers an entitled snapshot over an aggregate and a history bar', () => {
-    const accepted = resolveAcceptedPrice([history(10), aggregate(11), snapshot(12)]);
+  it('prefers an entitled snapshot when candidates share the same exchange timestamp', () => {
+    const timestamp = '2026-07-21T15:00:00.000Z';
+    const accepted = resolveAcceptedPrice([
+      history(10, timestamp),
+      aggregate(11, timestamp),
+      snapshot(12, timestamp),
+    ]);
     expect(accepted?.source).toBe('snapshot');
     expect(accepted?.price).toBe(12);
   });
@@ -33,14 +38,19 @@ describe('resolveAcceptedPrice — shared accepted-price priority', () => {
     expect(accepted?.mode).toBe('END-OF-DAY');
   });
 
-  it('never lets an older OR newer history bar overwrite a present aggregate/snapshot (rank dominates)', () => {
-    // A history bar with a strictly NEWER exchange timestamp still cannot beat a
-    // live aggregate — source rank dominates the timestamp.
+  it('uses the newest verified event and source rank only as a timestamp tie-breaker', () => {
     const newerHistory = history(99, '2026-07-21T23:59:00.000Z');
     const olderAggregate = aggregate(11, '2026-07-21T15:00:00.000Z');
-    expect(resolveAcceptedPrice([newerHistory, olderAggregate, null])?.source).toBe('aggregate-fallback');
-    // And an older history bar likewise never replaces a snapshot.
+    expect(resolveAcceptedPrice([newerHistory, olderAggregate, null])?.source).toBe('history-fallback');
+    expect(resolveAcceptedPrice([newerHistory, olderAggregate, null])?.price).toBe(99);
+    // An older history bar still never replaces a newer snapshot.
     expect(resolveAcceptedPrice([history(1, '1999-01-01T00:00:00.000Z'), null, snapshot(12)])?.price).toBe(12);
+  });
+
+  it('keeps the Yahoo latest candle and header accepted price in sync when the snapshot is older', () => {
+    const previousCloseSnapshot = snapshot(381.58, '2026-07-23T20:00:00.000Z');
+    const latestYahooDaily = history(384.3575, '2026-07-24T13:30:00.000Z', 'DELAYED');
+    expect(resolveAcceptedPrice([previousCloseSnapshot, null, latestYahooDaily])).toEqual(latestYahooDaily);
   });
 
   it('within the same source, the newer exchange timestamp wins (out-of-order guard)', () => {

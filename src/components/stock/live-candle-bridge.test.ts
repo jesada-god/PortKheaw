@@ -39,6 +39,7 @@ describe('shouldPollChart', () => {
 
   it('polls only for live-eligible selections the shared source does not cover', () => {
     expect(shouldPollChart(base)).toBe(true);
+    expect(shouldPollChart({ ...base, dataStatus: 'live' })).toBe(true);
     expect(shouldPollChart({ ...base, dataStatus: 'partial' })).toBe(true);
     expect(shouldPollChart({ ...base, dataStatus: 'delayed' })).toBe(false);
     expect(shouldPollChart({ ...base, hasResult: false })).toBe(false);

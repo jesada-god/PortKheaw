@@ -6,23 +6,24 @@ import type { MarketDataMode, MarketPriceSource } from './types';
  * The header price, the chart price line and the (future) S/R `currentPrice`
  * must all derive from ONE accepted value with one provenance and one exchange
  * timestamp. This module is the pure, deterministic policy that picks that value
- * from the candidates currently available, in strict priority:
+ * from the candidates currently available. A candidate with a verified newer
+ * exchange timestamp wins first, so an older snapshot cannot contradict the
+ * newest Yahoo candle displayed by the chart. When timestamps are equal or one
+ * is unavailable, trust priority breaks the tie:
  *
  *   entitled snapshot
  *     → accepted live aggregate close
  *       → newest displayed history bar close
  *         → unavailable (null)
  *
- * Source rank dominates: a lower-ranked candidate (a history bar) can NEVER
- * overwrite a present higher-ranked candidate (a live aggregate or an entitled
- * snapshot), regardless of its exchange timestamp — so an older history bar can
- * never replace a newer aggregate/snapshot result. Ties within the SAME source
- * prefer the newer exchange timestamp, so a late/out-of-order response cannot
- * replace a newer accepted value of equal rank. Nothing here is fabricated,
+ * This preserves source trust without allowing stale-but-higher-ranked data to
+ * override a newer accepted market event. An older history bar can never replace
+ * a newer aggregate/snapshot, while a newer verified Yahoo bar can correctly
+ * advance both the header and chart price line. Nothing here is fabricated,
  * interpolated or forward-filled, and no candidate may carry a REAL-TIME mode.
  */
 
-/** Descending trust rank; a strictly higher rank always wins. */
+/** Descending trust rank used when timestamps are equal or unavailable. */
 const SOURCE_RANK: Record<MarketPriceSource, number> = {
   snapshot: 3,
   'aggregate-fallback': 2,
@@ -83,9 +84,17 @@ export function resolveAcceptedPrice(
   for (const candidate of candidates) {
     if (!candidate || !Number.isFinite(candidate.price)) continue;
     if (!best) { best = candidate; continue; }
+    const candidateTime = timestampMs(candidate);
+    const bestTime = timestampMs(best);
+    if (candidateTime !== bestTime
+      && candidateTime !== Number.NEGATIVE_INFINITY
+      && bestTime !== Number.NEGATIVE_INFINITY) {
+      if (candidateTime > bestTime) best = candidate;
+      continue;
+    }
     const rankDelta = SOURCE_RANK[candidate.source] - SOURCE_RANK[best.source];
     if (rankDelta > 0) { best = candidate; continue; }
-    if (rankDelta === 0 && timestampMs(candidate) > timestampMs(best)) best = candidate;
+    if (rankDelta === 0 && candidateTime > bestTime) best = candidate;
   }
   return best;
 }

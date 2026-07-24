@@ -22,7 +22,7 @@ export const TRADER_TIMEFRAME_PRESETS: readonly TraderChartPreset[] = [
   { interval: '1h', label: '1h', range: '3m', session: 'extended' },
   { interval: '4h', label: '4h', range: '6m', session: 'extended' },
   { interval: '1D', label: '1D', range: '1y', session: 'regular' },
-  { interval: 'Week', label: 'W', range: '5y', session: 'regular' },
+  { interval: 'Week', label: 'Week', range: '5y', session: 'regular' },
 ];
 
 export function traderPresetForInterval(interval: CandleInterval): TraderChartPreset | null {

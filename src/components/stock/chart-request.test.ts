@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { planChartRequest, shouldApplyResponse } from './chart-request';
+import { chartRequestKey, planChartRequest, shouldApplyResponse } from './chart-request';
+
+describe('chartRequestKey', () => {
+  const base = { symbol: 'aapl', interval: '5m', range: '1m', adjusted: false, session: 'extended' };
+
+  it('changes when the timeframe changes', () => {
+    expect(chartRequestKey(base)).not.toBe(chartRequestKey({ ...base, interval: '10m' }));
+  });
+
+  it('changes when the opened symbol changes and canonicalizes symbol casing', () => {
+    expect(chartRequestKey(base)).toBe('AAPL:5m:1m:false:extended');
+    expect(chartRequestKey(base)).not.toBe(chartRequestKey({ ...base, symbol: 'MSFT' }));
+  });
+});
 
 describe('planChartRequest', () => {
   const base = { force: false, hasCache: false, hasInflight: false, now: 1_000, cooldownUntil: 0 };

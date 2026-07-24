@@ -12,7 +12,7 @@ const middleware = read('middleware.ts');
 describe('Phase 11 market UI production contract', () => {
   it('keeps candle requests isolated, cancellable, visibility-aware and independent of pan/zoom', () => {
     expect(candleChart).toContain('new Map<string, ChartResult>()');
-    expect(candleChart).toContain('`${symbol}:${interval}:${range}:${adjusted}:${session}`');
+    expect(candleChart).toContain('chartRequestKey({ symbol, interval, range, adjusted, session })');
     expect(candleChart).toContain('AbortController');
     expect(candleChart).toContain('generation.current');
     expect(candleChart).toContain('useAppActive');
@@ -21,7 +21,7 @@ describe('Phase 11 market UI production contract', () => {
   });
 
   it('uses one server-normalized gateway route with legacy trader presets and an optional history range', () => {
-    expect(candleChart).toContain('/api/market/chart?');
+    expect(candleChart).toContain('/api/market/candles?');
     expect(candleChart).not.toContain('aggregateSessionAwareIntraday');
     expect(candleChart).toContain('No candle is mocked, interpolated, forward-filled, or replaced by another provider');
     expect(candleChart).toContain('OptionToolRealtimeChart');

@@ -10,10 +10,10 @@ vi.mock('lightweight-charts', () => {
   const definition = (name: string) => ({ name });
   return {
     ColorType: { Solid: 'solid' },
-    LineStyle: { Solid: 0 },
+    LineStyle: { Solid: 0, Dotted: 1 },
     CandlestickSeries: definition('Candlestick'),
     HistogramSeries: definition('Histogram'),
-    createChart: vi.fn(() => {
+    createChart: vi.fn((container, options) => {
       const visibleHandlers = new Set<(range: { from: number; to: number } | null) => void>();
       const series: Array<Record<string, ReturnType<typeof vi.fn>>> = [];
       const timeScale = {
@@ -24,6 +24,8 @@ vi.mock('lightweight-charts', () => {
       };
       const priceScales = new Map<string, { applyOptions: ReturnType<typeof vi.fn> }>();
       const chart = {
+        container,
+        options,
         series,
         visibleHandlers,
         timeScaleApi: timeScale,
@@ -31,7 +33,7 @@ vi.mock('lightweight-charts', () => {
           const item = {
             setData: vi.fn(),
             update: vi.fn(),
-            createPriceLine: vi.fn((options) => ({ options })),
+            createPriceLine: vi.fn((options) => ({ options, applyOptions: vi.fn() })),
             removePriceLine: vi.fn(),
           };
           series.push(item);
@@ -86,6 +88,33 @@ afterEach(() => {
 });
 
 describe('OptionToolRealtimeChart', () => {
+  it('collapses Strict Mode into one support/resistance request', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      data: {
+        symbol: 'NVDA',
+        basisInterval: '1D',
+        sourceTime: 1_700_000_000,
+        provider: 'yahoo-finance-chart',
+        pivot: 100,
+        resistance: [101, 102, 103],
+        support: [99, 98, 97],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <React.StrictMode>
+        <OptionToolRealtimeChart symbol="NVDA" interval="5m" prices={prices} datasetKey="NVDA:5m" />
+      </React.StrictMode>,
+    ));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/market/chart-levels?');
+    await act(async () => root.unmount());
+  });
+
   it('creates separate synchronized price and volume charts', async () => {
     const host = document.createElement('div');
     document.body.append(host);
@@ -125,6 +154,61 @@ describe('OptionToolRealtimeChart', () => {
     expect(charts[0].series[0].update).toHaveBeenCalled();
     expect(charts[1].series[0].update).toHaveBeenCalled();
     expect(charts.map((chart) => chart.timeScaleApi.scrollToRealTime.mock.calls.length)).toEqual(initialScrolls);
+    await act(async () => root.unmount());
+  });
+
+  it('draws one dotted accepted-price line on the right axis and keeps mobile-responsive chart hosts', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <OptionToolRealtimeChart
+        symbol="NVDA"
+        interval="5m"
+        prices={prices}
+        datasetKey="NVDA:5m"
+        currentPrice={125.5}
+      />,
+    ));
+
+    const priceChart = lightweight.charts[0] as {
+      options: {
+        leftPriceScale: { visible: boolean };
+        rightPriceScale: { visible: boolean };
+        handleScroll: { mouseWheel: boolean; horzTouchDrag: boolean };
+        handleScale: { mouseWheel: boolean; pinch: boolean };
+      };
+      addSeries: ReturnType<typeof vi.fn>;
+      series: Array<Record<string, ReturnType<typeof vi.fn>>>;
+    };
+    const candleOptions = priceChart.addSeries.mock.calls[0][1];
+    expect(candleOptions).toMatchObject({
+      upColor: '#00c57f',
+      downColor: '#ff3b30',
+      wickUpColor: '#00c57f',
+      wickDownColor: '#ff3b30',
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    expect(priceChart.options.leftPriceScale.visible).toBe(false);
+    expect(priceChart.options.rightPriceScale.visible).toBe(true);
+    expect(priceChart.options.handleScroll).toMatchObject({ mouseWheel: true, horzTouchDrag: true });
+    expect(priceChart.options.handleScale).toMatchObject({ mouseWheel: true, pinch: true });
+
+    const priceLineOptions = priceChart.series[0].createPriceLine.mock.calls
+      .map(([options]) => options)
+      .find((options) => options.title === 'Current');
+    expect(priceLineOptions).toMatchObject({
+      price: 125.5,
+      lineStyle: 1,
+      axisLabelVisible: true,
+      title: 'Current',
+    });
+
+    expect(host.querySelector('[aria-label="Option tool candlestick chart"]')?.className)
+      .toContain('md:h-[480px]');
+    expect(host.querySelector('[aria-label="Option tool volume chart"]')?.className)
+      .toContain('h-[100px]');
     await act(async () => root.unmount());
   });
 

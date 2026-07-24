@@ -23,7 +23,7 @@ export interface ChartDisplayBar {
 /**
  * True when the chart's current selection is one the shared market source
  * streams as a live intraday candle, so the chart consumes that single accepted
- * candle rather than polling `/api/market/chart` itself. The shared source
+ * candle rather than polling `/api/market/candles` itself. The shared source
  * follows the selection (Phase B.2), so this now covers every supported intraday
  * interval and session — not just 5m/regular. Range-agnostic: the newest bucket
  * for an interval is identical whichever history range the chart displays.
@@ -33,7 +33,7 @@ export function matchesLiveSelection(interval: CandleInterval, session: MarketSe
 }
 
 /**
- * Whether the chart panel should run its own recurring `/api/market/chart` poll.
+ * Whether the chart panel should run its own recurring `/api/market/candles` poll.
  * When the shared source covers this selection the answer is always `false`: the
  * candle arrives from the single market-source loop, so a second loop would be a
  * duplicate request for the same bucket.
@@ -47,7 +47,9 @@ export function shouldPollChart(input: {
 }): boolean {
   if (!input.active || !input.appActive || !input.hasResult) return false;
   if (input.coveredByLiveSource) return false;
-  return input.dataStatus === 'real-time' || input.dataStatus === 'partial';
+  return input.dataStatus === 'live'
+    || input.dataStatus === 'real-time'
+    || input.dataStatus === 'partial';
 }
 
 function barTimeSeconds(bar: ChartDisplayBar): number | null {

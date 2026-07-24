@@ -1,4 +1,7 @@
-import { chartGatewayResponseSchema, type MarketDataStatus } from '@/src/lib/market-data/gateway/contracts';
+import {
+  normalizedCandleResultSchema,
+  type CandleDataStatus,
+} from '@/src/lib/market-data/candles/contracts';
 import { quoteEnvelopeSchema } from '@/src/lib/stock-detail/api-schemas';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type {
@@ -22,9 +25,9 @@ function freshnessFromQuote(status: string): TransportFreshness {
   }
 }
 
-function freshnessFromBars(status: MarketDataStatus): TransportFreshness {
+function freshnessFromBars(status: CandleDataStatus): TransportFreshness {
   switch (status) {
-    case 'real-time':
+    case 'live':
       return 'realtime';
     case 'delayed':
       return 'delayed';
@@ -56,8 +59,9 @@ function errorFromEnvelope(
 
 /**
  * REST transport for the Stock Detail live price. Uses only entitled endpoints:
- * `/api/market/quote/[symbol]` for the snapshot and `/api/market/chart` for the
- * verified aggregate that drives the active candle and the fallback price.
+ * `/api/market/quote/[symbol]` for the snapshot and the server-side Yahoo Chart
+ * JSON pipeline at `/api/market/candles` for the verified aggregate that drives
+ * the active candle and fallback price.
  */
 export function createBrowserMarketTransport(): MarketSourceTransport {
   return {
@@ -88,7 +92,7 @@ export function createBrowserMarketTransport(): MarketSourceTransport {
 
     async fetchAggregate({ symbol, interval, session, range, adjusted, signal }): Promise<TransportOutcome<AggregateValue>> {
       const query = new URLSearchParams({ symbol, interval, range, adjusted: String(adjusted), session });
-      const response = await fetch(`/api/market/chart?${query.toString()}`, {
+      const response = await fetch(`/api/market/candles?${query.toString()}`, {
         headers: { Accept: 'application/json' },
         cache: 'no-store',
         signal,
@@ -97,7 +101,7 @@ export function createBrowserMarketTransport(): MarketSourceTransport {
       if (!response.ok) {
         return { ok: false, ...errorFromEnvelope(response, payload?.error) };
       }
-      const parsed = chartGatewayResponseSchema.safeParse(payload?.data);
+      const parsed = normalizedCandleResultSchema.safeParse(payload?.data);
       if (!parsed.success) {
         return {
           ok: false,
@@ -105,12 +109,12 @@ export function createBrowserMarketTransport(): MarketSourceTransport {
           retryAfterSeconds: null,
         };
       }
-      const bars = parsed.data.bars;
+      const bars = parsed.data;
       return {
         ok: true,
         value: {
-          bars: bars.bars.map((bar) => ({
-            time: bar.time,
+          bars: bars.candles.map((bar) => ({
+            time: bar.timestamp,
             open: bar.open,
             high: bar.high,
             low: bar.low,
@@ -119,7 +123,7 @@ export function createBrowserMarketTransport(): MarketSourceTransport {
           })),
           provider: bars.provider,
           status: freshnessFromBars(bars.dataStatus),
-          asOf: bars.asOf ? new Date(bars.asOf * 1_000).toISOString() : null,
+          asOf: bars.actualEnd ? new Date(bars.actualEnd * 1_000).toISOString() : null,
         },
       };
     },

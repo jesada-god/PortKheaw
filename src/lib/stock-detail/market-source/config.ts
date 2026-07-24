@@ -1,3 +1,4 @@
+import { sourceIntervalFor, YAHOO_CANDLE_CAPABILITIES } from '@/src/lib/market-data/candles/capabilities';
 import { supportedRangesForInterval } from '@/src/lib/market-data/gateway/capabilities';
 import type { CandleInterval, HistoricalRange, MarketSessionMode } from '@/src/lib/market-data/gateway/contracts';
 
@@ -11,10 +12,9 @@ import type { CandleInterval, HistoricalRange, MarketSessionMode } from '@/src/l
  * rapid-polled, or an unsupported combination that must surface a typed
  * unavailable rather than silently substituting different data.
  *
- * Nothing here fabricates, interpolates, forward-fills or resamples candles.
- * Every supported intraday interval is served **provider-native** by Polygon's
- * multi-unit aggregates (`10m` → 10×minute, `4h` → 4×hour), so no deterministic
- * aggregation is required for the current provider.
+ * Nothing here fabricates, interpolates or forward-fills candles. Yahoo-native
+ * intervals remain provider-native; 10m/2h/4h are deterministically aggregated
+ * server-side from 5m/1h Yahoo candles with session/date boundaries preserved.
  */
 
 /** Intraday intervals the shared source streams as a live active candle. */
@@ -30,9 +30,8 @@ export type MarketSourceMode = 'intraday-live' | 'history-only' | 'unsupported';
 /**
  * Whether the live intraday candle comes straight from the provider or would
  * have to be deterministically aggregated from complete lower-timeframe candles.
- * Polygon serves every supported interval natively, so this is always
- * `provider-native` today; the type keeps room for a future provider that needs
- * explicit, session-boundary-aware aggregation.
+ * Yahoo serves most intervals natively; unsupported named resolutions are
+ * explicitly marked `aggregated`.
  */
 export type IntervalProvenance = 'provider-native' | 'aggregated';
 
@@ -107,11 +106,12 @@ export function resolveMarketSourceConfig(selection: MarketSelection): MarketSou
   }
 
   if (isLiveIntradayInterval(interval)) {
+    const sourceInterval = sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, interval);
     return {
       ...base,
       mode: 'intraday-live',
       aggregateRange: supportedRangesForInterval(interval)[0] ?? null,
-      provenance: 'provider-native',
+      provenance: sourceInterval === interval ? 'provider-native' : 'aggregated',
       pollsAggregate: true,
       reason: null,
     };

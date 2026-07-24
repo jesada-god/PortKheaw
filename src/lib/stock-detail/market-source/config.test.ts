@@ -9,13 +9,13 @@ import type { CandleInterval } from '@/src/lib/market-data/gateway/contracts';
 describe('resolveMarketSourceConfig', () => {
   const intraday: CandleInterval[] = ['1m', '5m', '10m', '15m', '30m', '1h', '2h', '4h'];
 
-  it.each(intraday)('streams %s as a provider-native intraday-live selection (regular)', (interval) => {
+  it.each(intraday)('streams %s from Yahoo with truthful interval provenance (regular)', (interval) => {
     const config = resolveMarketSourceConfig({ interval, session: 'regular', adjusted: false });
     expect(config.mode).toBe('intraday-live');
     expect(config.pollsAggregate).toBe(true);
-    expect(config.provenance).toBe('provider-native');
+    expect(config.provenance).toBe(['10m', '2h', '4h'].includes(interval) ? 'aggregated' : 'provider-native');
     // Every intraday live poll must use a chart-route-compatible range that still
-    // contains the newest bucket (never a range the /api/market/chart route rejects).
+    // contains the newest bucket (never a range the Yahoo candle route rejects).
     expect(config.aggregateRange).not.toBeNull();
   });
 

@@ -1,4 +1,5 @@
 import type { DisplayDataStatus } from '@/src/components/market-data/DataProvenance';
+import type { CandleDataStatus } from '@/src/lib/market-data/candles/contracts';
 import type { MarketDataStatus } from '@/src/lib/market-data/gateway/contracts';
 import type { MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 
@@ -14,7 +15,7 @@ export interface ChartProvenance {
  * consuming that candle and the gateway confirms an entitled real-time feed.
  */
 export function resolveChartProvenance(input: {
-  historyStatus: MarketDataStatus;
+  historyStatus: MarketDataStatus | CandleDataStatus;
   historyProvider?: string;
   historyAsOf?: string;
   coveredByLiveSource: boolean;
@@ -34,7 +35,9 @@ export function resolveChartProvenance(input: {
     };
   }
 
-  const status: DisplayDataStatus = input.historyStatus === 'real-time' || input.historyStatus === 'partial'
+  const status: DisplayDataStatus = input.historyStatus === 'real-time'
+    || input.historyStatus === 'partial'
+    || input.historyStatus === 'live'
     ? 'delayed'
     : input.historyStatus === 'unavailable'
       ? 'unavailable'

@@ -56,7 +56,7 @@ export function volumeData(bars: readonly ChartBar[]): HistogramData<Time>[] {
   return bars.map((bar) => ({
     time: bar.time,
     value: bar.volume,
-    color: bar.rawClose >= bar.rawOpen ? '#34d39999' : '#fb718599',
+    color: bar.rawClose >= bar.rawOpen ? '#00c57f99' : '#ff3b3099',
   }));
 }
 

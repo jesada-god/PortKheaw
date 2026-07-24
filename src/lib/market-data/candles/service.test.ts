@@ -81,5 +81,19 @@ describe('candle provider service', () => {
     await expect(service.getCandles({ symbol: 'AAPL', interval: '1m', range: '1d', adjusted: false, session: 'regular' })).rejects.toMatchObject({ code: 'unsupported' });
     expect(call).not.toHaveBeenCalled();
   });
-});
 
+  it('reuses one rolling-range request key instead of refetching as period bounds advance', async () => {
+    let now = Date.parse('2026-07-24T12:00:00.000Z');
+    const call = vi.fn(async (input) => result('yahoo', input));
+    const service = new CandleMarketDataService([
+      provider('yahoo', YAHOO_CANDLE_CAPABILITIES, call),
+    ], new SharedRequestCache(), () => now);
+    const input = { symbol: 'AAPL', interval: '5m', range: '1m', adjusted: false, session: 'extended' } as const;
+
+    await service.getCandles(input);
+    now += 12_000;
+    await service.getCandles(input);
+
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+});

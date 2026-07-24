@@ -47,6 +47,8 @@ export interface UseMarketSourceOptions {
   active: boolean;
   online: boolean;
   enabled: boolean;
+  /** Disable a non-Yahoo live stream when this view requires Yahoo-only candles. */
+  allowWebSocket?: boolean;
 }
 
 export interface UseMarketSourceResult {
@@ -115,13 +117,12 @@ const EMPTY_META: LiveMeta = {
  * {@link PollingMarketSource}: entitlement-aware REST polling that pauses when
  * hidden/offline, honors rate limits and never claims real-time data.
  *
- * The displayed price follows one deterministic priority — entitled snapshot →
- * accepted live aggregate close → newest displayed history bar close →
- * unavailable — so the header, the chart price line and the S/R currentPrice can
- * never diverge onto different market events. An older history bar can never
- * overwrite a newer aggregate/snapshot (source rank dominates), and a selection
- * change isolates the aggregate candidate by selection key so sessions/intervals
- * never mix.
+ * The displayed price follows one deterministic accepted-event policy: the
+ * newest verified exchange timestamp wins, with snapshot → aggregate → history
+ * trust order breaking equal/missing timestamp ties. This keeps the header,
+ * chart price line and S/R currentPrice on the same event without allowing an
+ * older snapshot to contradict a newer Yahoo candle. A selection change isolates
+ * aggregate candidates by selection key so sessions/intervals never mix.
  */
 const DEFAULT_SELECTION: MarketSelection = { interval: '5m', session: 'regular', adjusted: false };
 
@@ -173,12 +174,14 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   // client config above and validated (wss + non-loopback in production) here.
   // `process.env.NODE_ENV` is likewise a direct static access so Next inlines it.
   const wsUrl = useMemo(
-    () => resolvePublicMarketWsUrl({
-      NEXT_PUBLIC_MARKET_WS_URL: PUBLIC_MARKET_WS_URL ?? undefined,
-      NEXT_PUBLIC_APP_ENV: PUBLIC_APP_ENV,
-      NODE_ENV: process.env.NODE_ENV,
-    }),
-    [],
+    () => options.allowWebSocket === false
+      ? null
+      : resolvePublicMarketWsUrl({
+        NEXT_PUBLIC_MARKET_WS_URL: PUBLIC_MARKET_WS_URL ?? undefined,
+        NEXT_PUBLIC_APP_ENV: PUBLIC_APP_ENV,
+        NODE_ENV: process.env.NODE_ENV,
+      }),
+    [options.allowWebSocket],
   );
   // Kept current so the subscribe callback (registered once) tags every emission
   // with the source's live selection at emit time.

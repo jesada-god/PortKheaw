@@ -40,9 +40,14 @@ export class CandleMarketDataService {
     const failures: MarketDataError[] = [];
     const attemptedProviders: string[] = [];
     const fallbackReasons: string[] = [];
-    const bounds = input.period1 && input.period2
-      ? { period1: input.period1, period2: input.period2 }
-      : candleRangeBounds(input.range, new Date(this.now()));
+    let explicitBounds = false;
+    let bounds: { period1: number; period2: number };
+    if (input.period1 !== undefined && input.period2 !== undefined) {
+      explicitBounds = true;
+      bounds = { period1: input.period1, period2: input.period2 };
+    } else {
+      bounds = candleRangeBounds(input.range, new Date(this.now()));
+    }
 
     for (const provider of this.providers) {
       const capabilities = provider.getCapabilities();
@@ -58,7 +63,9 @@ export class CandleMarketDataService {
       attemptedProviders.push(provider.id);
       const cacheKey = [
         'candles', provider.id, input.symbol, input.interval, sourceInterval, input.range,
-        bounds.period1, bounds.period2, Boolean(input.adjusted), input.session ?? 'regular',
+        explicitBounds ? bounds.period1 : 'rolling-range',
+        explicitBounds ? bounds.period2 : 'rolling-range',
+        Boolean(input.adjusted), input.session ?? 'regular',
       ].join(':');
       try {
         const resolution = await this.cache.resolve(

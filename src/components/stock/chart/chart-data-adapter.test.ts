@@ -10,7 +10,7 @@ describe('Lightweight Charts data adapter', () => {
   it('keeps volume timestamps aligned with raw candles', () => {
     const bars = adaptChartBars(prices, 'candlestick');
     expect(volumeData(bars).map((point) => point.time)).toEqual(bars.map((bar) => bar.time));
-    expect(volumeData(bars).map((point) => point.color)).toEqual(['#34d39999', '#fb718599']);
+    expect(volumeData(bars).map((point) => point.color)).toEqual(['#00c57f99', '#ff3b3099']);
   });
 
   it('does not mutate raw OHLCV when deriving Heikin Ashi', () => {
@@ -28,4 +28,3 @@ describe('Lightweight Charts data adapter', () => {
     expect(canUpdateLatest(previous, replaced)).toBe(false);
   });
 });
-

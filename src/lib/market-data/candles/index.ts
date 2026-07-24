@@ -1,22 +1,14 @@
 import 'server-only';
-import { serverEnv } from '@/src/config/env/server';
-import { AlphaVantageCandleProvider } from '../providers/alpha-vantage/candles';
-import { FinancialModelingPrepCandleProvider } from '../providers/financial-modeling-prep/candles';
-import type { NormalizedMarketDataProvider } from './contracts';
+import { YahooCandleProvider } from '../providers/yahoo/candles';
 import { CandleMarketDataService } from './service';
 
-let configurationKey = '';
 let service: CandleMarketDataService | undefined;
 
 export function getCandleMarketDataService(): CandleMarketDataService {
-  const nextKey = `${serverEnv.FMP_API_KEY ?? ''}\u0000${serverEnv.ALPHA_VANTAGE_API_KEY ?? ''}`;
-  if (!service || nextKey !== configurationKey) {
-    configurationKey = nextKey;
-    const providers: NormalizedMarketDataProvider[] = [];
-    if (serverEnv.FMP_API_KEY) providers.push(new FinancialModelingPrepCandleProvider(serverEnv.FMP_API_KEY));
-    if (serverEnv.ALPHA_VANTAGE_API_KEY) providers.push(new AlphaVantageCandleProvider(serverEnv.ALPHA_VANTAGE_API_KEY));
-    service = new CandleMarketDataService(providers);
-  }
+  // Stock-detail charts intentionally use one deterministic Yahoo Chart JSON
+  // pipeline. A failed Yahoo request surfaces as unavailable; it is never mixed
+  // with or silently replaced by another provider's candle series.
+  service ??= new CandleMarketDataService([new YahooCandleProvider()]);
   return service;
 }
 

@@ -206,7 +206,10 @@ export function StockDetailClient({
     historyFallback: chartHistoryFallback,
     active: tabVisible,
     online: isOnline,
-    enabled: providerConfigured,
+    // Yahoo Chart JSON is the no-key OHLCV source for the shared active candle.
+    // Snapshot entitlement remains independent and can still report unavailable.
+    enabled: true,
+    allowWebSocket: false,
   });
 
   const quote = quoteResource.data;
@@ -412,7 +415,7 @@ export function StockDetailClient({
               currentPrice={quote?.price ?? null}
               marketLabel={dataLabel}
               liveCandle={liveCandle}
-              liveActive={providerConfigured}
+              liveActive
               onLiveRefresh={refreshQuote}
               liveRefreshDisabled={quoteLoading}
               onSelectionChange={handleSelectionChange}

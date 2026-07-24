@@ -94,7 +94,8 @@ export function OptionToolRealtimeChart({
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const previousBarsRef = useRef<ChartBar[]>([]);
   const displayedDatasetRef = useRef<string | null>(null);
-  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const supportResistanceLinesRef = useRef<IPriceLine[]>([]);
+  const currentPriceLineRef = useRef<IPriceLine | null>(null);
   const syncingRef = useRef(false);
   const disposedRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
@@ -105,34 +106,46 @@ export function OptionToolRealtimeChart({
   const activeLevels = levelState.datasetKey === datasetKey ? levelState.levels : null;
   const levelsError = levelState.datasetKey === datasetKey ? levelState.error : null;
   const showSupportResistance = srDataset === datasetKey && activeLevels != null;
-  const acceptedPrice = currentPrice ?? bars.at(-1)?.close ?? null;
+  const acceptedPrice = currentPrice != null && Number.isFinite(currentPrice)
+    ? currentPrice
+    : bars.at(-1)?.close ?? null;
 
   useEffect(() => {
     const controller = new AbortController();
     const query = new URLSearchParams({ symbol, timeframe: interval });
-    void (async () => {
-      try {
-        const response = await fetch(`/api/market/chart-levels?${query.toString()}`, {
-          signal: controller.signal,
-          headers: { Accept: 'application/json' },
-          cache: 'no-store',
-        });
-        const payload = await response.json() as LevelsEnvelope;
-        if (!response.ok) throw new Error(payload.error?.message ?? 'Support/resistance is unavailable.');
-        const parsed = optionToolPivotLevelsSchema.safeParse(payload.data);
-        if (!parsed.success) throw new Error('Support/resistance response failed validation.');
-        if (!controller.signal.aborted) setLevelState({ datasetKey, levels: parsed.data, error: null });
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setLevelState({
-            datasetKey,
-            levels: null,
-            error: cause instanceof Error ? cause.message : 'Support/resistance is unavailable.',
+    let cancelled = false;
+    // Strict Mode runs effect setup/cleanup/setup once in development. Deferring
+    // the request one microtask lets the throwaway setup cancel before any
+    // network request is made, so a dataset issues exactly one levels request.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void (async () => {
+        try {
+          const response = await fetch(`/api/market/chart-levels?${query.toString()}`, {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
           });
+          const payload = await response.json() as LevelsEnvelope;
+          if (!response.ok) throw new Error(payload.error?.message ?? 'Support/resistance is unavailable.');
+          const parsed = optionToolPivotLevelsSchema.safeParse(payload.data);
+          if (!parsed.success) throw new Error('Support/resistance response failed validation.');
+          if (!controller.signal.aborted) setLevelState({ datasetKey, levels: parsed.data, error: null });
+        } catch (cause) {
+          if (!controller.signal.aborted) {
+            setLevelState({
+              datasetKey,
+              levels: null,
+              error: cause instanceof Error ? cause.message : 'Support/resistance is unavailable.',
+            });
+          }
         }
-      }
-    })();
-    return () => controller.abort();
+      })();
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [datasetKey, interval, symbol]);
 
   useEffect(() => {
@@ -144,7 +157,7 @@ export function OptionToolRealtimeChart({
     const priceChart = createChart(priceContainer, {
       ...chartLayout(),
       leftPriceScale: {
-        visible: true,
+        visible: false,
         borderColor: '#242733',
         scaleMargins: { top: 0.12, bottom: 0.12 },
       },
@@ -156,7 +169,17 @@ export function OptionToolRealtimeChart({
         fixLeftEdge: false,
         fixRightEdge: false,
       },
-      handleScale: { axisPressedMouseMove: { time: true, price: false } },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: { time: true, price: false },
+        mouseWheel: true,
+        pinch: true,
+      },
     });
     const volumeChart = createChart(volumeContainer, {
       ...chartLayout(),
@@ -168,7 +191,17 @@ export function OptionToolRealtimeChart({
         fixLeftEdge: false,
         fixRightEdge: false,
       },
-      handleScale: { axisPressedMouseMove: { time: true, price: false } },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: { time: true, price: false },
+        mouseWheel: true,
+        pinch: true,
+      },
     });
     const candleSeries = priceChart.addSeries(CandlestickSeries, {
       upColor: '#00c57f',
@@ -176,6 +209,8 @@ export function OptionToolRealtimeChart({
       borderVisible: false,
       wickUpColor: '#00c57f',
       wickDownColor: '#ff3b30',
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
     const volumeSeries = volumeChart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
@@ -236,7 +271,8 @@ export function OptionToolRealtimeChart({
       volumeChartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
-      priceLinesRef.current = [];
+      supportResistanceLinesRef.current = [];
+      currentPriceLineRef.current = null;
       previousBarsRef.current = [];
       displayedDatasetRef.current = null;
     };
@@ -263,16 +299,41 @@ export function OptionToolRealtimeChart({
 
   useEffect(() => {
     const series = candleSeriesRef.current;
+    if (!series || disposedRef.current || acceptedPrice == null) return;
+    const latest = bars.at(-1);
+    const color = latest && acceptedPrice < latest.open ? '#ff3b30' : '#00c57f';
+    if (!currentPriceLineRef.current) {
+      currentPriceLineRef.current = series.createPriceLine({
+        price: acceptedPrice,
+        color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: 'Current',
+      });
+      return;
+    }
+    currentPriceLineRef.current.applyOptions({
+      price: acceptedPrice,
+      color,
+      lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: 'Current',
+    });
+  }, [acceptedPrice, bars]);
+
+  useEffect(() => {
+    const series = candleSeriesRef.current;
     if (!series || disposedRef.current) return;
-    priceLinesRef.current.forEach((line) => {
+    supportResistanceLinesRef.current.forEach((line) => {
       try { series.removePriceLine(line); } catch { /* chart may be tearing down */ }
     });
-    priceLinesRef.current = [];
+    supportResistanceLinesRef.current = [];
     if (!showSupportResistance || !activeLevels) return;
 
     const resistanceColors = ['#ff8a80', '#ff5c4d', '#ff3b30'];
     const supportColors = ['#69f0ae', '#2ee08a', '#00c57f'];
-    priceLinesRef.current = [
+    supportResistanceLinesRef.current = [
       ...activeLevels.resistance.map((price, index) => series.createPriceLine({
         price,
         color: resistanceColors[index],
@@ -325,7 +386,7 @@ export function OptionToolRealtimeChart({
             aria-pressed={showSupportResistance}
             onClick={() => setSrDataset(showSupportResistance ? null : datasetKey)}
             title={levelsError ?? undefined}
-            className={`min-h-11 rounded-lg border px-3 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${showSupportResistance ? 'border-[#D4FF00] text-[#D4FF00]' : 'border-[#D4FF00]/60 text-[#D4FF00]'}`}
+            className={`min-h-11 rounded-md border px-3 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${showSupportResistance ? 'border-[#f0b90b] bg-[#f0b90b]/10 text-[#f0b90b]' : 'border-[#f0b90b] text-[#f0b90b]'}`}
           >
             S/R
           </button>
@@ -344,8 +405,8 @@ export function OptionToolRealtimeChart({
         </div>
       )}
 
-      <div ref={priceContainerRef} className="h-[22rem] min-h-[18rem] w-full md:h-[28rem]" aria-label="Option tool candlestick chart" />
-      <div ref={volumeContainerRef} className="h-32 min-h-28 w-full border-t border-[#242733] md:h-36" aria-label="Option tool volume chart" />
+      <div ref={priceContainerRef} className="h-[380px] w-full md:h-[480px]" aria-label="Option tool candlestick chart" />
+      <div ref={volumeContainerRef} className="mt-2.5 h-[100px] w-full border-t border-[#242733] md:h-[120px]" aria-label="Option tool volume chart" />
 
       {showSupportResistance && activeLevels && (
         <div className="border-t border-[#242733] p-3">

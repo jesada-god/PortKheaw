@@ -60,9 +60,9 @@ export function ChartPanel({
   onHistoryFallbackChange,
 }: Props) {
   const { addToast } = useToast();
-  const [interval, setInterval] = useState<CandleInterval>('5m');
-  const [range, setRange] = useState<HistoricalRange>('1m');
-  const [session, setSession] = useState<MarketSessionMode>('extended');
+  const [interval, setInterval] = useState<CandleInterval>('1D');
+  const [range, setRange] = useState<HistoricalRange>('1y');
+  const [session, setSession] = useState<MarketSessionMode>('regular');
   const [adjusted, setAdjusted] = useState(false);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   const intraday = !['1D', 'Week', 'Month'].includes(interval);
@@ -100,9 +100,9 @@ export function ChartPanel({
     : 'border-amber-400/30 bg-amber-400/10 text-amber-200';
 
   return <div className="space-y-3">
-    <section aria-label="Legacy trader chart controls" className="rounded-xl border border-slate-800 bg-[#151B28] p-2" data-testid="legacy-trader-chart-controls">
+    <section aria-label="Legacy trader chart controls" className="rounded-lg border border-[#242733] bg-[#1c2030] p-2.5" data-testid="legacy-trader-chart-controls">
       <div className="flex min-w-0 gap-1 overflow-x-auto pb-2" role="tablist" aria-label="Candle interval">
-        {TRADER_TIMEFRAME_PRESETS.map((preset) => <button key={preset.interval} type="button" role="tab" aria-selected={interval === preset.interval} onClick={() => applyTraderTimeframe(preset.interval)} className={`min-h-11 min-w-12 shrink-0 rounded-lg px-3 font-mono text-xs ${interval === preset.interval ? 'bg-[#D4FF00] font-semibold text-black' : 'text-slate-300 hover:bg-slate-800'}`}>{preset.label}</button>)}
+        {TRADER_TIMEFRAME_PRESETS.map((preset) => <button key={preset.interval} type="button" role="tab" aria-selected={interval === preset.interval} onClick={() => applyTraderTimeframe(preset.interval)} className={`min-h-11 min-w-12 shrink-0 rounded-md border px-3 font-mono text-xs font-semibold ${interval === preset.interval ? 'border-[#2962ff] bg-[#2962ff] text-white' : 'border-[#434651] bg-[#2a2e39] text-slate-200 hover:border-slate-500'}`}>{preset.label}</button>)}
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
         <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold tracking-wide ${feedTone}`} data-testid="chart-feed-status">{feedLabel}</span>

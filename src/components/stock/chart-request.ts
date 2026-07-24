@@ -19,6 +19,19 @@ export interface ChartRequestPlanInput {
   cooldownUntil: number;
 }
 
+export interface ChartRequestIdentity {
+  symbol: string;
+  interval: string;
+  range: string;
+  adjusted: boolean;
+  session: string;
+}
+
+/** Stable identity for cache, in-flight deduplication, and stale-response isolation. */
+export function chartRequestKey(input: ChartRequestIdentity): string {
+  return `${input.symbol.toUpperCase()}:${input.interval}:${input.range}:${input.adjusted}:${input.session}`;
+}
+
 /**
  * Decide what a load for a given `symbol:interval:range:adjusted:session` key should do.
  *

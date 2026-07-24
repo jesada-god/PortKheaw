@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { getCandleMarketDataService } from '@/src/lib/market-data/candles';
 import { candleIntervalSchema } from '@/src/lib/market-data/candles/contracts';
 import { MarketDataError } from '@/src/lib/market-data/errors';
-import { getMarketDataGateway } from '@/src/lib/market-data/gateway/service';
 import { gatewayRouteResponse } from '@/src/lib/market-data/gateway/route';
 import { symbolSchema } from '@/src/lib/market-data/validation';
 import { calculateClassicPivotLevels } from '@/src/components/stock/option-tool-chart/pivot-levels';
@@ -19,24 +19,23 @@ export async function GET(request: NextRequest) {
       timeframe: request.nextUrl.searchParams.get('timeframe'),
     });
     const basisInterval = query.timeframe === 'Week' ? 'Week' as const : '1D' as const;
-    const gateway = getMarketDataGateway();
-    const instrument = await gateway.resolveInstrument(query.symbol);
-    const bars = await gateway.getBars({
-      instrument,
+    const result = await getCandleMarketDataService().getCandles({
+      symbol: query.symbol,
       interval: basisInterval,
       range: basisInterval === 'Week' ? '1y' : '1m',
       adjusted: false,
       session: 'regular',
     });
-    const source = bars.bars.filter((bar) => !bar.partial).at(-1);
+    const bars = result.data;
+    const source = bars.candles.filter((bar) => !bar.partial).at(-1);
     if (!source) {
       throw new MarketDataError('insufficient-data', `No completed ${basisInterval} bar is available for classic pivot levels`);
     }
     return {
       data: {
-        symbol: instrument.canonicalSymbol,
+        symbol: bars.symbol,
         basisInterval,
-        sourceTime: source.time,
+        sourceTime: source.timestamp,
         provider: bars.provider,
         ...calculateClassicPivotLevels(source),
       },

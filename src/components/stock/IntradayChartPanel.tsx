@@ -3,11 +3,16 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DataProvenance } from '@/src/components/market-data/DataProvenance';
-import { planChartRequest, shouldApplyResponse } from './chart-request';
+import { chartRequestKey, planChartRequest, shouldApplyResponse } from './chart-request';
 import { matchesLiveSelection, mergeLiveCandleIntoBars, shouldPollChart } from './live-candle-bridge';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import { useAppActive } from '@/src/hooks/useAppActive';
-import { chartGatewayResponseSchema, type CandleInterval, type HistoricalRange, type MarketSessionMode } from '@/src/lib/market-data/gateway/contracts';
+import {
+  normalizedCandleResultSchema,
+  type CandleInterval,
+  type CandleRange as HistoricalRange,
+  type CandleSession as MarketSessionMode,
+} from '@/src/lib/market-data/candles/contracts';
 import { historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCandle, type MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 import { resolveChartProvenance } from './chart-live-provenance';
 
@@ -17,7 +22,8 @@ const OptionToolRealtimeChart = dynamic(
 );
 
 type Envelope = { data: unknown; error?: { code?: string; message?: string; retryAfterSeconds?: number; reason?: string; retryable?: boolean } };
-type ChartResult = ReturnType<typeof chartGatewayResponseSchema.parse>;
+type ChartResult = ReturnType<typeof normalizedCandleResultSchema.parse>;
+type KeyedChartResult = { requestKey: string; data: ChartResult };
 
 interface Props {
   symbol: string;
@@ -38,12 +44,12 @@ interface Props {
 }
 
 function limitationMessage(code: string | undefined): string {
-  if (code === 'provider-not-configured') return 'Configuration required: set POLYGON_API_KEY and MARKET_DATA_PROVIDER=polygon.';
-  if (code === 'forbidden' || code === 'provider-unauthorized') return 'The configured Polygon plan does not authorize this market-data operation.';
-  if (code === 'rate-limited') return 'Polygon is cooling down after a rate limit.';
+  if (code === 'provider-not-configured') return 'Yahoo market candles are not configured.';
+  if (code === 'forbidden' || code === 'provider-unauthorized') return 'Yahoo did not authorize this market-data operation.';
+  if (code === 'rate-limited') return 'Yahoo Finance is cooling down after a rate limit.';
   if (code === 'unsupported') return 'This instrument or interval/range combination is unsupported.';
   if (code === 'invalid-symbol') return 'This instrument is delisted or cannot be resolved safely.';
-  if (code === 'not-found' || code === 'insufficient-data') return 'No real Polygon OHLCV is available for this symbol and selection.';
+  if (code === 'not-found' || code === 'insufficient-data') return 'No real Yahoo OHLCV is available for this symbol and selection.';
   return 'Market candles are temporarily unavailable.';
 }
 
@@ -52,9 +58,9 @@ export function MarketCandleChartPanel(props: Props) {
   const appActive = useAppActive();
   // When the current selection is the exact bucket the shared market source
   // streams, the chart consumes that single accepted candle instead of running a
-  // duplicate `/api/market/chart` poll. History still loads once below.
+  // duplicate `/api/market/candles` poll. History still loads once below.
   const coveredByLiveSource = Boolean(liveActive) && matchesLiveSelection(interval, session);
-  const [result, setResult] = useState<ChartResult | null>(null);
+  const [resultState, setResultState] = useState<KeyedChartResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string; diagnostics?: string; retryable?: boolean } | null>(null);
   const [cooldownUntil, setCooldownUntil] = useState(0);
@@ -63,7 +69,11 @@ export function MarketCandleChartPanel(props: Props) {
   const inflight = useRef(new Map<string, Promise<void>>());
   const abort = useRef<AbortController | null>(null);
   const generation = useRef(0);
-  const requestKey = `${symbol}:${interval}:${range}:${adjusted}:${session}`;
+  const requestKey = chartRequestKey({ symbol, interval, range, adjusted, session });
+  // A selection update renders before its effect can clear the previous result.
+  // Keying the data prevents that one stale render from mounting the chart with
+  // a new interval/symbol and issuing a throwaway levels request.
+  const result = resultState?.requestKey === requestKey ? resultState.data : null;
 
   useEffect(() => {
     if (!cooldownUntil) return;
@@ -81,7 +91,11 @@ export function MarketCandleChartPanel(props: Props) {
       now: Date.now(),
       cooldownUntil,
     });
-    if (plan === 'serve-cache') { setResult(cache.current.get(requestKey)!); setError(null); return; }
+    if (plan === 'serve-cache') {
+      setResultState({ requestKey, data: cache.current.get(requestKey)! });
+      setError(null);
+      return;
+    }
     if (plan === 'join-inflight') return inflight.current.get(requestKey);
     if (plan === 'wait-cooldown') return;
     const requestGeneration = ++generation.current;
@@ -93,7 +107,7 @@ export function MarketCandleChartPanel(props: Props) {
     const operation = (async () => {
       try {
         const query = new URLSearchParams({ symbol, interval, range, adjusted: String(adjusted), session });
-        const response = await fetch(`/api/market/chart?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
+        const response = await fetch(`/api/market/candles?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
         const payload = await response.json() as Envelope;
         if (!response.ok) {
           const retry = Number(response.headers.get('Retry-After') ?? payload.error?.retryAfterSeconds ?? 0);
@@ -104,15 +118,15 @@ export function MarketCandleChartPanel(props: Props) {
             diagnostics: process.env.NODE_ENV === 'development' ? payload.error?.reason ?? payload.error?.message : undefined,
           });
         }
-        const parsed = chartGatewayResponseSchema.safeParse(payload.data);
-        if (!parsed.success) throw Object.assign(new Error('Market gateway response failed validation.'), { code: 'invalid-provider-response' });
+        const parsed = normalizedCandleResultSchema.safeParse(payload.data);
+        if (!parsed.success) throw Object.assign(new Error('Yahoo candle response failed validation.'), { code: 'invalid-provider-response' });
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
         cache.current.set(requestKey, parsed.data);
-        setResult(parsed.data);
+        setResultState({ requestKey, data: parsed.data });
         setCooldownUntil(0);
       } catch (cause) {
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
-        setResult(null);
+        setResultState(null);
         setError({ code: (cause as { code?: string }).code, message: cause instanceof Error ? cause.message : 'Market candles are unavailable.', diagnostics: (cause as { diagnostics?: string }).diagnostics, retryable: (cause as { retryable?: boolean }).retryable });
       } finally {
         if (generation.current === requestGeneration) setLoading(false);
@@ -126,7 +140,7 @@ export function MarketCandleChartPanel(props: Props) {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      setResult(null);
+      setResultState(null);
       setError(null);
       if (active && appActive) void request();
     });
@@ -139,7 +153,7 @@ export function MarketCandleChartPanel(props: Props) {
       active,
       appActive,
       hasResult: Boolean(result),
-      dataStatus: result?.bars.dataStatus ?? '',
+      dataStatus: result?.dataStatus ?? '',
       coveredByLiveSource,
     })) return;
     const timer = window.setInterval(() => { void request(true); }, 60_000);
@@ -147,10 +161,10 @@ export function MarketCandleChartPanel(props: Props) {
   }, [active, appActive, coveredByLiveSource, request, result]);
   useEffect(() => () => abort.current?.abort(), []);
 
-  const prices = useMemo(() => result?.bars.bars.map((bar) => ({
-    date: new Date(bar.time * 1_000).toISOString(),
+  const prices = useMemo(() => result?.candles.map((bar) => ({
+    date: new Date(bar.timestamp * 1_000).toISOString(),
     open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume,
-    transactions: bar.transactions, vwap: bar.vwap, partial: bar.partial,
+    partial: bar.partial,
   })) ?? [], [result]);
   // Fold the shared source's accepted active candle into the loaded history:
   // same bucket updates in place, a newer bucket appends once, stale is ignored.
@@ -158,10 +172,10 @@ export function MarketCandleChartPanel(props: Props) {
     () => (coveredByLiveSource ? mergeLiveCandleIntoBars(prices, liveCandle ?? null) : prices),
     [coveredByLiveSource, liveCandle, prices],
   );
-  const historyAsOf = result?.bars.asOf ? new Date(result.bars.asOf * 1_000).toISOString() : undefined;
+  const historyAsOf = result?.actualEnd ? new Date(result.actualEnd * 1_000).toISOString() : undefined;
   const provenance = result ? resolveChartProvenance({
-    historyStatus: result.bars.dataStatus,
-    historyProvider: result.bars.provider,
+    historyStatus: result.dataStatus,
+    historyProvider: result.provider,
     historyAsOf,
     coveredByLiveSource,
     hasLiveCandle: Boolean(liveCandle),
@@ -169,11 +183,11 @@ export function MarketCandleChartPanel(props: Props) {
   }) : null;
   // The newest completed (non-partial) bar the chart currently displays, reported
   // up as a history-fallback price candidate — the exact bar shown, never a
-  // fabricated one. It is the header's last-resort price for Daily/Week/Month (or
-  // any snapshot-403 selection); the shared accepted-price priority ranks it below
-  // an entitled snapshot and an accepted live aggregate, so it can never overwrite
-  // a newer live value. Reported as null while there is no result so a stale bar
-  // from a superseded selection can never linger.
+  // fabricated one. It is the header's history candidate for Daily/Week/Month (or
+  // any snapshot-403 selection); the shared resolver accepts it only when its
+  // verified exchange timestamp is newer, or as the trust-ranked fallback when a
+  // higher-ranked source is absent. Reported as null while there is no result so a
+  // stale bar from a superseded selection can never linger.
   const historyFallback = useMemo<AcceptedPriceCandidate | null>(() => {
     if (!result) return null;
     let newestCompleted: (typeof displayPrices)[number] | null = null;
@@ -186,8 +200,8 @@ export function MarketCandleChartPanel(props: Props) {
       price: newestCompleted.close,
       source: 'history-fallback',
       exchangeTimestamp: newestCompleted.date,
-      mode: historyFallbackModeFromStatus(result.bars.dataStatus),
-      provider: result.bars.provider,
+      mode: historyFallbackModeFromStatus(result.dataStatus),
+      provider: result.provider,
     };
   }, [result, displayPrices]);
   useEffect(() => { onHistoryFallbackChange?.(historyFallback); }, [historyFallback, onHistoryFallbackChange]);
@@ -202,21 +216,21 @@ export function MarketCandleChartPanel(props: Props) {
     : loading || cooldown > 0 || !appActive || error?.retryable === false;
   const refreshLabel = !coveredByLiveSource && cooldown ? `Refresh in ${cooldown}s` : 'Refresh';
   return <div className="space-y-3" data-testid="market-candle-chart-panel">
-    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}{result && <span className="text-xs text-slate-500">{displayPrices.length.toLocaleString()} bars · {result.bars.timezone} · {result.bars.firstTimestamp ? new Date(result.bars.firstTimestamp * 1_000).toLocaleDateString() : '—'}–{result.bars.lastTimestamp ? new Date(result.bars.lastTimestamp * 1_000).toLocaleDateString() : '—'}</span>}</div>
-    <DataProvenance status={provenance?.status ?? (error ? 'unavailable' : 'delayed')} provider={provenance?.provider} asOf={provenance?.asOf} delayedMinutes={provenance?.realtime ? 0 : result?.bars.delayedByMinutes} reason={error?.message}/>
-    {result?.bars.warnings.map((warning) => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
+    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}{result && <span className="text-xs text-slate-500">{displayPrices.length.toLocaleString()} bars · {result.exchangeTimezone} · {result.actualStart ? new Date(result.actualStart * 1_000).toLocaleDateString() : '—'}–{result.actualEnd ? new Date(result.actualEnd * 1_000).toLocaleDateString() : '—'}</span>}</div>
+    <DataProvenance status={provenance?.status ?? (error ? 'unavailable' : 'delayed')} provider={provenance?.provider} asOf={provenance?.asOf} delayedMinutes={provenance?.realtime ? 0 : result?.delayedByMinutes ?? undefined} reason={error?.message}/>
+    {result?.warnings.map((warning) => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
     {loading && !result && <Skeleton className="h-[420px] w-full rounded-xl" />}
     {error && !loading && <div role="alert" className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-amber-500/20 p-4 text-center text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-500">No candle is mocked, interpolated, forward-filled, or replaced by another provider.</p>{error.diagnostics && <details className="mt-2 max-w-xl text-left text-xs text-slate-500"><summary>Development diagnostics</summary><p className="mt-1 break-words">{error.diagnostics}</p></details>}{error.retryable !== false && <button type="button" disabled={cooldown > 0} onClick={() => void request(true)} className="mt-3 min-h-11 rounded-lg border border-slate-700 px-3 disabled:opacity-40">{cooldown ? `Try again in ${cooldown}s` : 'Try again'}</button>}</div>}
     {result && displayPrices.length === 1 && <div role="status" className="rounded-xl border border-amber-500/20 p-5 text-sm text-amber-200">ช่วงนี้มีข้อมูลจริงเพียง 1 แท่ง อาจเป็นหลักทรัพย์เพิ่งเข้าตลาดหรือช่วงที่เลือกสั้นเกินไป กรุณาเลือก range ที่ยาวขึ้น</div>}
     {result && displayPrices.length >= 2 && <OptionToolRealtimeChart
-      symbol={result.instrument.canonicalSymbol}
+      symbol={result.symbol}
       interval={interval}
       prices={displayPrices}
       currentPrice={currentPrice}
       datasetKey={requestKey}
     />}
-    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">No validated real Polygon candles are available for this selection.</p>}
-    {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested: {symbol}</div><div>Canonical/provider: {result.instrument.canonicalSymbol} / {result.instrument.providerSymbol}</div><div>Exchange/MIC: {result.instrument.exchange ?? '—'} / {result.instrument.mic ?? '—'}</div><div>Asset: {result.instrument.assetType}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.bars.firstTimestamp ?? '—'} / {result.bars.lastTimestamp ?? '—'}</div><div>Bars: {result.bars.bars.length}</div><div>Status: {result.bars.dataStatus}</div></dl></details>}
+    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">No validated real Yahoo candles are available for this selection.</p>}
+    {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div></dl></details>}
   </div>;
 }
 
