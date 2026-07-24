@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Info } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
 import type {
@@ -40,6 +40,8 @@ export interface ExtendedHoursQuote {
   provider: string | null;
 }
 
+export type TransientPriceSink = (price: number) => void;
+
 interface StockPriceHeaderProps {
   symbol: string;
   exchange: string | null;
@@ -75,6 +77,11 @@ interface StockPriceHeaderProps {
    * REST-only deployment, which therefore never shows a "reconnecting" pill.
    */
   connectionState?: ConnectionStatus | null;
+  /**
+   * Shared imperative sink used by the live source for Alpaca trade ticks.
+   * The sink mutates only the price text node, avoiding a component-tree render.
+   */
+  transientPriceSinkRef?: MutableRefObject<TransientPriceSink | null>;
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -176,9 +183,12 @@ export function StockPriceHeader({
   symbolHalted = false,
   haltReason = null,
   connectionState = null,
+  transientPriceSinkRef,
 }: StockPriceHeaderProps) {
   const [currency, setCurrency] = useState<PriceDisplayCurrency>('USD');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const priceDisplayRef = useRef<HTMLSpanElement>(null);
+  const lastTransientUsdPriceRef = useRef<number | null>(null);
   const normalizedSourceCurrency = sourceCurrency?.toUpperCase() ?? null;
   const verifiedUsdSource = normalizedSourceCurrency === 'USD';
   const fxRate = fxQuote ? Number(fxQuote.rate) : null;
@@ -244,6 +254,28 @@ export function StockPriceHeader({
   const displayAsk = ask != null && verifiedUsdSource ? convertUsdForDisplay(ask, selectedCurrency, fxRate) : ask;
   const showBook = displayBid != null && Number.isFinite(displayBid) && displayAsk != null && Number.isFinite(displayAsk);
 
+  useEffect(() => {
+    if (!transientPriceSinkRef) return;
+    const sink: TransientPriceSink = (price) => {
+      if (!Number.isFinite(price) || price <= 0) return;
+      lastTransientUsdPriceRef.current = price;
+      const nextDisplayPrice = verifiedUsdSource
+        ? convertUsdForDisplay(price, selectedCurrency, fxRate)
+        : price;
+      if (priceDisplayRef.current) {
+        // Hot trade-tick path: one text-node write, zero React state updates.
+        priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
+      }
+    };
+    transientPriceSinkRef.current = sink;
+    // Re-apply the newest tick after a USD/THB toggle without waiting for another
+    // market event; React may just have rendered the slower bar-backed price.
+    if (lastTransientUsdPriceRef.current !== null) sink(lastTransientUsdPriceRef.current);
+    return () => {
+      if (transientPriceSinkRef.current === sink) transientPriceSinkRef.current = null;
+    };
+  }, [fxRate, selectedCurrency, transientPriceSinkRef, verifiedUsdSource]);
+
   return <>
     <section className="min-h-32 min-w-0 overflow-hidden rounded-2xl border border-border bg-bg-card p-4 shadow-xl sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -253,6 +285,8 @@ export function StockPriceHeader({
                 it on mobile, but no numeric token may ever split mid-number. */}
             <span className="inline-flex max-w-full shrink-0 items-baseline gap-x-2 whitespace-nowrap">
               <span
+                ref={priceDisplayRef}
+                data-testid="stock-last-price"
                 key={priceFlash.nonce}
                 className={displayPrice === null
                   ? 'font-sans text-2xl font-bold leading-tight tracking-tight text-text-main sm:text-3xl'

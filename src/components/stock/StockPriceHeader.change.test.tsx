@@ -15,7 +15,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
-import { StockPriceHeader } from './StockPriceHeader';
+import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.stubGlobal('React', React);
@@ -84,6 +84,16 @@ function changeRow(): HTMLElement | null {
 }
 
 describe('StockPriceHeader daily change display', () => {
+  it('updates a trade tick through the ref sink without a React state update', () => {
+    const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
+    render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
+
+    expect(transientPriceSinkRef.current).not.toBeNull();
+    transientPriceSinkRef.current?.(70.1234);
+
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.1234');
+  });
+
   it('renders change + percent from a REST quote with price and previous close', () => {
     // Provider omitted its own change: derive from the real previous close.
     render(baseProps({ ...BASE_QUOTE, change: null, changePercent: null }));

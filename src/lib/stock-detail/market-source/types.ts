@@ -111,6 +111,12 @@ export interface MarketUpdate {
   label: MarketDataLabel;
   error: MarketDataApiError | null;
   /**
+   * Provider event that caused this emission. WebSocket consumers use this to
+   * keep high-frequency trade ticks on an imperative/ref path while committing
+   * snapshots and bars through React state. REST sources omit it.
+   */
+  eventKind?: 'trade' | 'quote' | 'bar' | 'status' | 'snapshot' | 'lifecycle';
+  /**
    * Top-of-book, shown separately from Last Price in the header. Present only on
    * a real-time stream carrying quotes; null/undefined on REST paths. `undefined`
    * (never a fabricated 0) means "unknown".

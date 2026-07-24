@@ -13,8 +13,10 @@ import {
   type CandleRange as HistoricalRange,
   type CandleSession as MarketSessionMode,
 } from '@/src/lib/market-data/candles/contracts';
+import { chartGatewayResponseSchema } from '@/src/lib/market-data/gateway/contracts';
 import { historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCandle, type MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 import { resolveChartProvenance } from './chart-live-provenance';
+import { polygonBarsToChartResult } from './polygon-history-adapter';
 
 const OptionToolRealtimeChart = dynamic(
   () => import('./option-tool-chart/OptionToolRealtimeChart').then((module) => module.OptionToolRealtimeChart),
@@ -44,12 +46,12 @@ interface Props {
 }
 
 function limitationMessage(code: string | undefined): string {
-  if (code === 'provider-not-configured') return 'Yahoo market candles are not configured.';
-  if (code === 'forbidden' || code === 'provider-unauthorized') return 'Yahoo did not authorize this market-data operation.';
-  if (code === 'rate-limited') return 'Yahoo Finance is cooling down after a rate limit.';
+  if (code === 'provider-not-configured') return 'Polygon market candles are not configured.';
+  if (code === 'forbidden' || code === 'provider-unauthorized') return 'Polygon did not authorize this market-data operation.';
+  if (code === 'rate-limited') return 'Polygon is cooling down after a rate limit.';
   if (code === 'unsupported') return 'This instrument or interval/range combination is unsupported.';
   if (code === 'invalid-symbol') return 'This instrument is delisted or cannot be resolved safely.';
-  if (code === 'not-found' || code === 'insufficient-data') return 'No real Yahoo OHLCV is available for this symbol and selection.';
+  if (code === 'not-found' || code === 'insufficient-data') return 'No Polygon OHLCV is available for this symbol and selection.';
   return 'Market candles are temporarily unavailable.';
 }
 
@@ -58,7 +60,7 @@ export function MarketCandleChartPanel(props: Props) {
   const appActive = useAppActive();
   // When the current selection is the exact bucket the shared market source
   // streams, the chart consumes that single accepted candle instead of running a
-  // duplicate `/api/market/candles` poll. History still loads once below.
+  // duplicate history poll. Polygon REST history still loads once below.
   const coveredByLiveSource = Boolean(liveActive) && matchesLiveSelection(interval, session);
   const [resultState, setResultState] = useState<KeyedChartResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -107,7 +109,7 @@ export function MarketCandleChartPanel(props: Props) {
     const operation = (async () => {
       try {
         const query = new URLSearchParams({ symbol, interval, range, adjusted: String(adjusted), session });
-        const response = await fetch(`/api/market/candles?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
+        const response = await fetch(`/api/market/chart?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
         const payload = await response.json() as Envelope;
         if (!response.ok) {
           const retry = Number(response.headers.get('Retry-After') ?? payload.error?.retryAfterSeconds ?? 0);
@@ -118,8 +120,10 @@ export function MarketCandleChartPanel(props: Props) {
             diagnostics: process.env.NODE_ENV === 'development' ? payload.error?.reason ?? payload.error?.message : undefined,
           });
         }
-        const parsed = normalizedCandleResultSchema.safeParse(payload.data);
-        if (!parsed.success) throw Object.assign(new Error('Yahoo candle response failed validation.'), { code: 'invalid-provider-response' });
+        const gateway = chartGatewayResponseSchema.safeParse(payload.data);
+        if (!gateway.success) throw Object.assign(new Error('Polygon candle response failed validation.'), { code: 'invalid-provider-response' });
+        const parsed = normalizedCandleResultSchema.safeParse(polygonBarsToChartResult(gateway.data.bars));
+        if (!parsed.success) throw Object.assign(new Error('Polygon chart adapter failed validation.'), { code: 'invalid-provider-response' });
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
         cache.current.set(requestKey, parsed.data);
         setResultState({ requestKey, data: parsed.data });
@@ -229,7 +233,7 @@ export function MarketCandleChartPanel(props: Props) {
       currentPrice={currentPrice}
       datasetKey={requestKey}
     />}
-    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">No validated real Yahoo candles are available for this selection.</p>}
+    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">No validated Polygon candles are available for this selection.</p>}
     {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div></dl></details>}
   </div>;
 }

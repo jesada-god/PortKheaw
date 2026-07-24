@@ -59,7 +59,11 @@ describe('WebSocketMarketSource lifecycle', () => {
     const { source, sockets, updates, connect, tradeAt } = setup();
     source.start();
     connect(sockets[0]);
-    expect(sockets[0].frames().some((f) => f.type === 'subscribe' && Array.isArray(f.symbols))).toBe(true);
+    const subscribe = sockets[0].frames().find((frame) => frame.type === 'subscribe');
+    expect(subscribe).toMatchObject({
+      symbols: ['AAPL'],
+      channels: ['trades', 'bars', 'updatedBars'],
+    });
     expect(source.connectionState).toBe('open');
 
     sockets[0].emit(tradeAt('2024-01-02T15:04:05Z', 190.5));

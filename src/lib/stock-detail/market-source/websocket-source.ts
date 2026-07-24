@@ -3,7 +3,6 @@ import {
   LiveBucketStore,
   isRealtimeInterval,
   parseServerFrame,
-  MARKET_CHANNELS,
   MarketTracer,
   computeBackoffDelayMs,
   type MarketSnapshot,
@@ -52,6 +51,11 @@ export interface WebSocketMarketSourceOptions {
 }
 
 const DEFAULT_SELECTION: MarketSelection = { interval: '5m', session: 'regular', adjusted: false };
+// The hot UI path needs executed trades for the header and official/corrected
+// bars for the chart. Avoid subscribing this view to quote/status firehoses that
+// it does not need to repaint; the Gateway still supports those channels for
+// watchlists and future order-book screens.
+const STOCK_DETAIL_CHANNELS = ['trades', 'bars', 'updatedBars'] as const;
 const defaultScheduler = (callback: () => void, delayMs: number): (() => void) => {
   const handle = setTimeout(callback, delayMs);
   return () => clearTimeout(handle);
@@ -172,7 +176,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       this.clearHeartbeat();
       this.state = 'idle';
       this.degraded = true;
-      this.emit(false);
+      this.emit(false, 'lifecycle');
       return;
     }
     // Shown again before/after the socket resolved: cancel any deferred hide and
@@ -187,7 +191,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   setSession(session: MarketSessionKind): void {
     if (this.session === session) return;
     this.session = session;
-    this.emit(false);
+    this.emit(false, 'lifecycle');
   }
 
   setSelection(selection: MarketSelection): void {
@@ -199,7 +203,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.selection = selection;
     // Aggregation is client-side, so no resubscribe is needed: re-derive the
     // active candle for the new interval from the existing 1m buckets and emit.
-    this.emit(false);
+    this.emit(false, 'lifecycle');
   }
 
   /**
@@ -231,11 +235,11 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.halted = false;
     this.haltReason = undefined;
     if (this.state === 'open') this.sendSubscribe();
-    this.emit(false);
+    this.emit(false, 'lifecycle');
   }
 
   refresh(): Promise<void> {
-    this.emit(false);
+    this.emit(false, 'lifecycle');
     return Promise.resolve();
   }
 
@@ -266,7 +270,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         this.state = 'open';
         this.sendSubscribe();
         this.startHeartbeat();
-        this.emit(false);
+        this.emit(false, 'lifecycle');
         // A hide arrived mid-handshake: now that the socket is cleanly open we can
         // release it without tripping the "closed before established" warning.
         if (this.pendingHide && !this.visible) {
@@ -276,7 +280,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
           this.clearHeartbeat();
           this.state = 'idle';
           this.degraded = true;
-          this.emit(false);
+          this.emit(false, 'lifecycle');
         } else {
           this.pendingHide = false;
         }
@@ -296,12 +300,12 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   }
 
   private sendSubscribe(): void {
-    this.socket?.send(JSON.stringify({ type: 'subscribe', symbols: [this.symbol], channels: [...MARKET_CHANNELS] }));
+    this.socket?.send(JSON.stringify({ type: 'subscribe', symbols: [this.symbol], channels: [...STOCK_DETAIL_CHANNELS] }));
     console.info('[market-ws] subscribed', this.symbol);
   }
 
   private sendUnsubscribe(symbol: string): void {
-    this.socket?.send(JSON.stringify({ type: 'unsubscribe', symbols: [symbol], channels: [...MARKET_CHANNELS] }));
+    this.socket?.send(JSON.stringify({ type: 'unsubscribe', symbols: [symbol], channels: [...STOCK_DETAIL_CHANNELS] }));
   }
 
   /**
@@ -334,7 +338,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     }
     // A seeded run of canonical minutes is a good moment for the chart to compute
     // indicators/S-R once; intra-bar ticks after this stay cheap.
-    this.emit(snapshot.bars.length > 0);
+    this.emit(snapshot.bars.length > 0, 'snapshot');
   }
 
   private applyEvent(event: NormalizedMarketEvent): void {
@@ -379,7 +383,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         break;
       }
     }
-    this.emit(barFinalized);
+    this.emit(barFinalized, event.kind);
   }
 
   private handleDrop(): void {
@@ -392,7 +396,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     }
     this.degraded = true;
     this.state = 'connecting';
-    this.emit(false);
+    this.emit(false, 'lifecycle');
     this.scheduleReconnect();
   }
 
@@ -454,7 +458,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     return this.store.activeCandle(interval as RealtimeInterval);
   }
 
-  private emit(barFinalized: boolean): void {
+  private emit(barFinalized: boolean, eventKind: MarketUpdate['eventKind'] = 'lifecycle'): void {
     const hasPrice = this.lastPrice !== null && isTradeablePrice(this.lastPrice);
     const receivedAt = new Date(this.now()).toISOString();
     const label = buildRealtimeLabel({
@@ -481,6 +485,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       haltReason: this.haltReason,
       session: this.selection.session,
       barFinalized,
+      eventKind,
       // The socket lifecycle at emit time. The coordinator uses this to keep a
       // genuinely OPEN-but-quiet socket in a healthy "awaiting data" state instead
       // of degrading to a REST/"connection error" fallback before the first tick.

@@ -34,31 +34,50 @@ function candle(timestamp: number, close: number) {
   };
 }
 
-function yahooEnvelope(symbol: string, interval: CandleInterval, count = 2) {
+function polygonEnvelope(symbol: string, interval: CandleInterval, count = 2) {
   const candles = count === 0
     ? []
     : [candle(START, 100), candle(START + 300, 101)];
   return {
     data: {
-      symbol,
-      provider: 'yahoo-finance-chart',
-      attemptedProviders: ['yahoo-finance-chart'],
-      requestedInterval: interval,
-      actualInterval: interval,
-      sourceInterval: interval,
-      requestedRange: '1m',
-      actualStart: candles[0]?.timestamp ?? null,
-      actualEnd: candles.at(-1)?.timestamp ?? null,
-      exchangeTimezone: 'America/New_York',
-      currency: 'USD',
-      dataStatus: 'delayed',
-      delayedByMinutes: 0,
-      adjusted: false,
-      aggregated: false,
-      cacheStatus: 'miss',
-      candles,
-      warnings: [],
-      fallbackReason: null,
+      instrument: {
+        canonicalSymbol: symbol,
+        providerSymbol: symbol,
+        name: symbol,
+        assetType: 'stock',
+        exchange: 'NASDAQ',
+        mic: 'XNAS',
+        currency: 'USD',
+        timezone: 'America/New_York',
+        active: true,
+        supported: true,
+        unsupportedReason: null,
+      },
+      bars: {
+        symbol,
+        provider: 'polygon',
+        interval,
+        range: '1m',
+        adjusted: false,
+        session: 'extended',
+        timezone: 'America/New_York',
+        currency: 'USD',
+        firstTimestamp: candles[0]?.timestamp ?? null,
+        lastTimestamp: candles.at(-1)?.timestamp ?? null,
+        asOf: candles.at(-1)?.timestamp ?? null,
+        dataStatus: 'delayed',
+        delayedByMinutes: 0,
+        bars: candles.map((item) => ({
+          time: item.timestamp,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          volume: item.volume,
+          partial: false,
+        })),
+        warnings: [],
+      },
     },
   };
 }
@@ -100,8 +119,8 @@ afterEach(() => {
 });
 
 describe('MarketCandleChartPanel request lifecycle', () => {
-  it('collapses the Strict Mode mount into one Yahoo history request', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => response(yahooEnvelope('AAPL', '5m')));
+  it('collapses the Strict Mode mount into one Polygon history request', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response(polygonEnvelope('AAPL', '5m')));
     vi.stubGlobal('fetch', fetchMock);
     const host = document.createElement('div');
     document.body.append(host);
@@ -111,7 +130,7 @@ describe('MarketCandleChartPanel request lifecycle', () => {
       <StrictMode><MarketCandleChartPanel {...props()} /></StrictMode>,
     ));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/market/candles?');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/market/chart?');
     await act(async () => root.unmount());
   });
 
@@ -148,14 +167,14 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
 
     await act(async () => {
-      second.resolve(response(yahooEnvelope('MSFT', '10m')));
+      second.resolve(response(polygonEnvelope('MSFT', '10m')));
       await second.promise;
     });
     await vi.waitFor(() => expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-symbol')).toBe('MSFT'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-interval')).toBe('10m');
 
     await act(async () => {
-      first.resolve(response(yahooEnvelope('AAPL', '5m')));
+      first.resolve(response(polygonEnvelope('AAPL', '5m')));
       await first.promise;
     });
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-symbol')).toBe('MSFT');
@@ -165,7 +184,7 @@ describe('MarketCandleChartPanel request lifecycle', () => {
   it('renders truthful empty and provider-error states without candles', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => (
       String(input).includes('symbol=EMPTY')
-        ? response(yahooEnvelope('EMPTY', '5m', 0))
+        ? response(polygonEnvelope('EMPTY', '5m', 0))
         : response({
           data: null,
           error: { code: 'rate-limited', message: 'upstream detail', retryable: true },
@@ -177,11 +196,11 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     const root = createRoot(host);
 
     await act(async () => root.render(<MarketCandleChartPanel {...props('ERROR')} />));
-    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('Yahoo Finance is cooling down'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('Polygon is cooling down'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
 
     await act(async () => root.render(<MarketCandleChartPanel {...props('EMPTY')} />));
-    await vi.waitFor(() => expect(host.textContent).toContain('No validated real Yahoo candles'));
+    await vi.waitFor(() => expect(host.textContent).toContain('No validated Polygon candles'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
     await act(async () => root.unmount());
   });

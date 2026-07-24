@@ -21,6 +21,7 @@ import {
 import { resolvePublicMarketWsUrl } from '@/src/lib/market-data/realtime';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
+import { realtimeUpdatePolicy } from './realtime-performance';
 
 /** Regular-session cadence is 12s (inside the mandated 10–15s window); closed is slower. */
 const CADENCE = { regularMs: 12_000, closedMs: 60_000 };
@@ -47,8 +48,15 @@ export interface UseMarketSourceOptions {
   active: boolean;
   online: boolean;
   enabled: boolean;
-  /** Disable a non-Yahoo live stream when this view requires Yahoo-only candles. */
+  /** Disable the live stream for a view that explicitly requires REST-only data. */
   allowWebSocket?: boolean;
+  /**
+   * Imperative price sink owned by the header. Alpaca trade ticks call this ref
+   * directly instead of scheduling a React render for every trade.
+   */
+  transientPriceSinkRef?: {
+    current: ((price: number) => void) | null;
+  };
 }
 
 export interface UseMarketSourceResult {
@@ -121,7 +129,7 @@ const EMPTY_META: LiveMeta = {
  * newest verified exchange timestamp wins, with snapshot → aggregate → history
  * trust order breaking equal/missing timestamp ties. This keeps the header,
  * chart price line and S/R currentPrice on the same event without allowing an
- * older snapshot to contradict a newer Yahoo candle. A selection change isolates
+ * older snapshot to contradict a newer Polygon candle. A selection change isolates
  * aggregate candidates by selection key so sessions/intervals never mix.
  */
 const DEFAULT_SELECTION: MarketSelection = { interval: '5m', session: 'regular', adjusted: false };
@@ -190,6 +198,9 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   // Skip a live-meta rerender when nothing the header/chart reads has changed:
   // an intra-bar trade with an unchanged quote and no finalized bar is a no-op.
   const metaKeyRef = useRef('');
+  // Once live provenance has rendered, repeated trade ticks stay on the
+  // transient DOM path until a snapshot/bar needs a real React commit.
+  const hasCommittedLivePriceRef = useRef(false);
 
   useEffect(() => {
     if (!enabled) return;
@@ -220,24 +231,36 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       const updateSymbol = update.symbol.toUpperCase();
       setLastError(update.error);
       const candidate = candidateFromUpdate(update);
-      if (candidate?.source === 'snapshot' && update.quote) {
-        setSnapState({
-          symbol: updateSymbol,
-          candidate,
-          resource: {
-            data: update.quote,
-            freshness: freshnessFromMode(candidate.mode, candidate.exchangeTimestamp),
-            provider: candidate.provider,
-            reason: null,
-            error: null,
-            fallbackLabel: null,
-          },
-        });
-      } else if (candidate?.source === 'aggregate-fallback') {
-        setAggState({ symbol: updateSymbol, selectionKey: tag, candidate });
+      const policy = realtimeUpdatePolicy(update, hasCommittedLivePriceRef.current);
+      if (policy.transientPrice && update.price !== null) {
+        // Direct DOM update via StockPriceHeader's ref-backed sink. This is the
+        // hot path: no useState, no parent render, no chart reconciliation.
+        options.transientPriceSinkRef?.current?.(update.price);
       }
-      // The candle and the header price come from the same accepted event.
-      if (update.candle) setCandleState({ symbol: updateSymbol, selectionKey: tag, candle: update.candle });
+      if (policy.commitMarketState) {
+        if (candidate?.source === 'snapshot' && update.quote) {
+          setSnapState({
+            symbol: updateSymbol,
+            candidate,
+            resource: {
+              data: update.quote,
+              freshness: freshnessFromMode(candidate.mode, candidate.exchangeTimestamp),
+              provider: candidate.provider,
+              reason: null,
+              error: null,
+              fallbackLabel: null,
+            },
+          });
+        } else if (candidate?.source === 'aggregate-fallback') {
+          setAggState({ symbol: updateSymbol, selectionKey: tag, candidate });
+        }
+        // Snapshot / official bar commits feed the chart. Its series layer uses
+        // update() for the latest bar and never replays setData() per tick.
+        if (update.candle) {
+          setCandleState({ symbol: updateSymbol, selectionKey: tag, candle: update.candle });
+        }
+        if (update.label.realtime && candidate) hasCommittedLivePriceRef.current = true;
+      }
       // Capture top-of-book / halt state; only rerender when something the header
       // or chart actually reads has changed (or a bar just finalized).
       const nextMeta: LiveMeta = {
@@ -286,7 +309,10 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   }, [selectionKey]);
   // Follow a symbol change on the SAME socket: unsubscribe the old symbol and
   // subscribe the new one in place (no socket close/reopen).
-  useEffect(() => { sourceRef.current?.setSymbol?.(symUpper); }, [symUpper]);
+  useEffect(() => {
+    hasCommittedLivePriceRef.current = false;
+    sourceRef.current?.setSymbol?.(symUpper);
+  }, [symUpper]);
 
   // The candidates valid for the CURRENT symbol + selection. The snapshot is
   // symbol-scoped; the aggregate and history bar are selection-scoped, so a

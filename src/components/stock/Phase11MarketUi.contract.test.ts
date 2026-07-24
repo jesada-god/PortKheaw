@@ -21,7 +21,7 @@ describe('Phase 11 market UI production contract', () => {
   });
 
   it('uses one server-normalized gateway route with legacy trader presets and an optional history range', () => {
-    expect(candleChart).toContain('/api/market/candles?');
+    expect(candleChart).toContain('/api/market/chart?');
     expect(candleChart).not.toContain('aggregateSessionAwareIntraday');
     expect(candleChart).toContain('No candle is mocked, interpolated, forward-filled, or replaced by another provider');
     expect(candleChart).toContain('OptionToolRealtimeChart');

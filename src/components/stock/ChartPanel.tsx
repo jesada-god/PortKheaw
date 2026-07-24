@@ -63,7 +63,9 @@ export function ChartPanel({
   const [interval, setInterval] = useState<CandleInterval>('1D');
   const [range, setRange] = useState<HistoricalRange>('1y');
   const [session, setSession] = useState<MarketSessionMode>('regular');
-  const [adjusted, setAdjusted] = useState(false);
+  // Daily history starts with Polygon-adjusted prices (splits/dividends). The
+  // live Alpaca stream remains raw intraday data and never rewrites history.
+  const [adjusted, setAdjusted] = useState(true);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   const intraday = !['1D', 'Week', 'Month'].includes(interval);
 
@@ -88,7 +90,7 @@ export function ChartPanel({
     setInterval(preset.interval);
     setRange(preset.range);
     setSession(preset.session);
-    setAdjusted(false);
+    setAdjusted(['1D', 'Week', 'Month'].includes(nextInterval));
     setSelectionNotice(null);
   };
 

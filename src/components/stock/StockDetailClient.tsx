@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Activity, ArrowLeft, Bell, Share2, Star } from 'lucide-react';
 import { addWatchlistItemAction, removeWatchlistItemAction } from '@/app/watchlist/actions';
@@ -32,7 +32,7 @@ import type {
 import { CompanyProfileCard } from './CompanyProfileCard';
 import { resolvePriceCurrency, resolvePriceHeaderData } from './price-header';
 import { requestCompanyProfile } from './profile-retry';
-import { StockPriceHeader } from './StockPriceHeader';
+import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
 const ChartPanel = dynamic(
   () => import('./ChartPanel').then((module) => module.ChartPanel),
@@ -159,6 +159,9 @@ export function StockDetailClient({
   // market source so the header, chart price line and S/R currentPrice all read
   // one accepted value and timestamp.
   const [chartHistoryFallback, setChartHistoryFallback] = useState<AcceptedPriceCandidate | null>(null);
+  // Shared ref between the market source and StockPriceHeader. Trade ticks write
+  // directly to the price text node; snapshots/bars still flow through React.
+  const transientPriceSinkRef = useRef<TransientPriceSink | null>(null);
 
   useEffect(() => {
     if (profileRetryAt <= 0) return;
@@ -206,10 +209,11 @@ export function StockDetailClient({
     historyFallback: chartHistoryFallback,
     active: tabVisible,
     online: isOnline,
-    // Yahoo Chart JSON is the no-key OHLCV source for the shared active candle.
-    // Snapshot entitlement remains independent and can still report unavailable.
+    // Polygon REST bootstraps history; Alpaca IEX owns the live trade/bar stream.
+    // When the Gateway URL is absent, the coordinator safely falls back to REST.
     enabled: true,
-    allowWebSocket: false,
+    allowWebSocket: true,
+    transientPriceSinkRef,
   });
 
   const quote = quoteResource.data;
@@ -382,6 +386,7 @@ export function StockDetailClient({
           symbolHalted={halted}
           haltReason={haltReason}
           connectionState={connectionState}
+          transientPriceSinkRef={transientPriceSinkRef}
         />
 
         <div className="sticky top-16 z-30 -mx-4 border-y border-slate-800 bg-[#0A0E17]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
