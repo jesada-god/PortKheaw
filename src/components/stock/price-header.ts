@@ -180,6 +180,25 @@ export function resolvePriceHeaderData(input: {
     && acceptedAsOf
     && acceptedSession === expectedExtendedSession;
 
+  // A quote accepted from the entitled Alpaca stream is the newest market
+  // observation available to this app. Keep it in the primary price row in
+  // every session; otherwise an after-hours snapshot is hidden behind the
+  // previous regular close and the screen appears stale until another trade.
+  const genuineAlpacaRealtime = currentQuote
+    && tradeablePrice(currentQuote.price)
+    && current.freshness.status === 'realtime'
+    && current.provider?.toLowerCase().startsWith('alpaca');
+
+  if (genuineAlpacaRealtime) {
+    return {
+      quote: currentQuote,
+      freshness: current.freshness,
+      provider: current.provider,
+      fallbackLabel: null,
+      extendedQuote: null,
+    };
+  }
+
   if (!acceptedExtended || !expectedExtendedSession || !currentQuote || !acceptedAsOf) {
     return {
       quote: currentQuote,

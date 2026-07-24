@@ -63,11 +63,6 @@ interface StockPriceHeaderProps {
   realtime?: boolean;
   /** Upstream feed id, e.g. `iex`. The badge names the feed (IEX ≠ consolidated SIP). */
   feed?: string | null;
-  /** Top-of-book from the live stream, shown separately from Last Price. */
-  bid?: number | null;
-  ask?: number | null;
-  bidSize?: number | null;
-  askSize?: number | null;
   /** Per-symbol trading halt, independent of the market-wide session. */
   symbolHalted?: boolean;
   haltReason?: string | null;
@@ -176,10 +171,6 @@ export function StockPriceHeader({
   extendedQuote = null,
   realtime = false,
   feed = null,
-  bid = null,
-  ask = null,
-  bidSize = null,
-  askSize = null,
   symbolHalted = false,
   haltReason = null,
   connectionState = null,
@@ -250,9 +241,6 @@ export function StockPriceHeader({
   // Status-only view of the live socket. Never derives price/freshness — it is
   // rendered ALONGSIDE the existing status, never replacing it.
   const connectionView = connectionStatusPresentation(connectionState);
-  const displayBid = bid != null && verifiedUsdSource ? convertUsdForDisplay(bid, selectedCurrency, fxRate) : bid;
-  const displayAsk = ask != null && verifiedUsdSource ? convertUsdForDisplay(ask, selectedCurrency, fxRate) : ask;
-  const showBook = displayBid != null && Number.isFinite(displayBid) && displayAsk != null && Number.isFinite(displayAsk);
 
   useEffect(() => {
     if (!transientPriceSinkRef) return;
@@ -374,18 +362,6 @@ export function StockPriceHeader({
             </>}
           </div>
 
-          {showBook && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-sm tabular-nums">
-            <span className="inline-flex items-baseline gap-1">
-              <span className="text-xs uppercase tracking-wide text-text-muted">Bid</span>
-              <span className="text-text-main">{formatNumber(displayBid)}</span>
-              {bidSize != null && <span className="text-xs text-text-muted">× {bidSize}</span>}
-            </span>
-            <span className="inline-flex items-baseline gap-1">
-              <span className="text-xs uppercase tracking-wide text-text-muted">Ask</span>
-              <span className="text-text-main">{formatNumber(displayAsk)}</span>
-              {askSize != null && <span className="text-xs text-text-muted">× {askSize}</span>}
-            </span>
-          </div>}
         </div>
 
         <div className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-bg-base p-1">

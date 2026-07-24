@@ -193,10 +193,6 @@ export function StockDetailClient({
     quoteRetryAt,
     liveCandle,
     dataLabel,
-    bid,
-    ask,
-    bidSize,
-    askSize,
     halted,
     haltReason,
     connectionState,
@@ -379,10 +375,6 @@ export function StockDetailClient({
           extendedQuote={priceHeaderData.extendedQuote}
           realtime={dataLabel?.realtime ?? false}
           feed={dataLabel?.feed ?? null}
-          bid={bid}
-          ask={ask}
-          bidSize={bidSize}
-          askSize={askSize}
           symbolHalted={halted}
           haltReason={haltReason}
           connectionState={connectionState}

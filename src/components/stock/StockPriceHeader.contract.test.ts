@@ -58,6 +58,14 @@ describe('StockPriceHeader integration contract', () => {
     expect(header).toContain('withSeconds: true');
   });
 
+  it('does not render Bid or Ask in the stock price header', () => {
+    expect(header).not.toContain('showBook');
+    expect(header).not.toContain('displayBid');
+    expect(header).not.toContain('displayAsk');
+    expect(detail).not.toContain('bid={bid}');
+    expect(detail).not.toContain('ask={ask}');
+  });
+
   it('keeps Previous Close out of the Overview cards', () => {
     const overviewCards = detail.slice(detail.indexOf('function Overview'));
     expect(overviewCards).not.toContain("['Previous Close'");

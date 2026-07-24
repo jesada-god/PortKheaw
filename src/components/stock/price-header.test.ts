@@ -155,6 +155,27 @@ describe('stock price header accepted quote partition', () => {
     expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
   });
 
+  it('keeps a genuine Alpaca real-time snapshot primary after hours', () => {
+    const initial = quoteResource(HEADER_QUOTE, '2026-07-23T20:00:00.000Z');
+    const current = {
+      ...quoteResource(
+        { ...HEADER_QUOTE, price: 206.87, previousClose: 208.76 },
+        '2026-07-24T20:26:14.801Z',
+      ),
+      provider: 'alpaca:iex',
+    };
+    const result = resolvePriceHeaderData({
+      current,
+      initial,
+      marketStatus: 'after-hours',
+      evaluatedAt: '2026-07-24T20:26:15.000Z',
+    });
+    expect(result.quote?.price).toBe(206.87);
+    expect(result.provider).toBe('alpaca:iex');
+    expect(result.fallbackLabel).toBeNull();
+    expect(result.extendedQuote).toBeNull();
+  });
+
   it('shows a closed regular quote without an extended row when no extended quote was accepted', () => {
     const current = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
     const result = resolvePriceHeaderData({

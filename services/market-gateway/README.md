@@ -44,8 +44,11 @@ exponential backoff. It never returns a credential, URL, or key.
 - **Abuse limits** — inbound WS messages are capped at 16 KB (`maxPayload`),
   connections are rate-limited per IP, subscribe/unsubscribe frames are
   rate-limited per client, and the symbol cap is 30 per client.
-- **One upstream per instance** — scale by running more instances, never a
-  second upstream socket.
+- **One upstream per Alpaca key** — the free IEX plan permits only one active
+  stream for the same credentials. Keep this service at one replica and do not
+  deploy the same `ALPACA_*` keys to a second Railway service. `railway.json`
+  disables deployment overlap so a replacement does not compete with the
+  retiring instance.
 - **Graceful shutdown** — `SIGTERM`/`SIGINT` drain in order (timers → upstream →
   peers → WS server → HTTP server) then exit `0`, with a force-exit backstop.
 - **Fatal safety** — `uncaughtException` / `unhandledRejection` log a *sanitized*
