@@ -84,13 +84,16 @@ function input(overrides: Partial<ValuationInput> = {}): ValuationInput {
 }
 
 describe('RKLB-style loss-making regression', () => {
-  it('does not publish a value when latest reported FCF is negative', () => {
+  it('does not publish DCF or Base when latest reported FCF is negative', () => {
     const result = calculateFairValue(input(), now);
     expect(result).toMatchObject({
-      status: 'unavailable',
-      missingFields: expect.arrayContaining(['latestRealFreeCashFlow']),
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['latestRealFreeCashFlow']),
     });
-    expect(result).not.toHaveProperty('fundamentalFairValue');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toEqual(['ev-sales']);
+    expect(result.fundamentalFairValue.centralEstimate).toBeNull();
   });
 
   it('uses forward EV/Sales when target forward EPS is non-positive and DCF is valid', () => {
@@ -111,8 +114,9 @@ describe('RKLB-style loss-making regression', () => {
       peerObservations: peers.slice(0, 3),
     }), now);
     expect(result).toMatchObject({
-      status: 'unavailable',
-      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['validForwardPeers>=4']),
     });
   });
 

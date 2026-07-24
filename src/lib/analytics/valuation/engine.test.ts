@@ -92,13 +92,17 @@ describe('Nexora deterministic Fair Value engine', () => {
     if (result.status !== 'available') return;
     const dcf = result.modelResults.find((model) => model.model === 'fcff-dcf')!;
     const multiples = result.modelResults.find((model) => model.model === 'pe')!;
+    expect(result.baseStatus).toBe('available');
     expect(dcf.weight).toBe(0.6);
     expect(multiples.weight).toBe(0.4);
-    expect(result.fundamentalFairValue.centralEstimate).toBeCloseTo(
+    const centralEstimate = result.fundamentalFairValue.centralEstimate;
+    expect(centralEstimate).not.toBeNull();
+    if (centralEstimate === null) return;
+    expect(centralEstimate).toBeCloseTo(
       dcf.fairValue * 0.6 + multiples.fairValue * 0.4,
     );
     expect(result.upsidePercent).toBeCloseTo(
-      (result.fundamentalFairValue.centralEstimate - input.marketPrice) / input.marketPrice * 100,
+      (centralEstimate - input.marketPrice) / input.marketPrice * 100,
     );
     expect(result.currency).toBe('USD');
     expect(result.inputDetails.map((detail) => detail.field)).toEqual(expect.arrayContaining([
@@ -125,31 +129,47 @@ describe('Nexora deterministic Fair Value engine', () => {
     }
   });
 
-  it('returns unavailable for missing estimates, insufficient peers, WACC failure, or non-finite input', () => {
+  it('returns unavailable only when neither model passes, and exposes valid partial models', () => {
     const missingEstimates = calculateFairValue({ ...input, analystEstimates: [] }, Date.parse('2026-07-25'));
     expect(missingEstimates).toMatchObject({
       status: 'unavailable',
-      missingFields: expect.arrayContaining(['forwardEstimates']),
+      missingFields: expect.arrayContaining(['forwardRevenueEstimates', 'targetForwardEstimate']),
     });
     const peers = calculateFairValue({
       ...input,
       peerObservations: input.peerObservations!.slice(0, 3),
     }, Date.parse('2026-07-25'));
     expect(peers).toMatchObject({
-      status: 'unavailable',
-      provider: 'financial-modeling-prep',
-      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['validForwardPeers>=4']),
     });
+    if (peers.status === 'available') {
+      expect(peers.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
+      expect(peers.fundamentalFairValue.centralEstimate).toBeNull();
+      expect(peers.upsidePercent).toBeNull();
+    }
     const wacc = calculateFairValue({
       ...input,
       waccMarketInputs: { ...input.waccMarketInputs!, beta: null },
     }, Date.parse('2026-07-25'));
-    expect(wacc).toMatchObject({ status: 'unavailable', missingFields: expect.arrayContaining(['beta']) });
+    expect(wacc).toMatchObject({
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['beta']),
+    });
+    if (wacc.status === 'available') {
+      expect(wacc.modelResults.map((model) => model.model)).toEqual(['pe']);
+    }
     const nonFinite = calculateFairValue({
       ...input,
       periods: [{ ...latest, freeCashFlow: Number.POSITIVE_INFINITY }],
     }, Date.parse('2026-07-25'));
-    expect(nonFinite).toMatchObject({ status: 'unavailable' });
+    expect(nonFinite).toMatchObject({
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['latestRealFreeCashFlow']),
+    });
   });
 
   it('rejects stale peers and incomplete multi-year consensus instead of extending them', () => {
@@ -162,8 +182,9 @@ describe('Nexora deterministic Fair Value engine', () => {
       })),
     }, Date.parse('2026-07-25'));
     expect(stalePeers).toMatchObject({
-      status: 'unavailable',
-      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['validForwardPeers>=4']),
     });
 
     const incompleteConsensus = calculateFairValue({
@@ -171,17 +192,58 @@ describe('Nexora deterministic Fair Value engine', () => {
       analystEstimates: input.analystEstimates!.slice(0, 3),
     }, Date.parse('2026-07-25'));
     expect(incompleteConsensus).toMatchObject({
-      status: 'unavailable',
-      missingFields: expect.arrayContaining(['forwardRevenueEstimates']),
+      status: 'available',
+      baseStatus: 'unavailable',
+      missingInputs: expect.arrayContaining(['forwardRevenueEstimates']),
     });
   });
 
-  it('never fabricates a numeric fallback when a critical model is unavailable', () => {
+  it('never fabricates or reweights Base Fair Value when one model is unavailable', () => {
     const result = calculateFairValue({
       ...input,
       peerObservations: [],
     }, Date.parse('2026-07-25'));
-    expect(result.status).toBe('unavailable');
-    expect(result).not.toHaveProperty('fundamentalFairValue');
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.baseStatus).toBe('unavailable');
+    expect(result.fundamentalFairValue.centralEstimate).toBeNull();
+    expect(result.modelResults).toHaveLength(1);
+    expect(result.modelResults[0].model).toBe('fcff-dcf');
+    expect(result.modelResults[0].normalizedWeight).toBeUndefined();
+  });
+
+  it('deterministically caps quality at Medium and discloses grounded evidence', () => {
+    const source = {
+      url: 'https://www.nasdaq.com/market-activity/stocks/test/earnings',
+      publisher: 'Nasdaq',
+      publishedAt: '2026-07-24',
+      evidence: 'TEST FY2026 revenue consensus is 1080 USD.',
+      quality: 'reputable' as const,
+    };
+    const estimates = input.analystEstimates!.map((estimate, index) => index === 0
+      ? {
+          ...estimate,
+          revenueProvenance: {
+            provider: 'gemini-grounded-research',
+            sourceType: 'gemini-grounded' as const,
+            field: 'analystConsensusRevenue',
+            fiscalPeriod: estimate.periodEnd,
+            asOf: estimate.asOf,
+            sourceUrl: source.url,
+            evidence: [source],
+            evidenceQuality: 'medium' as const,
+          },
+        }
+      : estimate);
+    const result = calculateFairValue({ ...input, analystEstimates: estimates }, Date.parse('2026-07-25'));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.dataQualityLabel).toBe('Medium');
+    expect(result.inputDetails).toContainEqual(expect.objectContaining({
+      field: 'Consensus Revenue 2026-12-31',
+      sourceType: 'gemini-grounded',
+      sourceUrl: source.url,
+      evidenceCount: 1,
+    }));
   });
 });

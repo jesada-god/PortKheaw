@@ -64,7 +64,12 @@ export function FairValueSection({ symbol }: { symbol: string }) {
       {available && (
         <div className="mt-5 space-y-4">
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <Value label="Fair Value" value={formatFairValueMoney(available.fundamentalFairValue.centralEstimate)} />
+            <Value
+              label="Base Fair Value"
+              value={available.baseStatus === 'available'
+                ? formatFairValueMoney(available.fundamentalFairValue.centralEstimate)
+                : 'ยังสร้างราคากลางไม่ได้'}
+            />
             <Value label="Current Price" value={formatFairValueMoney(available.marketPrice.value)} />
             <Value label="Upside/Downside" value={formatUpsidePercent(available.upsidePercent)} />
             <Value label="DCF" value={formatFairValueMoney(dcf?.fairValue ?? null)} />
@@ -76,11 +81,19 @@ export function FairValueSection({ symbol }: { symbol: string }) {
             <div className="mt-3 space-y-3 text-xs text-slate-400">
               {available.modelResults.map((model) => (
                 <div key={model.model}>
-                  <p className="font-semibold text-slate-200">{modelLabel(model.model)} · {(model.weight * 100).toFixed(0)}%</p>
+                  <p className="font-semibold text-slate-200">
+                    {modelLabel(model.model)}
+                    {available.baseStatus === 'available' ? ` · ${(model.weight * 100).toFixed(0)}%` : ' · standalone model'}
+                  </p>
                   <p>{model.methodology}</p>
                   <pre className="mt-1 overflow-auto">{JSON.stringify(model.inputs, null, 2)}</pre>
                 </div>
               ))}
+              {available.baseStatus === 'unavailable' && (
+                <p className="text-amber-300">
+                  Base Fair Value ต้องมีทั้ง DCF และ Forward Multiples ที่ผ่าน validation
+                </p>
+              )}
               <p>Calculated {formatBangkokDateTime(available.calculatedAt)} · {available.methodologyVersion}</p>
             </div>
           </details>

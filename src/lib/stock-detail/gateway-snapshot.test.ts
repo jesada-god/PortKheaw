@@ -139,6 +139,8 @@ describe('loadStockDetailGatewaySnapshot quote/chart capability separation', () 
     const snapshot = await loadStockDetailGatewaySnapshot('AAPL');
 
     expect(snapshot.quote.data?.price).toBe(188.9);
+    expect(snapshot.quote.data?.previousClose).toBeNull();
+    expect(snapshot.quote.data?.change).toBeNull();
     expect(snapshot.quote.fallbackLabel).toBe('Intraday close fallback');
   });
 

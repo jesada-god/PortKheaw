@@ -111,7 +111,12 @@ export function FairValueCard({
           </div>
         ) : available ? (
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[10px] sm:grid-cols-3">
-            <Metric label="Fair Value" value={formatFairValueMoney(base)} />
+            <Metric
+              label="Base Fair Value"
+              value={available.baseStatus === 'available'
+                ? formatFairValueMoney(base)
+                : language === 'th' ? 'ยังสร้างไม่ได้' : 'Unavailable'}
+            />
             <Metric label="Current Price" value={formatFairValueMoney(available.marketPrice.value)} />
             <Metric
               label="Upside/Downside"
@@ -124,6 +129,13 @@ export function FairValueCard({
             <div className="col-span-full text-slate-500">
               {modelLabel(available.selectedModel)} · {displayStatus(available)} · USD source of truth
             </div>
+            {available.baseStatus === 'unavailable' && (
+              <div className="col-span-full text-amber-300">
+                {language === 'th'
+                  ? 'แสดงเฉพาะ model ที่ผ่าน validation; ยังไม่มี Base 60/40'
+                  : 'Validated model only; no 60/40 Base Fair Value.'}
+              </div>
+            )}
           </dl>
         ) : (
           <div>

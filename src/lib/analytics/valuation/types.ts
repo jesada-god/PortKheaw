@@ -15,6 +15,27 @@ export type FairValueFailureKind =
 export type CompanyClassification = 'profitable-growth' | 'mature-dividend-paying' | 'cyclical' | 'financial-institution' | 'reit' | 'early-stage-high-growth' | 'loss-making' | 'asset-heavy' | 'commodity-sensitive';
 export type ModelId = 'fcff-dcf' | 'fcfe' | 'ddm' | 'relative' | 'asset-based' | 'ev-sales' | 'ev-ebitda' | 'pe' | 'peg' | 'pb';
 export type FairValueDataStatus = 'live' | 'delayed' | 'cached' | 'stale' | 'limited' | 'unavailable';
+export type ValuationEvidenceSourceType = 'structured-provider' | 'gemini-grounded' | 'derived';
+export type EvidenceQuality = 'high' | 'medium';
+
+export interface ValuationEvidenceSource {
+  url: string;
+  publisher: string;
+  publishedAt: string;
+  evidence: string;
+  quality: 'primary' | 'reputable' | 'secondary';
+}
+
+export interface MetricProvenance {
+  provider: string;
+  sourceType: Exclude<ValuationEvidenceSourceType, 'derived'>;
+  field: string;
+  fiscalPeriod: string;
+  asOf: string;
+  sourceUrl?: string;
+  evidence: ValuationEvidenceSource[];
+  evidenceQuality: EvidenceQuality;
+}
 
 export interface FinancialPeriod {
   periodEnd: string;
@@ -87,6 +108,15 @@ export interface ValuationInput {
    */
   forwardRevenue?: { value: number; period: string; provider: string; asOf: string } | null;
   providerStatus?: Exclude<FairValueDataStatus, 'unavailable'>;
+  researchAudit?: {
+    geminiUsed: boolean;
+    evidenceSourceCount: number;
+    rejectedReasons: string[];
+  };
+  peerAudit?: {
+    candidates: string[];
+    rejected: Array<{ symbol: string; reason: string }>;
+  };
   displayFx?: {
     rate: number;
     asOf: string;
@@ -104,6 +134,9 @@ export interface AnalystEstimate {
   epsAnalystCount: number | null;
   provider: string;
   asOf: string;
+  currency?: string;
+  revenueProvenance?: MetricProvenance | null;
+  epsProvenance?: MetricProvenance | null;
 }
 
 export interface PeerObservation {
@@ -119,6 +152,8 @@ export interface PeerObservation {
   estimatePeriod: string | null;
   estimateAsOf: string | null;
   provider: string;
+  estimateProvenance?: MetricProvenance | null;
+  candidateSource?: 'provider-peers' | 'industry' | 'sector';
 }
 
 export interface WaccMarketInputs {
@@ -168,6 +203,10 @@ export interface ValuationInputDisclosure {
   asOf: string;
   status: 'available' | 'limited' | 'stale';
   origin: 'provider' | 'derived';
+  sourceType: ValuationEvidenceSourceType;
+  sourceUrl?: string;
+  evidenceCount?: number;
+  evidence?: ValuationEvidenceSource[];
 }
 export interface ValuationAssumptionDisclosure {
   field: string;
@@ -196,7 +235,14 @@ export interface FairValueUnavailable {
 export interface FairValueAvailable {
   status: 'available'; symbol: string; currency: string; marketPrice: { value: number; asOf: string; source: string; sourceType: AnalyticsSourceType };
   companyClassification: ClassificationResult; modelResults: Array<ModelResult & { weight: number }>; excludedModels: ExcludedModel[];
-  fundamentalFairValue: { conservative: { low: number; high: number }; base: { low: number; high: number }; optimistic: { low: number; high: number }; centralEstimate: number; dispersion: number };
+  fundamentalFairValue: {
+    conservative: { low: number | null; high: number | null };
+    base: { low: number | null; high: number | null };
+    optimistic: { low: number | null; high: number | null };
+    centralEstimate: number | null;
+    dispersion: number | null;
+  };
+  baseStatus: 'available' | 'unavailable';
   technicalContext: { status: 'available'; trendState: string; smaEmaStructure: string; rsi: number | null; macd: number | null; atr: number | null; realizedVolatility: number | null; relativeVolume: number | null; drawdown: number; fiftyTwoWeekHigh: number; fiftyTwoWeekLow: number; distanceFromHigh: number; distanceFromLow: number; distanceFromFairValueRange: number; supportResistance: unknown; source: string; asOf: string; limitations: string[] } | { status: 'unavailable'; reason: string };
   fundamentalQuality: QualityScore;
   dataQuality: { score: number; completeness: number; freshness: number; periodConsistency: number; currencyConsistency: number };
@@ -206,8 +252,8 @@ export interface FairValueAvailable {
   missingInputs: string[];
   dataStatus: Exclude<FairValueDataStatus, 'unavailable'>;
   selectedModel: ModelId | 'blended';
-  upsideAmount: number;
-  upsidePercent: number;
+  upsideAmount: number | null;
+  upsidePercent: number | null;
   sector: string;
   industry: string;
   sectorRuleId: string;
@@ -216,6 +262,11 @@ export interface FairValueAvailable {
   assumptionDetails: ValuationAssumptionDisclosure[];
   displayFx: ValuationInput['displayFx'];
   inputs: Record<string, unknown>; assumptions: Record<string, unknown>; sources: Array<{ name: string; asOf: string; sourceType: AnalyticsSourceType }>;
+  researchAudit?: {
+    geminiUsed: boolean;
+    evidenceSourceCount: number;
+    rejectedReasons: string[];
+  };
   latestDataAt: string; calculatedAt: string; methodologyVersion: typeof METHODOLOGY_VERSION; limitations: string[];
 }
 

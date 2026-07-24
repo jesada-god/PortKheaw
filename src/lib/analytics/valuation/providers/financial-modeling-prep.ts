@@ -10,7 +10,7 @@ import type {
 
 const BASE_URL = 'https://financialmodelingprep.com/stable';
 const TIMEOUT_MS = 10_000;
-const MAX_PEER_CANDIDATES = 10;
+const MAX_PEER_CANDIDATES = 16;
 const FRESH_MS = {
   quote: 5 * 60_000,
   profile: 7 * 86_400_000,
@@ -33,6 +33,12 @@ interface LoadedPayload {
   cache: CacheState;
 }
 
+interface PeerLoadResult {
+  observation: PeerObservation | null;
+  cacheStates: CacheState[];
+  rejectionReasons: string[];
+}
+
 export interface FmpValuationDataset {
   provider: 'financial-modeling-prep';
   marketPrice: number | null;
@@ -48,6 +54,9 @@ export interface FmpValuationDataset {
   industry: string | null;
   asOf: string;
   cacheStatus: CacheState;
+  peerCandidates: string[];
+  peerRejections: Array<{ symbol: string; reason: string }>;
+  endpointErrors: Record<string, string>;
 }
 
 function rows(payload: unknown): RawRow[] {
@@ -99,16 +108,39 @@ function newestByDate(input: RawRow[]): RawRow | undefined {
 function normalizedEstimate(row: RawRow, fetchedAt: string): AnalystEstimate | null {
   const periodEnd = firstDate(row, ['date', 'periodEnd']);
   if (!periodEnd) return null;
+  const estimatedRevenue = firstNumber(row, ['revenueAvg', 'estimatedRevenueAvg', 'estimatedRevenue']);
+  const estimatedEps = firstNumber(row, ['epsAvg', 'estimatedEpsAvg', 'estimatedEPS', 'estimatedEps']);
   return {
     periodEnd,
     // Stable FMP currently uses revenueAvg/epsAvg. The explicit aliases keep the
     // adapter compatible with the documented estimatedRevenue/estimatedEPS names.
-    estimatedRevenue: firstNumber(row, ['revenueAvg', 'estimatedRevenueAvg', 'estimatedRevenue']),
-    estimatedEps: firstNumber(row, ['epsAvg', 'estimatedEpsAvg', 'estimatedEPS', 'estimatedEps']),
+    estimatedRevenue,
+    estimatedEps,
     revenueAnalystCount: firstNumber(row, ['numAnalystsRevenue', 'numberAnalystsEstimatedRevenue']),
     epsAnalystCount: firstNumber(row, ['numAnalystsEps', 'numberAnalystEstimatedEps']),
     provider: 'financial-modeling-prep',
     asOf: fetchedAt,
+    currency: 'USD',
+    revenueProvenance: estimatedRevenue === null ? null : {
+      provider: 'financial-modeling-prep',
+      sourceType: 'structured-provider',
+      field: 'revenueAvg',
+      fiscalPeriod: periodEnd,
+      asOf: fetchedAt,
+      sourceUrl: `${BASE_URL}/analyst-estimates`,
+      evidence: [],
+      evidenceQuality: 'high',
+    },
+    epsProvenance: estimatedEps === null ? null : {
+      provider: 'financial-modeling-prep',
+      sourceType: 'structured-provider',
+      field: 'epsAvg',
+      fiscalPeriod: periodEnd,
+      asOf: fetchedAt,
+      sourceUrl: `${BASE_URL}/analyst-estimates`,
+      evidence: [],
+      evidenceQuality: 'high',
+    },
   };
 }
 
@@ -240,14 +272,22 @@ export class FinancialModelingPrepValuationProvider {
     symbol: string,
     target: { sector: string | null; industry: string | null },
     today: string,
-  ): Promise<{ observation: PeerObservation | null; cacheStates: CacheState[] }> {
-    const [profileResult, quoteResult, enterpriseResult, estimatesResult] = await Promise.all([
+    candidateSource: NonNullable<PeerObservation['candidateSource']>,
+  ): Promise<PeerLoadResult> {
+    const [profileSettled, quoteSettled, enterpriseSettled, estimatesSettled] = await Promise.allSettled([
       this.load('profile', { symbol }, FRESH_MS.profile),
       this.load('quote', { symbol }, FRESH_MS.quote),
       this.load('enterprise-values', { symbol, period: 'annual', limit: '1' }, FRESH_MS.financial),
       this.load('analyst-estimates', { symbol, period: 'annual', page: '0', limit: '10' }, FRESH_MS.financial),
     ]);
-    const profile = rows(profileResult.payload).at(0);
+    const profileResult = profileSettled.status === 'fulfilled' ? profileSettled.value : null;
+    const quoteResult = quoteSettled.status === 'fulfilled' ? quoteSettled.value : null;
+    const enterpriseResult = enterpriseSettled.status === 'fulfilled' ? enterpriseSettled.value : null;
+    const estimatesResult = estimatesSettled.status === 'fulfilled' ? estimatesSettled.value : null;
+    const cacheStates = [profileResult, quoteResult, enterpriseResult, estimatesResult]
+      .filter((result): result is LoadedPayload => result !== null)
+      .map((result) => result.cache);
+    const profile = rows(profileResult?.payload).at(0);
     const peerIdentity = {
       sector: text(profile?.sector),
       industry: text(profile?.industry),
@@ -255,48 +295,94 @@ export class FinancialModelingPrepValuationProvider {
     if (!profile || !sameIndustryOrSector(target, peerIdentity)) {
       return {
         observation: null,
-        cacheStates: [profileResult.cache, quoteResult.cache, enterpriseResult.cache, estimatesResult.cache],
+        cacheStates,
+        rejectionReasons: [!profile ? 'missing-profile' : 'industry-sector-mismatch'],
       };
     }
-    const quote = rows(quoteResult.payload).at(0);
-    const enterprise = newestByDate(rows(enterpriseResult.payload));
+    const quote = rows(quoteResult?.payload).at(0);
+    const enterprise = newestByDate(rows(enterpriseResult?.payload));
     const estimate = nearestFutureEstimate(
-      rows(estimatesResult.payload)
-        .map((row) => normalizedEstimate(row, new Date(estimatesResult.fetchedAt).toISOString()))
+      rows(estimatesResult?.payload)
+        .map((row) => normalizedEstimate(
+          row,
+          new Date(estimatesResult?.fetchedAt ?? this.now()).toISOString(),
+        ))
         .filter((item): item is AnalystEstimate => item !== null),
       today,
     );
+    const price = firstNumber(quote, ['price']);
+    const enterpriseValue = firstNumber(enterprise, ['enterpriseValue']);
+    const rejectionReasons = [
+      ...(!price ? ['missing-quote'] : []),
+      ...(!enterpriseValue ? ['missing-EV'] : []),
+      ...(!estimate || (estimate.estimatedEps === null && estimate.estimatedRevenue === null)
+        ? ['missing-estimate'] : []),
+    ];
     return {
       observation: {
         symbol,
         ...peerIdentity,
-        price: firstNumber(quote, ['price']),
-        priceAsOf: isoFromTimestamp(quote?.timestamp) ?? new Date(quoteResult.fetchedAt).toISOString(),
-        enterpriseValue: firstNumber(enterprise, ['enterpriseValue']),
+        price,
+        priceAsOf: quoteResult
+          ? isoFromTimestamp(quote?.timestamp) ?? new Date(quoteResult.fetchedAt).toISOString()
+          : null,
+        enterpriseValue,
         enterpriseValueAsOf: firstDate(enterprise, ['date']),
         forwardEps: estimate?.estimatedEps ?? null,
         forwardRevenue: estimate?.estimatedRevenue ?? null,
         estimatePeriod: estimate?.periodEnd ?? null,
         estimateAsOf: estimate?.asOf ?? null,
         provider: this.id,
+        estimateProvenance: estimate?.estimatedEps !== null && estimate?.estimatedEps !== undefined
+          ? estimate.epsProvenance ?? null
+          : estimate?.revenueProvenance ?? null,
+        candidateSource,
       },
-      cacheStates: [profileResult.cache, quoteResult.cache, enterpriseResult.cache, estimatesResult.cache],
+      cacheStates,
+      rejectionReasons,
     };
+  }
+
+  private safeError(cause: unknown): string {
+    return cause instanceof MarketDataError ? cause.code : 'provider-unavailable';
+  }
+
+  private rankedScreenerSymbols(
+    payload: unknown,
+    target: { sector: string | null; industry: string | null; marketCap: number | null },
+    kind: 'industry' | 'sector',
+  ): string[] {
+    const normalizedTarget = text(target[kind])?.toLowerCase();
+    if (!normalizedTarget) return [];
+    return rows(payload)
+      .filter((row) => text(row[kind])?.toLowerCase() === normalizedTarget)
+      .map((row) => ({
+        symbol: text(row.symbol)?.toUpperCase() ?? null,
+        marketCap: firstNumber(row, ['marketCap', 'marketCapitalization']),
+      }))
+      .filter((item): item is { symbol: string; marketCap: number | null } => Boolean(item.symbol))
+      .toSorted((left, right) => {
+        if (!target.marketCap || target.marketCap <= 0) return left.symbol.localeCompare(right.symbol);
+        const distance = (value: number | null) => value && value > 0
+          ? Math.abs(Math.log(value / target.marketCap!)) : Number.POSITIVE_INFINITY;
+        return distance(left.marketCap) - distance(right.marketCap);
+      })
+      .map((item) => item.symbol);
   }
 
   async getValuationDataset(rawSymbol: string): Promise<FmpValuationDataset> {
     const symbol = rawSymbol.trim().toUpperCase();
     const today = new Date(this.now()).toISOString().slice(0, 10);
-    const [
-      estimatesResult,
-      peersResult,
-      profileResult,
-      quoteResult,
-      enterpriseResult,
-      treasuryResult,
-      premiumResult,
-    ] =
-      await Promise.all([
+    const endpointNames = [
+      'analyst-estimates',
+      'stock-peers',
+      'profile',
+      'quote',
+      'enterprise-values',
+      'treasury-rates',
+      'market-risk-premium',
+    ] as const;
+    const settled = await Promise.allSettled([
         this.load('analyst-estimates', { symbol, period: 'annual', page: '0', limit: '10' }, FRESH_MS.financial),
         this.load('stock-peers', { symbol }, FRESH_MS.financial),
         this.load('profile', { symbol }, FRESH_MS.profile),
@@ -305,82 +391,184 @@ export class FinancialModelingPrepValuationProvider {
         this.load('treasury-rates', {}, FRESH_MS.financial),
         this.load('market-risk-premium', {}, FRESH_MS.financial),
       ]);
-    const profile = rows(profileResult.payload).at(0);
-    const quote = rows(quoteResult.payload).at(0);
+    const endpointErrors: Record<string, string> = {};
+    const results = settled.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value;
+      endpointErrors[endpointNames[index]] = this.safeError(result.reason);
+      return null;
+    });
+    const [
+      estimatesResult,
+      peersResult,
+      profileResult,
+      quoteResult,
+      enterpriseResult,
+      treasuryResult,
+      premiumResult,
+    ] = results;
+    const profile = rows(profileResult?.payload).at(0);
+    const quote = rows(quoteResult?.payload).at(0);
+    const enterprise = newestByDate(rows(enterpriseResult?.payload));
     const target = {
       sector: text(profile?.sector),
       industry: text(profile?.industry),
+      marketCap: firstNumber(profile, ['marketCap'])
+        ?? firstNumber(enterprise, ['marketCapitalization']),
     };
-    const estimatesAsOf = new Date(estimatesResult.fetchedAt).toISOString();
-    const estimates = rows(estimatesResult.payload)
+    const estimatesAsOf = new Date(estimatesResult?.fetchedAt ?? this.now()).toISOString();
+    const estimates = rows(estimatesResult?.payload)
       .map((row) => normalizedEstimate(row, estimatesAsOf))
       .filter((estimate): estimate is AnalystEstimate => estimate !== null)
       .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
-    const peerSymbols = [...new Set(rows(peersResult.payload)
+    const providerSymbols = [...new Set(rows(peersResult?.payload)
       .map((row) => text(row.symbol)?.toUpperCase() ?? null)
-      .filter((peer): peer is string => Boolean(peer) && peer !== symbol))]
-      .slice(0, MAX_PEER_CANDIDATES);
-    // Bounded one-shot fan-out from the provider's real peer set. There is no
-    // browser loop, timer, recursive pagination, or hard-coded peer universe.
-    const settledPeers = await Promise.allSettled(
-      peerSymbols.map((peer) => this.peerObservation(peer, target, today)),
-    );
-    const peerResults = settledPeers
-      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<FinancialModelingPrepValuationProvider['peerObservation']>>> =>
+      .filter((peer): peer is string => Boolean(peer) && peer !== symbol))];
+    const candidateSource = new Map<string, NonNullable<PeerObservation['candidateSource']>>();
+    // Keep room for industry/sector coverage instead of allowing a long but
+    // unusable provider list to crowd out all fallback candidates.
+    for (const peer of providerSymbols.slice(0, 8)) {
+      candidateSource.set(peer, 'provider-peers');
+    }
+
+    if (candidateSource.size < 12 && target.industry) {
+      try {
+        const industryResult = await this.load('company-screener', {
+          industry: target.industry,
+          country: 'US',
+          isActivelyTrading: 'true',
+          limit: '50',
+        }, FRESH_MS.profile);
+        for (const peer of this.rankedScreenerSymbols(industryResult.payload, target, 'industry')) {
+          if (peer !== symbol && candidateSource.size < 12) {
+            if (!candidateSource.has(peer)) candidateSource.set(peer, 'industry');
+          }
+        }
+      } catch (cause) {
+        endpointErrors['company-screener:industry'] = this.safeError(cause);
+      }
+    }
+
+    const settledPeers = new Map<string, PromiseSettledResult<PeerLoadResult>>();
+    const observeNewCandidates = async () => {
+      const pending = [...candidateSource.keys()]
+        .filter((peer) => !settledPeers.has(peer));
+      const results = await Promise.allSettled(
+        pending.map((peer) => this.peerObservation(
+          peer,
+          target,
+          today,
+          candidateSource.get(peer) ?? 'provider-peers',
+        )),
+      );
+      pending.forEach((peer, index) => settledPeers.set(peer, results[index]));
+    };
+    await observeNewCandidates();
+    const potentialValidPeerCount = () => [...settledPeers.values()]
+      .filter((result): result is PromiseFulfilledResult<PeerLoadResult> =>
+        result.status === 'fulfilled' && result.value.observation !== null)
+      .filter((result) => {
+        const peer = result.value.observation!;
+        return (
+          firstNumber({ value: peer.price }, ['value']) !== null
+          && firstNumber({ value: peer.forwardEps }, ['value']) !== null
+          && peer.price! > 0
+          && peer.forwardEps! > 0
+        ) || (
+          firstNumber({ value: peer.enterpriseValue }, ['value']) !== null
+          && firstNumber({ value: peer.forwardRevenue }, ['value']) !== null
+          && peer.enterpriseValue! > 0
+          && peer.forwardRevenue! > 0
+        );
+      }).length;
+
+    if (
+      potentialValidPeerCount() < 4
+      && candidateSource.size < MAX_PEER_CANDIDATES
+      && target.sector
+    ) {
+      try {
+        const sectorResult = await this.load('company-screener', {
+          sector: target.sector,
+          country: 'US',
+          isActivelyTrading: 'true',
+          limit: '50',
+        }, FRESH_MS.profile);
+        for (const peer of this.rankedScreenerSymbols(sectorResult.payload, target, 'sector')) {
+          if (peer !== symbol && candidateSource.size < MAX_PEER_CANDIDATES) {
+            if (!candidateSource.has(peer)) candidateSource.set(peer, 'sector');
+          }
+        }
+      } catch (cause) {
+        endpointErrors['company-screener:sector'] = this.safeError(cause);
+      }
+      await observeNewCandidates();
+    }
+    const peerSymbols = [...candidateSource.keys()].slice(0, MAX_PEER_CANDIDATES);
+    // Bounded fan-out from provider-derived candidates only. There is no
+    // browser loop, recursive pagination, or hard-coded peer universe.
+    const orderedPeerResults = peerSymbols
+      .map((peer) => settledPeers.get(peer))
+      .filter((result): result is PromiseSettledResult<PeerLoadResult> => Boolean(result));
+    const peerResults = orderedPeerResults
+      .filter((result): result is PromiseFulfilledResult<PeerLoadResult> =>
         result.status === 'fulfilled')
       .map((result) => result.value);
     const peers = peerResults
       .map((result) => result.observation)
       .filter((peer): peer is PeerObservation => peer !== null);
-    const latestTreasury = newestByDate(rows(treasuryResult.payload));
-    const usPremium = rows(premiumResult.payload).find((row) =>
+    const peerRejections = orderedPeerResults.flatMap((result, index) => {
+      const candidate = peerSymbols[index] ?? 'unknown';
+      if (result.status === 'rejected') {
+        return [{ symbol: candidate, reason: this.safeError(result.reason) }];
+      }
+      return result.value.rejectionReasons
+        .map((reason) => ({ symbol: candidate, reason }));
+    });
+    const latestTreasury = newestByDate(rows(treasuryResult?.payload));
+    const usPremium = rows(premiumResult?.payload).find((row) =>
       text(row.country)?.toLowerCase() === 'united states');
-    const enterprise = newestByDate(rows(enterpriseResult.payload));
     const cacheStates = [
-      estimatesResult.cache,
-      peersResult.cache,
-      profileResult.cache,
-      quoteResult.cache,
-      enterpriseResult.cache,
-      treasuryResult.cache,
-      premiumResult.cache,
+      ...results.filter((result): result is LoadedPayload => result !== null)
+        .map((result) => result.cache),
       ...peerResults.flatMap((result) => result.cacheStates),
     ];
-    const fetchedAt = Math.max(
-      estimatesResult.fetchedAt,
-      peersResult.fetchedAt,
-      profileResult.fetchedAt,
-      quoteResult.fetchedAt,
-      enterpriseResult.fetchedAt,
-      treasuryResult.fetchedAt,
-      premiumResult.fetchedAt,
-    );
+    const fetchedTimes = results
+      .filter((result): result is LoadedPayload => result !== null)
+      .map((result) => result.fetchedAt);
+    const fetchedAt = fetchedTimes.length ? Math.max(...fetchedTimes) : this.now();
     return {
       provider: this.id,
       marketPrice: firstNumber(quote, ['price']),
-      marketPriceAsOf: isoFromTimestamp(quote?.timestamp)
-        ?? new Date(quoteResult.fetchedAt).toISOString(),
+      marketPriceAsOf: quoteResult
+        ? isoFromTimestamp(quote?.timestamp)
+          ?? new Date(quoteResult.fetchedAt).toISOString()
+        : null,
       currency: text(profile?.currency)?.toUpperCase() ?? null,
       estimates,
       peers,
       waccMarketInputs: {
         beta: firstNumber(profile, ['beta']),
-        betaAsOf: new Date(profileResult.fetchedAt).toISOString(),
+        betaAsOf: profileResult ? new Date(profileResult.fetchedAt).toISOString() : null,
         riskFreeRate: percentage(latestTreasury?.year10),
         riskFreeAsOf: firstDate(latestTreasury, ['date']),
         equityRiskPremium: percentage(usPremium?.totalEquityRiskPremium),
-        equityRiskPremiumAsOf: new Date(premiumResult.fetchedAt).toISOString(),
+        equityRiskPremiumAsOf: premiumResult
+          ? new Date(premiumResult.fetchedAt).toISOString() : null,
         provider: this.id,
       },
       marketCapitalization: firstNumber(profile, ['marketCap'])
         ?? firstNumber(enterprise, ['marketCapitalization']),
       sharesOutstanding: firstNumber(enterprise, ['numberOfShares']),
       sharesOutstandingAsOf: firstDate(enterprise, ['date']),
-      ...target,
+      sector: target.sector,
+      industry: target.industry,
       asOf: new Date(fetchedAt).toISOString(),
       cacheStatus: cacheStates.includes('stale')
         ? 'stale'
-        : cacheStates.every((state) => state === 'hit') ? 'hit' : 'miss',
+        : cacheStates.length > 0 && cacheStates.every((state) => state === 'hit') ? 'hit' : 'miss',
+      peerCandidates: peerSymbols,
+      peerRejections,
+      endpointErrors,
     };
   }
 }

@@ -2,6 +2,11 @@ import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Pin the public gateway URL at build time. This avoids a stale/empty client
+  // constant when a cached production compilation is reused.
+  env: {
+    NEXT_PUBLIC_MARKET_WS_URL: process.env.NEXT_PUBLIC_MARKET_WS_URL ?? '',
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },

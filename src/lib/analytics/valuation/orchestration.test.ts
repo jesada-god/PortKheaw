@@ -1,22 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketDataError } from '@/src/lib/market-data/errors';
-import type { ValuationInput } from './types';
+import type { AnalystEstimate, ValuationInput } from './types';
 
 const mocks = vi.hoisted(() => ({
   getFundamentalsProvider: vi.fn(),
   getMarketDataProvider: vi.fn(),
+  loadResilientQuote: vi.fn(),
   getFmpValuationProvider: vi.fn(),
+  research: vi.fn(),
+  getGroundedFinancialResearchService: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/src/lib/market-data', () => ({
   getMarketDataProvider: mocks.getMarketDataProvider,
 }));
+vi.mock('@/src/lib/market-data/quote-service', () => ({
+  loadResilientQuote: mocks.loadResilientQuote,
+}));
 vi.mock('../fundamentals/provider', () => ({
   getFundamentalsProvider: mocks.getFundamentalsProvider,
 }));
 vi.mock('./providers/financial-modeling-prep', () => ({
   getFmpValuationProvider: mocks.getFmpValuationProvider,
+}));
+vi.mock('./grounded-research', () => ({
+  getGroundedFinancialResearchService: mocks.getGroundedFinancialResearchService,
 }));
 
 import { calculateFairValueSafely, loadFairValue } from './orchestration';
@@ -45,9 +54,7 @@ const financialPeriod = {
 };
 
 function arrangeProviders() {
-  mocks.getMarketDataProvider.mockReturnValue({
-    id: 'polygon',
-    getQuote: vi.fn().mockResolvedValue({
+  const quote = {
       data: { symbol: 'AAPL', currency: 'USD', price: 20 },
       freshness: {
         status: 'realtime',
@@ -55,7 +62,11 @@ function arrangeProviders() {
         maxAgeSeconds: 60,
       },
       provider: 'polygon',
-    }),
+    };
+  mocks.loadResilientQuote.mockResolvedValue(quote);
+  mocks.getMarketDataProvider.mockReturnValue({
+    id: 'polygon',
+    getQuote: vi.fn().mockResolvedValue(quote),
     getCompanyProfile: vi.fn().mockResolvedValue({
       data: {
         symbol: 'AAPL',
@@ -152,6 +163,13 @@ describe('Fair Value orchestration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     arrangeProviders();
+    mocks.getGroundedFinancialResearchService.mockReturnValue({ research: mocks.research });
+    mocks.research.mockResolvedValue({
+      metrics: [],
+      rejectedReasons: [],
+      cache: 'negative',
+      unavailableReason: 'no-validated-grounded-evidence',
+    });
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
   });
@@ -166,6 +184,7 @@ describe('Fair Value orchestration', () => {
       .toEqual(expect.arrayContaining(['financial-modeling-prep']));
     expect(result.currency).toBe('USD');
     expect(result.displayFx).toBeNull();
+    expect(mocks.research).not.toHaveBeenCalled();
   });
 
   it('maps provider throttling to a typed unavailable result', async () => {
@@ -185,8 +204,9 @@ describe('Fair Value orchestration', () => {
   });
 
   it('uses the traceable FMP quote when the primary market quote is throttled', async () => {
-    const market = mocks.getMarketDataProvider();
-    market.getQuote.mockRejectedValue(new MarketDataError('rate-limited', 'primary throttled'));
+    mocks.loadResilientQuote.mockRejectedValue(
+      new MarketDataError('rate-limited', 'primary throttled'),
+    );
     const result = await loadFairValue('AAPL');
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
@@ -232,5 +252,166 @@ describe('Fair Value orchestration', () => {
     });
     expect(result).not.toHaveProperty('fundamentalFairValue');
     expect(JSON.stringify(logger.mock.calls)).not.toContain('must-not-appear');
+  });
+
+  it('calls Gemini only for missing target metrics and keeps FMP fields authoritative', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      estimates: dataset.estimates.map((estimate: { estimatedEps: number }) => ({
+        ...estimate,
+        estimatedEps: null,
+        epsAnalystCount: null,
+      })),
+    });
+    mocks.research.mockResolvedValue({
+      metrics: dataset.estimates.map((estimate: { periodEnd: string }, index: number) => ({
+        symbol: 'AAPL',
+        metric: 'eps',
+        fiscalYear: Number(estimate.periodEnd.slice(0, 4)),
+        periodEnd: estimate.periodEnd,
+        value: 2 + index * 0.2,
+        analystCount: 8,
+        provenance: {
+          provider: 'gemini-grounded-research',
+          sourceType: 'gemini-grounded',
+          field: 'analystConsensusEps',
+          fiscalPeriod: estimate.periodEnd,
+          asOf: '2026-07-24',
+          evidence: [{
+            url: 'https://www.nasdaq.com/market-activity/stocks/aapl/earnings',
+            publisher: 'Nasdaq',
+            publishedAt: '2026-07-24',
+            evidence: 'AAPL forward EPS consensus.',
+            quality: 'reputable',
+          }],
+          evidenceQuality: 'medium',
+        },
+      })),
+      rejectedReasons: [],
+      cache: 'miss',
+      unavailableReason: null,
+    });
+
+    const result = await loadFairValue('AAPL');
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+    expect(mocks.research).toHaveBeenCalledWith(expect.objectContaining({
+      symbols: ['AAPL'],
+      metrics: ['eps'],
+    }));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.dataQualityLabel).toBe('Medium');
+    expect(result.inputDetails.find((detail) => detail.field.startsWith('Consensus Revenue')))
+      .toMatchObject({ sourceType: 'structured-provider' });
+    expect(result.inputDetails.find((detail) => detail.field === 'Target Forward EPS'))
+      .toMatchObject({ sourceType: 'gemini-grounded', evidenceCount: 1 });
+  });
+
+  it('rescues revenue for the same fiscal period when non-positive EPS must use EV/Sales', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      estimates: dataset.estimates.map((estimate: AnalystEstimate, index: number) => ({
+        ...estimate,
+        estimatedRevenue: index === 0 ? null : estimate.estimatedRevenue,
+        estimatedEps: index === 0 ? -0.5 : null,
+        revenueAnalystCount: index === 0 ? null : estimate.revenueAnalystCount,
+        epsAnalystCount: index === 0 ? 8 : null,
+      })),
+    });
+    mocks.research.mockResolvedValue({
+      metrics: [{
+        symbol: 'AAPL',
+        metric: 'revenue',
+        fiscalYear: 2026,
+        periodEnd: '2026-12-31',
+        value: 1_080,
+        analystCount: 8,
+        provenance: {
+          provider: 'gemini-grounded-research',
+          sourceType: 'gemini-grounded',
+          field: 'analystConsensusRevenue',
+          fiscalPeriod: '2026-12-31',
+          asOf: '2026-07-24',
+          evidence: [{
+            url: 'https://www.nasdaq.com/market-activity/stocks/aapl/earnings',
+            publisher: 'Nasdaq',
+            publishedAt: '2026-07-24',
+            evidence: 'AAPL FY2026 forward revenue consensus is 1080 USD.',
+            quality: 'reputable',
+          }],
+          evidenceQuality: 'medium',
+        },
+      }],
+      rejectedReasons: [],
+      cache: 'miss',
+      unavailableReason: null,
+    });
+
+    const result = await loadFairValue('AAPL');
+
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+    expect(mocks.research).toHaveBeenCalledWith(expect.objectContaining({
+      symbols: ['AAPL'],
+      metrics: ['revenue'],
+    }));
+    expect(result.status).toBe('available');
+    if (result.status === 'available') {
+      expect(result.modelResults.map((model) => model.model)).toContain('ev-sales');
+    }
+  });
+
+  it('batch-rescues missing peer estimates without one request per peer', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      peers: dataset.peers.map((peer: { symbol: string }) => ({
+        ...peer,
+        forwardEps: null,
+        estimatePeriod: null,
+        estimateAsOf: null,
+      })),
+    });
+    mocks.research.mockImplementation(async (request: { symbols: string[] }) => ({
+      metrics: request.symbols.map((symbol) => ({
+        symbol,
+        metric: 'eps',
+        fiscalYear: 2026,
+        periodEnd: '2026-12-31',
+        value: 2,
+        analystCount: 6,
+        provenance: {
+          provider: 'gemini-grounded-research',
+          sourceType: 'gemini-grounded',
+          field: 'analystConsensusEps',
+          fiscalPeriod: '2026-12-31',
+          asOf: '2026-07-24',
+          evidence: [{
+            url: `https://www.nasdaq.com/market-activity/stocks/${symbol.toLowerCase()}/earnings`,
+            publisher: 'Nasdaq',
+            publishedAt: '2026-07-24',
+            evidence: `${symbol} forward EPS consensus.`,
+            quality: 'reputable',
+          }],
+          evidenceQuality: 'medium',
+        },
+      })),
+      rejectedReasons: [],
+      cache: 'miss',
+      unavailableReason: null,
+    }));
+
+    const result = await loadFairValue('AAPL');
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+    expect(mocks.research.mock.calls[0][0].symbols).toHaveLength(5);
+    expect(result.status).toBe('available');
+    if (result.status === 'available') {
+      expect(result.modelResults.map((model) => model.model)).toContain('pe');
+      expect(result.dataQualityLabel).toBe('Medium');
+    }
   });
 });

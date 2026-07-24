@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
-import { MarketDataError } from '@/src/lib/market-data/errors';
 import { FinancialModelingPrepValuationProvider } from './financial-modeling-prep';
 
 const NOW = Date.parse('2026-07-25T00:00:00.000Z');
@@ -117,11 +116,12 @@ describe('FMP deterministic valuation data provider', () => {
     expect(cached.cacheStatus).toBe('hit');
   });
 
-  it('maps a 429 after the bounded retry budget and never returns fabricated data', async () => {
+  it('keeps a partial dataset after an estimate 429 and never returns fabricated estimates', async () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const endpoint = new URL(String(input)).pathname.split('/').at(-1);
-      return endpoint === 'analyst-estimates'
+      const symbol = new URL(String(input)).searchParams.get('symbol');
+      return endpoint === 'analyst-estimates' && symbol === 'TARGET'
         ? json({ 'Error Message': 'rate limit exceeded' }, 429, { 'retry-after': '0' })
         : json(payload(new URL(String(input))));
     });
@@ -131,9 +131,86 @@ describe('FMP deterministic valuation data provider', () => {
       () => NOW,
       sleep,
     );
-    await expect(provider.getValuationDataset('TARGET')).rejects.toMatchObject({
-      code: 'rate-limited',
-    } satisfies Partial<MarketDataError>);
+    const result = await provider.getValuationDataset('TARGET');
+    expect(result.estimates).toEqual([]);
+    expect(result.endpointErrors).toMatchObject({ 'analyst-estimates': 'rate-limited' });
+    expect(result.marketPrice).toBe(20);
     expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('expands and deduplicates industry candidates before the sector fallback', async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const endpoint = url.pathname.split('/').at(-1);
+      if (endpoint === 'stock-peers') return json([{ symbol: 'P1' }, { symbol: 'P2' }]);
+      if (endpoint === 'company-screener' && url.searchParams.has('industry')) {
+        return json(Array.from({ length: 20 }, (_, index) => ({
+          symbol: index === 0 ? 'P1' : `I${index}`,
+          sector: 'Technology',
+          industry: 'Software',
+          marketCap: 800 + index,
+        })));
+      }
+      return json(payload(url));
+    });
+    const provider = new FinancialModelingPrepValuationProvider(
+      'secret',
+      fetcher as typeof fetch,
+      () => NOW,
+      async () => undefined,
+    );
+    const result = await provider.getValuationDataset('TARGET');
+    expect(result.peerCandidates).toHaveLength(12);
+    expect(new Set(result.peerCandidates).size).toBe(12);
+    expect(result.peerCandidates.slice(0, 2)).toEqual(['P1', 'P2']);
+    expect(result.peers.some((peer) => peer.candidateSource === 'industry')).toBe(true);
+    expect(fetcher.mock.calls.some(([input]) =>
+      new URL(String(input)).pathname.endsWith('/company-screener')
+      && new URL(String(input)).searchParams.has('sector'))).toBe(false);
+  });
+
+  it('uses the sector fallback when industry coverage is still bounded below the candidate target', async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const endpoint = url.pathname.split('/').at(-1);
+      const symbol = url.searchParams.get('symbol');
+      if (endpoint === 'stock-peers') return json([]);
+      if (endpoint === 'company-screener' && url.searchParams.has('industry')) {
+        return json([
+          { symbol: 'I1', sector: 'Technology', industry: 'Software', marketCap: 810 },
+          { symbol: 'I1', sector: 'Technology', industry: 'Software', marketCap: 810 },
+        ]);
+      }
+      if (endpoint === 'company-screener' && url.searchParams.has('sector')) {
+        return json(Array.from({ length: 20 }, (_, index) => ({
+          symbol: index === 0 ? 'I1' : `S${index}`,
+          sector: 'Technology',
+          industry: 'Software',
+          marketCap: 820 + index,
+        })));
+      }
+      if (endpoint === 'analyst-estimates' && symbol === 'S1') return json([]);
+      return json(payload(url));
+    });
+    const provider = new FinancialModelingPrepValuationProvider(
+      'secret',
+      fetcher as typeof fetch,
+      () => NOW,
+      async () => undefined,
+    );
+
+    const result = await provider.getValuationDataset('TARGET');
+
+    expect(result.peerCandidates).toHaveLength(16);
+    expect(new Set(result.peerCandidates).size).toBe(16);
+    expect(result.peerCandidates[0]).toBe('I1');
+    expect(result.peers.some((peer) => peer.candidateSource === 'sector')).toBe(true);
+    expect(result.peerRejections).toContainEqual({
+      symbol: 'S1',
+      reason: 'missing-estimate',
+    });
+    expect(fetcher.mock.calls.some(([input]) =>
+      new URL(String(input)).pathname.endsWith('/company-screener')
+      && new URL(String(input)).searchParams.has('sector'))).toBe(true);
   });
 });

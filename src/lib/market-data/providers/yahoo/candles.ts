@@ -5,6 +5,7 @@ import { ProviderHttpClient } from '../../provider-http';
 import { YAHOO_CANDLE_CAPABILITIES } from '../../candles/capabilities';
 import { applyAdjustment, normalizeCandles, validatedCandle } from '../../candles/normalize';
 import { candleRangeBounds } from '../../candles/range';
+import type { ProviderResult, Quote } from '../../types';
 import type { CandleInterval, CandleRequest, NormalizedCandleResult, NormalizedMarketDataProvider } from '../../candles/contracts';
 
 const BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
@@ -23,6 +24,14 @@ const chartSchema = z.object({
         exchangeTimezoneName: z.string().optional(),
         exchangeDataDelayedBy: z.number().int().nonnegative().optional(),
         marketState: z.string().optional(),
+        regularMarketPrice: z.number().finite().positive().optional(),
+        regularMarketTime: z.number().int().positive().optional(),
+        regularMarketOpen: z.number().finite().positive().optional(),
+        regularMarketDayHigh: z.number().finite().positive().optional(),
+        regularMarketDayLow: z.number().finite().positive().optional(),
+        regularMarketVolume: z.number().finite().nonnegative().optional(),
+        previousClose: z.number().finite().positive().optional(),
+        chartPreviousClose: z.number().finite().positive().optional(),
       }).passthrough(),
       timestamp: z.array(z.number().int()),
       indicators: z.object({
@@ -49,6 +58,44 @@ function intervalSeconds(interval: CandleInterval): number {
   return 86_400;
 }
 
+function marketSession(value: string | undefined): Quote['session'] {
+  switch (value?.trim().toUpperCase()) {
+    case 'PRE':
+    case 'PREPRE':
+      return 'pre-market';
+    case 'REGULAR':
+      return 'regular';
+    case 'POST':
+    case 'POSTPOST':
+      return 'after-hours';
+    case 'CLOSED':
+      return 'closed';
+    default:
+      return 'unknown';
+  }
+}
+
+function positiveNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function quoteDate(timestamp: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(timestamp * 1_000));
+}
+
+export interface YahooQuoteResult extends ProviderResult<Quote> {
+  diagnostics: {
+    providerStatus: number;
+    failureKind: 'upstream-entitlement-fallback';
+    previousCloseSource: string | null;
+  };
+}
+
 function exchangePeriodKey(timestamp: number, timeZone: string, interval: 'Week' | 'Month'): string {
   const date = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(timestamp * 1_000));
   if (interval === 'Month') return date.slice(0, 7);
@@ -68,6 +115,134 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
   ) {}
 
   getCapabilities() { return YAHOO_CANDLE_CAPABILITIES; }
+
+  /**
+   * Server-side regular-session quote fallback built from the same validated
+   * Yahoo Chart JSON pipeline as candles. The main price is always
+   * `regularMarketPrice` (including PRE/POST), so an extended quote can never
+   * replace the regular-session header row.
+   */
+  async getQuote(
+    symbol: string,
+    comparisonForTradingDay?: string,
+  ): Promise<YahooQuoteResult> {
+    const bounds = candleRangeBounds('1m', this.now());
+    const url = new URL(`${BASE_URL}/${encodeURIComponent(symbol)}`);
+    url.searchParams.set('interval', '1d');
+    url.searchParams.set('period1', String(bounds.period1));
+    url.searchParams.set('period2', String(bounds.period2));
+    url.searchParams.set('includePrePost', 'false');
+    url.searchParams.set('events', 'div,splits');
+    const payload = await this.http.json({
+      provider: this.id,
+      operation: 'quote-fallback',
+      route: '/api/market/quote/[symbol]',
+      symbol,
+      url,
+      init: { cache: 'no-store' },
+      timeoutMs: 10_000,
+      maxAttempts: 2,
+    });
+    try {
+      const parsed = chartSchema.parse(payload);
+      const result = parsed.chart.result?.[0];
+      if (!result || parsed.chart.error) {
+        throw new MarketDataError('not-found', `No Yahoo quote was returned for ${symbol}`);
+      }
+      const canonical = result.meta.symbol?.trim().toUpperCase();
+      if (canonical && canonical !== symbol.trim().toUpperCase()) {
+        throw new MarketDataError('invalid-provider-response', 'Yahoo quote symbol did not match the request');
+      }
+      const price = positiveNumber(result.meta.regularMarketPrice);
+      const timestamp = result.meta.regularMarketTime;
+      if (!price || !timestamp) {
+        throw new MarketDataError('insufficient-data', 'Yahoo quote did not include a regular market price and timestamp');
+      }
+
+      const normalizedRows = normalizeCandles(result.timestamp.map((time, index) => {
+        const quote = result.indicators.quote[0];
+        return validatedCandle({
+          timestamp: time,
+          open: quote.open?.[index],
+          high: quote.high?.[index],
+          low: quote.low?.[index],
+          close: quote.close?.[index],
+          volume: quote.volume?.[index],
+          session: 'regular',
+        });
+      })).candles;
+      const priceDate = quoteDate(timestamp, result.meta.exchangeTimezoneName ?? 'UTC');
+      const comparisonDate = comparisonForTradingDay ?? priceDate;
+      const completedBeforePrice = normalizedRows.filter((row) =>
+        quoteDate(row.timestamp, result.meta.exchangeTimezoneName ?? 'UTC') < comparisonDate);
+      const candlePreviousClose = completedBeforePrice.at(-1)?.close ?? null;
+      const comparisonMatchesYahooPrice = comparisonDate === priceDate;
+      const providerPreviousClose = comparisonMatchesYahooPrice
+        ? positiveNumber(result.meta.previousClose) : null;
+      const completedCandleClose = positiveNumber(candlePreviousClose);
+      const chartPreviousClose = comparisonMatchesYahooPrice
+        ? positiveNumber(result.meta.chartPreviousClose) : null;
+      // `chartPreviousClose` can represent the close before the requested chart
+      // range rather than the immediately previous session. Prefer the verified
+      // completed daily candle whenever the explicit `previousClose` is absent.
+      const previousRegularClose = providerPreviousClose
+        ?? completedCandleClose
+        ?? chartPreviousClose;
+      const previousCloseSource = providerPreviousClose !== null
+        ? 'yahoo-chart-meta.previousClose'
+        : completedCandleClose !== null
+          ? 'yahoo-chart.previous-completed-daily-candle'
+          : chartPreviousClose !== null ? 'yahoo-chart-meta.chartPreviousClose' : null;
+      const change = previousRegularClose === null ? null : price - previousRegularClose;
+      const changePercent = previousRegularClose === null
+        ? null
+        : (change! / previousRegularClose) * 100;
+      const delayedByMinutes = result.meta.exchangeDataDelayedBy ?? null;
+      const session = marketSession(result.meta.marketState);
+      const status = session === 'closed'
+        ? 'end-of-day' as const
+        : delayedByMinutes === 0 ? 'delayed' as const : 'delayed' as const;
+      const quote: Quote = {
+        symbol: symbol.trim().toUpperCase(),
+        currency: result.meta.currency ?? null,
+        price,
+        open: positiveNumber(result.meta.regularMarketOpen),
+        high: positiveNumber(result.meta.regularMarketDayHigh),
+        low: positiveNumber(result.meta.regularMarketDayLow),
+        previousClose: previousRegularClose,
+        previousRegularClose,
+        change,
+        changePercent,
+        volume: result.meta.regularMarketVolume == null
+          ? null : Math.round(result.meta.regularMarketVolume),
+        latestTradingDay: priceDate,
+        quoteTimestamp: new Date(timestamp * 1_000).toISOString(),
+        session,
+        priceSource: 'yahoo-chart-meta.regularMarketPrice',
+        previousCloseSource,
+      };
+      return {
+        data: quote,
+        provider: this.id,
+        freshness: {
+          status,
+          asOf: quote.quoteTimestamp ?? null,
+          maxAgeSeconds: status === 'end-of-day' ? 86_400 : 60,
+        },
+        diagnostics: {
+          providerStatus: 403,
+          failureKind: 'upstream-entitlement-fallback',
+          previousCloseSource,
+        },
+      };
+    } catch (cause) {
+      if (cause instanceof MarketDataError) throw cause;
+      if (cause instanceof ZodError) {
+        throw new MarketDataError('invalid-provider-response', 'Yahoo quote response did not match its validated schema');
+      }
+      throw cause;
+    }
+  }
 
   async getCandles(input: CandleRequest & { sourceInterval: CandleInterval }): Promise<NormalizedCandleResult> {
     const providerInterval = INTERVALS[input.sourceInterval];

@@ -38,7 +38,7 @@ const analyticsSourceTypeSchema = z.enum([
   'estimated',
   'user-provided',
 ]);
-const rangeSchema = z.object({ low: finite, high: finite });
+const rangeSchema = z.object({ low: finite.nullable(), high: finite.nullable() });
 const excludedModelSchema = z.object({
   model: modelIdSchema,
   reason: z.string(),
@@ -96,9 +96,10 @@ const availableSchema = z.object({
     conservative: rangeSchema,
     base: rangeSchema,
     optimistic: rangeSchema,
-    centralEstimate: finite,
-    dispersion: finite,
+    centralEstimate: finite.nullable(),
+    dispersion: finite.nullable(),
   }),
+  baseStatus: z.enum(['available', 'unavailable']),
   technicalContext: z.unknown(),
   fundamentalQuality: z.object({
     score: finite,
@@ -123,8 +124,8 @@ const availableSchema = z.object({
   missingInputs: z.array(z.string()),
   dataStatus: z.enum(['live', 'delayed', 'cached', 'stale', 'limited']),
   selectedModel: z.union([modelIdSchema, z.literal('blended')]),
-  upsideAmount: finite,
-  upsidePercent: finite,
+  upsideAmount: finite.nullable(),
+  upsidePercent: finite.nullable(),
   sector: z.string(),
   industry: z.string(),
   sectorRuleId: z.string(),
@@ -138,6 +139,16 @@ const availableSchema = z.object({
     asOf: z.string(),
     status: z.enum(['available', 'limited', 'stale']),
     origin: z.enum(['provider', 'derived']),
+    sourceType: z.enum(['structured-provider', 'gemini-grounded', 'derived']),
+    sourceUrl: z.url().optional(),
+    evidenceCount: z.number().int().nonnegative().optional(),
+    evidence: z.array(z.object({
+      url: z.url(),
+      publisher: z.string(),
+      publishedAt: z.string(),
+      evidence: z.string(),
+      quality: z.enum(['primary', 'reputable', 'secondary']),
+    })).optional(),
   })),
   assumptionDetails: z.array(z.object({
     field: z.string(),
@@ -153,6 +164,11 @@ const availableSchema = z.object({
   }).nullable().optional(),
   inputs: z.record(z.string(), z.unknown()),
   assumptions: z.record(z.string(), z.unknown()),
+  researchAudit: z.object({
+    geminiUsed: z.boolean(),
+    evidenceSourceCount: z.number().int().nonnegative(),
+    rejectedReasons: z.array(z.string()),
+  }).optional(),
   sources: z.array(z.object({
     name: z.string(),
     asOf: z.string(),

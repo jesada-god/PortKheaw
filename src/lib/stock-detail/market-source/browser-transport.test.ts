@@ -7,6 +7,59 @@ afterEach(() => {
 });
 
 describe('Yahoo browser market transport', () => {
+  it('preserves the regular comparison close, change, session and provenance', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      data: {
+        symbol: 'NVTS',
+        currency: 'USD',
+        price: 10.9599,
+        open: 10.9,
+        high: 11.2,
+        low: 10.8,
+        previousClose: 11.136,
+        previousRegularClose: 11.136,
+        change: -0.1761,
+        changePercent: -1.581,
+        volume: 5_000,
+        latestTradingDay: '2026-07-24',
+        quoteTimestamp: '2026-07-24T20:00:00.000Z',
+        session: 'closed',
+        priceSource: 'yahoo-chart-meta.regularMarketPrice',
+        previousCloseSource: 'yahoo-chart-meta.previousClose',
+      },
+      meta: {
+        provider: 'yahoo-finance-chart',
+        timestamp: '2026-07-25T00:00:00.000Z',
+        freshness: {
+          status: 'end-of-day',
+          asOf: '2026-07-24T20:00:00.000Z',
+          maxAgeSeconds: 86_400,
+        },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const outcome = await createBrowserMarketTransport().fetchSnapshot({
+      symbol: 'NVTS',
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      value: {
+        price: 10.9599,
+        provider: 'yahoo-finance-chart',
+        quote: {
+          previousRegularClose: 11.136,
+          change: -0.1761,
+          changePercent: -1.581,
+          session: 'closed',
+          previousCloseSource: 'yahoo-chart-meta.previousClose',
+        },
+      },
+    });
+  });
+
   it('maps the normalized Yahoo candle envelope to canonical time/open/high/low/close/volume bars', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       data: {

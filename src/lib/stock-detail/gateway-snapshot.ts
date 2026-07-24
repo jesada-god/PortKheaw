@@ -1,9 +1,11 @@
 import 'server-only';
 import { getCompanyProfileService } from '@/src/lib/market-data';
 import { MarketDataError } from '@/src/lib/market-data/errors';
+import { getYahooChartProvider } from '@/src/lib/market-data/candles';
 import { getMarketDataGateway } from '@/src/lib/market-data/gateway/service';
+import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import type { NormalizedBarsResult, NormalizedMarketSession, NormalizedQuote, ResolvedInstrument } from '@/src/lib/market-data/gateway/contracts';
-import type { CompanyProfile, DataFreshness, MarketDataApiError, MarketOverview, Quote } from '@/src/lib/market-data/types';
+import type { CompanyProfile, DataFreshness, MarketDataApiError, MarketOverview, ProviderResult, Quote } from '@/src/lib/market-data/types';
 import type { InitialHistoryResponse, StockDetailQuoteResource, StockDetailResource } from './types';
 
 const unavailableFreshness: DataFreshness = { status: 'unavailable', asOf: null, maxAgeSeconds: null };
@@ -28,6 +30,7 @@ function freshness(status: NormalizedQuote['status'], timestamp: number): DataFr
 }
 
 function legacyQuote(quote: NormalizedQuote): Quote {
+  const quoteTimestamp = new Date(quote.timestamp * 1_000).toISOString();
   return {
     symbol: quote.symbol,
     currency: quote.currency,
@@ -36,24 +39,29 @@ function legacyQuote(quote: NormalizedQuote): Quote {
     high: quote.high ?? null,
     low: quote.low ?? null,
     previousClose: quote.previousClose,
+    previousRegularClose: quote.previousClose,
     change: quote.change,
     changePercent: quote.changePercent,
     volume: quote.volume == null ? null : Math.round(quote.volume),
-    latestTradingDay: new Date(quote.timestamp * 1_000).toISOString().slice(0, 10),
+    latestTradingDay: quoteTimestamp.slice(0, 10),
+    quoteTimestamp,
+    session: 'unknown',
+    priceSource: `${quote.provider}.quote`,
+    previousCloseSource: quote.previousClose === null
+      ? null : `${quote.provider}.previousClose`,
   };
 }
 
 function quoteFromBars(instrument: ResolvedInstrument, bars: NormalizedBarsResult): NormalizedQuote | null {
   const latest = bars.bars.at(-1);
   if (!latest) return null;
-  const previous = bars.bars.at(-2)?.close ?? null;
-  const change = previous == null ? null : latest.close - previous;
   return {
     symbol: instrument.canonicalSymbol,
     price: latest.close,
-    previousClose: previous,
-    change,
-    changePercent: previous ? (change! / previous) * 100 : null,
+    // A previous intraday bucket is not a previous regular-session close.
+    previousClose: null,
+    change: null,
+    changePercent: null,
     timestamp: latest.time,
     provider: bars.provider,
     exchange: instrument.exchange,
@@ -65,6 +73,19 @@ function quoteFromBars(instrument: ResolvedInstrument, bars: NormalizedBarsResul
     high: latest.high,
     low: latest.low,
     volume: latest.volume,
+  };
+}
+
+function providerQuoteResource(result: ProviderResult<Quote>): StockDetailQuoteResource {
+  return {
+    data: result.data,
+    freshness: result.freshness,
+    provider: result.provider ?? null,
+    reason: result.provider === 'yahoo-finance-chart'
+      ? 'Primary quote entitlement unavailable; using the validated Yahoo regular-session quote.'
+      : null,
+    error: null,
+    fallbackLabel: null,
   };
 }
 
@@ -113,7 +134,14 @@ export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<St
   const gateway = getMarketDataGateway();
   const instrument = await gateway.resolveInstrument(symbol);
   const quotePromise = (async () => {
-    try { return quoteResource(await gateway.getQuote({ instrument }), false); }
+    try {
+      return providerQuoteResource(await loadResilientQuote(
+        symbol,
+        gateway,
+        getYahooChartProvider(),
+        instrument,
+      ));
+    }
     catch (quoteCause) {
       try {
         const bars = await gateway.getBars({ instrument, interval: '5m', range: '1d', adjusted: false, session: 'regular' });
@@ -145,4 +173,3 @@ export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<St
     },
   };
 }
-

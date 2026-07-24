@@ -14,6 +14,16 @@ function history(price: number, ts: string, mode: AcceptedPriceCandidate['mode']
 }
 
 describe('buildAcceptedResource — the header and chart price line share one value/timestamp', () => {
+  it('preserves the canonical previous regular close through normalization', () => {
+    expect(regularComparisonClose({
+      ...baseQuote,
+      previousClose: null,
+      previousRegularClose: 94.75,
+      change: null,
+      changePercent: null,
+    })).toBe(94.75);
+  });
+
   it('recovers a provider-verifiable previous close when Polygon omitted prevDay', () => {
     const withoutPreviousClose = {
       ...baseQuote,

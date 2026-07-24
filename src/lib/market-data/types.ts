@@ -39,6 +39,15 @@ export const quoteSchema = z.object({
   changePercent: nullableNumber,
   volume: z.number().int().nonnegative().nullable(),
   latestTradingDay: z.iso.date().nullable(),
+  /** Explicit regular-session comparison base retained across normalization. */
+  previousRegularClose: nullableNumber.optional(),
+  /** Exchange/provider timestamp for the displayed price. */
+  quoteTimestamp: z.iso.datetime().nullable().optional(),
+  /** Session represented by the displayed price, never inferred by the browser. */
+  session: z.enum(['pre-market', 'regular', 'after-hours', 'closed', 'unknown']).optional(),
+  /** Safe, non-secret provenance labels for the price and comparison base. */
+  priceSource: z.string().nullable().optional(),
+  previousCloseSource: z.string().nullable().optional(),
 });
 
 export const historicalPriceSchema = z.object({

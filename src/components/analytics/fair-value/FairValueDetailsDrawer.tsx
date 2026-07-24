@@ -28,6 +28,12 @@ export function FairValueDetailsDrawer({
   const missingDetails = data?.status === 'unavailable'
     ? fairValueMissingFieldDetails(data.missingFields)
     : [];
+  const peerAudit = data?.status === 'available'
+    ? data.inputs.peerAudit as {
+      candidates?: string[];
+      rejected?: Array<{ symbol: string; reason: string }>;
+    } | undefined
+    : undefined;
   return (
     <Drawer id={id} isOpen={open} onClose={onClose} title="ดูวิธีคำนวณ Fair Value">
       <div className="space-y-6 break-words text-sm leading-6 text-slate-300">
@@ -86,6 +92,16 @@ export function FairValueDetailsDrawer({
                   <Summary key={model.model} label={modelLabel(model.model)} value={formatFairValueMoney(model.fairValue)} />
                 ))}
               </dl>
+              {data.baseStatus === 'unavailable' && (
+                <p className="mt-2 text-xs text-amber-300">
+                  Base Fair Value ยัง unavailable — ระบบไม่ reweight model เดียวแทนสูตร 60/40
+                </p>
+              )}
+              {data.baseStatus === 'unavailable' && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Missing inputs: {data.missingInputs.join(', ') || 'none'}
+                </p>
+              )}
             </section>
             <section>
               <h3 className="font-semibold text-white">สูตรและ intermediate calculations</h3>
@@ -93,7 +109,10 @@ export function FairValueDetailsDrawer({
                 {data.modelResults.map((model) => (
                   <article key={model.model} className="rounded-lg border border-slate-800 p-3">
                     <h4 className="font-semibold text-[#D4FF00]">
-                      {modelLabel(model.model)} · {(model.weight * 100).toFixed(0)}%
+                      {modelLabel(model.model)}
+                      {data.baseStatus === 'available'
+                        ? ` · ${(model.weight * 100).toFixed(0)}%`
+                        : ' · standalone model'}
                     </h4>
                     <p className="mt-1 text-xs">{model.methodology}</p>
                     <dl className="mt-2 grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-2 text-xs">
@@ -116,8 +135,35 @@ export function FairValueDetailsDrawer({
                     <dt className="font-semibold text-slate-200">{item.field}</dt>
                     <dd className="mt-1 font-mono">{String(item.value)} {item.currency ?? ''}</dd>
                     <dd className="text-slate-500">
-                      {item.period} · {item.provider} · as of {item.asOf} · {item.origin}
+                      {item.period} · {item.provider} · as of {item.asOf} · {item.sourceType}
                     </dd>
+                    {item.sourceUrl && (
+                      <dd className="mt-1">
+                        <a
+                          href={item.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[#D4FF00] underline"
+                        >
+                          Source reference
+                        </a>
+                        {item.evidenceCount !== undefined ? ` · Evidence ${item.evidenceCount} source(s)` : ''}
+                      </dd>
+                    )}
+                    {item.evidence?.map((source) => (
+                      <dd key={source.url} className="mt-2 rounded border border-slate-800 p-2 text-slate-500">
+                        <a
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mr-1 text-[#D4FF00] underline"
+                        >
+                          Open evidence source
+                        </a>
+                        {source.publisher} · {source.publishedAt} · {source.quality}
+                        <span className="mt-1 block text-slate-400">{source.evidence}</span>
+                      </dd>
+                    ))}
                   </dl>
                 ))}
               </div>
@@ -135,6 +181,26 @@ export function FairValueDetailsDrawer({
             <section>
               <h3 className="font-semibold text-white">Data Quality และเวลา</h3>
               <p className="mt-1">{data.dataQualityLabel} · {data.dataQuality.score.toFixed(0)}/100</p>
+              <h4 className="mt-3 font-semibold text-slate-200">Peer coverage audit</h4>
+              <p className="mt-1 text-xs text-slate-400">
+                Candidates: {peerAudit?.candidates?.join(', ') || 'none'}
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-xs text-slate-500">
+                {(peerAudit?.rejected ?? []).map((item) => (
+                  <li key={`${item.symbol}:${item.reason}`}>{item.symbol}: {item.reason}</li>
+                ))}
+                {!peerAudit?.rejected?.length && <li>No provider-level rejection recorded.</li>}
+              </ul>
+              <h4 className="mt-3 font-semibold text-slate-200">Grounded research audit</h4>
+              <p className="mt-1 text-xs text-slate-400">
+                Gemini used: {data.researchAudit?.geminiUsed ? 'yes' : 'no'}
+                {' '}· Evidence sources: {data.researchAudit?.evidenceSourceCount ?? 0}
+              </p>
+              {!!data.researchAudit?.rejectedReasons.length && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Rejected: {data.researchAudit.rejectedReasons.join(', ')}
+                </p>
+              )}
               <ul className="mt-2 list-disc pl-5 text-xs text-slate-400">
                 {data.reliabilityReasons.map((reason) => <li key={reason}>{reason}</li>)}
               </ul>

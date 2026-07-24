@@ -49,13 +49,21 @@ export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidat
 
 /**
  * Resolve a real regular comparison close already present in the accepted
- * pipeline. A direct `previousClose` wins. If Polygon supplied only the
- * authoritative daily `change` + `changePercent`, both fields must independently
- * imply the same positive close before it is accepted. No open/high/low, cached
- * price, or arbitrary fallback is used.
+ * pipeline. The canonical `previousRegularClose` wins, followed by the legacy
+ * `previousClose`. If Polygon supplied only the authoritative daily `change` +
+ * `changePercent`, both fields must independently imply the same positive close
+ * before it is accepted. No open/high/low, intraday candle, cached price, or
+ * arbitrary fallback is used.
  */
 export function regularComparisonClose(quote: Quote | null): number | null {
   if (!quote) return null;
+  if (
+    quote.previousRegularClose != null
+    && Number.isFinite(quote.previousRegularClose)
+    && quote.previousRegularClose > 0
+  ) {
+    return quote.previousRegularClose;
+  }
   if (quote.previousClose != null && Number.isFinite(quote.previousClose) && quote.previousClose > 0) {
     return quote.previousClose;
   }
