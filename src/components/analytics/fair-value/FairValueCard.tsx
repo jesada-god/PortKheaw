@@ -61,7 +61,6 @@ export function FairValueCard({
   const data = currentResult?.data ?? null;
   const loading = enabled && currentResult === null;
   const available = data?.status === 'available' ? data : null;
-  const base = available?.fundamentalFairValue.centralEstimate ?? null;
   const dcf = available?.modelResults.find((model) => model.model === 'fcff-dcf')?.fairValue ?? null;
   const forwardMultiples = available?.modelResults.find(
     (model) => model.model === 'pe' || model.model === 'ev-sales',
@@ -111,12 +110,7 @@ export function FairValueCard({
           </div>
         ) : available ? (
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[10px] sm:grid-cols-3">
-            <Metric
-              label="Base Fair Value"
-              value={available.baseStatus === 'available'
-                ? formatFairValueMoney(base)
-                : language === 'th' ? 'ยังสร้างไม่ได้' : 'Unavailable'}
-            />
+            <Metric label={available.fairValue.label} value={formatFairValueMoney(available.fairValue.value)} />
             <Metric label="Current Price" value={formatFairValueMoney(available.marketPrice.value)} />
             <Metric
               label="Upside/Downside"
@@ -127,13 +121,13 @@ export function FairValueCard({
             <Metric label="Forward Multiples" value={formatFairValueMoney(forwardMultiples)} />
             <Metric label="Data Quality" value={available.dataQualityLabel} />
             <div className="col-span-full text-slate-500">
-              {modelLabel(available.selectedModel)} · {displayStatus(available)} · USD source of truth
+              {modelLabel(available.selectedModel)} · Confidence {available.fairValue.confidence} · {displayStatus(available)} · USD source of truth
             </div>
-            {available.baseStatus === 'unavailable' && (
+            {available.fairValue.type !== 'base' && (
               <div className="col-span-full text-amber-300">
                 {language === 'th'
-                  ? 'แสดงเฉพาะ model ที่ผ่าน validation; ยังไม่มี Base 60/40'
-                  : 'Validated model only; no 60/40 Base Fair Value.'}
+                  ? `${available.fairValue.label} มาจากโมเดลเดียวที่ผ่าน validation และไม่ใช่ Base/Blended`
+                  : `${available.fairValue.label} uses one validated model and is not Base/Blended.`}
               </div>
             )}
           </dl>

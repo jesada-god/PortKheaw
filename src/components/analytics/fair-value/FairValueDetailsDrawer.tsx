@@ -1,16 +1,33 @@
 'use client';
 
+import React, { useId, useMemo, useState } from 'react';
+import { Check, X } from 'lucide-react';
 import { Drawer } from '@/src/components/ui/Drawer';
-import type { FairValueResult } from '@/src/lib/analytics/valuation/types';
+import type {
+  FairValueAvailable,
+  FairValueResult,
+  ValuationDiagnostic,
+} from '@/src/lib/analytics/valuation/types';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import {
-  fairValueMissingFieldDetails,
+  diagnosticReasonLabel,
+  fairValueMissingFieldsSummary,
+  fairValueSummary,
   fairValueUnavailableLabel,
   fairValueUnavailableReason,
   formatFairValueMoney,
-  formatUpsidePercent,
   modelLabel,
+  readableFieldLabel,
 } from './presentation';
+
+type Tab = 'summary' | 'models' | 'inputs' | 'sources';
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'summary', label: 'สรุป' },
+  { id: 'models', label: 'โมเดล' },
+  { id: 'inputs', label: 'ข้อมูลที่ใช้' },
+  { id: 'sources', label: 'แหล่งที่มา' },
+];
 
 export function FairValueDetailsDrawer({
   id,
@@ -25,205 +42,351 @@ export function FairValueDetailsDrawer({
   data: FairValueResult | null;
   unavailableReason: string | null;
 }) {
-  const missingDetails = data?.status === 'unavailable'
-    ? fairValueMissingFieldDetails(data.missingFields)
-    : [];
-  const peerAudit = data?.status === 'available'
-    ? data.inputs.peerAudit as {
-      candidates?: string[];
-      rejected?: Array<{ symbol: string; reason: string }>;
-    } | undefined
-    : undefined;
+  const [tab, setTab] = useState<Tab>('summary');
+  const tabsId = useId();
+
+  const diagnostics = useMemo(() => normalizedDiagnostics(data), [data]);
+  const available = data?.status === 'available' ? data : null;
+  const type = available
+    ? available.fairValue.type === 'base' ? 'Base'
+      : available.fairValue.type === 'dcf' ? 'DCF' : 'Relative'
+    : 'Unavailable';
+  const modelsUsed = available
+    ? available.modelResults.map((model) => modelLabel(model.model)).join(', ')
+    : 'ไม่มีโมเดลที่ผ่าน';
+
   return (
-    <Drawer id={id} isOpen={open} onClose={onClose} title="ดูวิธีคำนวณ Fair Value">
-      <div className="space-y-6 break-words text-sm leading-6 text-slate-300">
-        <section>
-          <h3 className="font-semibold text-white">หลักการ</h3>
-          <p className="mt-1">
-            คำนวณแบบ deterministic จาก DCF และ Forward Multiples เท่านั้น
-            ทุก input ต้องย้อนกลับไปยัง provider หรืองบการเงินจริงได้ และใช้ USD เป็น source of truth
+    <Drawer
+      id={id}
+      isOpen={open}
+      onClose={onClose}
+      title="วิธีคำนวณ Fair Value"
+      variant="responsive-dialog"
+    >
+      <div className="min-w-0 space-y-4 break-words text-sm leading-6 text-slate-300">
+        <section className="rounded-xl border border-slate-700 bg-slate-900/40 p-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Overview label="Fair Value" value={available ? formatFairValueMoney(available.fairValue.value) : 'Unavailable'} />
+            <Overview label="ประเภท" value={type} />
+            <Overview label="Confidence" value={available?.fairValue.confidence ?? 'Unavailable'} />
+            <Overview
+              label="Data freshness"
+              value={available ? freshnessLabel(available.dataStatus) : 'Unavailable'}
+            />
+          </div>
+          <p className="mt-3 text-xs text-slate-400">
+            โมเดลที่ใช้: <span className="text-slate-200">{modelsUsed}</span>
           </p>
         </section>
-        {data?.status !== 'available' ? (
-          <section>
-            <h3 className="font-semibold text-white">เหตุผลที่ยังคำนวณไม่ได้</h3>
-            <p className="mt-1 font-semibold text-amber-300">
-              {data?.status === 'unavailable'
-                ? fairValueUnavailableLabel(data.failureKind, 'th')
-                : 'เกิดข้อผิดพลาด'}
-            </p>
-            <p className="mt-1">
-              {data?.status === 'unavailable'
-                ? fairValueUnavailableReason(data, 'th')
-                : unavailableReason ?? 'ไม่มีผล Fair Value ที่ผ่าน validation'}
-            </p>
-            {data?.status === 'unavailable' && (
-              <>
-                <p className="mt-2 text-xs text-slate-500">
-                  Provider: {data.provider ?? 'ไม่ทราบ'} · as of {formatBangkokDateTime(data.asOf)}
-                </p>
-                {missingDetails.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {missingDetails.map((item, index) => (
-                      <dl
-                        key={`${item.field}:${item.period ?? index}`}
-                        className="grid grid-cols-[6rem_1fr] gap-x-2 rounded-lg border border-slate-800 p-3 text-xs"
-                      >
-                        <dt className="text-slate-500">Field</dt><dd>{item.field}</dd>
-                        <dt className="text-slate-500">Period</dt><dd>{item.period ?? 'ไม่ระบุ'}</dd>
-                        <dt className="text-slate-500">Reason</dt><dd>{item.reason}</dd>
-                      </dl>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-        ) : (
-          <>
-            <section>
-              <h3 className="font-semibold text-white">ผลลัพธ์</h3>
-              <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <Summary label="Fair Value" value={formatFairValueMoney(data.fundamentalFairValue.centralEstimate)} />
-                <Summary label="Current Price" value={formatFairValueMoney(data.marketPrice.value)} />
-                <Summary label="Upside/Downside" value={formatUpsidePercent(data.upsidePercent)} />
-                <Summary label="Data Quality" value={data.dataQualityLabel} />
-                {data.modelResults.map((model) => (
-                  <Summary key={model.model} label={modelLabel(model.model)} value={formatFairValueMoney(model.fairValue)} />
-                ))}
-              </dl>
-              {data.baseStatus === 'unavailable' && (
-                <p className="mt-2 text-xs text-amber-300">
-                  Base Fair Value ยัง unavailable — ระบบไม่ reweight model เดียวแทนสูตร 60/40
-                </p>
-              )}
-              {data.baseStatus === 'unavailable' && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Missing inputs: {data.missingInputs.join(', ') || 'none'}
-                </p>
-              )}
-            </section>
-            <section>
-              <h3 className="font-semibold text-white">สูตรและ intermediate calculations</h3>
-              <div className="mt-2 space-y-3">
-                {data.modelResults.map((model) => (
-                  <article key={model.model} className="rounded-lg border border-slate-800 p-3">
-                    <h4 className="font-semibold text-[#D4FF00]">
-                      {modelLabel(model.model)}
-                      {data.baseStatus === 'available'
-                        ? ` · ${(model.weight * 100).toFixed(0)}%`
-                        : ' · standalone model'}
-                    </h4>
-                    <p className="mt-1 text-xs">{model.methodology}</p>
-                    <dl className="mt-2 grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-2 text-xs">
-                      {Object.entries(model.inputs).map(([field, value]) => (
-                        <div key={field} className="contents">
-                          <dt className="text-slate-500">{field}</dt>
-                          <dd className="overflow-wrap-anywhere font-mono">{String(value)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </article>
-                ))}
-              </div>
-            </section>
-            <section>
-              <h3 className="font-semibold text-white">Inputs และแหล่งข้อมูล</h3>
-              <div className="mt-2 space-y-2">
-                {data.inputDetails.map((item) => (
-                  <dl key={`${item.field}:${item.period}`} className="rounded-lg border border-slate-800 p-3 text-xs">
-                    <dt className="font-semibold text-slate-200">{item.field}</dt>
-                    <dd className="mt-1 font-mono">{String(item.value)} {item.currency ?? ''}</dd>
-                    <dd className="text-slate-500">
-                      {item.period} · {item.provider} · as of {item.asOf} · {item.sourceType}
-                    </dd>
-                    {item.sourceUrl && (
-                      <dd className="mt-1">
-                        <a
-                          href={item.sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[#D4FF00] underline"
-                        >
-                          Source reference
-                        </a>
-                        {item.evidenceCount !== undefined ? ` · Evidence ${item.evidenceCount} source(s)` : ''}
-                      </dd>
-                    )}
-                    {item.evidence?.map((source) => (
-                      <dd key={source.url} className="mt-2 rounded border border-slate-800 p-2 text-slate-500">
-                        <a
-                          href={source.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mr-1 text-[#D4FF00] underline"
-                        >
-                          Open evidence source
-                        </a>
-                        {source.publisher} · {source.publishedAt} · {source.quality}
-                        <span className="mt-1 block text-slate-400">{source.evidence}</span>
-                      </dd>
-                    ))}
-                  </dl>
-                ))}
-              </div>
-            </section>
-            <section>
-              <h3 className="font-semibold text-white">Assumptions ที่กำหนดชัดเจน</h3>
-              <ul className="mt-2 list-disc pl-5 text-xs text-slate-400">
-                {data.assumptionDetails.map((item) => (
-                  <li key={item.field}>
-                    {item.field}: {String(item.value)} · {item.source} · {item.ruleVersion}
-                  </li>
-                ))}
-              </ul>
-            </section>
-            <section>
-              <h3 className="font-semibold text-white">Data Quality และเวลา</h3>
-              <p className="mt-1">{data.dataQualityLabel} · {data.dataQuality.score.toFixed(0)}/100</p>
-              <h4 className="mt-3 font-semibold text-slate-200">Peer coverage audit</h4>
-              <p className="mt-1 text-xs text-slate-400">
-                Candidates: {peerAudit?.candidates?.join(', ') || 'none'}
-              </p>
-              <ul className="mt-1 list-disc pl-5 text-xs text-slate-500">
-                {(peerAudit?.rejected ?? []).map((item) => (
-                  <li key={`${item.symbol}:${item.reason}`}>{item.symbol}: {item.reason}</li>
-                ))}
-                {!peerAudit?.rejected?.length && <li>No provider-level rejection recorded.</li>}
-              </ul>
-              <h4 className="mt-3 font-semibold text-slate-200">Grounded research audit</h4>
-              <p className="mt-1 text-xs text-slate-400">
-                Gemini used: {data.researchAudit?.geminiUsed ? 'yes' : 'no'}
-                {' '}· Evidence sources: {data.researchAudit?.evidenceSourceCount ?? 0}
-              </p>
-              {!!data.researchAudit?.rejectedReasons.length && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Rejected: {data.researchAudit.rejectedReasons.join(', ')}
-                </p>
-              )}
-              <ul className="mt-2 list-disc pl-5 text-xs text-slate-400">
-                {data.reliabilityReasons.map((reason) => <li key={reason}>{reason}</li>)}
-              </ul>
-              <p className="mt-2 text-xs text-slate-500">
-                Latest data {formatBangkokDateTime(data.latestDataAt)} · calculated {formatBangkokDateTime(data.calculatedAt)}
-                {' '}· methodology {data.methodologyVersion}
-              </p>
-            </section>
-          </>
-        )}
-        <section className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
-          Fair Value เป็นผลจากแบบจำลอง ไม่ใช่ราคาตลาดหรือคำแนะนำในการลงทุน
-        </section>
+
+        <div
+          role="tablist"
+          aria-label="รายละเอียด Fair Value"
+          className="grid grid-cols-2 gap-1 rounded-xl bg-slate-900 p-1 sm:grid-cols-4"
+        >
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              id={`${tabsId}-${item.id}-tab`}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              aria-controls={`${tabsId}-${item.id}-panel`}
+              tabIndex={tab === item.id ? 0 : -1}
+              onClick={() => setTab(item.id)}
+              className={`min-h-11 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#D4FF00] ${
+                tab === item.id ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div
+          id={`${tabsId}-${tab}-panel`}
+          role="tabpanel"
+          aria-labelledby={`${tabsId}-${tab}-tab`}
+          tabIndex={0}
+          className="min-w-0 outline-none"
+        >
+          {tab === 'summary' && (
+            <SummaryTab data={data} unavailableReason={unavailableReason} />
+          )}
+          {tab === 'models' && <ModelsTab data={data} />}
+          {tab === 'inputs' && <InputsTab diagnostics={diagnostics} />}
+          {tab === 'sources' && <SourcesTab data={data} diagnostics={diagnostics} />}
+        </div>
+
+        <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+          Fair Value เป็นผลจากแบบจำลอง ไม่ใช่ราคาตลาดหรือคำแนะนำในการลงทุน และใช้ USD เป็นฐานคำนวณ
+        </p>
       </div>
     </Drawer>
   );
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
+function Overview({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-800 p-2">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="mt-1 font-mono text-white">{value}</dd>
+    <div className="min-w-0">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 overflow-wrap-anywhere font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function SummaryTab({
+  data,
+  unavailableReason,
+}: {
+  data: FairValueResult | null;
+  unavailableReason: string | null;
+}) {
+  if (data?.status === 'available') {
+    const excluded = data.excludedModels.at(0);
+    return (
+      <section className="space-y-3 rounded-xl border border-slate-800 p-4">
+        <h3 className="font-semibold text-white">ผลนี้คำนวณอย่างไร</h3>
+        <p>{fairValueSummary(data)}</p>
+        <p>
+          ระดับความเชื่อมั่น <strong className="text-white">{data.fairValue.confidence}</strong>
+          {' '}สะท้อนความครบถ้วน ความสด และการตรวจสอบย้อนกลับของข้อมูล ไม่ใช่โอกาสได้ผลตอบแทน
+        </p>
+        {excluded && (
+          <p className="rounded-lg bg-amber-500/10 p-3 text-amber-200">
+            โมเดลที่ไม่ถูกนำมาใช้: {modelLabel(excluded.model)} — {humanModelReason(excluded.reason)}
+          </p>
+        )}
+      </section>
+    );
+  }
+  const reason = data?.status === 'unavailable'
+    ? fairValueUnavailableReason(data, 'th')
+    : unavailableReason ?? 'ยังไม่มีผลที่ผ่านการตรวจสอบ';
+  return (
+    <section className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+      <h3 className="font-semibold text-amber-200">
+        {data?.status === 'unavailable'
+          ? fairValueUnavailableLabel(data.failureKind, 'th')
+          : 'Fair Value ยังไม่พร้อม'}
+      </h3>
+      <p>{reason}</p>
+      <p className="text-xs text-slate-400">
+        ระบบไม่สร้างค่าทดแทน ไม่สมมติข้อมูลที่ขาด และไม่ลดเกณฑ์เพื่อให้มีราคา
+      </p>
+    </section>
+  );
+}
+
+function ModelsTab({ data }: { data: FairValueResult | null }) {
+  if (data?.status !== 'available') {
+    const reason = data?.status === 'unavailable'
+      ? fairValueMissingFieldsSummary(data.missingFields, 'th')
+      : 'ยังไม่มีข้อมูลจากระบบ';
+    return (
+      <div className="space-y-3">
+        <ModelState name="DCF" passed={false} reason={reason} />
+        <ModelState name="Forward Multiples" passed={false} reason={reason} />
+      </div>
+    );
+  }
+  const dcf = data.modelResults.find((model) => model.model === 'fcff-dcf');
+  const multiples = data.modelResults.find((model) => model.model === 'pe' || model.model === 'ev-sales');
+  const dcfExcluded = data.excludedModels.find((model) => model.model === 'fcff-dcf');
+  const multipleExcluded = data.excludedModels.find((model) =>
+    model.model === 'pe' || model.model === 'ev-sales');
+  return (
+    <div className="space-y-3">
+      <ModelState
+        name="DCF"
+        passed={Boolean(dcf)}
+        fairValue={dcf?.fairValue}
+        reason={dcf ? 'ข้อมูลและผลคำนวณผ่าน validation' : humanModelReason(dcfExcluded?.reason)}
+        weight={data.fairValue.type === 'base' ? dcf?.weight : undefined}
+      />
+      <ModelState
+        name="Forward Multiples"
+        passed={Boolean(multiples)}
+        fairValue={multiples?.fairValue}
+        reason={multiples ? 'มีบริษัทจริงผ่านเกณฑ์อย่างน้อย 4 บริษัท' : humanModelReason(multipleExcluded?.reason)}
+        weight={data.fairValue.type === 'base' ? multiples?.weight : undefined}
+      />
+    </div>
+  );
+}
+
+function ModelState({
+  name,
+  passed,
+  fairValue,
+  reason,
+  weight,
+}: {
+  name: string;
+  passed: boolean;
+  fairValue?: number;
+  reason: string;
+  weight?: number;
+}) {
+  return (
+    <article className="rounded-xl border border-slate-800 p-4">
+      <div className="flex items-start gap-3">
+        <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+          passed ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
+        }`}>
+          {passed ? <Check size={15} aria-hidden="true" /> : <X size={15} aria-hidden="true" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-white">{passed ? 'ผ่าน' : 'ไม่ผ่าน'} · {name}</h3>
+          {fairValue !== undefined && (
+            <p className="mt-1 font-mono text-base text-[#D4FF00]">{formatFairValueMoney(fairValue)}</p>
+          )}
+          <p className="mt-1 text-xs text-slate-400">{reason}</p>
+          {weight !== undefined && (
+            <p className="mt-2 text-xs text-slate-300">น้ำหนักใน Base Fair Value: {(weight * 100).toFixed(0)}%</p>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function InputsTab({ diagnostics }: { diagnostics: ValuationDiagnostic[] }) {
+  const inputs = diagnostics.filter((item) => !item.field.startsWith('model:'));
+  if (!inputs.length) {
+    return <p className="rounded-xl border border-slate-800 p-4 text-slate-400">ยังไม่มีรายละเอียดข้อมูล</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {inputs.map((item, index) => (
+        <details
+          key={`${item.field}:${item.period ?? 'none'}:${index}`}
+          className="group rounded-xl border border-slate-800"
+        >
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:content-none">
+            <span className="min-w-0 font-medium text-slate-200">{readableFieldLabel(item.field)}</span>
+            <span className={item.status === 'available' ? 'text-emerald-400' : 'text-amber-300'}>
+              {item.status === 'available' ? 'พร้อม' : item.status === 'stale' ? 'เก่า' : 'ไม่พร้อม'}
+            </span>
+          </summary>
+          <dl className="grid grid-cols-[minmax(5rem,auto)_minmax(0,1fr)] gap-x-3 border-t border-slate-800 px-4 py-3 text-xs">
+            <Technical label="Value" value={formatDiagnosticValue(item.value)} />
+            <Technical label="Period" value={item.period ?? 'ไม่ระบุ'} />
+            <Technical label="Provider" value={item.provider ?? 'ไม่ระบุ'} />
+            <Technical label="As of" value={formatBangkokDateTime(item.asOf)} />
+            <Technical label="Provenance" value={item.provenance} />
+            <Technical label="สถานะ" value={diagnosticReasonLabel(item)} />
+          </dl>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function Technical({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="min-w-0 overflow-wrap-anywhere font-mono text-slate-300">{value}</dd>
+    </>
+  );
+}
+
+function SourcesTab({
+  data,
+  diagnostics,
+}: {
+  data: FairValueResult | null;
+  diagnostics: ValuationDiagnostic[];
+}) {
+  const providers = new Map<string, { asOf: string; freshness: string }>();
+  for (const item of diagnostics) {
+    if (!item.provider) continue;
+    const existing = providers.get(item.provider);
+    if (!existing || item.asOf > existing.asOf) {
+      providers.set(item.provider, {
+        asOf: item.asOf,
+        freshness: item.status === 'stale' ? 'เก่า' : item.status === 'available' ? 'พร้อม' : 'มีข้อจำกัด',
+      });
+    }
+  }
+  if (data?.status === 'available') {
+    for (const source of data.sources) {
+      if (!providers.has(source.name)) {
+        providers.set(source.name, { asOf: source.asOf, freshness: freshnessLabel(data.dataStatus) });
+      }
+    }
+  } else if (data?.status === 'unavailable' && data.provider && !providers.has(data.provider)) {
+    providers.set(data.provider, { asOf: data.asOf, freshness: 'ไม่พร้อม' });
+  }
+  return (
+    <div className="space-y-3">
+      {[...providers].map(([provider, detail]) => (
+        <article key={provider} className="rounded-xl border border-slate-800 p-4">
+          <h3 className="font-semibold text-white">{provider}</h3>
+          <p className="mt-1 text-xs text-slate-400">อัปเดต {formatBangkokDateTime(detail.asOf)}</p>
+          <p className="mt-1 text-xs text-slate-400">Freshness: {detail.freshness}</p>
+        </article>
+      ))}
+      {!providers.size && (
+        <p className="rounded-xl border border-slate-800 p-4 text-slate-400">ยังไม่มีแหล่งข้อมูลที่ยืนยันได้</p>
+      )}
+      {data?.status === 'available' && (
+        <p className="text-xs text-slate-500">
+          คำนวณ {formatBangkokDateTime(data.calculatedAt)} · {data.methodologyVersion}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnostic[] {
+  if (!data) return [];
+  if (data.diagnostics.length) return data.diagnostics;
+  if (data.status === 'unavailable') {
+    return data.missingFields.map((field) => ({
+      field,
+      value: null,
+      period: null,
+      provider: data.provider,
+      asOf: data.asOf,
+      status: 'missing',
+      provenance: 'validation',
+      reason: 'required-model-input-failed-validation',
+    }));
+  }
+  return data.inputDetails.map((item) => ({
+    field: item.field,
+    value: item.value,
+    period: item.period,
+    provider: item.provider,
+    asOf: item.asOf,
+    status: item.status === 'available' ? 'available' : 'stale',
+    provenance: item.origin,
+    reason: item.status === 'available' ? null : 'stale-provider-cache',
+  }));
+}
+
+function freshnessLabel(status: FairValueAvailable['dataStatus']): string {
+  const labels: Record<FairValueAvailable['dataStatus'], string> = {
+    live: 'สด',
+    delayed: 'ล่าช้า',
+    cached: 'Cache',
+    stale: 'เก่า',
+    limited: 'มีข้อจำกัด',
+  };
+  return labels[status];
+}
+
+function humanModelReason(reason?: string): string {
+  if (!reason) return 'ไม่มีข้อมูลที่ผ่าน validation';
+  return reason.split(',').map((field) => readableFieldLabel(field.trim())).join(', ');
+}
+
+function formatDiagnosticValue(value: ValuationDiagnostic['value']): string {
+  if (value === null) return 'ไม่มีค่า';
+  if (typeof value === 'number') return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 6,
+  }).format(value);
+  return value;
 }

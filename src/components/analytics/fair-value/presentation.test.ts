@@ -6,6 +6,7 @@ import {
   formatFairValueMoney,
   formatUpsidePercent,
   modelLabel,
+  readableFieldLabel,
   upsideTone,
 } from './presentation';
 
@@ -33,23 +34,25 @@ describe('Fair Value presentation', () => {
     expect(modelLabel('ev-sales')).toBe('Forward EV/Sales');
   });
 
-  it('maps v2 missing fields to human-readable reasons', () => {
+  it('maps technical fields to human-readable Thai names', () => {
     expect(fairValueMissingFieldsSummary([
       'forwardEstimates',
       'validForwardPeers>=4',
       'validWaccInputs',
-    ], 'th')).toContain('Forward Estimates');
+    ], 'th')).toContain('ประมาณการล่วงหน้า');
     expect(fairValueMissingFieldsSummary(['validForwardPeers>=4'], 'th')).toContain('4');
+    expect(readableFieldLabel('riskFreeRate')).toBe('อัตราผลตอบแทนไร้ความเสี่ยง');
+    expect(readableFieldLabel('targetForwardEstimate')).toBe('ประมาณการล่วงหน้าของบริษัท');
   });
 
-  it('keeps the provider reason visible', () => {
+  it('keeps a safe provider reason visible', () => {
     expect(fairValueUnavailableReason({
       status: 'unavailable',
       failureKind: 'provider-unavailable',
       symbol: 'RKLB',
       currency: 'USD',
       provider: 'financial-modeling-prep',
-      reason: 'ยังคำนวณ Fair Value ไม่ได้ เพราะขาด Forward Estimates',
+      reason: 'ยังคำนวณไม่ได้เพราะขาด Forward Estimates',
       missingFields: ['forwardEstimates'],
       missingInputs: ['forwardEstimates'],
       staleInputs: [],
@@ -57,6 +60,7 @@ describe('Fair Value presentation', () => {
       calculatedAt: '2026-07-25T00:00:00.000Z',
       methodologyVersion: 'nexora-fv-v2',
       limitations: [],
-    }, 'th')).toContain('ยังคำนวณ Fair Value ไม่ได้');
+      diagnostics: [],
+    }, 'th')).toContain('ยังคำนวณไม่ได้');
   });
 });

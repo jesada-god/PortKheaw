@@ -3,6 +3,7 @@ import type {
   FairValueFailureKind,
   FairValueUnavailable,
   ModelId,
+  ValuationDiagnostic,
 } from '@/src/lib/analytics/valuation/types';
 
 export type UpsideTone = 'success' | 'danger' | 'neutral';
@@ -21,16 +22,40 @@ const MODEL_LABELS: Record<ModelId | 'blended', string> = {
   blended: 'Blended',
 };
 
+const FIELD_LABELS: Record<string, string> = {
+  beta: 'Beta',
+  riskFreeRate: 'อัตราผลตอบแทนไร้ความเสี่ยง',
+  equityRiskPremium: 'Equity Risk Premium',
+  forwardRevenue: 'ประมาณการรายได้ล่วงหน้า',
+  forwardEps: 'ประมาณการ EPS ล่วงหน้า',
+  forwardEstimates: 'ประมาณการล่วงหน้า',
+  targetForwardEstimate: 'ประมาณการล่วงหน้าของบริษัท',
+  peerObservations: 'ข้อมูลบริษัทเทียบเคียง',
+  stockPeers: 'บริษัทเทียบเคียง',
+  marketCapitalization: 'มูลค่าหลักทรัพย์ตามราคาตลาด',
+  sharesOutstanding: 'จำนวนหุ้นที่ออกจำหน่าย',
+  dilutedShares: 'จำนวนหุ้นถัวเฉลี่ยปรับลด',
+  dilutedSharesOrSharesOutstanding: 'จำนวนหุ้น',
+  freeCashFlow: 'กระแสเงินสดอิสระ (FCF)',
+  latestRealFreeCashFlow: 'กระแสเงินสดอิสระล่าสุด',
+  latestRealRevenue: 'รายได้ล่าสุด',
+  cash: 'เงินสด',
+  totalDebt: 'หนี้สินรวม',
+  incomeBeforeTax: 'กำไรก่อนภาษี',
+  incomeTaxExpense: 'ภาษีเงินได้',
+  interestExpense: 'ดอกเบี้ยจ่าย',
+  marketPrice: 'ราคาตลาด',
+  financialStatements: 'งบการเงินจริง',
+  waccMarketInputs: 'ข้อมูลตลาดสำหรับ WACC',
+  forwardRevenueEstimates: 'ประมาณการรายได้ล่วงหน้า',
+  'validForwardPeers>=4': 'บริษัทเทียบเคียงที่ผ่านเกณฑ์อย่างน้อย 4 บริษัท',
+  validWaccAndDcfCalculation: 'ข้อมูล WACC และผลคำนวณ DCF ที่ผ่านเกณฑ์',
+};
+
 export function modelLabel(model: ModelId | 'blended'): string {
   return MODEL_LABELS[model];
 }
 
-/**
- * Fair Value is always presented in the instrument's source currency (USD for US
- * stocks). The former USD/THB toggle and conversion were removed from the Fair
- * Value UI — the app-wide currency feature still governs prices and portfolio,
- * but a model estimate is never converted. USD stays the calculation source of truth.
- */
 export function formatFairValueMoney(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return 'Unavailable';
   return new Intl.NumberFormat('en-US', {
@@ -57,29 +82,14 @@ export function displayStatus(data: FairValueAvailable): string {
 }
 
 const FAILURE_LABELS: Record<FairValueFailureKind, { th: string; en: string }> = {
-  'insufficient-periods': { th: 'งบการเงินมีจำนวนงวดไม่เพียงพอ', en: 'Insufficient financial periods' },
+  'insufficient-periods': { th: 'งบการเงินจริงมีจำนวนงวดไม่เพียงพอ', en: 'Insufficient financial periods' },
   'currency-mismatch': { th: 'สกุลเงินของข้อมูลไม่ตรงกัน', en: 'Currency mismatch' },
   'stale-fundamentals': { th: 'งบการเงินเก่าเกินเกณฑ์', en: 'Stale fundamentals' },
-  'provider-unavailable': {
-    th: 'ผู้ให้บริการไม่มีข้อมูล',
-    en: 'Provider data unavailable',
-  },
-  'missing-field': {
-    th: 'ข้อมูลไม่ผ่านเกณฑ์ขั้นต่ำ',
-    en: 'Insufficient data',
-  },
-  'mapping-error': {
-    th: 'ไม่มีโมเดลที่มีความหมายกับข้อมูลชุดนี้',
-    en: 'No meaningful valuation model',
-  },
-  'provider-rate-limited': {
-    th: 'ผู้ให้บริการจำกัดคำขอชั่วคราว',
-    en: 'Rate limited',
-  },
-  'calculation-error': {
-    th: 'เซิร์ฟเวอร์ประมวลผลไม่สำเร็จ',
-    en: 'Server error',
-  },
+  'provider-unavailable': { th: 'ผู้ให้บริการไม่มีข้อมูล', en: 'Provider data unavailable' },
+  'missing-field': { th: 'ข้อมูลจริงไม่ผ่านเกณฑ์ขั้นต่ำ', en: 'Insufficient data' },
+  'mapping-error': { th: 'ไม่สามารถจับคู่ข้อมูลจากผู้ให้บริการได้', en: 'Provider mapping error' },
+  'provider-rate-limited': { th: 'ผู้ให้บริการจำกัดคำขอชั่วคราว', en: 'Rate limited' },
+  'calculation-error': { th: 'ระบบประมวลผลไม่สำเร็จ', en: 'Server error' },
 };
 
 export function fairValueUnavailableLabel(
@@ -93,97 +103,21 @@ export function fairValueUnavailableLabel(
       : failureKind === 'rate-limited'
         ? 'provider-rate-limited'
         : failureKind === 'server-error' ? 'calculation-error' : failureKind;
-  if (language === 'th') {
-    const thaiLabels: Record<FairValueFailureKind, string> = {
-      'insufficient-periods': 'งบการเงินจริงไม่เพียงพอ',
-      'currency-mismatch': 'สกุลเงินของข้อมูลไม่ตรงกัน',
-      'stale-fundamentals': 'งบการเงินเก่าเกินเกณฑ์',
-      'provider-unavailable': 'ผู้ให้บริการไม่มีข้อมูล',
-      'missing-field': 'ข้อมูลจริงไม่ผ่านเกณฑ์ขั้นต่ำ',
-      'mapping-error': 'ไม่สามารถจับคู่ข้อมูล provider ได้',
-      'provider-rate-limited': 'ผู้ให้บริการจำกัดคำขอชั่วคราว',
-      'calculation-error': 'เซิร์ฟเวอร์ประมวลผลไม่สำเร็จ',
-    };
-    return thaiLabels[normalized];
-  }
-  return FAILURE_LABELS[normalized].en;
+  return FAILURE_LABELS[normalized][language];
 }
 
-function missingFieldLabel(field: string, language: 'th' | 'en'): string {
-  const normalized = field.toLowerCase();
-  if (normalized.includes('forwardestimate') || normalized.includes('targetforward')) {
-    return 'Forward Estimates';
-  }
-  if (normalized.includes('wacc') || normalized.includes('riskfree') || normalized.includes('equityrisk') || normalized.includes('beta')) {
-    return language === 'th' ? 'ข้อมูลจริงสำหรับ WACC' : 'traceable WACC inputs';
-  }
-  if (normalized.includes('peer')) {
-    return language === 'th' ? 'peer ที่ผ่านเกณฑ์อย่างน้อย 4 บริษัท' : 'at least four valid peers';
-  }
-  const labels = language === 'th'
-    ? {
-        fcf: 'FCF',
-        ebitda: 'EBITDA',
-        history: 'ข้อมูลย้อนหลัง 3 งวด',
-        ohlcv: 'ราคาย้อนหลังอย่างน้อย 50 วัน',
-        income: 'งบกำไรขาดทุน',
-        balance: 'งบดุล',
-        cashFlow: 'งบกระแสเงินสด',
-        shares: 'จำนวนหุ้นถัวเฉลี่ยปรับลด',
-        marketCap: 'มูลค่าหลักทรัพย์ตามราคาตลาด',
-        sector: 'Sector',
-        industry: 'Industry',
-        quote: 'ราคาตลาด',
-        profile: 'ข้อมูลบริษัท',
-        currency: 'สกุลเงินที่ตรวจสอบได้',
-        aligned: 'งบการเงินที่ตรงกันตามงวด',
-        peers: 'peer set ที่ตรวจสอบได้อย่างน้อย 5 บริษัท',
-        forwardRevenue: 'forward/NTM revenue ที่ระบุงวด',
-      }
-    : {
-        fcf: 'FCF',
-        ebitda: 'EBITDA',
-        history: 'three historical financial periods',
-        ohlcv: 'at least 50 daily price rows',
-        income: 'income statement',
-        balance: 'balance sheet',
-        cashFlow: 'cash-flow statement',
-        shares: 'diluted shares',
-        marketCap: 'market capitalization',
-        sector: 'sector',
-        industry: 'industry',
-        quote: 'market quote',
-        profile: 'company profile',
-        currency: 'verified currency',
-        aligned: 'period-aligned financial statements',
-        peers: 'a verifiable peer set of at least 5 companies',
-        forwardRevenue: 'forward/NTM revenue with an explicit period',
-      };
-
-  if (normalized.includes('verifiablepeerset')) return labels.peers;
-  if (normalized.includes('forwardrevenue')) return labels.forwardRevenue;
-  if (normalized.includes('historicalfinancials')) return labels.history;
-  if (normalized.includes('historicalohlcv')) return labels.ohlcv;
-  if (normalized.includes('freecashflow')) return labels.fcf;
-  if (normalized.includes('ebitda')) return labels.ebitda;
-  if (normalized.includes('income-statement') || normalized.includes('incomestatement')) return labels.income;
-  if (normalized.includes('balance-sheet') || normalized.includes('balancesheet') || normalized.includes('cashanddebt')) return labels.balance;
-  if (normalized.includes('cash-flow') || normalized.includes('cashflowstatement')) return labels.cashFlow;
-  if (normalized.includes('dilutedshares')) return labels.shares;
-  if (normalized.includes('marketcapitalization')) return labels.marketCap;
-  if (normalized === 'sector') return labels.sector;
-  if (normalized === 'industry') return labels.industry;
-  if (normalized === 'quote' || normalized.includes('marketprice')) return labels.quote;
-  if (normalized === 'companyprofile') return labels.profile;
-  if (normalized.includes('currency')) return labels.currency;
-  if (normalized.includes('alignedstatements')) return labels.aligned;
-  return field;
+export function readableFieldLabel(field: string): string {
+  if (field.startsWith('model:fcff-dcf')) return 'โมเดล DCF';
+  if (field.startsWith('model:forward-multiples')) return 'โมเดล Forward Multiples';
+  if (FIELD_LABELS[field]) return FIELD_LABELS[field];
+  const periodMatch = /^(annual|quarterly):\d{4}-\d{2}-\d{2}:(.+)$/.exec(field);
+  return FIELD_LABELS[periodMatch?.[2] ?? ''] ?? periodMatch?.[2] ?? field;
 }
 
 function joinHumanList(values: string[], language: 'th' | 'en'): string {
   if (values.length <= 1) return values[0] ?? '';
   return language === 'th'
-    ? `${values.slice(0, -1).join(', ')} และ${values.at(-1)}`
+    ? `${values.slice(0, -1).join(', ')} และ ${values.at(-1)}`
     : `${values.slice(0, -1).join(', ')} and ${values.at(-1)}`;
 }
 
@@ -191,8 +125,9 @@ export function fairValueMissingFieldsSummary(
   missingFields: string[],
   language: 'th' | 'en',
 ): string {
-  const labels = [...new Set(missingFields.map((field) => missingFieldLabel(field, language)))];
-  if (!labels.length) return language === 'th' ? 'ไม่มีข้อมูลที่ขาดเพิ่มเติม' : 'No additional fields are missing';
+  const labels = [...new Set(missingFields.map((field) =>
+    language === 'th' ? readableFieldLabel(field) : field))];
+  if (!labels.length) return language === 'th' ? 'ไม่พบรายการข้อมูลที่ขาดเพิ่มเติม' : 'No additional fields are missing';
   return `${language === 'th' ? 'ขาด' : 'Missing'} ${joinHumanList(labels, language)}`;
 }
 
@@ -206,14 +141,9 @@ export interface MissingFieldDetail {
 
 function affectedModelsForField(field: string): ModelId[] {
   const normalized = field.toLowerCase();
-  if (/workingcapital|freecashflow|capitalexpenditure|depreciation/.test(normalized)) return ['fcff-dcf'];
-  if (/dividend/.test(normalized)) return ['ddm'];
-  if (/forward.*growth/.test(normalized)) return ['peg'];
-  if (/eps/.test(normalized)) return ['pe', 'peg'];
-  if (/equity|asset|liabilit/.test(normalized)) return ['asset-based', 'pb'];
-  if (/ebitda/.test(normalized)) return ['ev-ebitda'];
-  if (/revenue/.test(normalized)) return ['fcff-dcf', 'ev-sales'];
-  if (/shares/.test(normalized)) return ['fcff-dcf', 'fcfe', 'ddm', 'relative', 'asset-based', 'ev-sales', 'ev-ebitda', 'pe', 'peg', 'pb'];
+  if (/workingcapital|freecashflow|capitalexpenditure|depreciation|wacc|beta|riskfree|equityrisk/.test(normalized)) return ['fcff-dcf'];
+  if (/forward|peer|eps|revenue/.test(normalized)) return ['pe', 'ev-sales'];
+  if (/shares|cash|debt/.test(normalized)) return ['fcff-dcf', 'pe', 'ev-sales'];
   return [];
 }
 
@@ -222,16 +152,11 @@ export function fairValueMissingFieldDetails(missingFields: string[]): MissingFi
     const periodMatch = /^(annual|quarterly):(\d{4}-\d{2}-\d{2}):(.+)$/.exec(raw);
     const modelMatch = /^(fcff-dcf|fcfe|ddm|relative|asset-based|ev-sales|ev-ebitda|pe|peg|pb):\s*(.+)$/.exec(raw);
     const field = periodMatch?.[3] ?? (modelMatch ? 'model input gate' : raw);
-    const statement = /revenue|income|eps|shares|ebitda|interest/i.test(field)
-      ? 'income statement'
-      : /cash|capital|dividend|workingcapital|freecashflow/i.test(field)
-        ? 'cash-flow statement'
-        : /asset|liabilit|debt|equity/i.test(field) ? 'balance sheet' : null;
     return {
       field: modelMatch?.[1] ?? field,
       period: periodMatch?.[2] ?? null,
-      statement,
-      reason: modelMatch?.[2] ?? (periodMatch ? 'provider field unavailable or could not be mapped safely' : raw),
+      statement: null,
+      reason: modelMatch?.[2] ?? readableFieldLabel(raw),
       affectedModels: modelMatch ? [modelMatch[1] as ModelId] : affectedModelsForField(field),
     };
   });
@@ -244,5 +169,35 @@ export function fairValueUnavailableReason(
   const missing = data.missingFields.length > 0
     ? fairValueMissingFieldsSummary(data.missingFields, language)
     : null;
-  return missing ? `${missing} · ${data.reason}` : data.reason;
+  const safeReason = /[\u0080-\u009f]/.test(data.reason)
+    ? fairValueUnavailableLabel(data.failureKind, language)
+    : data.reason;
+  return missing
+    ? `${missing} · ${safeReason}`
+    : safeReason;
+}
+
+export function diagnosticReasonLabel(diagnostic: ValuationDiagnostic): string {
+  if (!diagnostic.reason) return diagnostic.status === 'available' ? 'ข้อมูลพร้อมใช้งาน' : 'ไม่ระบุเหตุผล';
+  const safeLabels: Record<string, string> = {
+    'provider-field-missing': 'ผู้ให้บริการไม่ส่งค่านี้',
+    'provider-not-configured': 'ยังไม่ได้ตั้งค่าผู้ให้บริการ',
+    'stale-provider-cache': 'ใช้ข้อมูล cache ที่เก่ากว่าปกติ',
+    'required-model-input-failed-validation': 'ข้อมูลไม่ผ่านเกณฑ์ของโมเดล',
+    'rate-limited': 'ผู้ให้บริการจำกัดคำขอชั่วคราว',
+    'provider-unavailable': 'ผู้ให้บริการไม่พร้อมใช้งาน',
+  };
+  if (safeLabels[diagnostic.reason]) return safeLabels[diagnostic.reason];
+  const fields = diagnostic.reason.split(',').map((field) => readableFieldLabel(field.trim()));
+  return fields.join(', ');
+}
+
+export function fairValueSummary(data: FairValueAvailable): string {
+  if (data.fairValue.type === 'base') {
+    return 'ค่านี้ผสมผล DCF 60% และ Forward Multiples 40% หลังจากทั้งสองโมเดลผ่านการตรวจสอบข้อมูลแล้ว';
+  }
+  if (data.fairValue.type === 'dcf') {
+    return 'ค่านี้มาจาก DCF ที่ผ่านการตรวจสอบเพียงโมเดลเดียว จึงไม่เรียกว่า Base หรือ Blended Fair Value';
+  }
+  return 'ค่านี้เทียบประมาณการล่วงหน้ากับบริษัทจริงอย่างน้อย 4 บริษัทที่ผ่านเกณฑ์ โดยไม่มีการผสม DCF';
 }

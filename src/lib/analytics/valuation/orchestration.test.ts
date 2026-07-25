@@ -254,7 +254,7 @@ describe('Fair Value orchestration', () => {
     expect(JSON.stringify(logger.mock.calls)).not.toContain('must-not-appear');
   });
 
-  it('calls Gemini only for missing target metrics and keeps FMP fields authoritative', async () => {
+  it('uses provider forward revenue without researching or fabricating missing EPS', async () => {
     const valuationProvider = mocks.getFmpValuationProvider();
     const dataset = await valuationProvider.getValuationDataset();
     valuationProvider.getValuationDataset.mockResolvedValue({
@@ -295,18 +295,14 @@ describe('Fair Value orchestration', () => {
     });
 
     const result = await loadFairValue('AAPL');
-    expect(mocks.research).toHaveBeenCalledTimes(1);
-    expect(mocks.research).toHaveBeenCalledWith(expect.objectContaining({
-      symbols: ['AAPL'],
-      metrics: ['eps'],
-    }));
+    expect(mocks.research).not.toHaveBeenCalled();
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
-    expect(result.dataQualityLabel).toBe('Medium');
+    expect(result.modelResults.map((model) => model.model)).toContain('ev-sales');
     expect(result.inputDetails.find((detail) => detail.field.startsWith('Consensus Revenue')))
       .toMatchObject({ sourceType: 'structured-provider' });
-    expect(result.inputDetails.find((detail) => detail.field === 'Target Forward EPS'))
-      .toMatchObject({ sourceType: 'gemini-grounded', evidenceCount: 1 });
+    expect(result.inputDetails.find((detail) => detail.field === 'Target Forward Revenue'))
+      .toMatchObject({ sourceType: 'structured-provider' });
   });
 
   it('rescues revenue for the same fiscal period when non-positive EPS must use EV/Sales', async () => {

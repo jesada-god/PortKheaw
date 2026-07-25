@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const card = readFileSync(new URL('./FairValueCard.tsx', import.meta.url), 'utf8');
 const drawer = readFileSync(new URL('./FairValueDetailsDrawer.tsx', import.meta.url), 'utf8');
+const drawerPrimitive = readFileSync(new URL('../../ui/Drawer.tsx', import.meta.url), 'utf8');
 const stock = readFileSync(new URL('../../stock/StockDetailClient.tsx', import.meta.url), 'utf8');
 
 describe('Stock Overview Fair Value contract', () => {
@@ -16,15 +17,27 @@ describe('Stock Overview Fair Value contract', () => {
     expect(stock.slice(fairValue, after)).toContain('enabled={fairValueEnabled}');
   });
 
-  it('shows all required outputs and an accessible calculation drawer', () => {
+  it('shows required outputs and progressive disclosure', () => {
     for (const label of ['Fair Value', 'Current Price', 'Upside/Downside', 'DCF', 'Forward Multiples', 'Data Quality']) {
       expect(card).toContain(label);
     }
     expect(card).toContain('aria-label="ดูวิธีคำนวณ Fair Value"');
     expect(card).toContain('min-h-11 min-w-11');
     expect(card).toContain('aria-expanded={open}');
-    expect(drawer).toContain('<Drawer id={id}');
-    expect(drawer).toContain('Inputs และแหล่งข้อมูล');
+    for (const label of ['สรุป', 'โมเดล', 'ข้อมูลที่ใช้', 'แหล่งที่มา']) {
+      expect(drawer).toContain(label);
+    }
+    expect(drawer).toContain('title="วิธีคำนวณ Fair Value"');
+    expect(drawer).toContain('variant="responsive-dialog"');
+  });
+
+  it('keeps the responsive dialog inside the viewport and preserves dialog accessibility', () => {
+    expect(drawerPrimitive).toContain('max-h-[90dvh]');
+    expect(drawerPrimitive).toContain('overflow-x-hidden overflow-y-auto');
+    expect(drawerPrimitive).toContain('env(safe-area-inset-bottom)');
+    expect(drawerPrimitive).toContain('min-h-11 min-w-11');
+    expect(drawerPrimitive).toContain('aria-modal="true"');
+    expect(drawerPrimitive).toContain('role="dialog"');
   });
 
   it('keeps USD as source of truth and never adds a Fair Value currency toggle', () => {

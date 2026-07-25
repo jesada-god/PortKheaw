@@ -17,22 +17,25 @@ export function FairValueSection({ symbol }: { symbol: string }) {
   const [data, setData] = useState<FairValueResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const analyze = async () => {
     if (!canLoadFairValue(true, true, true, loading)) return;
     setLoading(true);
     setError(null);
-    const controller = new AbortController();
     try {
-      setData(await requestFairValue(symbol, controller.signal));
+      setData(await requestFairValue(symbol, new AbortController().signal));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'เกิดข้อผิดพลาด');
     } finally {
       setLoading(false);
     }
   };
+
   const available = data?.status === 'available' ? data : null;
   const dcf = available?.modelResults.find((model) => model.model === 'fcff-dcf') ?? null;
-  const multiples = available?.modelResults.find((model) => model.model === 'pe' || model.model === 'ev-sales') ?? null;
+  const multiples = available?.modelResults.find((model) =>
+    model.model === 'pe' || model.model === 'ev-sales') ?? null;
+
   return (
     <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -64,34 +67,30 @@ export function FairValueSection({ symbol }: { symbol: string }) {
       {available && (
         <div className="mt-5 space-y-4">
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <Value
-              label="Base Fair Value"
-              value={available.baseStatus === 'available'
-                ? formatFairValueMoney(available.fundamentalFairValue.centralEstimate)
-                : 'ยังสร้างราคากลางไม่ได้'}
-            />
+            <Value label={available.fairValue.label} value={formatFairValueMoney(available.fairValue.value)} />
             <Value label="Current Price" value={formatFairValueMoney(available.marketPrice.value)} />
             <Value label="Upside/Downside" value={formatUpsidePercent(available.upsidePercent)} />
             <Value label="DCF" value={formatFairValueMoney(dcf?.fairValue ?? null)} />
             <Value label="Forward Multiples" value={formatFairValueMoney(multiples?.fairValue ?? null)} />
-            <Value label="Data Quality" value={available.dataQualityLabel} />
+            <Value label="Confidence" value={available.fairValue.confidence} />
           </dl>
           <details className="rounded-lg border border-slate-700 p-3 text-sm">
-            <summary className="cursor-pointer">ดูวิธีคำนวณ</summary>
+            <summary className="min-h-11 cursor-pointer py-2">ดูวิธีคำนวณ</summary>
             <div className="mt-3 space-y-3 text-xs text-slate-400">
               {available.modelResults.map((model) => (
                 <div key={model.model}>
                   <p className="font-semibold text-slate-200">
                     {modelLabel(model.model)}
-                    {available.baseStatus === 'available' ? ` · ${(model.weight * 100).toFixed(0)}%` : ' · standalone model'}
+                    {available.fairValue.type === 'base'
+                      ? ` · ${(model.weight * 100).toFixed(0)}%`
+                      : ' · standalone model'}
                   </p>
                   <p>{model.methodology}</p>
-                  <pre className="mt-1 overflow-auto">{JSON.stringify(model.inputs, null, 2)}</pre>
                 </div>
               ))}
-              {available.baseStatus === 'unavailable' && (
+              {available.fairValue.type !== 'base' && (
                 <p className="text-amber-300">
-                  Base Fair Value ต้องมีทั้ง DCF และ Forward Multiples ที่ผ่าน validation
+                  {available.fairValue.label} มาจากโมเดลเดียวที่ผ่าน validation จึงไม่ใช่ Base หรือ Blended Fair Value
                 </p>
               )}
               <p>Calculated {formatBangkokDateTime(available.calculatedAt)} · {available.methodologyVersion}</p>

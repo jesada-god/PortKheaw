@@ -39,6 +39,16 @@ const analyticsSourceTypeSchema = z.enum([
   'user-provided',
 ]);
 const rangeSchema = z.object({ low: finite.nullable(), high: finite.nullable() });
+const valuationDiagnosticSchema = z.object({
+  field: z.string(),
+  value: z.union([finite, z.string()]).nullable(),
+  period: z.string().nullable(),
+  provider: z.string().nullable(),
+  asOf: z.string(),
+  status: z.enum(['available', 'missing', 'stale', 'rejected']),
+  provenance: z.enum(['provider', 'derived', 'validation']),
+  reason: z.string().nullable(),
+});
 const excludedModelSchema = z.object({
   model: modelIdSchema,
   reason: z.string(),
@@ -57,6 +67,7 @@ const unavailableSchema = z.object({
   calculatedAt: z.iso.datetime(),
   methodologyVersion: z.literal(METHODOLOGY_VERSION),
   limitations: z.array(z.string()),
+  diagnostics: z.array(valuationDiagnosticSchema),
 });
 const availableSchema = z.object({
   status: z.literal('available'),
@@ -67,6 +78,12 @@ const availableSchema = z.object({
     asOf: z.string(),
     source: z.string(),
     sourceType: analyticsSourceTypeSchema,
+  }),
+  fairValue: z.object({
+    type: z.enum(['base', 'dcf', 'relative']),
+    label: z.enum(['Base Fair Value', 'DCF Fair Value', 'Relative Fair Value']),
+    value: finite,
+    confidence: z.enum(['High', 'Medium', 'Low']),
   }),
   companyClassification: z.object({
     classification: z.array(z.string()),
@@ -150,6 +167,7 @@ const availableSchema = z.object({
       quality: z.enum(['primary', 'reputable', 'secondary']),
     })).optional(),
   })),
+  diagnostics: z.array(valuationDiagnosticSchema),
   assumptionDetails: z.array(z.object({
     field: z.string(),
     value: z.union([z.number(), z.string()]),

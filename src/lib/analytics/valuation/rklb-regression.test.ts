@@ -94,6 +94,11 @@ describe('RKLB-style loss-making regression', () => {
     if (result.status !== 'available') return;
     expect(result.modelResults.map((model) => model.model)).toEqual(['ev-sales']);
     expect(result.fundamentalFairValue.centralEstimate).toBeNull();
+    expect(result.fairValue).toMatchObject({
+      type: 'relative',
+      label: 'Relative Fair Value',
+      confidence: 'Medium',
+    });
   });
 
   it('uses forward EV/Sales when target forward EPS is non-positive and DCF is valid', () => {

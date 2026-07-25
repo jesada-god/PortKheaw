@@ -2,6 +2,7 @@ import {
   METHODOLOGY_VERSION,
   type FairValueFailureKind,
   type FairValueUnavailable,
+  type ValuationDiagnostic,
 } from './types';
 
 export function createFairValueUnavailable(input: {
@@ -15,6 +16,7 @@ export function createFairValueUnavailable(input: {
   asOf: string;
   calculatedAt: string;
   limitations: string[];
+  diagnostics?: ValuationDiagnostic[];
 }): FairValueUnavailable {
   const missingFields = [...new Set(input.missingFields ?? [])];
   return {
@@ -31,5 +33,6 @@ export function createFairValueUnavailable(input: {
     calculatedAt: input.calculatedAt,
     methodologyVersion: METHODOLOGY_VERSION,
     limitations: input.limitations,
+    diagnostics: input.diagnostics ?? [],
   };
 }

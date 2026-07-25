@@ -336,9 +336,8 @@ function retainedPeerMultiples(peers: Array<{ symbol: string; multiple: number }
   return retained;
 }
 
-/** Forward P/E for positive target EPS, otherwise Forward EV/Sales. The branch is
- * driven only by the real target estimate; missing target EPS is not treated as
- * negative and therefore never triggers a silent EV/Sales fallback. */
+/** Forward P/E for positive target EPS, otherwise Forward EV/Sales when the
+ * provider supplied positive forward revenue. No estimate is synthesized. */
 export function calculateForwardMultiples(input: {
   targetForwardEps: number | null;
   targetForwardRevenue: number | null;
@@ -349,15 +348,14 @@ export function calculateForwardMultiples(input: {
   minimumPeers?: number;
 }): ForwardMultiplesResult {
   assertFinite({ cash: input.cash, debt: input.debt, shares: input.shares });
-  if (input.targetForwardEps === null || !Number.isFinite(input.targetForwardEps)) {
-    throw new RangeError('targetForwardEps is required');
-  }
   positive(input.shares, 'shares');
   if (input.cash < 0 || input.debt < 0) throw new RangeError('cash and debt must be non-negative');
   const minimumPeers = input.minimumPeers ?? 4;
   if (!Number.isInteger(minimumPeers) || minimumPeers < 4) throw new RangeError('minimumPeers must be at least four');
 
-  if (input.targetForwardEps > 0) {
+  if (input.targetForwardEps !== null
+    && Number.isFinite(input.targetForwardEps)
+    && input.targetForwardEps > 0) {
     const retained = retainedPeerMultiples(input.peers.map((peer) => ({
       symbol: peer.symbol,
       multiple: peer.price != null && peer.forwardEps != null && peer.price > 0 && peer.forwardEps > 0

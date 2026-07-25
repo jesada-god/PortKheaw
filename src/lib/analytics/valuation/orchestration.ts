@@ -21,6 +21,7 @@ import type {
   AnalystEstimate,
   PeerObservation,
   ValuationInput,
+  ValuationDiagnostic,
 } from './types';
 
 function unavailable(
@@ -32,6 +33,7 @@ function unavailable(
   currency: string | null = null,
   provider: string | null = null,
   asOf: string = calculatedAt,
+  diagnostics: ValuationDiagnostic[] = [],
 ): FairValueUnavailable {
   return createFairValueUnavailable({
     failureKind,
@@ -45,6 +47,7 @@ function unavailable(
     limitations: [
       'No financial value, estimate, peer, market input, FX rate, or fair value is fabricated.',
     ],
+    diagnostics,
   });
 }
 
@@ -227,6 +230,19 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       calculatedAt,
       'ยังคำนวณ Fair Value ไม่ได้ เพราะไม่ได้ตั้งค่า provider งบการเงินจริง',
       ['financialStatements'],
+      null,
+      null,
+      calculatedAt,
+      [{
+        field: 'financialStatements',
+        value: null,
+        period: null,
+        provider: null,
+        asOf: calculatedAt,
+        status: 'missing',
+        provenance: 'provider',
+        reason: 'provider-not-configured',
+      }],
     ));
   }
   if (!valuationProvider) {
@@ -238,6 +254,17 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       ['forwardEstimates', 'stockPeers', 'waccMarketInputs'],
       null,
       'financial-modeling-prep',
+      calculatedAt,
+      ['forwardEstimates', 'stockPeers', 'waccMarketInputs'].map((field) => ({
+        field,
+        value: null,
+        period: null,
+        provider: 'financial-modeling-prep',
+        asOf: calculatedAt,
+        status: 'missing' as const,
+        provenance: 'provider' as const,
+        reason: 'provider-not-configured',
+      })),
     ));
   }
 
@@ -397,15 +424,17 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       missingTargetMetrics.push('revenue');
     }
     const hasMultiplesTarget = future.some((estimate) =>
-      finite(estimate.estimatedEps)
-      && (estimate.estimatedEps > 0
-        || (finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0)));
-    if (!hasMultiplesTarget && !future.some((estimate) => finite(estimate.estimatedEps))) {
-      missingTargetMetrics.push('eps');
-    } else if (!hasMultiplesTarget && !missingTargetMetrics.includes('revenue')) {
-      // A non-positive EPS can use EV/Sales only when revenue exists for the
-      // same forward fiscal period; revenue from another year is not a match.
-      missingTargetMetrics.push('revenue');
+      (finite(estimate.estimatedEps) && estimate.estimatedEps > 0)
+      || (finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0));
+    if (!hasMultiplesTarget) {
+      if (!future.some((estimate) => finite(estimate.estimatedEps))) {
+        missingTargetMetrics.push('eps');
+      }
+      if (!future.some((estimate) =>
+        finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0)
+        && !missingTargetMetrics.includes('revenue')) {
+        missingTargetMetrics.push('revenue');
+      }
     }
     if (missingTargetMetrics.length) {
       const rescued = await groundedResearch.research({
@@ -426,13 +455,13 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     const targetEstimate = estimates
       .filter((estimate) =>
         estimate.periodEnd > latestFinancialPeriod.periodEnd
-        && finite(estimate.estimatedEps)
-        && (estimate.estimatedEps > 0
+        && ((finite(estimate.estimatedEps) && estimate.estimatedEps > 0)
           || (finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0)))
       .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
       .at(0);
     if (targetEstimate) {
-      const branch = targetEstimate.estimatedEps! > 0 ? 'eps' as const : 'revenue' as const;
+      const branch = finite(targetEstimate.estimatedEps) && targetEstimate.estimatedEps > 0
+        ? 'eps' as const : 'revenue' as const;
       const validPeerCount = peers.filter((peer) =>
         branch === 'eps'
           ? finite(peer.price) && peer.price > 0 && finite(peer.forwardEps) && peer.forwardEps > 0
@@ -469,6 +498,72 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       }
     }
   }
+
+  const diagnostics: ValuationDiagnostic[] = [
+    ...(valuation.diagnostics ?? []),
+    {
+      field: 'marketPrice',
+      value: marketPrice,
+      period: marketPriceAsOf,
+      provider: marketPriceSource,
+      asOf: marketPriceAsOf,
+      status: providerStatus === 'stale' ? 'stale' : 'available',
+      provenance: 'provider',
+      reason: providerStatus === 'stale' ? 'stale-provider-cache' : null,
+    },
+    {
+      field: 'marketCapitalization',
+      value: marketCapitalization ?? null,
+      period: 'latest',
+      provider: profile?.provider ?? valuation.provider,
+      asOf: profile?.freshness.asOf ?? valuation.asOf,
+      status: marketCapitalization == null ? 'missing' : 'available',
+      provenance: 'provider',
+      reason: marketCapitalization == null ? 'provider-field-missing' : null,
+    },
+    ...(latestFinancialPeriod ? [
+      {
+        field: 'freeCashFlow',
+        value: latestFinancialPeriod.freeCashFlow,
+        period: latestFinancialPeriod.periodEnd,
+        provider: providerUsed,
+        asOf: financials.fetchedAt,
+        status: 'available' as const,
+        provenance: 'provider' as const,
+        reason: null,
+      },
+      {
+        field: 'cash',
+        value: latestFinancialPeriod.cash,
+        period: latestFinancialPeriod.periodEnd,
+        provider: providerUsed,
+        asOf: financials.fetchedAt,
+        status: 'available' as const,
+        provenance: 'provider' as const,
+        reason: null,
+      },
+      {
+        field: 'totalDebt',
+        value: latestFinancialPeriod.totalDebt,
+        period: latestFinancialPeriod.periodEnd,
+        provider: providerUsed,
+        asOf: financials.fetchedAt,
+        status: 'available' as const,
+        provenance: 'provider' as const,
+        reason: null,
+      },
+      {
+        field: 'dilutedShares',
+        value: latestFinancialPeriod.dilutedShares,
+        period: latestFinancialPeriod.periodEnd,
+        provider: providerUsed,
+        asOf: financials.fetchedAt,
+        status: latestFinancialPeriod.dilutedShares > 0 ? 'available' as const : 'missing' as const,
+        provenance: 'provider' as const,
+        reason: latestFinancialPeriod.dilutedShares > 0 ? null : 'provider-field-missing',
+      },
+    ] : []),
+  ];
 
   return calculateFairValueSafely({
     symbol,
@@ -509,6 +604,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       candidates: valuation.peerCandidates,
       rejected: valuation.peerRejections,
     },
+    diagnostics,
     displayFx: null,
     calculatedAt,
   });

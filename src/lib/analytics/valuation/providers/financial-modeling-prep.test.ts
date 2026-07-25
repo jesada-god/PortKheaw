@@ -28,7 +28,7 @@ function payload(url: URL) {
     ];
   }
   if (endpoint === 'stock-peers') {
-    return PEERS.map((peer) => ({ symbol: peer, companyName: peer, price: 10, mktCap: 100 }));
+    return [{ symbol, peersList: PEERS }];
   }
   if (endpoint === 'profile') {
     return [{
@@ -51,6 +51,9 @@ function payload(url: URL) {
       marketCapitalization: 800,
       numberOfShares: 40,
     }];
+  }
+  if (endpoint === 'shares-float') {
+    return [{ symbol, date: '2026-07-20', outstandingShares: 42 }];
   }
   if (endpoint === 'treasury-rates') {
     return [{ date: '2026-07-23', year10: 4.71 }];
@@ -92,7 +95,14 @@ describe('FMP deterministic valuation data provider', () => {
       marketPriceAsOf: '2026-07-25T00:00:00.000Z',
       currency: 'USD',
     });
-    expect(result.sharesOutstanding).toBe(40);
+    expect(result.sharesOutstanding).toBe(42);
+    expect(result.peerCandidates).toEqual(PEERS);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      field: 'sharesOutstanding',
+      value: 42,
+      provider: 'financial-modeling-prep',
+      status: 'available',
+    }));
   });
 
   it('deduplicates concurrent loads and reuses the cache', async () => {

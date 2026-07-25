@@ -15,6 +15,8 @@ export type FairValueFailureKind =
 export type CompanyClassification = 'profitable-growth' | 'mature-dividend-paying' | 'cyclical' | 'financial-institution' | 'reit' | 'early-stage-high-growth' | 'loss-making' | 'asset-heavy' | 'commodity-sensitive';
 export type ModelId = 'fcff-dcf' | 'fcfe' | 'ddm' | 'relative' | 'asset-based' | 'ev-sales' | 'ev-ebitda' | 'pe' | 'peg' | 'pb';
 export type FairValueDataStatus = 'live' | 'delayed' | 'cached' | 'stale' | 'limited' | 'unavailable';
+export type FairValueType = 'base' | 'dcf' | 'relative';
+export type FairValueConfidence = 'High' | 'Medium' | 'Low';
 export type ValuationEvidenceSourceType = 'structured-provider' | 'gemini-grounded' | 'derived';
 export type EvidenceQuality = 'high' | 'medium';
 
@@ -117,6 +119,7 @@ export interface ValuationInput {
     candidates: string[];
     rejected: Array<{ symbol: string; reason: string }>;
   };
+  diagnostics?: ValuationDiagnostic[];
   displayFx?: {
     rate: number;
     asOf: string;
@@ -208,6 +211,17 @@ export interface ValuationInputDisclosure {
   evidenceCount?: number;
   evidence?: ValuationEvidenceSource[];
 }
+
+export interface ValuationDiagnostic {
+  field: string;
+  value: number | string | null;
+  period: string | null;
+  provider: string | null;
+  asOf: string;
+  status: 'available' | 'missing' | 'stale' | 'rejected';
+  provenance: 'provider' | 'derived' | 'validation';
+  reason: string | null;
+}
 export interface ValuationAssumptionDisclosure {
   field: string;
   value: number | string;
@@ -230,10 +244,17 @@ export interface FairValueUnavailable {
   calculatedAt: string;
   methodologyVersion: typeof METHODOLOGY_VERSION;
   limitations: string[];
+  diagnostics: ValuationDiagnostic[];
 }
 
 export interface FairValueAvailable {
   status: 'available'; symbol: string; currency: string; marketPrice: { value: number; asOf: string; source: string; sourceType: AnalyticsSourceType };
+  fairValue: {
+    type: FairValueType;
+    label: 'Base Fair Value' | 'DCF Fair Value' | 'Relative Fair Value';
+    value: number;
+    confidence: FairValueConfidence;
+  };
   companyClassification: ClassificationResult; modelResults: Array<ModelResult & { weight: number }>; excludedModels: ExcludedModel[];
   fundamentalFairValue: {
     conservative: { low: number | null; high: number | null };
@@ -259,6 +280,7 @@ export interface FairValueAvailable {
   sectorRuleId: string;
   sectorRuleVersion: typeof SECTOR_RULE_VERSION;
   inputDetails: ValuationInputDisclosure[];
+  diagnostics: ValuationDiagnostic[];
   assumptionDetails: ValuationAssumptionDisclosure[];
   displayFx: ValuationInput['displayFx'];
   inputs: Record<string, unknown>; assumptions: Record<string, unknown>; sources: Array<{ name: string; asOf: string; sourceType: AnalyticsSourceType }>;

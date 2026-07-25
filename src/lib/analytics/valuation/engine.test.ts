@@ -93,6 +93,11 @@ describe('Nexora deterministic Fair Value engine', () => {
     const dcf = result.modelResults.find((model) => model.model === 'fcff-dcf')!;
     const multiples = result.modelResults.find((model) => model.model === 'pe')!;
     expect(result.baseStatus).toBe('available');
+    expect(result.fairValue).toMatchObject({
+      type: 'base',
+      label: 'Base Fair Value',
+      confidence: 'High',
+    });
     expect(dcf.weight).toBe(0.6);
     expect(multiples.weight).toBe(0.4);
     const centralEstimate = result.fundamentalFairValue.centralEstimate;
@@ -147,7 +152,12 @@ describe('Nexora deterministic Fair Value engine', () => {
     if (peers.status === 'available') {
       expect(peers.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
       expect(peers.fundamentalFairValue.centralEstimate).toBeNull();
-      expect(peers.upsidePercent).toBeNull();
+      expect(peers.fairValue).toMatchObject({
+        type: 'dcf',
+        label: 'DCF Fair Value',
+        value: peers.modelResults[0].fairValue,
+      });
+      expect(peers.upsidePercent).not.toBeNull();
     }
     const wacc = calculateFairValue({
       ...input,
@@ -160,6 +170,11 @@ describe('Nexora deterministic Fair Value engine', () => {
     });
     if (wacc.status === 'available') {
       expect(wacc.modelResults.map((model) => model.model)).toEqual(['pe']);
+      expect(wacc.fairValue).toMatchObject({
+        type: 'relative',
+        label: 'Relative Fair Value',
+        value: wacc.modelResults[0].fairValue,
+      });
     }
     const nonFinite = calculateFairValue({
       ...input,
@@ -210,6 +225,47 @@ describe('Nexora deterministic Fair Value engine', () => {
     expect(result.modelResults).toHaveLength(1);
     expect(result.modelResults[0].model).toBe('fcff-dcf');
     expect(result.modelResults[0].normalizedWeight).toBeUndefined();
+    expect(result.fairValue.type).toBe('dcf');
+    expect(result.fairValue.label).not.toMatch(/Base|Blended/);
+  });
+
+  it('uses real forward revenue for Relative Fair Value when provider EPS is absent', () => {
+    const revenueOnly = calculateFairValue({
+      ...input,
+      waccMarketInputs: null,
+      analystEstimates: input.analystEstimates!.map((estimate) => ({
+        ...estimate,
+        estimatedEps: null,
+        epsAnalystCount: null,
+      })),
+    }, Date.parse('2026-07-25'));
+    expect(revenueOnly.status).toBe('available');
+    if (revenueOnly.status !== 'available') return;
+    expect(revenueOnly.modelResults.map((model) => model.model)).toEqual(['ev-sales']);
+    expect(revenueOnly.fairValue).toMatchObject({
+      type: 'relative',
+      label: 'Relative Fair Value',
+      confidence: 'Medium',
+    });
+    expect(revenueOnly.inputDetails).toContainEqual(expect.objectContaining({
+      field: 'Target Forward Revenue',
+      value: input.analystEstimates![0].estimatedRevenue,
+    }));
+  });
+
+  it('does not fabricate missing provider values when no model passes', () => {
+    const result = calculateFairValue({
+      ...input,
+      analystEstimates: [],
+      peerObservations: [],
+      waccMarketInputs: null,
+    }, Date.parse('2026-07-25'));
+    expect(result.status).toBe('unavailable');
+    if (result.status !== 'unavailable') return;
+    expect(result).not.toHaveProperty('fairValue');
+    expect(result).not.toHaveProperty('modelResults');
+    expect(result.diagnostics.filter((item) => item.status === 'rejected')
+      .every((item) => item.value === null)).toBe(true);
   });
 
   it('deterministically caps quality at Medium and discloses grounded evidence', () => {

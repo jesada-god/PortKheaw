@@ -146,12 +146,12 @@ describe('nexora-fv-v2 deterministic formulas', () => {
   it('rejects missing estimates and all NaN/Infinity paths', () => {
     expect(() => calculateForwardMultiples({
       targetForwardEps: null,
-      targetForwardRevenue: 100,
+      targetForwardRevenue: null,
       cash: 0,
       debt: 0,
       shares: 10,
       peers: [],
-    })).toThrow(/targetForwardEps/);
+    })).toThrow(/targetForwardRevenue/);
     expect(() => calculateDeterministicDcf({
       latestFreeCashFlow: Number.POSITIVE_INFINITY,
       growthRates: [0.05],

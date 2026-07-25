@@ -129,6 +129,7 @@ const unavailableFairValue = {
   calculatedAt: '2026-07-20T06:00:00.000Z',
   methodologyVersion: 'nexora-fv-v2',
   limitations: ['No data is fabricated.'],
+  diagnostics: [],
 };
 const originalTimeZone = process.env.TZ;
 

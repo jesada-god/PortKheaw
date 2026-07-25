@@ -13,6 +13,7 @@ import {
   type FinancialPeriod,
   type ModelResult,
   type ValuationInput,
+  type ValuationDiagnostic,
   type ValuationInputDisclosure,
 } from './types';
 
@@ -85,6 +86,19 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
     calculatedAt,
     limitations: [
       'No analyst estimate, WACC input, peer, multiple, financial value, or fallback assumption is fabricated.',
+    ],
+    diagnostics: [
+      ...(input.diagnostics ?? []),
+      ...fields.map((field): ValuationDiagnostic => ({
+        field,
+        value: null,
+        period: null,
+        provider: provider || null,
+        asOf: input.priceAsOf || calculatedAt,
+        status: 'rejected',
+        provenance: 'validation',
+        reason: 'required-model-input-failed-validation',
+      })),
     ],
   });
 }
@@ -254,8 +268,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   if (!latest) return unavailable(input, calculatedAt, ['historicalFinancials']);
   const futureEstimates = validFutureEstimates(input.analystEstimates ?? [], latest.periodEnd, now);
   const targetEstimate = futureEstimates.find((estimate) =>
-    finite(estimate.estimatedEps)
-    && (estimate.estimatedEps! > 0 || positive(estimate.estimatedRevenue))) ?? null;
+    positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue)) ?? null;
   const marketWacc = input.waccMarketInputs;
   const dilutedShares = positive(latest.dilutedShares) ? latest.dilutedShares : null;
   const fallbackShares = positive(input.sharesOutstanding) ? input.sharesOutstanding : null;
@@ -324,7 +337,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   let multiples: ReturnType<typeof calculateForwardMultiples> | null = null;
   let currentPeers = [] as NonNullable<ValuationInput['peerObservations']>;
   if (!multiplesMissing.length && targetEstimate) {
-    const positiveTargetEps = targetEstimate.estimatedEps! > 0;
+    const positiveTargetEps = positive(targetEstimate.estimatedEps);
     currentPeers = (input.peerObservations ?? []).filter((peer) =>
       peer.estimatePeriod !== null
       && peer.estimatePeriod > latest.periodEnd
@@ -410,9 +423,9 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         ? 'Target forward EPS × median valid peer forward P/E.'
         : 'Target forward revenue × median valid peer forward EV/Sales, then EV-to-equity bridge.',
       inputs: {
-        targetForwardEps: targetEstimate!.estimatedEps!,
-        targetForwardRevenue: targetEstimate!.estimatedRevenue!,
-        estimatePeriod: targetEstimate!.periodEnd,
+        targetForwardEps: targetEstimate.estimatedEps ?? 'not-provided',
+        targetForwardRevenue: targetEstimate.estimatedRevenue ?? 'not-provided',
+        estimatePeriod: targetEstimate.periodEnd,
         peers: multiples.peers.map((peer) => peer.symbol).join(','),
         peerMultiples: multiples.peers.map((peer) => `${peer.symbol}:${peer.multiple}`).join(','),
         medianMultiple: multiples.medianMultiple,
@@ -440,7 +453,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     : groundedCritical || !completeModels ? 'Medium' as const : 'High' as const;
   const qualityScore = dataQualityLabel === 'High' ? 95
     : dataQualityLabel === 'Medium' ? (completeModels ? 82 : 74) : 55;
-  const baseAvailable = completeModels && dataQualityLabel !== 'Low';
+  const baseAvailable = completeModels;
   if (!baseAvailable) {
     for (const model of modelResults) delete model.normalizedWeight;
   }
@@ -456,6 +469,16 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   if (centralEstimate !== null && (!positive(centralEstimate) || !finite(dispersion))) {
     return unavailable(input, calculatedAt, ['finiteCombinedFairValue']);
   }
+  const publishableValue = centralEstimate ?? dcf?.fairValue ?? multiples?.fairValue ?? null;
+  if (!positive(publishableValue)) {
+    return unavailable(input, calculatedAt, ['finitePublishableFairValue']);
+  }
+  const fairValueType = baseAvailable ? 'base' as const
+    : dcf ? 'dcf' as const : 'relative' as const;
+  const confidence = baseAvailable
+    ? stale || groundedCritical || input.providerStatus === 'limited'
+      ? 'Medium' as const : 'High' as const
+    : stale || groundedCritical ? 'Low' as const : 'Medium' as const;
   const lowerModel = baseAvailable ? Math.min(dcf!.fairValue, multiples!.fairValue) : null;
   const upperModel = baseAvailable ? Math.max(dcf!.fairValue, multiples!.fairValue) : null;
   const estimateCoverage = growth
@@ -464,8 +487,8 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   const peerCoverage = multiples ? (multiples.peers.length >= 5 ? 30 : 24) : 0;
   const shareCoverage = dilutedShares ? 15 : 10;
   const modelReliability = {
-    level: dataQualityLabel === 'High' ? 'High' as const
-      : dataQualityLabel === 'Medium' ? 'Moderate' as const : 'Low' as const,
+    level: confidence === 'High' ? 'High' as const
+      : confidence === 'Medium' ? 'Moderate' as const : 'Low' as const,
     score: qualityScore,
     components: {
       estimateCoverage,
@@ -517,15 +540,15 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     );
   }
   if (multiples && targetEstimate) {
-    const targetProvenance = targetEstimate.estimatedEps! > 0
+    const targetProvenance = positive(targetEstimate.estimatedEps)
       ? targetEstimate.epsProvenance : targetEstimate.revenueProvenance;
     const peerEvidence = currentPeers.flatMap((peer) =>
       peer.estimateProvenance?.evidence ?? []);
     inputDetails.push(
       inputDetail({
-        field: targetEstimate.estimatedEps! > 0 ? 'Target Forward EPS' : 'Target Forward Revenue',
-        value: targetEstimate.estimatedEps! > 0
-          ? targetEstimate.estimatedEps! : targetEstimate.estimatedRevenue!,
+        field: positive(targetEstimate.estimatedEps) ? 'Target Forward EPS' : 'Target Forward Revenue',
+        value: positive(targetEstimate.estimatedEps)
+          ? targetEstimate.estimatedEps : targetEstimate.estimatedRevenue!,
         currency: 'USD',
         period: targetEstimate.periodEnd,
         provider: targetEstimate.provider,
@@ -543,8 +566,8 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     inputDetail({ field: 'Median Peer Multiple', value: multiples.medianMultiple, period: multiples.method, provider: peerProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
     );
   }
-  const upsideAmount = centralEstimate === null ? null : centralEstimate - input.marketPrice;
-  const upsidePercent = upsideAmount === null ? null : upsideAmount / input.marketPrice * 100;
+  const upsideAmount = publishableValue - input.marketPrice;
+  const upsidePercent = upsideAmount / input.marketPrice * 100;
   const dataStatus = gate.staleInputs.length || input.providerStatus === 'stale'
     ? 'stale' as const
     : input.providerStatus === 'cached'
@@ -562,10 +585,33 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   const excludedModels = [
     ...(!dcf ? [{ model: 'fcff-dcf' as const, reason: unique(dcfMissing).join(', ') }] : []),
     ...(!multiples ? [{
-      model: targetEstimate?.estimatedEps !== null && (targetEstimate?.estimatedEps ?? 0) <= 0
+      model: !positive(targetEstimate?.estimatedEps)
         ? 'ev-sales' as const : 'pe' as const,
       reason: unique(multiplesMissing).join(', '),
     }] : []),
+  ];
+  const diagnostics: ValuationDiagnostic[] = [
+    ...(input.diagnostics ?? []),
+    {
+      field: 'model:fcff-dcf',
+      value: dcf?.fairValue ?? null,
+      period: latest.periodEnd,
+      provider: input.source,
+      asOf: calculatedAt,
+      status: dcf ? 'available' : 'rejected',
+      provenance: 'validation',
+      reason: dcf ? null : unique(dcfMissing).join(', '),
+    },
+    {
+      field: 'model:forward-multiples',
+      value: multiples?.fairValue ?? null,
+      period: targetEstimate?.periodEnd ?? null,
+      provider: peerProvider,
+      asOf: targetEstimate?.asOf ?? calculatedAt,
+      status: multiples ? 'available' : 'rejected',
+      provenance: 'validation',
+      reason: multiples ? null : unique(multiplesMissing).join(', '),
+    },
   ];
 
   return {
@@ -577,6 +623,14 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       asOf: input.priceAsOf,
       source: input.marketPriceSource ?? input.source,
       sourceType: input.sourceType,
+    },
+    fairValue: {
+      type: fairValueType,
+      label: fairValueType === 'base'
+        ? 'Base Fair Value'
+        : fairValueType === 'dcf' ? 'DCF Fair Value' : 'Relative Fair Value',
+      value: publishableValue,
+      confidence,
     },
     companyClassification: {
       ...classification,
@@ -621,7 +675,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       `Shares basis: ${sharesSource}.`,
       baseAvailable
         ? 'Both DCF and Forward Multiples passed validation before Base Fair Value was published.'
-        : 'Base Fair Value is unavailable because both validated models and the minimum quality gate are required.',
+        : `${dcf ? 'DCF' : 'Forward Multiples'} is the only model that passed validation; no Base or blended value was created.`,
       ...(groundedCritical
         ? ['Validated Gemini-grounded evidence was used; Data Quality is capped at Medium.']
         : []),
@@ -639,6 +693,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     sectorRuleId: 'deterministic-dcf-forward-multiples',
     sectorRuleVersion: SECTOR_RULE_VERSION,
     inputDetails,
+    diagnostics,
     assumptionDetails: [
       { field: 'Perpetual Growth', value: PERPETUAL_GROWTH, source: 'model-assumption', ruleVersion: SECTOR_RULE_VERSION },
       { field: 'DCF Weight', value: DCF_WEIGHT, source: 'model-assumption', ruleVersion: SECTOR_RULE_VERSION },
@@ -668,7 +723,9 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       'Fair Value is a deterministic model output, not a market quote or investment recommendation.',
       'USD is the calculation source of truth.',
       'No unavailable model is reweighted and no missing input receives a numeric fallback.',
-      ...(baseAvailable ? [] : ['Base Fair Value remains unavailable when only one model passes.']),
+      ...(baseAvailable ? [] : [
+        `${fairValueType === 'dcf' ? 'DCF Fair Value' : 'Relative Fair Value'} is a standalone validated model result, not Base or Blended Fair Value.`,
+      ]),
     ],
   };
 }

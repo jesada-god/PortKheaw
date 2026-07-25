@@ -5,6 +5,7 @@ import { safeNumber } from '../../fundamentals/normalize';
 import type {
   AnalystEstimate,
   PeerObservation,
+  ValuationDiagnostic,
   WaccMarketInputs,
 } from '../types';
 
@@ -57,6 +58,7 @@ export interface FmpValuationDataset {
   peerCandidates: string[];
   peerRejections: Array<{ symbol: string; reason: string }>;
   endpointErrors: Record<string, string>;
+  diagnostics: ValuationDiagnostic[];
 }
 
 function rows(payload: unknown): RawRow[] {
@@ -146,10 +148,15 @@ function normalizedEstimate(row: RawRow, fetchedAt: string): AnalystEstimate | n
 
 function nearestFutureEstimate(estimates: AnalystEstimate[], today: string): AnalystEstimate | null {
   return estimates
-    .filter((estimate) =>
-      estimate.periodEnd > today
-      && (estimate.revenueAnalystCount === null || estimate.revenueAnalystCount > 0)
-      && (estimate.epsAnalystCount === null || estimate.epsAnalystCount > 0))
+    .filter((estimate) => {
+      const revenueAvailable = estimate.estimatedRevenue !== null
+        && estimate.estimatedRevenue > 0
+        && (estimate.revenueAnalystCount === null || estimate.revenueAnalystCount > 0);
+      const epsAvailable = estimate.estimatedEps !== null
+        && Number.isFinite(estimate.estimatedEps)
+        && (estimate.epsAnalystCount === null || estimate.epsAnalystCount > 0);
+      return estimate.periodEnd > today && (revenueAvailable || epsAvailable);
+    })
     .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
     .at(0) ?? null;
 }
@@ -379,6 +386,7 @@ export class FinancialModelingPrepValuationProvider {
       'profile',
       'quote',
       'enterprise-values',
+      'shares-float',
       'treasury-rates',
       'market-risk-premium',
     ] as const;
@@ -388,6 +396,7 @@ export class FinancialModelingPrepValuationProvider {
         this.load('profile', { symbol }, FRESH_MS.profile),
         this.load('quote', { symbol }, FRESH_MS.quote),
         this.load('enterprise-values', { symbol, period: 'annual', limit: '1' }, FRESH_MS.financial),
+        this.load('shares-float', { symbol }, FRESH_MS.financial),
         this.load('treasury-rates', {}, FRESH_MS.financial),
         this.load('market-risk-premium', {}, FRESH_MS.financial),
       ]);
@@ -403,12 +412,14 @@ export class FinancialModelingPrepValuationProvider {
       profileResult,
       quoteResult,
       enterpriseResult,
+      sharesResult,
       treasuryResult,
       premiumResult,
     ] = results;
     const profile = rows(profileResult?.payload).at(0);
     const quote = rows(quoteResult?.payload).at(0);
     const enterprise = newestByDate(rows(enterpriseResult?.payload));
+    const shares = newestByDate(rows(sharesResult?.payload)) ?? rows(sharesResult?.payload).at(0);
     const target = {
       sector: text(profile?.sector),
       industry: text(profile?.industry),
@@ -421,7 +432,13 @@ export class FinancialModelingPrepValuationProvider {
       .filter((estimate): estimate is AnalystEstimate => estimate !== null)
       .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
     const providerSymbols = [...new Set(rows(peersResult?.payload)
-      .map((row) => text(row.symbol)?.toUpperCase() ?? null)
+      .flatMap((row) => {
+        const nested = Array.isArray(row.peersList)
+          ? row.peersList.map((peer) => text(peer))
+          : Array.isArray(row.peers) ? row.peers.map((peer) => text(peer)) : [];
+        return [text(row.symbol), ...nested]
+          .map((peer) => peer?.toUpperCase() ?? null);
+      })
       .filter((peer): peer is string => Boolean(peer) && peer !== symbol))];
     const candidateSource = new Map<string, NonNullable<PeerObservation['candidateSource']>>();
     // Keep room for industry/sector coverage instead of allowing a long but
@@ -536,6 +553,57 @@ export class FinancialModelingPrepValuationProvider {
       .filter((result): result is LoadedPayload => result !== null)
       .map((result) => result.fetchedAt);
     const fetchedAt = fetchedTimes.length ? Math.max(...fetchedTimes) : this.now();
+    const datasetAsOf = new Date(fetchedAt).toISOString();
+    const sharesOutstanding = firstNumber(shares, ['outstandingShares', 'sharesOutstanding'])
+      ?? firstNumber(enterprise, ['numberOfShares']);
+    const sharesOutstandingAsOf = firstDate(shares, ['date'])
+      ?? firstDate(enterprise, ['date']);
+    const marketCapitalization = firstNumber(profile, ['marketCap'])
+      ?? firstNumber(enterprise, ['marketCapitalization']);
+    const beta = firstNumber(profile, ['beta']);
+    const riskFreeRate = percentage(latestTreasury?.year10);
+    const equityRiskPremium = percentage(usPremium?.totalEquityRiskPremium);
+    const diagnostic = (
+      field: string,
+      value: number | string | null,
+      period: string | null,
+      asOf: string,
+      endpoint: typeof endpointNames[number],
+    ): ValuationDiagnostic => ({
+      field,
+      value,
+      period,
+      provider: this.id,
+      asOf,
+      status: value === null
+        ? 'missing'
+        : results[endpointNames.indexOf(endpoint)]?.cache === 'stale' ? 'stale' : 'available',
+      provenance: 'provider',
+      reason: value === null
+        ? endpointErrors[endpoint] ?? 'provider-field-missing'
+        : results[endpointNames.indexOf(endpoint)]?.cache === 'stale' ? 'stale-provider-cache' : null,
+    });
+    const diagnostics: ValuationDiagnostic[] = [
+      diagnostic('beta', beta, 'latest profile', profileResult
+        ? new Date(profileResult.fetchedAt).toISOString() : datasetAsOf, 'profile'),
+      diagnostic('riskFreeRate', riskFreeRate, '10Y Treasury',
+        firstDate(latestTreasury, ['date']) ?? datasetAsOf, 'treasury-rates'),
+      diagnostic('equityRiskPremium', equityRiskPremium, 'United States',
+        premiumResult ? new Date(premiumResult.fetchedAt).toISOString() : datasetAsOf,
+        'market-risk-premium'),
+      diagnostic('marketCapitalization', marketCapitalization, 'latest profile',
+        profileResult ? new Date(profileResult.fetchedAt).toISOString() : datasetAsOf, 'profile'),
+      diagnostic('sharesOutstanding', sharesOutstanding, sharesOutstandingAsOf,
+        sharesResult ? new Date(sharesResult.fetchedAt).toISOString() : datasetAsOf,
+        sharesResult ? 'shares-float' : 'enterprise-values'),
+      diagnostic('peerObservations', peers.length, 'forward annual', datasetAsOf, 'stock-peers'),
+      ...estimates.flatMap((estimate) => [
+        diagnostic('forwardRevenue', estimate.estimatedRevenue, estimate.periodEnd,
+          estimate.asOf, 'analyst-estimates'),
+        diagnostic('forwardEps', estimate.estimatedEps, estimate.periodEnd,
+          estimate.asOf, 'analyst-estimates'),
+      ]),
+    ];
     return {
       provider: this.id,
       marketPrice: firstNumber(quote, ['price']),
@@ -547,28 +615,28 @@ export class FinancialModelingPrepValuationProvider {
       estimates,
       peers,
       waccMarketInputs: {
-        beta: firstNumber(profile, ['beta']),
+        beta,
         betaAsOf: profileResult ? new Date(profileResult.fetchedAt).toISOString() : null,
-        riskFreeRate: percentage(latestTreasury?.year10),
+        riskFreeRate,
         riskFreeAsOf: firstDate(latestTreasury, ['date']),
-        equityRiskPremium: percentage(usPremium?.totalEquityRiskPremium),
+        equityRiskPremium,
         equityRiskPremiumAsOf: premiumResult
           ? new Date(premiumResult.fetchedAt).toISOString() : null,
         provider: this.id,
       },
-      marketCapitalization: firstNumber(profile, ['marketCap'])
-        ?? firstNumber(enterprise, ['marketCapitalization']),
-      sharesOutstanding: firstNumber(enterprise, ['numberOfShares']),
-      sharesOutstandingAsOf: firstDate(enterprise, ['date']),
+      marketCapitalization,
+      sharesOutstanding,
+      sharesOutstandingAsOf,
       sector: target.sector,
       industry: target.industry,
-      asOf: new Date(fetchedAt).toISOString(),
+      asOf: datasetAsOf,
       cacheStatus: cacheStates.includes('stale')
         ? 'stale'
         : cacheStates.length > 0 && cacheStates.every((state) => state === 'hit') ? 'hit' : 'miss',
       peerCandidates: peerSymbols,
       peerRejections,
       endpointErrors,
+      diagnostics,
     };
   }
 }
