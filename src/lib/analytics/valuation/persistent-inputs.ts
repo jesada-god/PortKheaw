@@ -348,17 +348,9 @@ function cacheProvenance(
 }
 
 export function hasCompleteFreshValuationLkg(snapshot: ValuationInputLkgSnapshot): boolean {
-  const peSet = snapshot.peers.find((set) =>
-    set.state === 'fresh'
-    && set.metric === 'forward-pe'
-    && set.accepted.length >= 4
-    && set.observations.length >= 4);
   return snapshot.company.beta?.state === 'fresh'
     && snapshot.market.riskFreeRate?.state === 'fresh'
-    && snapshot.market.equityRiskPremium?.state === 'fresh'
-    && snapshot.company.forwardEps.some((item) => item.state === 'fresh')
-    && snapshot.company.forwardRevenue.filter((item) => item.state === 'fresh').length >= 5
-    && Boolean(peSet);
+    && snapshot.market.equityRiskPremium?.state === 'fresh';
 }
 
 export function mergeCachedForwardEstimates(
@@ -446,15 +438,17 @@ export function applyCachedWaccInputs(
   snapshot: ValuationInputLkgSnapshot,
   phase: 'read-first' | 'stale-fallback',
 ): WaccMarketInputs {
-  const allow = (value: CachedValuationScalar | null, always = false) =>
-    value && (always || (phase === 'read-first'
+  const allow = (value: CachedValuationScalar | null) =>
+    value && (phase === 'read-first'
       ? value.state === 'fresh'
-      : value.state === 'stale'))
+      : value.state === 'stale')
       ? value
       : null;
-  const beta = allow(snapshot.company.beta, true);
+  const betaCandidate = allow(snapshot.company.beta);
   const riskFreeCandidate = allow(snapshot.market.riskFreeRate);
   const erpCandidate = allow(snapshot.market.equityRiskPremium);
+  const beta = phase === 'stale-fallback' && current.beta
+    ? null : betaCandidate;
   const riskFree = phase === 'stale-fallback' && current.riskFreeRate
     ? null : riskFreeCandidate;
   const erp = phase === 'stale-fallback' && current.equityRiskPremium

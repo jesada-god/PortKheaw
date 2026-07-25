@@ -53,7 +53,7 @@ const inputResolutionSchema = z.object({
   missing: z.array(z.string()),
   resolved: z.array(z.object({
     field: z.string(),
-    origin: z.enum(['derived', 'gemini-grounded']),
+    origin: z.enum(['provider', 'derived', 'gemini-grounded']),
     provider: z.string(),
     asOf: z.string(),
   })),

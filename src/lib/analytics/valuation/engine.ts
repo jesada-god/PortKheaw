@@ -190,9 +190,7 @@ export function dataSufficiency(input: Partial<ValuationInput>, now = Date.now()
   if (!positive(input.marketPrice)) missingInputs.push('marketPrice');
   if (!input.priceAsOf) missingInputs.push('priceAsOf');
   if (!latestPeriod(input.periods ?? [])) missingInputs.push('historicalFinancials');
-  if (!input.analystEstimates?.length) missingInputs.push('forwardEstimates');
   if (!input.waccMarketInputs) missingInputs.push('waccMarketInputs');
-  if (!input.peerObservations?.length) missingInputs.push('peerObservations');
   if (input.priceAsOf
     && now - Date.parse(input.priceAsOf) > DATASET_FRESHNESS_POLICY.marketPrice.freshMs) {
     staleInputs.push('marketPrice');
@@ -257,16 +255,19 @@ export function validFutureEstimates(
     .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
 }
 
+interface DcfGrowthRates {
+  rates: number[];
+  method: 'consensus-revenue-growth-proxy' | 'historical-revenue-cagr-proxy';
+  estimateMode: 'annual-series' | 'consensus-cagr' | 'historical-cagr';
+  estimates: AnalystEstimate[];
+  historicalPeriods: FinancialPeriod[];
+}
+
 function annualGrowthRates(
   latestRevenue: number,
   latestPeriodEnd: string,
   estimates: AnalystEstimate[],
-): {
-  rates: number[];
-  method: 'consensus-revenue-growth-proxy';
-  estimateMode: 'annual-series' | 'consensus-cagr';
-  estimates: AnalystEstimate[];
-} {
+): DcfGrowthRates {
   const revenueEstimates = estimates
     .filter((estimate): estimate is AnalystEstimate & { estimatedRevenue: number } =>
       estimate.periodEnd > latestPeriodEnd && positive(estimate.estimatedRevenue))
@@ -285,6 +286,7 @@ function annualGrowthRates(
       method: 'consensus-revenue-growth-proxy',
       estimateMode: 'annual-series',
       estimates: selected,
+      historicalPeriods: [],
     };
   }
   if (revenueEstimates.length !== 1) {
@@ -303,6 +305,35 @@ function annualGrowthRates(
     method: 'consensus-revenue-growth-proxy',
     estimateMode: 'consensus-cagr',
     estimates: [terminalEstimate],
+    historicalPeriods: [],
+  };
+}
+
+function historicalGrowthRates(periods: FinancialPeriod[]): DcfGrowthRates {
+  const ordered = periods
+    .filter((period) => positive(period.revenue))
+    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
+  const earliest = ordered.at(0);
+  const latest = ordered.at(-1);
+  if (!earliest || !latest || earliest.periodEnd === latest.periodEnd) {
+    throw new RangeError('At least two reported revenue periods are required');
+  }
+  const elapsedYears = (
+    Date.parse(latest.periodEnd) - Date.parse(earliest.periodEnd)
+  ) / (365.25 * 86_400_000);
+  if (!(elapsedYears > 0)) throw new RangeError('Historical revenue period is invalid');
+  const rawCagr = (latest.revenue / earliest.revenue) ** (1 / elapsedYears) - 1;
+  if (!Number.isFinite(rawCagr) || rawCagr <= -1) {
+    throw new RangeError('Historical revenue CAGR is invalid');
+  }
+  // Reuse the existing verified-history DCF growth contract from sector selection.
+  const cagr = Math.max(-0.1, Math.min(0.2, rawCagr));
+  return {
+    rates: [cagr],
+    method: 'historical-revenue-cagr-proxy',
+    estimateMode: 'historical-cagr',
+    estimates: [],
+    historicalPeriods: [earliest, latest],
   };
 }
 
@@ -368,7 +399,7 @@ function valuationQuality(input: {
   completeModels: boolean;
   dcfAvailable: boolean;
   multiplesAvailable: boolean;
-  estimateMode: 'annual-series' | 'consensus-cagr' | null;
+  estimateMode: 'annual-series' | 'consensus-cagr' | 'historical-cagr' | null;
   targetEstimateAvailable: boolean;
   peerCount: number;
   stale: boolean;
@@ -384,6 +415,7 @@ function valuationQuality(input: {
     : input.dcfAvailable || input.multiplesAvailable ? 60 : 0;
   const estimateCoverage = input.estimateMode === 'annual-series' ? 100
     : input.estimateMode === 'consensus-cagr' ? 78
+      : input.estimateMode === 'historical-cagr' ? 72
       : input.targetEstimateAvailable ? 65 : 0;
   // Peer coverage is optional for a valid standalone DCF. Model coverage
   // already reflects that Forward Multiples was excluded.
@@ -491,7 +523,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   if (!finite(latest?.totalDebt) || latest.totalDebt < 0) dcfMissing.push('totalDebt');
   if (!shares) dcfMissing.push('dilutedSharesOrSharesOutstanding');
 
-  let growth: ReturnType<typeof annualGrowthRates> | null = null;
+  let growth: DcfGrowthRates | null = null;
   let taxRate: number | null = null;
   let costDebt: number | null = null;
   let wacc: ReturnType<typeof calculateDeterministicWacc> | null = null;
@@ -500,7 +532,11 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     try {
       growth = annualGrowthRates(latest.revenue, latest.periodEnd, futureEstimates);
     } catch {
-      dcfMissing.push('forwardRevenueEstimates');
+      try {
+        growth = historicalGrowthRates(input.periods);
+      } catch {
+        dcfMissing.push('forwardRevenueEstimatesOrHistoricalRevenueGrowth');
+      }
     }
   }
   if (!dcfMissing.length && growth && latest) {
@@ -671,7 +707,9 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       weight: DCF_WEIGHT,
       configuredWeight: DCF_WEIGHT,
       normalizedWeight: DCF_WEIGHT,
-      methodology: 'Five-year FCFF DCF from latest reported FCF and provider-derived consensus revenue growth; Gordon terminal value.',
+      methodology: growth.method === 'consensus-revenue-growth-proxy'
+        ? 'Five-year FCFF DCF from latest reported FCF and provider-derived consensus revenue growth; Gordon terminal value.'
+        : 'Five-year FCFF DCF from latest reported FCF and verified historical revenue CAGR; Gordon terminal value.',
       inputs: {
         latestFreeCashFlow: latest.freeCashFlow,
         growthRates: growth.rates.join(','),
@@ -692,8 +730,13 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         wacc: wacc.wacc,
       },
       limitations: [
-        'DCF is sensitive to provider consensus growth and WACC inputs.',
-        'Consensus revenue growth is explicitly used as an FCF growth proxy; it is not FCF consensus.',
+        `DCF is sensitive to ${
+          growth.method === 'consensus-revenue-growth-proxy'
+            ? 'provider consensus' : 'historically derived'
+        } growth and WACC inputs.`,
+        growth.method === 'consensus-revenue-growth-proxy'
+          ? 'Consensus revenue growth is explicitly used as an FCF growth proxy; it is not FCF consensus.'
+          : 'Historical revenue CAGR is explicitly used as an FCF growth proxy and is bounded by the existing verified-history DCF growth contract.',
       ],
     });
   }
@@ -831,7 +874,26 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       evidence: estimate.revenueProvenance?.evidence,
       status: estimate.revenueProvenance?.sourceType === 'gemini-grounded' ? 'limited' : 'available',
     })),
-      inputDetail({ field: 'Consensus Growth Rates', value: growth.rates.join(','), period: growth.method, provider: estimateProvider, asOf: growth.estimates.at(-1)?.asOf ?? calculatedAt, origin: 'derived' }),
+      ...growth.historicalPeriods.map((period) => inputDetail({
+        field: `Historical Revenue ${period.periodEnd}`,
+        value: period.revenue,
+        currency: 'USD',
+        period: period.periodEnd,
+        provider: input.source,
+        asOf: period.periodEnd,
+      })),
+      inputDetail({
+        field: growth.method === 'consensus-revenue-growth-proxy'
+          ? 'Consensus Growth Rates' : 'Historical Revenue CAGR',
+        value: growth.rates.join(','),
+        period: growth.method,
+        provider: growth.method === 'consensus-revenue-growth-proxy'
+          ? estimateProvider : input.source,
+        asOf: growth.estimates.at(-1)?.asOf
+          ?? growth.historicalPeriods.at(-1)?.periodEnd
+          ?? calculatedAt,
+        origin: 'derived',
+      }),
     inputDetail({
       field: 'Risk-free Rate',
       value: marketWacc!.riskFreeRate!,
@@ -1067,7 +1129,9 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     modelReliability,
     dataQualityLabel,
     reliabilityReasons: [
-      `${growth?.estimates.length ?? 0} consensus revenue estimate period(s) support DCF growth.`,
+      growth?.method === 'historical-revenue-cagr-proxy'
+        ? `${growth.historicalPeriods.length} reported revenue periods support the historical DCF growth proxy.`
+        : `${growth?.estimates.length ?? 0} consensus revenue estimate period(s) support DCF growth.`,
       `${multiples?.peers.length ?? 0} peers passed finite-positive and outlier gates.`,
       `Shares basis: ${sharesSource}.`,
       baseAvailable
@@ -1102,6 +1166,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       analystEstimates: input.analystEstimates,
       peerObservations: input.peerObservations,
       waccMarketInputs: input.waccMarketInputs,
+      betaAudit: input.betaAudit ?? null,
       peerAudit: peerQualityAudit,
     },
     assumptions: {

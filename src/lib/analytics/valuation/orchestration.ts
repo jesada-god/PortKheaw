@@ -32,6 +32,10 @@ import {
   type ValidatedGroundedMetric,
 } from './grounded-research';
 import {
+  getIndependentMarketInputsResolver,
+  IndependentMarketSourceError,
+} from './independent-market-inputs';
+import {
   classifyValuationInputs,
   resolveDeterministicInputs,
 } from './resolver';
@@ -423,6 +427,7 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
   const fundamentals = getFundamentalsProvider();
   const configuredValuationProvider = getFmpValuationProvider();
   const groundedResearch = getGroundedFinancialResearchService();
+  const independentMarketInputs = getIndependentMarketInputsResolver();
   let historicalMarketDataService: ReturnType<
     typeof getHistoricalMarketDataService
   > | null = null;
@@ -507,10 +512,9 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
             'persistent-valuation-lkg-complete',
           ))
         : valuationProvider.getValuationDataset(symbol, {
-            includeMarketInputs: !(
-              valuationLkg.market.riskFreeRate?.state === 'fresh'
-              && valuationLkg.market.equityRiskPremium?.state === 'fresh'
-            ),
+            // Rf and ERP are resolved from shared independent sources/LKG.
+            // FMP remains an optional company/relative enrichment provider.
+            includeMarketInputs: false,
           }),
     ]);
   const required = [
@@ -732,8 +736,8 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
   const providerFieldState = (
     field: string,
     available: boolean,
-    provider = valuation.provider,
-    asOf = valuation.asOf,
+    provider: string = valuation.provider,
+    asOf: string = valuation.asOf,
   ) => writeFairValueFieldLog({
     event: 'fair_value_field_resolution',
     symbol,
@@ -743,11 +747,23 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
     reason: available ? undefined : 'provider-field-missing',
     asOf,
   });
-  providerFieldState('beta', positive(waccMarketInputs.beta));
-  providerFieldState('riskFreeRate', positive(waccMarketInputs.riskFreeRate));
+  providerFieldState(
+    'beta',
+    positive(waccMarketInputs.beta),
+    waccMarketInputs.betaProvenance?.provider ?? valuation.provider,
+    waccMarketInputs.betaAsOf ?? valuation.asOf,
+  );
+  providerFieldState(
+    'riskFreeRate',
+    positive(waccMarketInputs.riskFreeRate),
+    waccMarketInputs.riskFreeRateProvenance?.provider ?? valuation.provider,
+    waccMarketInputs.riskFreeAsOf ?? valuation.asOf,
+  );
   providerFieldState(
     'equityRiskPremium',
     positive(waccMarketInputs.equityRiskPremium),
+    waccMarketInputs.equityRiskPremiumProvenance?.provider ?? valuation.provider,
+    waccMarketInputs.equityRiskPremiumAsOf ?? valuation.asOf,
   );
   providerFieldState(
     'targetForwardEstimate',
@@ -894,6 +910,120 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
       reason: 'market-price-times-shares',
       asOf: deterministic.marketCapitalizationProvenance.asOf,
     });
+  }
+
+  const independentDiagnostics: ValuationDiagnostic[] = [];
+  const independentRequests = [
+    ...(!positive(waccMarketInputs.riskFreeRate) ? [{
+      field: 'riskFreeRate' as const,
+      operation: independentMarketInputs.resolveRiskFreeRate(),
+    }] : []),
+    ...(!positive(waccMarketInputs.equityRiskPremium) ? [{
+      field: 'equityRiskPremium' as const,
+      operation: independentMarketInputs.resolveEquityRiskPremium(),
+    }] : []),
+  ];
+  const independentResults = await Promise.allSettled(
+    independentRequests.map((request) => request.operation),
+  );
+  independentResults.forEach((settled, index) => {
+    const request = independentRequests[index]!;
+    if (settled.status === 'fulfilled') {
+      const resolved = settled.value;
+      if (request.field === 'riskFreeRate') {
+        waccMarketInputs.riskFreeRate = resolved.value;
+        waccMarketInputs.riskFreeAsOf = resolved.asOf;
+        waccMarketInputs.riskFreeRateProvenance = resolved.provenance;
+      } else {
+        waccMarketInputs.equityRiskPremium = resolved.value;
+        waccMarketInputs.equityRiskPremiumAsOf = resolved.asOf;
+        waccMarketInputs.equityRiskPremiumProvenance = resolved.provenance;
+      }
+      waccMarketInputs.provider = [
+        waccMarketInputs.provider,
+        resolved.provenance.provider,
+      ].filter(Boolean).join('+');
+      recordResolvedInput(inputResolution, {
+        field: request.field,
+        origin: 'provider',
+        provider: resolved.provenance.provider,
+        asOf: resolved.asOf,
+      });
+      independentDiagnostics.push({
+        field: request.field,
+        value: resolved.value,
+        period: resolved.provenance.fiscalPeriod,
+        provider: resolved.provenance.provider,
+        asOf: resolved.asOf,
+        status: 'available',
+        provenance: 'provider',
+        sourceState: 'provider-live',
+        sourceType: 'structured-provider',
+        sourceUrl: resolved.provenance.sourceUrl,
+        evidence: resolved.provenance.evidence,
+        reason: null,
+      });
+      writeFairValueFieldLog({
+        event: 'fair_value_field_resolution',
+        symbol,
+        field: request.field,
+        state: 'provider-hit',
+        provider: resolved.provenance.provider,
+        reason: 'independent-shared-market-source',
+        asOf: resolved.asOf,
+      });
+      return;
+    }
+    const cause = settled.reason;
+    const sourceError = cause instanceof IndependentMarketSourceError ? cause : null;
+    const reason = sourceError?.code ?? safeFairValueErrorCode(cause);
+    const provider = sourceError?.source ?? 'independent-market-source';
+    independentDiagnostics.push({
+      field: request.field,
+      value: null,
+      period: request.field === 'riskFreeRate' ? '10Y' : 'United States',
+      provider,
+      asOf: calculatedAt,
+      status: 'missing',
+      provenance: 'provider',
+      sourceState: 'missing',
+      reason,
+    });
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: request.field,
+      state: 'provider-miss',
+      provider,
+      reason,
+      asOf: calculatedAt,
+    });
+    console.warn(JSON.stringify({
+      event: 'fair_value_independent_market_source_failed',
+      symbol,
+      field: request.field,
+      source: provider,
+      status: sourceError?.status ?? null,
+      errorCode: reason,
+      timestamp: calculatedAt,
+    }));
+  });
+
+  const betaBeforeStaleLkg = waccMarketInputs.beta;
+  const riskFreeBeforeStaleLkg = waccMarketInputs.riskFreeRate;
+  const erpBeforeStaleLkg = waccMarketInputs.equityRiskPremium;
+  waccMarketInputs = applyCachedWaccInputs(
+    waccMarketInputs,
+    valuationLkg,
+    'stale-fallback',
+  );
+  if (
+    waccMarketInputs.beta !== betaBeforeStaleLkg
+    || waccMarketInputs.riskFreeRate !== riskFreeBeforeStaleLkg
+    || waccMarketInputs.equityRiskPremium !== erpBeforeStaleLkg
+  ) {
+    valuationLkgUsed = true;
+    valuationLkgStaleUsed = true;
   }
 
   const researchCounters: ResearchCounters = {
@@ -1120,21 +1250,6 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
     }
   }
 
-  const riskFreeBeforeStaleLkg = waccMarketInputs.riskFreeRate;
-  const erpBeforeStaleLkg = waccMarketInputs.equityRiskPremium;
-  waccMarketInputs = applyCachedWaccInputs(
-    waccMarketInputs,
-    valuationLkg,
-    'stale-fallback',
-  );
-  if (
-    waccMarketInputs.riskFreeRate !== riskFreeBeforeStaleLkg
-    || waccMarketInputs.equityRiskPremium !== erpBeforeStaleLkg
-  ) {
-    valuationLkgUsed = true;
-    valuationLkgStaleUsed = true;
-  }
-
   if (!positive(marketCapitalization) && positive(sharesOutstanding)) {
     const afterResearch = resolveDeterministicInputs({
       marketPrice,
@@ -1168,6 +1283,36 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
   }
 
   const researchBoundary = latestFinancialPeriod?.periodEnd ?? calculatedAt.slice(0, 10);
+  const reportedRevenuePeriods = financials.periods.filter((period) =>
+    positive(period.revenue));
+  const futureRevenueCount = estimates.filter((estimate) =>
+    estimate.periodEnd > researchBoundary && positive(estimate.estimatedRevenue)).length;
+  const dcfGrowthReady = futureRevenueCount === 1
+    || futureRevenueCount >= 5
+    || reportedRevenuePeriods.length >= 2;
+  const dcfCriticalInputsReady = Boolean(
+    latestFinancialPeriod
+    && positive(latestFinancialPeriod.freeCashFlow)
+    && positive(latestFinancialPeriod.revenue)
+    && positive(marketCapitalization)
+    && positive(waccMarketInputs.beta)
+    && positive(waccMarketInputs.riskFreeRate)
+    && positive(waccMarketInputs.equityRiskPremium)
+    && positive(latestFinancialPeriod.incomeBeforeTax)
+    && finite(latestFinancialPeriod.incomeTaxExpense)
+    && latestFinancialPeriod.incomeTaxExpense! >= 0
+    && finite(latestFinancialPeriod.interestExpense)
+    && latestFinancialPeriod.interestExpense >= 0
+    && finite(latestFinancialPeriod.cash)
+    && latestFinancialPeriod.cash >= 0
+    && finite(latestFinancialPeriod.totalDebt)
+    && latestFinancialPeriod.totalDebt >= 0
+    && (
+      positive(sharesOutstanding)
+      || positive(latestFinancialPeriod.dilutedShares)
+    )
+    && dcfGrowthReady
+  );
   if (!groundedResearch) {
     const estimateCountBeforeStaleLkg = estimates.length;
     estimates = mergeCachedForwardEstimates(estimates, valuationLkg, 'stale');
@@ -1183,7 +1328,7 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
       valuationLkgStaleUsed = true;
     }
   }
-  if (groundedResearch) {
+  if (groundedResearch && !dcfCriticalInputsReady) {
     const fiscalYears = futureFiscalYears(researchBoundary, calculatedAt);
     const future = estimates.filter((estimate) =>
       estimate.periodEnd > researchBoundary);
@@ -1597,6 +1742,7 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
       ...diagnostic,
       sourceState: 'derived' as const,
     })),
+    ...independentDiagnostics,
     ...groundedDiagnostics,
     {
       field: 'financialStatements',
@@ -1721,6 +1867,20 @@ async function resolveFairValue(symbol: string): Promise<FairValueResult> {
     analystEstimates: estimates,
     peerObservations: peers,
     waccMarketInputs,
+    betaAudit: {
+      targetSource: historySource || 'persistent-or-provider-beta',
+      benchmarkSource: benchmarkSource || 'persistent-or-provider-beta',
+      targetRows: deterministic.betaAudit.targetRows,
+      benchmarkRows: deterministic.betaAudit.benchmarkRows,
+      alignedRows: deterministic.betaAudit.alignedObservations,
+      sampleSize: deterministic.beta?.provenance.sampleSize
+        ?? waccMarketInputs.betaProvenance?.sampleSize
+        ?? 0,
+      period: deterministic.betaAudit.period
+        ?? waccMarketInputs.betaProvenance?.fiscalPeriod
+        ?? null,
+      derivedBeta: deterministic.betaAudit.derivedBeta,
+    },
     providerStatus: groundedValueUsed
       ? 'limited'
       : valuationLkgStaleUsed

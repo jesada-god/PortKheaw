@@ -5,6 +5,7 @@ import type { MarketDataProvider } from './types';
 import { AlphaVantageProvider } from './providers/alpha-vantage/provider';
 import { StooqHistoricalProvider } from './providers/stooq/provider';
 import { NasdaqHistoricalProvider } from './providers/nasdaq/provider';
+import { YahooHistoricalProvider } from './providers/yahoo/historical';
 import { HistoricalMarketDataService, type HistoricalProvider } from './historical-service';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import type { CompanyProfile, HistoricalPrices, HistoricalRange, MarketOverview, ProviderResult, Quote, SymbolSearchResult } from './types';
@@ -114,6 +115,25 @@ class UnconfiguredHistoricalProvider implements HistoricalProvider {
   }
 }
 
+class CascadingHistoricalProvider implements HistoricalProvider {
+  readonly id: string;
+
+  constructor(
+    private readonly primary: HistoricalProvider,
+    private readonly fallback: HistoricalProvider,
+  ) {
+    this.id = `${primary.id}+${fallback.id}`;
+  }
+
+  async getHistoricalPrices(symbol: string, range: HistoricalRange) {
+    try {
+      return await this.primary.getHistoricalPrices(symbol, range);
+    } catch {
+      return this.fallback.getHistoricalPrices(symbol, range);
+    }
+  }
+}
+
 export function getHistoricalMarketDataService(): HistoricalMarketDataService {
   const key = serverEnv.ALPHA_VANTAGE_API_KEY;
   if (!historicalService || historicalProviderKey !== key) {
@@ -123,7 +143,10 @@ export function getHistoricalMarketDataService(): HistoricalMarketDataService {
       primary,
       new StooqHistoricalProvider(),
       Date.now,
-      new NasdaqHistoricalProvider(),
+      new CascadingHistoricalProvider(
+        new NasdaqHistoricalProvider(),
+        new YahooHistoricalProvider(),
+      ),
     );
   }
   return historicalService;

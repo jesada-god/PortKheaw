@@ -10,6 +10,7 @@ import type {
 } from '@/src/lib/analytics/valuation/types';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import {
+  availableFairValueResult,
   diagnosticReasonLabel,
   fairValueMissingFieldsSummary,
   fairValueSummary,
@@ -46,7 +47,7 @@ export function FairValueDetailsDrawer({
   const tabsId = useId();
 
   const diagnostics = useMemo(() => normalizedDiagnostics(data), [data]);
-  const available = data?.status === 'available' ? data : null;
+  const available = availableFairValueResult(data);
   const type = available
     ? available.fairValue.type === 'base' ? 'Base'
       : available.fairValue.type === 'dcf' ? 'DCF' : 'Relative'

@@ -54,7 +54,7 @@ export interface InputResolutionAudit {
   /** Fields that were subsequently resolved without overwriting provider data. */
   resolved: Array<{
     field: string;
-    origin: 'derived' | 'gemini-grounded';
+    origin: 'provider' | 'derived' | 'gemini-grounded';
     provider: string;
     asOf: string;
   }>;
@@ -121,6 +121,16 @@ export interface ValuationInput {
   analystEstimates?: AnalystEstimate[] | null;
   peerObservations?: PeerObservation[] | null;
   waccMarketInputs?: WaccMarketInputs | null;
+  betaAudit?: {
+    targetSource: string;
+    benchmarkSource: string;
+    targetRows: number;
+    benchmarkRows: number;
+    alignedRows: number;
+    sampleSize: number;
+    period: string | null;
+    derivedBeta: number | null;
+  } | null;
   forwardEpsGrowth?: {
     value: number;
     unit: 'decimal';

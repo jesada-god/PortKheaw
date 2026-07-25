@@ -5,6 +5,7 @@ import { hydrateRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, Quote } from '@/src/lib/market-data/types';
+import { createDcfOnlyFairValueResult } from '@/src/test/fixtures/fair-value';
 import { StockDetailClient } from './StockDetailClient';
 
 vi.stubGlobal('React', React);
@@ -139,6 +140,7 @@ function initialMarkup(): string {
 
 beforeEach(() => {
   vi.stubGlobal('React', React);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 });
 
 afterEach(() => {
@@ -202,6 +204,44 @@ describe('Stock Detail hydration regression', () => {
     expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(
       /hydration|did not match|server rendered HTML/i,
     );
+
+    await act(async () => root?.unmount());
+    container.remove();
+  });
+
+  it('keeps standalone DCF available in the Overview card and details drawer', async () => {
+    const dcfOnly = createDcfOnlyFairValueResult();
+    expect(dcfOnly.baseStatus).toBe('unavailable');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: dcfOnly,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    const container = document.createElement('div');
+    document.body.append(container);
+    container.innerHTML = initialMarkup();
+
+    let root: Root | undefined;
+    await act(async () => {
+      root = hydrateRoot(container, <StockDetailClient {...props} />);
+    });
+    await vi.waitFor(() => {
+      const fairValueMetric = [...container.querySelectorAll('dt')]
+        .find((item) => item.textContent === 'DCF Fair Value');
+      expect(fairValueMetric?.nextElementSibling?.textContent)
+        .toBe(`$${dcfOnly.fairValue.value.toFixed(2)}`);
+    });
+
+    const detailsButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls^="fair-value-details-"]',
+    );
+    expect(detailsButton).not.toBeNull();
+    await act(async () => detailsButton?.click());
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain(`$${dcfOnly.fairValue.value.toFixed(2)}`);
+    expect(dialog?.textContent).toContain('DCF');
 
     await act(async () => root?.unmount());
     container.remove();

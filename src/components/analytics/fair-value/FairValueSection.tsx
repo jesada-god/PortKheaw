@@ -6,6 +6,7 @@ import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { canLoadFairValue } from './load-policy';
 import { requestFairValue } from './fair-value-client';
 import {
+  availableFairValueResult,
   fairValueUnavailableLabel,
   fairValueUnavailableReason,
   formatFairValueMoney,
@@ -31,7 +32,7 @@ export function FairValueSection({ symbol }: { symbol: string }) {
     }
   };
 
-  const available = data?.status === 'available' ? data : null;
+  const available = availableFairValueResult(data);
   const dcf = available?.modelResults.find((model) => model.model === 'fcff-dcf') ?? null;
   const multiples = available?.modelResults.find((model) =>
     model.model === 'pe' || model.model === 'ev-sales') ?? null;

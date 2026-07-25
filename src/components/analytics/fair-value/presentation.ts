@@ -1,12 +1,19 @@
 import type {
   FairValueAvailable,
   FairValueFailureKind,
+  FairValueResult,
   FairValueUnavailable,
   ModelId,
   ValuationDiagnostic,
 } from '@/src/lib/analytics/valuation/types';
 
 export type UpsideTone = 'success' | 'danger' | 'neutral';
+
+export function availableFairValueResult(
+  data: FairValueResult | null,
+): FairValueAvailable | null {
+  return data?.status === 'available' ? data : null;
+}
 
 const MODEL_LABELS: Record<ModelId | 'blended', string> = {
   'fcff-dcf': 'DCF',

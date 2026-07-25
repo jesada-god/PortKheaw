@@ -6,6 +6,7 @@ import type { CompanyProfileLanguage } from '@/src/lib/stock-detail/profile-pres
 import { FairValueDetailsDrawer } from './FairValueDetailsDrawer';
 import { requestFairValue } from './fair-value-client';
 import {
+  availableFairValueResult,
   displayStatus,
   fairValueUnavailableLabel,
   fairValueUnavailableReason,
@@ -60,7 +61,7 @@ export function FairValueCard({
   const currentResult = result?.key === requestKey ? result : null;
   const data = currentResult?.data ?? null;
   const loading = enabled && currentResult === null;
-  const available = data?.status === 'available' ? data : null;
+  const available = availableFairValueResult(data);
   const dcf = available?.modelResults.find((model) => model.model === 'fcff-dcf')?.fairValue ?? null;
   const forwardMultiples = available?.modelResults.find(
     (model) => model.model === 'pe' || model.model === 'ev-sales',

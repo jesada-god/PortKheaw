@@ -14,6 +14,7 @@ vi.mock('@/src/lib/analytics/valuation/orchestration', () => ({
 }));
 
 import { GET } from './route';
+import { createDcfOnlyFairValueResult } from '@/src/test/fixtures/fair-value';
 
 const unavailable = {
   status: 'unavailable' as const,
@@ -61,6 +62,32 @@ describe('GET /api/analytics/fair-value/[symbol]', () => {
     await expect(response.json()).resolves.toEqual({ data: unavailable });
     expect(mocks.loadFairValue).toHaveBeenCalledWith('AAPL');
     expect(mocks.checkAnalyticsRateLimit).toHaveBeenCalledWith('fair-value:anonymous', 10);
+  });
+
+  it('serializes standalone DCF as overall available when Base is unavailable', async () => {
+    vi.stubEnv('FEATURE_FAIR_VALUE', 'true');
+    const dcfOnly = createDcfOnlyFairValueResult();
+    mocks.loadFairValue.mockResolvedValue(dcfOnly);
+
+    const response = await request();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      status: 'available',
+      baseStatus: 'unavailable',
+      fairValue: {
+        type: 'dcf',
+        label: 'DCF Fair Value',
+        value: dcfOnly.fairValue.value,
+      },
+      modelResults: [
+        expect.objectContaining({
+          model: 'fcff-dcf',
+          fairValue: dcfOnly.fairValue.value,
+        }),
+      ],
+    });
   });
 
   it('returns a structured rate-limited unavailable response', async () => {

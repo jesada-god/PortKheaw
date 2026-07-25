@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   research: vi.fn(),
   researchPeers: vi.fn(),
   getGroundedFinancialResearchService: vi.fn(),
+  resolveRiskFreeRate: vi.fn(),
+  resolveEquityRiskPremium: vi.fn(),
   readValuationLkg: vi.fn(),
   writeValuationLkg: vi.fn(),
 }));
@@ -36,6 +38,13 @@ vi.mock('./providers/financial-modeling-prep', () => ({
 }));
 vi.mock('./grounded-research', () => ({
   getGroundedFinancialResearchService: mocks.getGroundedFinancialResearchService,
+}));
+vi.mock('./independent-market-inputs', () => ({
+  getIndependentMarketInputsResolver: () => ({
+    resolveRiskFreeRate: mocks.resolveRiskFreeRate,
+    resolveEquityRiskPremium: mocks.resolveEquityRiskPremium,
+  }),
+  IndependentMarketSourceError: class IndependentMarketSourceError extends Error {},
 }));
 vi.mock('./persistent-inputs-repository', () => ({
   getValuationInputLkgService: () => ({
@@ -316,6 +325,32 @@ describe('Fair Value orchestration', () => {
       cache: 'negative',
       unavailableReason: 'no-validated-peer-candidates',
     });
+    mocks.resolveRiskFreeRate.mockResolvedValue({
+      value: 0.043,
+      asOf: '2026-07-24',
+      provenance: {
+        provider: 'us-treasury-daily-par-yield-curve',
+        sourceType: 'structured-provider',
+        field: 'riskFreeRate',
+        fiscalPeriod: '10Y',
+        asOf: '2026-07-24',
+        evidence: [],
+        evidenceQuality: 'high',
+      },
+    });
+    mocks.resolveEquityRiskPremium.mockResolvedValue({
+      value: 0.0418,
+      asOf: '2026-07-01',
+      provenance: {
+        provider: 'nyu-damodaran-implied-erp',
+        sourceType: 'structured-provider',
+        field: 'equityRiskPremium',
+        fiscalPeriod: 'United States',
+        asOf: '2026-07-01',
+        evidence: [],
+        evidenceQuality: 'high',
+      },
+    });
     mocks.getHistoricalMarketDataService.mockReturnValue({
       getHistoricalPrices: vi.fn(async (symbol: string) => ({
         data: {
@@ -452,7 +487,7 @@ describe('Fair Value orchestration', () => {
 
     const result = await loadFairValue('AAPL');
 
-    expect(valuationProvider.getValuationDataset).toHaveBeenCalledOnce();
+    expect(valuationProvider.getValuationDataset).not.toHaveBeenCalled();
     expect(mocks.research).toHaveBeenCalled();
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
@@ -548,7 +583,7 @@ describe('Fair Value orchestration', () => {
       .toEqual(expect.arrayContaining(['fcff-dcf', 'pe']));
   });
 
-  it('falls back from rate-limited FMP peers to one grounded candidate batch', async () => {
+  it('does not run P1 peer research after standalone DCF inputs are complete', async () => {
     const valuationProvider = mocks.getFmpValuationProvider();
     const dataset = await valuationProvider.getValuationDataset();
     valuationProvider.getValuationDataset.mockResolvedValue({
@@ -643,18 +678,15 @@ describe('Fair Value orchestration', () => {
 
     const result = await loadFairValue('AAPL');
 
-    expect(mocks.researchPeers).toHaveBeenCalledTimes(1);
-    expect(mocks.research).toHaveBeenCalledTimes(1);
-    expect(mocks.research.mock.calls[0][0].symbols).toEqual(candidateSymbols);
+    expect(mocks.researchPeers).not.toHaveBeenCalled();
+    expect(mocks.research).not.toHaveBeenCalled();
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
-    expect(result.modelResults.map((model) => model.model)).toContain('pe');
-    expect(result.peerAudit?.candidates).toEqual(candidateSymbols);
-    expect(result.peerAudit?.accepted).toHaveLength(4);
-    expect(result.peerAudit?.rejected).toContainEqual(expect.objectContaining({
-      symbol: 'P5',
-      reason: 'engine-quality-gate-or-outlier',
-    }));
+    expect(result.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
+    expect(result.fairValue).toMatchObject({
+      type: 'dcf',
+      label: 'DCF Fair Value',
+    });
   });
 
   it('continues through bounded research after valuation-provider throttling', async () => {
@@ -835,7 +867,7 @@ describe('Fair Value orchestration', () => {
     }
   });
 
-  it('rescues missing market-level WACC inputs in one shared-scope research request', async () => {
+  it('rescues missing market-level WACC inputs from independent shared sources before Gemini', async () => {
     const valuationProvider = mocks.getFmpValuationProvider();
     const dataset = await valuationProvider.getValuationDataset();
     valuationProvider.getValuationDataset.mockResolvedValue({
@@ -916,23 +948,19 @@ describe('Fair Value orchestration', () => {
 
     const result = await loadFairValue('AAPL');
 
-    expect(mocks.research).toHaveBeenCalledTimes(1);
-    expect(mocks.research).toHaveBeenCalledWith({
-      symbols: [],
-      metrics: ['riskFreeRate', 'equityRiskPremium'],
-      fiscalYears: [2026],
-    });
+    expect(mocks.resolveRiskFreeRate).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveEquityRiskPremium).toHaveBeenCalledTimes(1);
+    expect(mocks.research).not.toHaveBeenCalled();
     expect(result.status).toBe('available');
     if (result.status === 'available') {
-      expect(result.dataQualityLabel).toBe('Medium');
       expect(result.inputDetails).toContainEqual(expect.objectContaining({
         field: 'Risk-free Rate',
-        sourceType: 'gemini-grounded',
+        sourceType: 'structured-provider',
+        provider: 'us-treasury-daily-par-yield-curve',
       }));
       expect(result.researchAudit).toMatchObject({
-        geminiUsed: true,
-        requests: 1,
-        cacheMisses: 1,
+        geminiUsed: false,
+        requests: 0,
       });
     }
   });
@@ -1051,7 +1079,7 @@ describe('Fair Value orchestration', () => {
     }
   });
 
-  it('batch-rescues missing peer estimates without one request per peer', async () => {
+  it('does not batch-rescue optional peer estimates after DCF is ready', async () => {
     const valuationProvider = mocks.getFmpValuationProvider();
     const dataset = await valuationProvider.getValuationDataset();
     valuationProvider.getValuationDataset.mockResolvedValue({
@@ -1093,24 +1121,106 @@ describe('Fair Value orchestration', () => {
     }));
 
     const result = await loadFairValue('AAPL');
-    expect(mocks.research).toHaveBeenCalledTimes(1);
-    expect(mocks.research.mock.calls[0][0].symbols).toHaveLength(5);
+    expect(mocks.research).not.toHaveBeenCalled();
     expect(result.status).toBe('available');
     if (result.status === 'available') {
-      expect(result.modelResults.map((model) => model.model)).toContain('pe');
-      expect(result.dataQualityLabel).toBe('Medium');
-      expect(result.inputResolution?.resolved).toContainEqual(expect.objectContaining({
-        field: 'peerForwardEstimates',
-        origin: 'gemini-grounded',
-      }));
-      expect(result.inputs.peerObservations).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          forwardEps: 2,
-          estimateProvenance: expect.objectContaining({
-            sourceType: 'gemini-grounded',
-          }),
-        }),
-      ]));
+      expect(result.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
+      expect(result.fairValue.type).toBe('dcf');
     }
+  });
+
+  it('passes P0 cold-start and restart recovery with FMP/Gemini unavailable', async () => {
+    const fundamentals = mocks.getFundamentalsProvider();
+    const baseSnapshot = await fundamentals.getFinancialPeriods('NVDA');
+    fundamentals.getFinancialPeriods.mockResolvedValue({
+      ...baseSnapshot,
+      symbol: 'NVDA',
+      periods: [
+        { ...financialPeriod, periodEnd: '2022-12-31', revenue: 550, freeCashFlow: 55 },
+        { ...financialPeriod, periodEnd: '2023-12-31', revenue: 680, freeCashFlow: 70 },
+        { ...financialPeriod, periodEnd: '2024-12-31', revenue: 830, freeCashFlow: 90 },
+        financialPeriod,
+      ],
+      providerUsed: 'alpha-vantage',
+      diagnostics: {
+        ...baseSnapshot.diagnostics,
+        provider: 'alpha-vantage',
+      },
+    });
+    mocks.getFundamentalsProvider.mockReturnValue({
+      ...fundamentals,
+      id: 'alpha-vantage',
+    });
+    const valuationProvider = mocks.getFmpValuationProvider();
+    valuationProvider.getValuationDataset.mockRejectedValue(
+      new MarketDataError('rate-limited', 'FMP 429', 120),
+    );
+    mocks.research.mockResolvedValue({
+      metrics: [],
+      rejectedReasons: ['gemini-rate-limited'],
+      cache: 'negative',
+      unavailableReason: 'gemini-rate-limited',
+    });
+
+    const cold = await loadFairValue('NVDA');
+
+    expect(cold).toMatchObject({
+      status: 'available',
+      fairValue: { type: 'dcf', label: 'DCF Fair Value' },
+      baseStatus: 'unavailable',
+    });
+    if (cold.status !== 'available') return;
+    expect(cold.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
+    expect(cold.inputs.waccMarketInputs).toMatchObject({
+      riskFreeRate: 0.043,
+      equityRiskPremium: 0.0418,
+      beta: expect.any(Number),
+    });
+    expect(mocks.resolveRiskFreeRate).toHaveBeenCalledOnce();
+    expect(mocks.resolveEquityRiskPremium).toHaveBeenCalledOnce();
+    expect(mocks.research).not.toHaveBeenCalled();
+
+    const persisted = mocks.writeValuationLkg.mock.calls
+      .flatMap(([entries]) => entries as ValuationInputLkgEntry[]);
+    expect(persisted.map((entry) => entry.metric)).toEqual(expect.arrayContaining([
+      'beta',
+      'risk-free-rate',
+      'equity-risk-premium',
+    ]));
+
+    const restartedLkg = emptyValuationInputLkgSnapshot('NVDA');
+    for (const entry of persisted) {
+      const value = (entry.data as { value?: number }).value;
+      if (!value) continue;
+      const cached = { value, state: entry.freshness, entry } as const;
+      if (entry.metric === 'beta') restartedLkg.company.beta = cached;
+      if (entry.metric === 'risk-free-rate') restartedLkg.market.riskFreeRate = cached;
+      if (entry.metric === 'equity-risk-premium') {
+        restartedLkg.market.equityRiskPremium = cached;
+      }
+    }
+    mocks.readValuationLkg.mockResolvedValue(restartedLkg);
+    valuationProvider.getValuationDataset.mockClear();
+    mocks.resolveRiskFreeRate.mockClear();
+    mocks.resolveEquityRiskPremium.mockClear();
+    mocks.resolveRiskFreeRate.mockRejectedValue(new Error('Treasury unavailable'));
+    mocks.resolveEquityRiskPremium.mockRejectedValue(new Error('ERP unavailable'));
+    const unavailableHistory = vi.fn().mockRejectedValue(
+      new Error('History unavailable'),
+    );
+    mocks.getHistoricalMarketDataService.mockReturnValue({
+      getHistoricalPrices: unavailableHistory,
+    });
+
+    const restarted = await loadFairValue('NVDA');
+
+    expect(restarted).toMatchObject({
+      status: 'available',
+      fairValue: { type: 'dcf', label: 'DCF Fair Value' },
+    });
+    expect(valuationProvider.getValuationDataset).toHaveBeenCalledOnce();
+    expect(mocks.resolveRiskFreeRate).not.toHaveBeenCalled();
+    expect(mocks.resolveEquityRiskPremium).not.toHaveBeenCalled();
+    expect(unavailableHistory).toHaveBeenCalledTimes(2);
   });
 });

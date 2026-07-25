@@ -78,11 +78,13 @@ const input: ValuationInput = {
 };
 
 describe('Nexora deterministic Fair Value engine', () => {
-  it('requires real estimates, WACC inputs, peers, and USD', () => {
+  it('keeps forward estimates and peers out of the global critical-input gate', () => {
     expect(dataSufficiency(input, Date.parse('2026-07-25')).ok).toBe(true);
-    expect(dataSufficiency({ ...input, analystEstimates: null }).missingInputs).toContain('forwardEstimates');
+    expect(dataSufficiency({ ...input, analystEstimates: null }).missingInputs)
+      .not.toContain('forwardEstimates');
     expect(dataSufficiency({ ...input, waccMarketInputs: null }).missingInputs).toContain('waccMarketInputs');
-    expect(dataSufficiency({ ...input, peerObservations: null }).missingInputs).toContain('peerObservations');
+    expect(dataSufficiency({ ...input, peerObservations: null }).missingInputs)
+      .not.toContain('peerObservations');
     expect(dataSufficiency({ ...input, currency: 'THB' }).missingInputs).toContain('valuationInputsNormalizedToUSD');
   });
 
@@ -138,7 +140,10 @@ describe('Nexora deterministic Fair Value engine', () => {
     const missingEstimates = calculateFairValue({ ...input, analystEstimates: [] }, Date.parse('2026-07-25'));
     expect(missingEstimates).toMatchObject({
       status: 'unavailable',
-      missingFields: expect.arrayContaining(['forwardRevenueEstimates', 'targetForwardEstimate']),
+      missingFields: expect.arrayContaining([
+        'forwardRevenueEstimatesOrHistoricalRevenueGrowth',
+        'targetForwardEstimate',
+      ]),
     });
     if (missingEstimates.status === 'unavailable') {
       const dcfDiagnostic = missingEstimates.diagnostics.find((item) =>
@@ -149,7 +154,8 @@ describe('Nexora deterministic Fair Value engine', () => {
         item.field === 'model:forward-pe');
       const evSalesDiagnostic = missingEstimates.diagnostics.find((item) =>
         item.field === 'model:forward-ev-sales');
-      expect(dcfDiagnostic?.reason).toBe('unavailable:forwardRevenueEstimates');
+      expect(dcfDiagnostic?.reason)
+        .toBe('unavailable:forwardRevenueEstimatesOrHistoricalRevenueGrowth');
       expect(multiplesDiagnostic?.reason).toBe('unavailable:targetForwardEstimate');
       expect(multiplesDiagnostic?.reason).not.toMatch(/beta|riskFreeRate|equityRiskPremium/);
       expect(peDiagnostic?.reason).toBe(
@@ -230,8 +236,41 @@ describe('Nexora deterministic Fair Value engine', () => {
     expect(incompleteConsensus).toMatchObject({
       status: 'available',
       baseStatus: 'unavailable',
-      missingInputs: expect.arrayContaining(['forwardRevenueEstimates']),
+      missingInputs: expect.arrayContaining([
+        'forwardRevenueEstimatesOrHistoricalRevenueGrowth',
+      ]),
     });
+  });
+
+  it('publishes standalone DCF from verified historical growth when relative inputs are absent', () => {
+    const periods = [
+      { ...latest, periodEnd: '2022-12-31', revenue: 650, freeCashFlow: 60 },
+      { ...latest, periodEnd: '2023-12-31', revenue: 760, freeCashFlow: 75 },
+      { ...latest, periodEnd: '2024-12-31', revenue: 880, freeCashFlow: 95 },
+      latest,
+    ];
+    const result = calculateFairValue({
+      ...input,
+      periods,
+      analystEstimates: [],
+      peerObservations: [],
+    }, Date.parse('2026-07-25'));
+
+    expect(result).toMatchObject({
+      status: 'available',
+      baseStatus: 'unavailable',
+      fairValue: {
+        type: 'dcf',
+        label: 'DCF Fair Value',
+      },
+    });
+    if (result.status === 'available') {
+      expect(result.modelResults.map((model) => model.model)).toEqual(['fcff-dcf']);
+      expect(result.modelResults[0].inputs).toMatchObject({
+        growthMethod: 'historical-revenue-cagr-proxy',
+      });
+      expect(result.missingInputs).toContain('targetForwardEstimate');
+    }
   });
 
   it('never fabricates or reweights Base Fair Value when one model is unavailable', () => {
