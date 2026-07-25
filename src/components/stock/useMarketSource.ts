@@ -48,6 +48,8 @@ export interface UseMarketSourceOptions {
   active: boolean;
   online: boolean;
   enabled: boolean;
+  /** Server-created snapshot time used by both SSR and the first client render. */
+  initialReceivedAt?: string;
   /** Disable the live stream for a view that explicitly requires REST-only data. */
   allowWebSocket?: boolean;
   /**
@@ -156,6 +158,9 @@ const PUBLIC_APP_ENV = process.env.NEXT_PUBLIC_APP_ENV?.trim() || undefined;
 
 export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourceResult {
   const { symbol, initialQuote, session, active, online, enabled } = options;
+  const initialReceivedAt = options.initialReceivedAt
+    ?? initialQuote.freshness.asOf
+    ?? '1970-01-01T00:00:00.000Z';
   const selection = options.selection ?? DEFAULT_SELECTION;
   const selectionKey = selectionKeyOf(selection);
   const historyFallback = options.historyFallback ?? null;
@@ -344,7 +349,10 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     return base;
   }, [accepted, snapshotResource, baseQuote, symbol, lastError, initialQuote]);
 
-  const dataLabel = useMemo(() => labelFromAccepted(accepted, new Date().toISOString()), [accepted]);
+  const dataLabel = useMemo(
+    () => labelFromAccepted(accepted, initialReceivedAt),
+    [accepted, initialReceivedAt],
+  );
 
   const refresh = useCallback(() => {
     const source = sourceRef.current;

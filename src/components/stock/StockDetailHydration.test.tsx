@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, Quote } from '@/src/lib/market-data/types';
 import { StockDetailClient } from './StockDetailClient';
+import { clearAnalystTargetClientCacheForTests } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
 
 vi.stubGlobal('React', React);
 vi.mock('next/navigation', () => ({
@@ -181,6 +182,7 @@ function initialMarkup(): string {
 }
 
 beforeEach(() => {
+  clearAnalystTargetClientCacheForTests();
   vi.stubGlobal('React', React);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 });
@@ -204,12 +206,34 @@ describe('Stock Detail hydration regression', () => {
       expect(clientInitialMarkup).toBe(serverMarkup);
       expect(serverMarkup).toContain('ข้อมูล ณ 17 ก.ค. 2569');
       expect(serverMarkup).not.toContain('17 ก.ค. 2569 00:00');
-      expect(serverMarkup).toContain('Loading Analyst Consensus');
+      expect(serverMarkup).not.toContain('Loading Analyst Consensus');
+      expect(serverMarkup).not.toContain('Target Price');
+      expect(serverMarkup).toContain('Prev Close');
+      expect(serverMarkup).toContain('50.5');
       expect(serverMarkup).toContain('December');
     } finally {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
     }
+  });
+
+  it('shows an em dash when accepted quote data has no previous close', () => {
+    const markup = renderToString(
+      <StockDetailClient
+        {...props}
+        quoteResource={{
+          ...props.quoteResource,
+          data: props.quoteResource.data
+            ? { ...props.quoteResource.data, previousClose: null }
+            : null,
+        }}
+      />,
+    );
+    const host = document.createElement('div');
+    host.innerHTML = markup;
+    const label = [...host.querySelectorAll('p')]
+      .find((item) => item.textContent?.includes('Prev Close'));
+    expect(label?.parentElement?.textContent).toContain('—');
   });
 
   it('hydrates RKLB without a React mismatch and then shows the unavailable reason', async () => {
@@ -235,6 +259,9 @@ describe('Stock Detail hydration regression', () => {
         { onRecoverableError: (error) => recoverable.push(error) },
       );
     });
+    const financials = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Financials');
+    await act(async () => financials?.click());
     await vi.waitFor(() => {
       expect(container.textContent).toContain('ยังไม่มีราคาเป้าหมายนักวิเคราะห์ที่พร้อมใช้งาน');
       expect(container.textContent).toContain('Finnhub: API plan ปัจจุบันไม่รองรับ Price Target');
@@ -264,18 +291,21 @@ describe('Stock Detail hydration regression', () => {
     await act(async () => {
       root = hydrateRoot(container, <StockDetailClient {...props} />);
     });
+    const financials = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Financials');
+    await act(async () => financials?.click());
     await vi.waitFor(() => {
       expect(container.textContent).toContain('$55.00');
       expect(container.textContent).toContain('18 Analysts');
     });
 
     const detailsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-controls^="analyst-sources-"]',
+      'button[aria-label="แหล่งข้อมูลที่ใช้วิเคราะห์ Analyst Consensus"]',
     );
     expect(detailsButton).not.toBeNull();
     await act(async () => detailsButton?.click());
 
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('✓ Finnhub');
     expect(dialog?.textContent).toContain('ผู้ให้ข้อมูลไม่ได้ระบุชื่อสถาบันรายตัว');
 

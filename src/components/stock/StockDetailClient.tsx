@@ -13,6 +13,8 @@ import { useMarketSource } from './useMarketSource';
 import { selectionKeyOf, type AcceptedPriceCandidate, type MarketSelection, type MarketSessionKind } from '@/src/lib/stock-detail/market-source';
 import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/KeyStatisticsSection';
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
+import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
+import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import { formatMarketCapitalization } from '@/src/lib/stock-detail/profile-presentation';
 import type { CompanyProfileLanguage } from '@/src/lib/stock-detail/profile-presentation';
@@ -75,18 +77,31 @@ interface StockDetailClientProps {
   supportResistanceEnabled: boolean;
   keyStatisticsEnabled: boolean;
   analystConsensusEnabled: boolean;
+  marketSignal?: MarketSignalResult | null;
 }
 
 function MetricCard({
   label,
   value,
+  tooltip,
 }: {
   label: string;
   value: string | null;
+  tooltip?: string;
 }) {
   return (
     <div className="min-h-20 rounded-xl border border-slate-800 bg-[#151B28] p-3">
-      <p className="text-[10px] uppercase text-slate-500">{label}</p>
+      <p className="flex items-center gap-1 text-[10px] uppercase text-slate-500">
+        {label}
+        {tooltip && (
+          <span
+            tabIndex={0}
+            title={tooltip}
+            aria-label={`${label}: ${tooltip}`}
+            className="cursor-help text-xs normal-case text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
+          >ⓘ</span>
+        )}
+      </p>
       <p className="mt-2 break-words font-mono text-sm text-white">
         {value ?? 'ไม่พบข้อมูล'}
       </p>
@@ -117,6 +132,7 @@ export function StockDetailClient({
   supportResistanceEnabled,
   keyStatisticsEnabled,
   analystConsensusEnabled,
+  marketSignal = null,
 }: StockDetailClientProps) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -201,6 +217,7 @@ export function StockDetailClient({
     session: marketSession,
     selection: chartSelection,
     historyFallback: chartHistoryFallback,
+    initialReceivedAt: evaluatedAt,
     active: tabVisible,
     online: isOnline,
     // Polygon REST bootstraps history; Alpaca IEX owns the live trade/bar stream.
@@ -396,7 +413,7 @@ export function StockDetailClient({
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
               keyStatisticsEnabled={keyStatisticsEnabled}
-              analystConsensusEnabled={analystConsensusEnabled}
+              marketSignal={marketSignal}
             />
           )}
           {tab === 'Chart' && (
@@ -454,7 +471,7 @@ function Overview({
   profileLanguage,
   onProfileLanguageChange,
   keyStatisticsEnabled,
-  analystConsensusEnabled,
+  marketSignal,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -466,14 +483,21 @@ function Overview({
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
   keyStatisticsEnabled: boolean;
-  analystConsensusEnabled: boolean;
+  marketSignal: MarketSignalResult | null;
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
-  const marketMetrics = [
+  const priceMetrics = [
     { label: 'Open', value: numberValue(quote?.open) },
     { label: 'High', value: numberValue(quote?.high) },
     { label: 'Low', value: numberValue(quote?.low) },
+    {
+      label: 'Prev Close',
+      value: numberValue(quote?.previousClose) ?? '—',
+      tooltip: 'ราคาปิดของวันซื้อขายก่อนหน้า ใช้เป็นฐานเปรียบเทียบว่าราคาวันนี้เพิ่มขึ้นหรือลดลงเท่าไร',
+    },
+  ];
+  const profileMetrics = [
     { label: 'Volume', value: numberValue(quote?.volume) },
     {
       label: 'Market cap',
@@ -489,13 +513,11 @@ function Overview({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {marketMetrics.slice(0, 3).map((metric) => <MetricCard key={metric.label} {...metric} />)}
-        <AnalystTargetSection
-          symbol={symbol}
-          enabled={analystConsensusEnabled}
-          className="col-span-2 md:col-span-4"
-        />
-        {marketMetrics.slice(3).map((metric) => <MetricCard key={metric.label} {...metric} />)}
+        {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
+      </div>
+      {marketSignal && <MarketSignalSection result={marketSignal} />}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
       {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
       <CompanyProfileCard

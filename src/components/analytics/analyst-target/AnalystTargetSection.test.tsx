@@ -4,7 +4,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnalystConsensusResult } from '@/src/lib/analytics/analyst-target/types';
-import { AnalystTargetSection } from './AnalystTargetSection';
+import { AnalystTargetSection, clearAnalystTargetClientCacheForTests } from './AnalystTargetSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -82,6 +82,7 @@ async function render(data: AnalystConsensusResult, enabled = true) {
 }
 
 beforeEach(() => {
+  clearAnalystTargetClientCacheForTests();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -98,7 +99,7 @@ describe('AnalystTargetSection', () => {
     await render(finnhub);
     expect(container.textContent).toContain('Analyst Consensus');
     expect(container.textContent).toContain('$150.00');
-    expect(container.textContent).toContain('+50.00% Potential Upside');
+    expect(container.textContent).toContain('Potential +50.00% · Upside');
     expect(container.textContent).toContain('Median');
     expect(container.textContent).toContain('$120.00–$180.00');
     expect(container.textContent).toContain('30 Analysts');
@@ -108,7 +109,7 @@ describe('AnalystTargetSection', () => {
     );
     expect(button?.getAttribute('aria-expanded')).toBe('false');
     await act(async () => button?.click());
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
     expect(button?.getAttribute('aria-expanded')).toBe('true');
     expect(dialog?.textContent).toContain('✓ Finnhub');
     expect(dialog?.textContent).toContain('ราคาเป้าหมายเฉลี่ย: $150.00');
@@ -119,7 +120,7 @@ describe('AnalystTargetSection', () => {
     await act(async () => {
       dialog?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('shows only fields Alpha actually provides and the real Finnhub failure', async () => {
@@ -134,7 +135,7 @@ describe('AnalystTargetSection', () => {
       'button[aria-label="แหล่งข้อมูลที่ใช้วิเคราะห์ Analyst Consensus"]',
     );
     await act(async () => button?.click());
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('✓ Alpha Vantage');
     expect(dialog?.textContent).toContain('สถานะ: ใช้เป็นแหล่งสำรอง');
     expect(dialog?.textContent).toContain('Analyst Target: $140.00');
@@ -153,7 +154,7 @@ describe('AnalystTargetSection', () => {
       targetPrice: 80,
       upsideDownsidePct: -20,
     });
-    expect(container.textContent).toContain('-20.00% Potential Downside');
+    expect(container.textContent).toContain('Potential -20.00% · Downside');
   });
 
   it('shows an unavailable state with truthful provider coverage', async () => {
@@ -182,5 +183,14 @@ describe('AnalystTargetSection', () => {
       root.render(<AnalystTargetSection symbol="AAPL" enabled />);
     });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the valid 24h client cache after the Financials panel remounts', async () => {
+    await render(alpha);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<AnalystTargetSection symbol="AAPL" enabled />));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('$140.00');
   });
 });

@@ -1,19 +1,46 @@
 'use client';
 
-import React, {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type FocusEvent,
-  type KeyboardEvent,
-} from 'react';
-import { Info, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Info } from 'lucide-react';
 import type {
   AnalystConsensusResult,
   ProviderAvailability,
 } from '@/src/lib/analytics/analyst-target/types';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
+
+const ANALYST_CLIENT_CACHE_MS = 24 * 60 * 60_000;
+const analystCache = new Map<string, { data: AnalystConsensusResult; savedAt: number }>();
+const analystInflight = new Map<string, Promise<AnalystConsensusResult>>();
+
+async function requestAnalystConsensus(symbol: string): Promise<AnalystConsensusResult> {
+  const key = symbol.trim().toUpperCase();
+  const cached = analystCache.get(key);
+  if (cached && Date.now() - cached.savedAt < ANALYST_CLIENT_CACHE_MS) return cached.data;
+  const existing = analystInflight.get(key);
+  if (existing) return existing;
+  const request = fetch(
+    `/api/analytics/analyst-target/${encodeURIComponent(key)}`,
+    { cache: 'no-store' },
+  ).then(async (response) => {
+    const body = (await response.json()) as {
+      data?: AnalystConsensusResult;
+      error?: { message?: string };
+    };
+    if (!response.ok || !body.data) {
+      throw new Error(body.error?.message ?? 'ไม่พบข้อมูล');
+    }
+    analystCache.set(key, { data: body.data, savedAt: Date.now() });
+    return body.data;
+  }).finally(() => analystInflight.delete(key));
+  analystInflight.set(key, request);
+  return request;
+}
+
+export function clearAnalystTargetClientCacheForTests(): void {
+  analystCache.clear();
+  analystInflight.clear();
+}
 
 export function AnalystTargetSection({
   symbol,
@@ -31,27 +58,18 @@ export function AnalystTargetSection({
 
   useEffect(() => {
     if (!enabled) return;
-    const controller = new AbortController();
-    void fetch(
-      `/api/analytics/analyst-target/${encodeURIComponent(symbol)}`,
-      { cache: 'no-store', signal: controller.signal },
-    ).then(async (response) => {
-      const body = (await response.json()) as {
-        data?: AnalystConsensusResult;
-        error?: { message?: string };
-      };
-      if (!response.ok || !body.data) {
-        throw new Error(body.error?.message ?? 'ไม่พบข้อมูล');
-      }
-      setData(body.data);
+    let active = true;
+    void requestAnalystConsensus(symbol).then((data) => {
+      if (!active) return;
+      setData(data);
       setDataSymbol(symbol);
       setError(null);
     }).catch((cause: unknown) => {
-      if (controller.signal.aborted) return;
+      if (!active) return;
       setError(cause instanceof Error ? cause.message : 'เกิดข้อผิดพลาด');
       setErrorSymbol(symbol);
     });
-    return () => controller.abort();
+    return () => { active = false; };
   }, [enabled, symbol]);
 
   if (!enabled) return null;
@@ -65,11 +83,11 @@ export function AnalystTargetSection({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-1">
-            <h2 className="font-bold text-white">Analyst Consensus</h2>
-            <SourceDetailsPopover data={data} />
+            <h2 className="font-bold text-white">Target Price</h2>
+            <SourceDetailsDialog data={data} />
           </div>
           <p className="mt-1 text-xs text-slate-400">
-            ราคาเป้าหมายนักวิเคราะห์จากผู้ให้ข้อมูลภายนอก ไม่ใช่มูลค่าที่ Nexora คำนวณเอง
+            Analyst Consensus · ราคาเป้าหมายจากผู้ให้ข้อมูลภายนอก
           </p>
         </div>
         {data && <StatusBadge data={data} />}
@@ -138,19 +156,17 @@ function AnalystTargetBody({ target }: { target: AnalystConsensusResult }) {
       )}
 
       <div>
-        <p className="text-xs uppercase tracking-wide text-slate-500">Analyst Consensus</p>
+        <p className="text-xs uppercase tracking-wide text-slate-500">Target Price</p>
         <p className="mt-1 font-mono text-3xl font-bold text-[#D4FF00]">
           {money(target.targetPrice, target.currency)}
         </p>
-        <p className="mt-3 text-sm text-slate-300">
-          Current {money(target.currentPrice, target.currency)} → Target{' '}
-          {money(target.targetPrice, target.currency)}
-        </p>
+        <p className="mt-3 text-sm text-slate-300">Current {money(target.currentPrice, target.currency)}</p>
         <p className={`mt-1 font-mono text-sm font-semibold ${directionClass}`}>
           {target.upsideDownsidePct === null
-            ? 'Potential Upside / Downside unavailable'
-            : `${signedPercent(target.upsideDownsidePct)} Potential ${direction}`}
+            ? 'Potential unavailable'
+            : `Potential ${signedPercent(target.upsideDownsidePct)} · ${direction}`}
         </p>
+        <p className="mt-3 text-xs text-slate-400">Source: {target.providerLabel}</p>
       </div>
 
       {showFinnhubDetails && (
@@ -193,101 +209,33 @@ function CoverageList({ coverage }: { coverage: ProviderAvailability[] }) {
   );
 }
 
-function SourceDetailsPopover({ data }: { data: AnalystConsensusResult | null }) {
-  const id = `analyst-sources-${useId().replaceAll(':', '')}`;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+function SourceDetailsDialog({ data }: { data: AnalystConsensusResult | null }) {
   const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setOpen(false);
-      setPinned(false);
-      buttonRef.current?.focus();
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [open]);
-
-  const close = () => {
-    setOpen(false);
-    setPinned(false);
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    close();
-    buttonRef.current?.focus();
-  };
-  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!pinned && !containerRef.current?.contains(event.relatedTarget as Node | null)) {
-      setOpen(false);
-    }
-  };
 
   return (
-    <div
-      ref={containerRef}
-      className="relative"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => { if (!pinned) setOpen(false); }}
-      onFocus={() => setOpen(true)}
-      onBlur={onBlur}
-      onKeyDown={onKeyDown}
-    >
+    <>
       <button
-        ref={buttonRef}
         type="button"
         aria-label="แหล่งข้อมูลที่ใช้วิเคราะห์ Analyst Consensus"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={id}
-        onClick={() => {
-          setPinned((current) => {
-            const next = !current;
-            setOpen(next);
-            return next;
-          });
-        }}
+        onClick={() => setOpen(true)}
         className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-400 hover:bg-slate-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
       >
         <Info aria-hidden="true" size={18} />
       </button>
-
-      {open && (
-        <div
-          id={id}
-          role="dialog"
-          aria-label="แหล่งข้อมูลที่ใช้วิเคราะห์"
-          className="absolute right-0 z-50 mt-2 max-h-[75vh] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-slate-700 bg-[#0F1420] p-4 shadow-2xl"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="font-bold text-white">แหล่งข้อมูลที่ใช้</h3>
-            <button
-              type="button"
-              aria-label="ปิดรายละเอียดแหล่งข้อมูล"
-              onClick={close}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-400 hover:bg-slate-800 hover:text-white"
-            >
-              <X aria-hidden="true" size={18} />
-            </button>
-          </div>
-          {!data
-            ? <p className="mt-4 text-sm text-slate-400">กำลังตรวจสอบแหล่งข้อมูล…</p>
-            : <SourceDetails data={data} />}
-        </div>
-      )}
-    </div>
+      <ResponsiveDialog isOpen={open} onClose={() => setOpen(false)} title="แหล่งข้อมูลที่ใช้">
+        {!data
+          ? <p className="text-sm text-slate-400">กำลังตรวจสอบแหล่งข้อมูล…</p>
+          : <SourceDetails data={data} />}
+      </ResponsiveDialog>
+    </>
   );
 }
 
 function SourceDetails({ data }: { data: AnalystConsensusResult }) {
   return (
-    <div className="mt-4 space-y-4 text-sm text-slate-300">
+    <div className="space-y-4 text-sm text-slate-300">
       {data.provider === 'finnhub' && data.targetPrice !== null && (
         <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
           <h4 className="font-semibold text-white">✓ Finnhub</h4>

@@ -4,6 +4,7 @@ import { getFxRate } from '@/src/lib/market-data/fx/service';
 import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { StockDetailClient } from '@/src/components/stock/StockDetailClient';
+import { loadMarketSignal } from '@/src/lib/analytics/market-signal/service';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import {
@@ -36,10 +37,11 @@ export default async function StockDetailPage({
   if (!parsed.success) notFound();
   const symbol = parsed.data;
 
-  const [marketResult, fxResult, watchResult] = await Promise.allSettled([
+  const [marketResult, fxResult, watchResult, signalResult] = await Promise.allSettled([
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
+    loadMarketSignal(symbol),
   ]);
 
   if (marketResult.status === 'rejected') {
@@ -67,6 +69,7 @@ export default async function StockDetailPage({
       supportResistanceEnabled={supportResistanceEnabled()}
       keyStatisticsEnabled={keyStatisticsEnabled()}
       analystConsensusEnabled={analystConsensusEnabled()}
+      marketSignal={signalResult.status === 'fulfilled' ? signalResult.value : null}
     />
   );
 }
