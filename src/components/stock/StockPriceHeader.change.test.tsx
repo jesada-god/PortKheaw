@@ -203,6 +203,7 @@ describe('StockPriceHeader daily change display', () => {
     const row = container.querySelector('[data-testid="extended-hours-row"]');
     expect(row?.textContent).toContain('ก่อนตลาดเปิด');
     expect(row?.textContent).toContain('70.25');
+    expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
   });
 
   it('keeps the main status closed while showing the latest after-hours row', () => {
@@ -222,6 +223,7 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.textContent).toContain('ปิดตลาด');
     expect(row?.textContent).toContain('หลังเวลาทำการ');
     expect(row?.textContent).toContain('+1.00');
+    expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
     expect(container.textContent).not.toContain('Real-time · IEX');
   });
 

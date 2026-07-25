@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
-import { Info } from 'lucide-react';
+import { ChevronDown, Clock3, Info, Moon, Sunrise } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
 import type {
   DataFreshness,
@@ -156,6 +156,27 @@ function StatusEmoji({ value }: { value: string }) {
   return <span aria-hidden="true" className="shrink-0">{value}</span>;
 }
 
+function SessionIcon({
+  session,
+  extended = false,
+}: {
+  session: ReturnType<typeof deriveMarketSession>;
+  extended?: boolean;
+}) {
+  const className = extended || session === 'premarket' || session === 'after-hours'
+    ? 'text-accent-blue'
+    : session === 'open'
+      ? 'text-positive'
+      : 'text-negative';
+  if (session === 'premarket') {
+    return <Sunrise aria-hidden="true" className={`shrink-0 ${className}`} size={15}/>;
+  }
+  if (session === 'after-hours') {
+    return <Moon aria-hidden="true" className={`shrink-0 ${className}`} size={15}/>;
+  }
+  return <Clock3 aria-hidden="true" className={`shrink-0 ${className}`} size={14}/>;
+}
+
 function Detail({ label, value }: { label: string; value: string }) {
   return <div className="grid gap-1 border-b border-border py-3 last:border-b-0 sm:grid-cols-[9rem_1fr]"><dt className="text-text-muted">{label}</dt><dd className="min-w-0 break-words text-text-main">{value}</dd></div>;
 }
@@ -302,40 +323,40 @@ export function StockPriceHeader({
   });
 
   return <>
-    <section className="min-h-32 min-w-0 overflow-hidden rounded-2xl border border-border bg-bg-card p-4 shadow-xl sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="min-h-32 min-w-0 py-1">
+      <div className="flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1 font-mono tabular-nums">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1.5 font-mono tabular-nums">
             {/* Price + currency are one atomic flow unit. The change may wrap below
                 it on mobile, but no numeric token may ever split mid-number. */}
-            <span className="inline-flex max-w-full shrink-0 items-baseline gap-x-2 whitespace-nowrap">
+            <span className="inline-flex max-w-full shrink-0 items-baseline gap-x-1.5 whitespace-nowrap">
               <span
                 ref={priceDisplayRef}
                 data-testid="stock-last-price"
                 key={priceFlash.nonce}
                 className={displayPrice === null
                   ? 'font-sans text-2xl font-bold leading-tight tracking-tight text-text-main sm:text-3xl'
-                  : `whitespace-nowrap rounded-md px-1.5 -mx-1.5 text-[clamp(1.75rem,9vw,3rem)] font-bold leading-none tracking-tight text-text-main ${flashClass(priceFlash.direction)}`}>
+                  : `whitespace-nowrap rounded-md px-1.5 -mx-1.5 text-[clamp(2.25rem,10vw,3.25rem)] font-bold leading-none tracking-tight text-text-main ${flashClass(priceFlash.direction)}`}>
                 {displayPrice === null ? 'ไม่พบราคาล่าสุด' : formatNumber(displayPrice)}
               </span>
-              <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-text-muted">{displayedCurrency}</span>
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-text-muted">{displayedCurrency}</span>
             </span>
-            {regularChange && <div className={`inline-flex shrink-0 items-baseline gap-x-2 whitespace-nowrap text-base font-semibold sm:text-lg ${directionClass(changeDirection)}`}>
+            {regularChange && <div className={`inline-flex shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
               <span className="whitespace-nowrap">{formatSigned(displayChange)}</span>
               <span className="whitespace-nowrap">{formatPercent(regularChange.percent)}</span>
-              {directionMark(changeDirection) && <span aria-label={changeDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(changeDirection)}</span>}
+              {directionMark(changeDirection) && <span className="text-[0.7em]" aria-label={changeDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(changeDirection)}</span>}
             </div>}
           </div>
 
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <StatusEmoji value={market ? sessionView.emoji : '⚠️'}/>
+          <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-muted">
+            <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
+              <SessionIcon session={session}/>
               <span>{combinedStatus}</span>
             </span>
-            <span aria-hidden="true">·</span>
+            <span className="text-text-muted/60" aria-hidden="true">·</span>
             <span className="whitespace-nowrap tabular-nums">{formatProviderTimestamp(displayedQuoteAsOf, Boolean(quoteDate))}</span>
-            <span aria-hidden="true">·</span>
-            <span>{dataStatusView.label}</span>
+            <span className="hidden text-text-muted/60 sm:inline" aria-hidden="true">·</span>
+            <span className="hidden sm:inline">{dataStatusView.label}</span>
             {fallbackLabel && <span aria-hidden="true">·</span>}
             {fallbackLabel && <span className="text-amber-300">{fallbackLabel === 'Intraday close fallback' ? 'ราคาปิด intraday ล่าสุด (fallback)' : 'ข้อมูลจากวันซื้อขายก่อนหน้า'}</span>}
             {showRealtime && <>
@@ -422,15 +443,16 @@ export function StockPriceHeader({
 
       {currency === 'THB' && thbUnavailable && <p className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-300">ไม่มีอัตรา USD/THB จริงที่ตรวจสอบได้</p>}
 
-      {extendedQuote && extendedChange && displayExtendedPrice !== null && displayExtendedChange !== null && <div data-testid="extended-hours-row" className="mt-4 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1.5 border-t border-border pt-3 font-mono text-sm tabular-nums">
+      {extendedQuote && extendedChange && displayExtendedPrice !== null && displayExtendedChange !== null && <div data-testid="extended-hours-row" className="mt-4 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-sm tabular-nums">
         <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans font-semibold text-text-main">
-          <StatusEmoji value={marketSessionPresentation(extendedQuote.session).emoji}/>
+          <SessionIcon session={extendedQuote.session} extended/>
           {marketSessionPresentation(extendedQuote.session).label}
+          <ChevronDown aria-hidden="true" className={directionClass(extendedDirection)} size={14}/>
         </span>
-        <span key={extendedFlash.nonce} className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
-        <span className={`shrink-0 whitespace-nowrap ${directionClass(extendedDirection)}`}>{formatSigned(displayExtendedChange)} {formatPercent(extendedChange.percent)} {directionMark(extendedDirection)}</span>
-        <span className="shrink-0 whitespace-nowrap text-text-muted">{formatProviderTimestamp(extendedQuote.asOf)}</span>
-        {extendedDataStatusView && <span className="inline-flex items-center gap-1.5 text-text-muted">{extendedDataStatusView.emoji && <StatusEmoji value={extendedDataStatusView.emoji}/>} {extendedDataStatusView.label}</span>}
+        <span key={extendedFlash.nonce} className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
+        <span className={`shrink-0 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>{formatSigned(displayExtendedChange)} {formatPercent(extendedChange.percent)}</span>
+        <span className="shrink-0 whitespace-nowrap text-xs text-text-muted">{formatProviderTimestamp(extendedQuote.asOf)}</span>
+        {extendedDataStatusView && <span className="hidden items-center gap-1.5 text-xs text-text-muted sm:inline-flex">{extendedDataStatusView.emoji && <StatusEmoji value={extendedDataStatusView.emoji}/>} {extendedDataStatusView.label}</span>}
       </div>}
 
       {regularPrice === null && <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-bg-base/60 p-3 text-sm text-amber-300"><p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{stockDetailErrorMessage(quoteError, 'quote', providerConfigured)}</p><button type="button" disabled={quoteLoading || quoteCoolingDown} onClick={onRetryQuote} className="min-h-11 shrink-0 rounded-lg border border-amber-400/30 px-3 text-xs disabled:opacity-50">{quoteLoading ? 'กำลังโหลด…' : quoteCoolingDown ? 'รอตามระยะเวลาที่กำหนดแล้วลองอีกครั้ง' : 'ลองโหลดราคาอีกครั้ง'}</button></div>}

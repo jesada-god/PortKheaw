@@ -33,9 +33,17 @@ describe('StockPriceHeader integration contract', () => {
 
   it('uses a mobile-safe Thai empty-price heading instead of a large Unavailable word', () => {
     expect(header).toContain("'ไม่พบราคาล่าสุด'");
-    expect(header).toContain('text-[clamp(1.75rem,9vw,3rem)]');
+    expect(header).toContain('text-[clamp(2.25rem,10vw,3.25rem)]');
     expect(header).toContain('whitespace-nowrap');
     expect(header).not.toContain("displayPrice === null ? 'Unavailable'");
+  });
+
+  it('uses the compact Investing-style price hierarchy and session rows', () => {
+    expect(header).toContain('<SessionIcon session={session}/>');
+    expect(header).toContain('<SessionIcon session={extendedQuote.session} extended/>');
+    expect(header).toContain('<ChevronDown aria-hidden="true"');
+    expect(header).toContain('data-testid="extended-hours-row"');
+    expect(header).not.toContain('shadow-xl');
   });
 
   it('does not render fallback change placeholders or duplicate market errors', () => {
