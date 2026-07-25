@@ -114,6 +114,43 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   supportResistanceEnabled: false,
   keyStatisticsEnabled: false,
   analystConsensusEnabled: true,
+  marketSignal: {
+    status: 'available',
+    signal: 'bullish',
+    score: 37,
+    confidence: 'High',
+    confidencePct: 85,
+    timeframe: '1D',
+    calculatedAt: '2026-07-19T00:00:00.000Z',
+    latestCandleAt: '2026-07-18',
+    source: 'yahoo-finance-chart',
+    freshness: { status: 'end-of-day', asOf: '2026-07-18T20:00:00.000Z', maxAgeSeconds: 21_600 },
+    dataPoints: { received: 260, finalized: 259 },
+    components: {
+      trend: { score: 0.8, weight: 30, coverage: 1, factorsUsed: 6 },
+      momentum: { score: 0.5, weight: 25, coverage: 1, factorsUsed: 3 },
+      volume: { score: 0.4, weight: 20, coverage: 0.67, factorsUsed: 2 },
+      structure: { score: 0.2, weight: 25, coverage: 0.67, factorsUsed: 2 },
+    },
+    reasons: [{ id: 'price-ema20', polarity: 'positive', text: 'ราคาอยู่เหนือ EMA20', impact: 1 }],
+    indicators: {
+      close: 51.23,
+      ema20: 50,
+      ema50: 48,
+      ema200: 35,
+      rsi14: 62,
+      macd: 1.2,
+      macdSignal: 1,
+      macdHistogram: 0.2,
+      relativeVolume20: 1.4,
+      obvTrend: 'rising',
+      adx14: 28,
+      plusDi14: 31,
+      minusDi14: 18,
+      nearestSupport: 48,
+      nearestResistance: 55,
+    },
+  },
 };
 
 const unavailableConsensus = {
@@ -208,6 +245,10 @@ describe('Stock Detail hydration regression', () => {
       expect(serverMarkup).not.toContain('17 ก.ค. 2569 00:00');
       expect(serverMarkup).not.toContain('Loading Analyst Consensus');
       expect(serverMarkup).not.toContain('Target Price');
+      expect(serverMarkup).not.toContain('Market Signal');
+      expect(serverMarkup).toContain('Open');
+      expect(serverMarkup).toContain('High');
+      expect(serverMarkup).toContain('Low');
       expect(serverMarkup).toContain('Prev Close');
       expect(serverMarkup).toContain('50.5');
       expect(serverMarkup).toContain('December');
@@ -236,7 +277,7 @@ describe('Stock Detail hydration regression', () => {
     expect(label?.parentElement?.textContent).toContain('—');
   });
 
-  it('hydrates RKLB without a React mismatch and then shows the unavailable reason', async () => {
+  it('hydrates RKLB without a React mismatch and hides unavailable provider internals', async () => {
     const recoverable: unknown[] = [];
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
@@ -263,9 +304,10 @@ describe('Stock Detail hydration regression', () => {
       .find((button) => button.textContent === 'Financials');
     await act(async () => financials?.click());
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('ยังไม่มีราคาเป้าหมายนักวิเคราะห์ที่พร้อมใช้งาน');
-      expect(container.textContent).toContain('Finnhub: API plan ปัจจุบันไม่รองรับ Price Target');
+      expect(container.textContent).toContain('ยังไม่มีราคาเป้าหมายสำหรับหุ้นนี้');
     });
+    expect(container.textContent).not.toMatch(/Finnhub|API plan|not-entitled|403|429/);
+    expect(container.querySelector('section[aria-label="Technical Outlook"]')).not.toBeNull();
 
     expect(recoverable).toEqual([]);
     expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(
@@ -276,7 +318,7 @@ describe('Stock Detail hydration regression', () => {
     container.remove();
   });
 
-  it('shows Finnhub consensus and opens the source detail panel', async () => {
+  it('orders independent Target Price, Market Signal, and financial metrics cards', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       data: availableConsensus,
     }), {
@@ -296,18 +338,30 @@ describe('Stock Detail hydration regression', () => {
     await act(async () => financials?.click());
     await vi.waitFor(() => {
       expect(container.textContent).toContain('$55.00');
-      expect(container.textContent).toContain('18 Analysts');
+      expect(container.textContent).toContain('Technical Outlook · Market Signal');
     });
 
+    const targetCard = container.querySelector('section[aria-label="Target Price"]');
+    const signalCard = container.querySelector('section[aria-label="Technical Outlook"]');
+    expect(targetCard).not.toBeNull();
+    expect(signalCard).not.toBeNull();
+    expect(targetCard).not.toBe(signalCard);
+    expect(targetCard?.compareDocumentPosition(signalCard!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(targetCard?.textContent).toContain('$55.00');
+    expect(targetCard?.textContent).not.toContain('Score: +37');
+    expect(signalCard?.textContent).toContain('Score: +37');
+    expect(signalCard?.textContent).not.toContain('$55.00');
+
     const detailsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="แหล่งข้อมูลที่ใช้วิเคราะห์ Analyst Consensus"]',
+      'button[aria-label="รายละเอียดราคาเป้าหมาย"]',
     );
     expect(detailsButton).not.toBeNull();
     await act(async () => detailsButton?.click());
 
     const dialog = document.body.querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain('✓ Finnhub');
-    expect(dialog?.textContent).toContain('ผู้ให้ข้อมูลไม่ได้ระบุชื่อสถาบันรายตัว');
+    expect(dialog?.textContent).toContain('Median Target');
+    expect(dialog?.textContent).toContain('Analyst Count');
+    expect(dialog?.textContent).not.toContain('ชื่อสถาบันรายตัว');
 
     await act(async () => root?.unmount());
     container.remove();

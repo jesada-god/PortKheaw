@@ -412,8 +412,6 @@ export function StockDetailClient({
               onRetryProfile={() => void retryProfile()}
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
-              keyStatisticsEnabled={keyStatisticsEnabled}
-              marketSignal={marketSignal}
             />
           )}
           {tab === 'Chart' && (
@@ -442,6 +440,8 @@ export function StockDetailClient({
           {tab === 'Financials' && (
             <div className="space-y-4">
               <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
+              {marketSignal && <MarketSignalSection result={marketSignal} />}
+              {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
             </div>
           )}
           {tab === 'Analysis' && (
@@ -470,8 +470,6 @@ function Overview({
   onRetryProfile,
   profileLanguage,
   onProfileLanguageChange,
-  keyStatisticsEnabled,
-  marketSignal,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -482,8 +480,6 @@ function Overview({
   onRetryProfile: () => void;
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
-  keyStatisticsEnabled: boolean;
-  marketSignal: MarketSignalResult | null;
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
@@ -515,11 +511,9 @@ function Overview({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
-      {marketSignal && <MarketSignalSection result={marketSignal} />}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
-      {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
       <CompanyProfileCard
         symbol={symbol}
         profile={profile}

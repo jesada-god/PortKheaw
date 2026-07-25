@@ -54,7 +54,9 @@ describe('ResponsiveDialog', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(backdrop?.className).toContain('fixed inset-0');
     expect(backdrop?.style.paddingBottom).toContain('safe-area-inset-bottom');
-    expect(dialog?.className).toContain('max-w-[35rem]');
+    expect(dialog?.className).toContain('w-[calc(100vw-24px)]');
+    expect(dialog?.className).toContain('max-w-[min(35rem,100%)]');
+    expect(dialog?.className).toContain('max-h-[min(calc(100dvh-24px),100%)]');
     const content = dialog?.lastElementChild as HTMLElement;
     expect(content.className).toContain('overflow-y-auto');
     expect(content.className).toContain('overflow-x-hidden');

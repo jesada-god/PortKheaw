@@ -18,13 +18,13 @@ export function MarketSignalSection({ result }: { result: MarketSignalResult }) 
   const [open, setOpen] = useState(false);
   if (result.status === 'insufficient-data') {
     return (
-      <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
+      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
         <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
         <div className="mt-2 flex items-center gap-2 text-slate-300">
           <Info aria-hidden="true" size={18} />
-          <h2 className="font-bold">Market Signal · ข้อมูลไม่เพียงพอ</h2>
+          <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
-        <p className="mt-3 text-sm text-slate-400">{result.reason}</p>
+        <p className="mt-3 text-sm text-slate-400">ข้อมูลไม่เพียงพอ · {result.reason}</p>
         <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
       </section>
     );
@@ -36,13 +36,13 @@ export function MarketSignalSection({ result }: { result: MarketSignalResult }) 
   const negatives = result.reasons.filter((reason) => reason.polarity === 'negative' || reason.polarity === 'caution');
 
   return (
-    <section className={`rounded-2xl border p-5 ${presentation.tone}`}>
+    <section aria-label="Technical Outlook" className={`rounded-2xl border p-5 ${presentation.tone}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-slate-400">Technical Signal · 1D</p>
           <div className="mt-2 flex items-center gap-2">
             <Icon aria-hidden="true" size={22} />
-            <h2 className="font-bold text-white">Market Signal</h2>
+            <h2 className="font-bold text-white">Technical Outlook · Market Signal</h2>
           </div>
           <p className="mt-2 font-mono text-xl font-bold">
             {presentation.mark} {presentation.english}

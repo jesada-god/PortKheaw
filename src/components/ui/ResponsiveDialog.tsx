@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import React, { useId, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useDialogA11y } from '@/src/hooks/useDialogA11y';
@@ -12,6 +12,8 @@ interface ResponsiveDialogProps {
   children: ReactNode;
   labelledBy?: string;
 }
+
+const subscribeToHydration = () => () => undefined;
 
 /**
  * Viewport-owned dialog shared by data-source and explanation surfaces.
@@ -31,8 +33,11 @@ export function ResponsiveDialog({
   const titleId = labelledBy ?? generatedTitleId;
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useDialogA11y(isOpen, onClose, closeRef);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  );
 
   if (!mounted || !isOpen) return null;
 
@@ -56,7 +61,7 @@ export function ResponsiveDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="flex max-h-full w-full max-w-[35rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#0F1420] shadow-2xl"
+        className="flex max-h-[min(calc(100dvh-24px),100%)] w-[calc(100vw-24px)] max-w-[min(35rem,100%)] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#0F1420] shadow-2xl"
       >
         <div className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-800 px-4 py-2">
           <h2 id={titleId} className="min-w-0 break-words font-bold text-white [overflow-wrap:anywhere]">
