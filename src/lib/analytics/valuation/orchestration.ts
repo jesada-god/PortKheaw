@@ -3,17 +3,20 @@ import {
   getHistoricalMarketDataService,
   getMarketDataProvider,
 } from '@/src/lib/market-data';
+import { serverEnv } from '@/src/config/env/server';
 import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import {
   getFundamentalsProvider,
   type FundamentalsSnapshot,
 } from '../fundamentals/provider';
-import { calculateFairValue } from './engine';
+import { fundamentalsLkgRepositoryConfigured } from '../fundamentals/repository';
+import { calculateFairValue, validFutureEstimates } from './engine';
 import { datasetFreshness } from './freshness';
 import {
   safeFairValueErrorCode,
   writeFairValueLog,
   writeFairValueFieldLog,
+  writeFairValueResolutionAuditLog,
   writeFairValueRuntimeLog,
   type FairValueLogger,
 } from './logging';
@@ -25,12 +28,27 @@ import {
   getGroundedFinancialResearchService,
   type GroundedResearchOutcome,
   type GroundedResearchRequest,
+  type GroundedPeerResearchOutcome,
   type ValidatedGroundedMetric,
 } from './grounded-research';
 import {
   classifyValuationInputs,
   resolveDeterministicInputs,
 } from './resolver';
+import {
+  applyCachedWaccInputs,
+  buildResolvedValuationLkgEntries,
+  emptyValuationInputLkgSnapshot,
+  excludeUnchangedLkgEntries,
+  hasCompleteFreshValuationLkg,
+  mergeCachedForwardEstimates,
+  mergeCachedPeers,
+  valuationInputLkgDiagnostics,
+} from './persistent-inputs';
+import {
+  getValuationInputLkgService,
+  valuationInputLkgRepositoryConfigured,
+} from './persistent-inputs-repository';
 import { createFairValueUnavailable } from './result';
 import type {
   FairValueFailureKind,
@@ -368,8 +386,40 @@ function recordResearch(
   return outcome;
 }
 
-export async function loadFairValue(symbol: string): Promise<FairValueResult> {
+function recordPeerResearch(
+  outcome: GroundedPeerResearchOutcome,
+  counters: ResearchCounters,
+): GroundedPeerResearchOutcome {
+  counters.requests += 1;
+  if (outcome.cache === 'hit') counters.cacheHits += 1;
+  else if (outcome.cache === 'miss') counters.cacheMisses += 1;
+  else counters.negativeCacheHits += 1;
+  counters.evidenceSourceCount += outcome.candidates.reduce(
+    (sum, candidate) => sum + candidate.evidence.length,
+    0,
+  );
+  counters.rejectedReasons.push(...outcome.rejected.map((item) => item.reason));
+  if (outcome.unavailableReason) counters.rejectedReasons.push(outcome.unavailableReason);
+  return outcome;
+}
+
+async function resolveFairValue(symbol: string): Promise<FairValueResult> {
   const calculatedAt = new Date().toISOString();
+  const valuationLkgService = getValuationInputLkgService();
+  const valuationLkg = await valuationLkgService.read(symbol).catch((cause) => {
+    const repositoryError = cause instanceof Error
+      && /^Valuation LKG read failed: [A-Za-z0-9_-]+$/.test(cause.message)
+      ? cause.message
+      : safeFairValueErrorCode(cause);
+    console.warn(JSON.stringify({
+      event: 'valuation-lkg-read-failed',
+      symbol,
+      errorCode: repositoryError,
+      timestamp: calculatedAt,
+    }));
+    return emptyValuationInputLkgSnapshot(symbol);
+  });
+  const valuationLkgComplete = hasCompleteFreshValuationLkg(valuationLkg);
   const fundamentals = getFundamentalsProvider();
   const configuredValuationProvider = getFmpValuationProvider();
   const groundedResearch = getGroundedFinancialResearchService();
@@ -386,15 +436,23 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   writeFairValueRuntimeLog({
     event: 'fair_value_runtime_configuration',
     symbol,
+    secUserAgentConfigured: Boolean(serverEnv.SEC_USER_AGENT),
     geminiConfigured: Boolean(groundedResearch),
     groundingConfigured: Boolean(groundedResearch),
     fundamentalsProviderConfigured: Boolean(fundamentals),
     valuationProviderConfigured: Boolean(configuredValuationProvider),
     historyProviderConfigured,
+    lkgReadConfigured: fundamentalsLkgRepositoryConfigured(),
+    lkgWriteConfigured: fundamentalsLkgRepositoryConfigured(),
+    valuationLkgReadConfigured: valuationInputLkgRepositoryConfigured(),
+    valuationLkgWriteConfigured: valuationInputLkgRepositoryConfigured(),
   });
   const valuationProvider = configuredValuationProvider ?? {
     id: 'financial-modeling-prep' as const,
-    getValuationDataset: async () =>
+    getValuationDataset: async (
+      _symbol: string,
+      _options?: { includeMarketInputs?: boolean },
+    ) =>
       emptyValuationDataset(calculatedAt, 'provider-not-configured'),
   };
   if (!fundamentals && !configuredValuationProvider) {
@@ -443,7 +501,17 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
             calculatedAt,
             'provider-not-configured',
           )),
-      valuationProvider.getValuationDataset(symbol),
+      valuationLkgComplete
+        ? Promise.resolve(emptyValuationDataset(
+            calculatedAt,
+            'persistent-valuation-lkg-complete',
+          ))
+        : valuationProvider.getValuationDataset(symbol, {
+            includeMarketInputs: !(
+              valuationLkg.market.riskFreeRate?.state === 'fresh'
+              && valuationLkg.market.equityRiskPremium?.state === 'fresh'
+            ),
+          }),
     ]);
   const required = [
     {
@@ -518,7 +586,13 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       marketFailure,
     );
   }
-  if (!financials.periods.length && !valuation.estimates.length && !groundedResearch) {
+  if (
+    !financials.periods.length
+    && !valuation.estimates.length
+    && !valuationLkg.company.forwardEps.length
+    && !valuationLkg.company.forwardRevenue.length
+    && !groundedResearch
+  ) {
     const errorCodes = Object.values(financials.datasetErrors ?? {});
     const rateLimited = errorCodes.includes('rate-limited');
     return logUnavailable(
@@ -609,8 +683,43 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   let waccMarketInputs: WaccMarketInputs = {
     ...valuation.waccMarketInputs,
   };
-  let estimates = valuation.estimates;
-  let peers = valuation.peers;
+  waccMarketInputs = applyCachedWaccInputs(
+    waccMarketInputs,
+    valuationLkg,
+    'read-first',
+  );
+  let estimates = mergeCachedForwardEstimates(
+    valuation.estimates,
+    valuationLkg,
+    'fresh',
+  );
+  const cachedPeerMerge = mergeCachedPeers(valuation.peers, valuationLkg);
+  let peers = cachedPeerMerge.peers;
+  const peerCandidateSymbols = [...new Set([
+    ...cachedPeerMerge.candidates,
+    ...(valuation.peerCandidates ?? []),
+  ])];
+  const peerRejections: NonNullable<ValuationInput['peerAudit']>['rejected'] =
+    [
+      ...cachedPeerMerge.rejected,
+      ...(valuation.peerRejections ?? []).map((item) => ({
+      ...item,
+      metric: null,
+      period: null,
+      source: valuation.provider,
+      asOf: valuation.asOf,
+      })),
+    ];
+  let valuationLkgUsed = Boolean(
+    valuationLkg.company.beta
+    || valuationLkg.market.riskFreeRate
+    || valuationLkg.market.equityRiskPremium
+    || valuationLkg.company.forwardEps.some((item) => item.state === 'fresh')
+    || valuationLkg.company.forwardRevenue.some((item) => item.state === 'fresh')
+    || cachedPeerMerge.candidates.length,
+  );
+  let valuationLkgStaleUsed = cachedPeerMerge.stale
+    || valuationLkg.company.beta?.state === 'stale';
   const inputResolution = classifyValuationInputs({
     marketPrice,
     marketCapitalization,
@@ -656,31 +765,57 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   let benchmarkPrices: ValuationInput['historicalPrices'] = [];
   let benchmarkSource = '';
   if (!positive(waccMarketInputs.beta)) {
-    try {
-      const history = historicalMarketDataService;
-      if (!history) throw new Error('Historical provider is unavailable');
-      const [stockHistory, benchmarkHistory] = await Promise.all([
-        history.getHistoricalPrices(symbol, '5y'),
-        history.getHistoricalPrices('SPY', '5y'),
-      ]);
-      historicalPrices = stockHistory.data.prices;
-      historySource = stockHistory.provider ?? stockHistory.data.providerUsed ?? 'historical-provider';
-      historyFreshness = stockHistory.freshness;
-      benchmarkPrices = benchmarkHistory.data.prices;
-      benchmarkSource = benchmarkHistory.provider
-        ?? benchmarkHistory.data.providerUsed
-        ?? 'historical-provider';
-    } catch (cause) {
-      // Beta remains researchable; a history failure must not fail the request.
+    const history = historicalMarketDataService;
+    if (!history) {
       writeFairValueFieldLog({
         event: 'fair_value_field_resolution',
         symbol,
         field: 'beta',
         state: 'provider-miss',
         provider: 'historical-provider',
-        reason: safeFairValueErrorCode(cause),
+        reason: 'provider-not-configured',
         asOf: calculatedAt,
       });
+    } else {
+      const [stockHistoryResult, benchmarkHistoryResult] = await Promise.allSettled([
+        history.getHistoricalPrices(symbol, '5y'),
+        history.getHistoricalPrices('SPY', '5y'),
+      ]);
+      if (stockHistoryResult.status === 'fulfilled') {
+        const stockHistory = stockHistoryResult.value;
+        historicalPrices = stockHistory.data.prices;
+        historySource = stockHistory.provider
+          ?? stockHistory.data.providerUsed
+          ?? 'historical-provider';
+        historyFreshness = stockHistory.freshness;
+      } else {
+        writeFairValueFieldLog({
+          event: 'fair_value_field_resolution',
+          symbol,
+          field: 'beta',
+          state: 'provider-miss',
+          provider: 'historical-provider:target',
+          reason: safeFairValueErrorCode(stockHistoryResult.reason),
+          asOf: calculatedAt,
+        });
+      }
+      if (benchmarkHistoryResult.status === 'fulfilled') {
+        const benchmarkHistory = benchmarkHistoryResult.value;
+        benchmarkPrices = benchmarkHistory.data.prices;
+        benchmarkSource = benchmarkHistory.provider
+          ?? benchmarkHistory.data.providerUsed
+          ?? 'historical-provider';
+      } else {
+        writeFairValueFieldLog({
+          event: 'fair_value_field_resolution',
+          symbol,
+          field: 'beta',
+          state: 'provider-miss',
+          provider: 'historical-provider:benchmark',
+          reason: safeFairValueErrorCode(benchmarkHistoryResult.reason),
+          asOf: calculatedAt,
+        });
+      }
     }
   }
   const deterministic = resolveDeterministicInputs({
@@ -697,6 +832,24 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     stockHistoryProvider: historySource || undefined,
     benchmarkHistoryProvider: benchmarkSource || undefined,
     benchmark: 'SPY',
+  });
+  writeFairValueResolutionAuditLog({
+    event: 'fair_value_resolution_audit',
+    symbol,
+    field: 'beta',
+    stage: 'history',
+    provider: [historySource, benchmarkSource].filter(Boolean).join('+')
+      || 'historical-provider',
+    available: Boolean(deterministic.beta),
+    reason: deterministic.betaAudit.reason,
+    asOf: deterministic.beta?.provenance.asOf ?? calculatedAt,
+    targetRows: deterministic.betaAudit.targetRows,
+    benchmarkRows: deterministic.betaAudit.benchmarkRows,
+    alignedObservations: deterministic.betaAudit.alignedObservations,
+    minimumSamples: deterministic.betaAudit.minimumSamples,
+    frequency: deterministic.betaAudit.frequency,
+    period: deterministic.betaAudit.period,
+    value: deterministic.betaAudit.derivedBeta,
   });
   marketCapitalization = deterministic.marketCapitalization;
   marketCapitalizationProvenance =
@@ -753,10 +906,15 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     plannedFields: [],
     executedFields: [],
     modelsUnlocked: [],
-    budget: 3,
+    budget: 5,
   };
   const financialModelPossible = Boolean(latestFinancialPeriod);
-  researchCounters.plannedFields.push('forwardEps', 'forwardRevenue', 'peerForwardEstimates');
+  researchCounters.plannedFields.push(
+    'forwardEps',
+    'forwardRevenue',
+    'peerCandidates',
+    'peerForwardEstimates',
+  );
   if (financialModelPossible) {
     researchCounters.plannedFields.push(
       'beta',
@@ -817,6 +975,49 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
         asOf: calculatedAt,
       });
     }
+    return outcome;
+  };
+  const researchPeerCandidates = async (
+    request: Parameters<NonNullable<typeof groundedResearch>['researchPeers']>[0],
+  ) => {
+    if (researchCounters.requests >= researchCounters.budget) {
+      researchCounters.rejectedReasons.push('research-budget-exhausted');
+      return {
+        candidates: [],
+        rejected: [],
+        cache: 'negative' as const,
+        unavailableReason: 'research-budget-exhausted',
+      };
+    }
+    researchCounters.executedFields.push('peerCandidates');
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: 'peerCandidates',
+      state: 'research-started',
+      provider: 'gemini-grounded-research',
+      asOf: calculatedAt,
+    });
+    const outcome = recordPeerResearch(
+      await groundedResearch!.researchPeers(request),
+      researchCounters,
+    );
+    const reason = outcome.unavailableReason
+      ?? outcome.rejected.at(0)?.reason
+      ?? 'no-validated-peer-candidates';
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: 'peerCandidates',
+      state: outcome.candidates.length
+        ? 'research-hit'
+        : reason.startsWith('gemini-') ? 'research-error' : 'research-rejected',
+      provider: 'gemini-grounded-research',
+      reason: outcome.candidates.length ? undefined : reason,
+      asOf: outcome.candidates.map((candidate) => candidate.asOf)
+        .toSorted()
+        .at(-1) ?? calculatedAt,
+    });
     return outcome;
   };
 
@@ -919,6 +1120,21 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     }
   }
 
+  const riskFreeBeforeStaleLkg = waccMarketInputs.riskFreeRate;
+  const erpBeforeStaleLkg = waccMarketInputs.equityRiskPremium;
+  waccMarketInputs = applyCachedWaccInputs(
+    waccMarketInputs,
+    valuationLkg,
+    'stale-fallback',
+  );
+  if (
+    waccMarketInputs.riskFreeRate !== riskFreeBeforeStaleLkg
+    || waccMarketInputs.equityRiskPremium !== erpBeforeStaleLkg
+  ) {
+    valuationLkgUsed = true;
+    valuationLkgStaleUsed = true;
+  }
+
   if (!positive(marketCapitalization) && positive(sharesOutstanding)) {
     const afterResearch = resolveDeterministicInputs({
       marketPrice,
@@ -952,6 +1168,21 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   }
 
   const researchBoundary = latestFinancialPeriod?.periodEnd ?? calculatedAt.slice(0, 10);
+  if (!groundedResearch) {
+    const estimateCountBeforeStaleLkg = estimates.length;
+    estimates = mergeCachedForwardEstimates(estimates, valuationLkg, 'stale');
+    if (
+      estimates.length !== estimateCountBeforeStaleLkg
+      || estimates.some((estimate) =>
+        estimate.epsProvenance?.provider === valuationLkg.company.forwardEps
+          .find((item) => item.state === 'stale')?.entry.source
+        || estimate.revenueProvenance?.provider === valuationLkg.company.forwardRevenue
+          .find((item) => item.state === 'stale')?.entry.source)
+    ) {
+      valuationLkgUsed = true;
+      valuationLkgStaleUsed = true;
+    }
+  }
   if (groundedResearch) {
     const fiscalYears = futureFiscalYears(researchBoundary, calculatedAt);
     const future = estimates.filter((estimate) =>
@@ -1008,6 +1239,20 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
         });
         groundedValueUsed = true;
       }
+    }
+
+    const estimateCountBeforeStaleLkg = estimates.length;
+    estimates = mergeCachedForwardEstimates(estimates, valuationLkg, 'stale');
+    if (
+      estimates.length !== estimateCountBeforeStaleLkg
+      || estimates.some((estimate) =>
+        estimate.epsProvenance?.provider === valuationLkg.company.forwardEps
+          .find((item) => item.state === 'stale')?.entry.source
+        || estimate.revenueProvenance?.provider === valuationLkg.company.forwardRevenue
+          .find((item) => item.state === 'stale')?.entry.source)
+    ) {
+      valuationLkgUsed = true;
+      valuationLkgStaleUsed = true;
     }
 
     const targetEstimate = estimates
@@ -1079,14 +1324,180 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           }
         }
       }
+      const hydratedPeerCount = peers.filter((peer) =>
+        branch === 'eps'
+          ? positive(peer.price) && positive(peer.forwardEps)
+          : positive(peer.enterpriseValue) && positive(peer.forwardRevenue)).length;
+      if (hydratedPeerCount < 4) {
+        const metric = branch === 'eps' ? 'forward-pe' as const : 'forward-ev-sales' as const;
+        const discovered = await researchPeerCandidates({
+          symbol,
+          company: profile?.data.name ?? null,
+          sector: profile?.data.sector ?? valuation.sector ?? '',
+          industry: profile?.data.industry ?? valuation.industry ?? '',
+          metric,
+          period: targetEstimate.periodEnd,
+        });
+        peerRejections.push(...discovered.rejected.map((item) => ({
+          symbol: item.symbol,
+          reason: item.reason,
+          metric,
+          period: targetEstimate.periodEnd,
+          source: 'gemini-grounded-research',
+          asOf: calculatedAt,
+        })));
+        const existingSymbols = new Set([
+          symbol,
+          ...peers.map((peer) => peer.symbol),
+        ].map((item) => item.trim().toUpperCase()));
+        const candidates = discovered.candidates.filter((candidate) => {
+          if (existingSymbols.has(candidate.symbol)) {
+            peerRejections.push({
+              symbol: candidate.symbol,
+              reason: 'duplicate-peer',
+              metric,
+              period: targetEstimate.periodEnd,
+              source: candidate.sourceName,
+              asOf: candidate.asOf,
+            });
+            return false;
+          }
+          existingSymbols.add(candidate.symbol);
+          if (!peerCandidateSymbols.includes(candidate.symbol)) {
+            peerCandidateSymbols.push(candidate.symbol);
+          }
+          return true;
+        });
+
+        if (branch === 'eps' && candidates.length) {
+          const [quotes, rescued] = await Promise.all([
+            Promise.allSettled(candidates.map((candidate) =>
+              market
+                ? market.getQuote(candidate.symbol)
+                : Promise.reject(new Error('market-provider-unavailable')))),
+            research({
+              symbols: candidates.map((candidate) => candidate.symbol),
+              metrics: ['eps'],
+              fiscalYears: [Number(targetEstimate.periodEnd.slice(0, 4))],
+            }),
+          ]);
+          const metricsBySymbol = new Map(rescued.metrics
+            .filter((item) => item.metric === 'eps')
+            .map((item) => [item.symbol, item]));
+          candidates.forEach((candidate, index) => {
+            const quoteResult = quotes[index];
+            const forwardEps = metricsBySymbol.get(candidate.symbol);
+            const reasons: string[] = [];
+            const quote = quoteResult?.status === 'fulfilled' ? quoteResult.value : null;
+            if (!quote || !positive(quote.data.price)) reasons.push('missing-price');
+            if (quote?.data.currency !== 'USD') reasons.push('currency-mismatch');
+            if (!forwardEps || !positive(forwardEps.value)) reasons.push('missing-forward-eps');
+            if (forwardEps && forwardEps.periodEnd !== targetEstimate.periodEnd) {
+              reasons.push('forward-period-mismatch');
+            }
+            if (reasons.length) {
+              peerRejections.push({
+                symbol: candidate.symbol,
+                reason: [...new Set(reasons)].join(','),
+                metric,
+                period: forwardEps?.periodEnd ?? targetEstimate.periodEnd,
+                source: forwardEps?.sourceName ?? candidate.sourceName,
+                asOf: forwardEps?.asOf ?? candidate.asOf,
+              });
+              return;
+            }
+            peers.push({
+              symbol: candidate.symbol,
+              company: candidate.company,
+              businessContext: candidate.businessContext,
+              sector: candidate.sector,
+              industry: candidate.industry,
+              price: quote!.data.price,
+              priceAsOf: quote!.freshness.asOf,
+              enterpriseValue: null,
+              enterpriseValueAsOf: null,
+              forwardEps: forwardEps!.value,
+              forwardRevenue: null,
+              estimatePeriod: forwardEps!.periodEnd,
+              estimateAsOf: forwardEps!.asOf,
+              provider: `${quote!.provider ?? market!.id}+gemini-grounded-research`,
+              estimateProvenance: forwardEps!.provenance,
+              candidateProvenance: {
+                provider: 'gemini-grounded-research',
+                sourceType: 'gemini-grounded',
+                field: 'peerCandidate',
+                fiscalPeriod: targetEstimate.periodEnd,
+                asOf: candidate.asOf,
+                sourceUrl: candidate.sourceUrl,
+                evidence: candidate.evidence,
+                evidenceQuality: candidate.evidence.some((item) => item.quality === 'primary')
+                  ? 'high' : 'medium',
+              },
+              candidateSource: 'gemini-grounded',
+              currency: quote!.data.currency,
+            });
+          });
+          if (peers.some((peer) => peer.candidateSource === 'gemini-grounded')) {
+            const latestCandidate = candidates
+              .toSorted((left, right) => left.asOf.localeCompare(right.asOf))
+              .at(-1)!;
+            recordResolvedInput(inputResolution, {
+              field: 'peerForwardEstimates',
+              origin: 'gemini-grounded',
+              provider: 'gemini-grounded-research',
+              asOf: latestCandidate.asOf,
+            });
+            groundedValueUsed = true;
+          }
+        } else if (branch === 'revenue') {
+          peerRejections.push(...candidates.map((candidate) => ({
+            symbol: candidate.symbol,
+            reason: 'enterprise-value-source-unavailable',
+            metric,
+            period: targetEstimate.periodEnd,
+            source: candidate.sourceName,
+            asOf: candidate.asOf,
+          })));
+        }
+      }
     }
   }
 
-  const finalTargetEstimate = estimates
-    .filter((estimate) => estimate.periodEnd > researchBoundary
-      && (positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue)))
+  const finalTargetEstimate = validFutureEstimates(
+    estimates,
+    latestFinancialPeriod?.periodEnd ?? null,
+    Date.parse(calculatedAt),
+  ).find((estimate) =>
+    positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue));
+  const nearestRawEstimate = estimates
+    .filter((estimate) => estimate.periodEnd > researchBoundary)
     .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
     .at(0);
+  writeFairValueResolutionAuditLog({
+    event: 'fair_value_resolution_audit',
+    symbol,
+    field: 'targetForwardEstimate',
+    stage: 'future-estimate-validation',
+    provider: finalTargetEstimate?.provider
+      ?? nearestRawEstimate?.provider
+      ?? valuation.provider,
+    available: Boolean(finalTargetEstimate),
+    reason: finalTargetEstimate
+      ? undefined
+      : nearestRawEstimate
+        ? 'engine-future-estimate-contract-rejected'
+        : 'no-future-estimate-candidate',
+    asOf: finalTargetEstimate?.asOf ?? nearestRawEstimate?.asOf ?? calculatedAt,
+    period: finalTargetEstimate?.periodEnd ?? nearestRawEstimate?.periodEnd ?? null,
+    value: finalTargetEstimate
+      ? positive(finalTargetEstimate.estimatedEps)
+        ? finalTargetEstimate.estimatedEps
+        : finalTargetEstimate.estimatedRevenue
+      : null,
+    currency: finalTargetEstimate?.currency ?? nearestRawEstimate?.currency ?? null,
+    schemaPassed: Boolean(nearestRawEstimate),
+    validFutureEstimatePassed: Boolean(finalTargetEstimate),
+  });
   if (finalTargetEstimate) {
     const branch = positive(finalTargetEstimate.estimatedEps) ? 'pe' : 'ev-sales';
     const validPeers = peers.filter((peer) =>
@@ -1150,8 +1561,37 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       asOf: field.asOf,
     });
   }
+  for (const field of [
+    {
+      name: 'riskFreeRate' as const,
+      value: waccMarketInputs.riskFreeRate,
+      provider: waccMarketInputs.riskFreeRateProvenance?.provider
+        ?? waccMarketInputs.provider,
+      asOf: waccMarketInputs.riskFreeAsOf ?? calculatedAt,
+    },
+    {
+      name: 'equityRiskPremium' as const,
+      value: waccMarketInputs.equityRiskPremium,
+      provider: waccMarketInputs.equityRiskPremiumProvenance?.provider
+        ?? waccMarketInputs.provider,
+      asOf: waccMarketInputs.equityRiskPremiumAsOf ?? calculatedAt,
+    },
+  ]) {
+    writeFairValueResolutionAuditLog({
+      event: 'fair_value_resolution_audit',
+      symbol,
+      field: field.name,
+      stage: 'normalization',
+      provider: field.provider,
+      available: positive(field.value),
+      reason: positive(field.value) ? undefined : 'no-normalized-canonical-value',
+      asOf: field.asOf,
+      value: field.value,
+    });
+  }
 
   const diagnostics: ValuationDiagnostic[] = [
+    ...valuationInputLkgDiagnostics(valuationLkg),
     ...(valuation.diagnostics ?? []),
     ...deterministic.diagnostics.map((diagnostic) => ({
       ...diagnostic,
@@ -1254,7 +1694,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     ] : []),
   ];
 
-  return calculateFairValueSafely({
+  const calculationInput: ValuationInput = {
     symbol,
     currency: 'USD',
     marketPrice,
@@ -1281,7 +1721,11 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     analystEstimates: estimates,
     peerObservations: peers,
     waccMarketInputs,
-    providerStatus: groundedValueUsed ? 'limited' : providerStatus,
+    providerStatus: groundedValueUsed
+      ? 'limited'
+      : valuationLkgStaleUsed
+        ? 'stale'
+        : valuationLkgUsed ? 'cached' : providerStatus,
     researchAudit: {
       geminiUsed: groundedValueUsed,
       evidenceSourceCount: researchCounters.evidenceSourceCount,
@@ -1297,8 +1741,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     },
     inputResolution,
     peerAudit: {
-      candidates: valuation.peerCandidates,
-      rejected: valuation.peerRejections,
+      candidates: peerCandidateSymbols,
+      rejected: peerRejections,
     },
     diagnostics,
     balanceSheetBridge: valuation.balanceSheetAsOf
@@ -1312,5 +1756,48 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       : null,
     displayFx: null,
     calculatedAt,
-  });
+  };
+  const result = calculateFairValueSafely(calculationInput);
+  const resolvedEntries = excludeUnchangedLkgEntries(
+    buildResolvedValuationLkgEntries({
+      symbol,
+      waccMarketInputs,
+      estimates: validFutureEstimates(
+        estimates,
+        latestFinancialPeriod?.periodEnd ?? null,
+        Date.parse(calculatedAt),
+      ),
+      peers,
+      peerAudit: result.peerAudit ?? calculationInput.peerAudit,
+      calculatedAt,
+    }),
+    valuationLkg,
+  );
+  if (resolvedEntries.length) {
+    await valuationLkgService.writeMany(resolvedEntries).catch((cause) => {
+      const repositoryError = cause instanceof Error
+        && /^Valuation LKG write failed: [A-Za-z0-9_-]+$/.test(cause.message)
+        ? cause.message
+        : safeFairValueErrorCode(cause);
+      console.warn(JSON.stringify({
+        event: 'valuation-lkg-write-failed',
+        symbol,
+        errorCode: repositoryError,
+        timestamp: calculatedAt,
+      }));
+    });
+  }
+  return result;
+}
+
+const fairValueInflight = new Map<string, Promise<FairValueResult>>();
+
+export function loadFairValue(rawSymbol: string): Promise<FairValueResult> {
+  const symbol = rawSymbol.trim().toUpperCase();
+  const active = fairValueInflight.get(symbol);
+  if (active) return active;
+  const operation = resolveFairValue(symbol)
+    .finally(() => fairValueInflight.delete(symbol));
+  fairValueInflight.set(symbol, operation);
+  return operation;
 }

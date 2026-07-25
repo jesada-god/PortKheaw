@@ -7,6 +7,10 @@ import type { FundamentalsSnapshot } from './provider';
 import type { FundamentalsLkgEntry, FundamentalsLkgRepository } from './service';
 import { fundamentalsSnapshotSchema } from './validation';
 
+export function fundamentalsLkgRepositoryConfigured(): boolean {
+  return Boolean(clientEnv.NEXT_PUBLIC_SUPABASE_URL && serverEnv.SUPABASE_SERVICE_ROLE_KEY);
+}
+
 export function createFundamentalsLkgRepository(): FundamentalsLkgRepository | null {
   const url = clientEnv.NEXT_PUBLIC_SUPABASE_URL;
   const key = serverEnv.SUPABASE_SERVICE_ROLE_KEY;

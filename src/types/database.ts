@@ -175,6 +175,44 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['analytics_fundamentals_lkg']['Insert']>;
         Relationships: [];
       };
+      analytics_valuation_inputs_lkg: {
+        Row: {
+          scope: 'company' | 'market' | 'peers';
+          owner_key: string;
+          metric: 'beta' | 'risk-free-rate' | 'equity-risk-premium' | 'forward-eps' | 'forward-revenue' | 'peer-forward-pe' | 'peer-forward-ev-sales';
+          period: string;
+          data: Json;
+          source: string;
+          origin: 'provider' | 'derived' | 'gemini-grounded';
+          source_as_of: string;
+          fetched_at: string;
+          validated_at: string;
+          freshness: 'fresh' | 'stale';
+          schema_version: number;
+          provenance: Json | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          scope: 'company' | 'market' | 'peers';
+          owner_key: string;
+          metric: 'beta' | 'risk-free-rate' | 'equity-risk-premium' | 'forward-eps' | 'forward-revenue' | 'peer-forward-pe' | 'peer-forward-ev-sales';
+          period: string;
+          data: Json;
+          source: string;
+          origin: 'provider' | 'derived' | 'gemini-grounded';
+          source_as_of: string;
+          fetched_at: string;
+          validated_at: string;
+          freshness: 'fresh' | 'stale';
+          schema_version: number;
+          provenance?: Json | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['analytics_valuation_inputs_lkg']['Insert']>;
+        Relationships: [];
+      };
       price_alerts: {
         Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; created_at: string; updated_at: string };
         Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; created_at?: string; updated_at?: string };

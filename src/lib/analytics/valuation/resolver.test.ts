@@ -5,6 +5,7 @@ import {
   deriveHistoricalBeta,
   normalizePercentage,
   resolveDeterministicInputs,
+  resolveHistoricalBeta,
 } from './resolver';
 
 function history(multiplier: number, count = 90): HistoricalPrice[] {
@@ -66,10 +67,20 @@ describe('Fair Value missing-input resolver', () => {
   });
 
   it('refuses a beta with too few observations and never substitutes a default', () => {
-    expect(deriveHistoricalBeta(history(1.2, 20), history(1, 20), {
+    const result = resolveHistoricalBeta(history(1.2, 20), history(1, 20), {
       stockProvider: 'stock-history',
       benchmarkProvider: 'benchmark-history',
-    })).toBeNull();
+    });
+    expect(result.beta).toBeNull();
+    expect(result.audit).toMatchObject({
+      targetRows: 20,
+      benchmarkRows: 20,
+      alignedObservations: 19,
+      minimumSamples: 60,
+      frequency: 'daily',
+      reason: 'insufficient-aligned-observations',
+      derivedBeta: null,
+    });
   });
 
   it('derives market cap only when the authoritative field is absent', () => {

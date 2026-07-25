@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketDataError } from '@/src/lib/market-data/errors';
 import type { AnalystEstimate, ValuationInput } from './types';
+import {
+  emptyValuationInputLkgSnapshot,
+  type ValuationInputLkgEntry,
+  type ValuationInputLkgSnapshot,
+} from './persistent-inputs';
 
 const mocks = vi.hoisted(() => ({
   getFundamentalsProvider: vi.fn(),
@@ -9,7 +14,10 @@ const mocks = vi.hoisted(() => ({
   loadResilientQuote: vi.fn(),
   getFmpValuationProvider: vi.fn(),
   research: vi.fn(),
+  researchPeers: vi.fn(),
   getGroundedFinancialResearchService: vi.fn(),
+  readValuationLkg: vi.fn(),
+  writeValuationLkg: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -28,6 +36,13 @@ vi.mock('./providers/financial-modeling-prep', () => ({
 }));
 vi.mock('./grounded-research', () => ({
   getGroundedFinancialResearchService: mocks.getGroundedFinancialResearchService,
+}));
+vi.mock('./persistent-inputs-repository', () => ({
+  getValuationInputLkgService: () => ({
+    read: mocks.readValuationLkg,
+    writeMany: mocks.writeValuationLkg,
+  }),
+  valuationInputLkgRepositoryConfigured: () => true,
 }));
 
 import { calculateFairValueSafely, loadFairValue } from './orchestration';
@@ -176,16 +191,130 @@ function arrangeProviders() {
   });
 }
 
+function lkgEntry(
+  metric: ValuationInputLkgEntry['metric'],
+  data: unknown,
+  overrides: Partial<ValuationInputLkgEntry> = {},
+): ValuationInputLkgEntry {
+  const market = metric === 'risk-free-rate' || metric === 'equity-risk-premium';
+  const peers = metric === 'peer-forward-pe' || metric === 'peer-forward-ev-sales';
+  return {
+    scope: market ? 'market' : peers ? 'peers' : 'company',
+    ownerKey: market ? 'US' : 'AAPL',
+    metric,
+    period: 'latest',
+    data,
+    source: 'persistent-test-source',
+    origin: 'provider',
+    asOf: '2026-07-24T00:00:00.000Z',
+    fetchedAt: '2026-07-24T01:00:00.000Z',
+    validatedAt: '2026-07-24T01:00:00.000Z',
+    freshness: 'fresh',
+    schemaVersion: 1,
+    provenance: {
+      provider: 'persistent-test-source',
+      sourceType: 'structured-provider',
+      field: metric,
+      fiscalPeriod: 'latest',
+      asOf: '2026-07-24T00:00:00.000Z',
+      evidence: [],
+      evidenceQuality: 'high',
+    },
+    ...overrides,
+  };
+}
+
+function warmLkgSnapshot(): ValuationInputLkgSnapshot {
+  const snapshot = emptyValuationInputLkgSnapshot('AAPL');
+  const beta = lkgEntry('beta', { value: 1.2 });
+  const riskFree = lkgEntry('risk-free-rate', { value: 0.04 });
+  const erp = lkgEntry('equity-risk-premium', { value: 0.05 });
+  snapshot.company.beta = { value: 1.2, state: 'fresh', entry: beta };
+  snapshot.market.riskFreeRate = { value: 0.04, state: 'fresh', entry: riskFree };
+  snapshot.market.equityRiskPremium = { value: 0.05, state: 'fresh', entry: erp };
+  for (const year of [2026, 2027, 2028, 2029, 2030]) {
+    const period = `${year}-12-31`;
+    const eps = lkgEntry('forward-eps', {
+      value: 2 + (year - 2026) * 0.2,
+      analystCount: 8,
+      currency: 'USD',
+    }, { period });
+    const revenue = lkgEntry('forward-revenue', {
+      value: 1_080 * (1.08 ** (year - 2026)),
+      analystCount: 8,
+      currency: 'USD',
+    }, { period });
+    snapshot.company.forwardEps.push({
+      value: (eps.data as { value: number }).value,
+      analystCount: 8,
+      currency: 'USD',
+      period,
+      state: 'fresh',
+      entry: eps,
+    });
+    snapshot.company.forwardRevenue.push({
+      value: (revenue.data as { value: number }).value,
+      analystCount: 8,
+      currency: 'USD',
+      period,
+      state: 'fresh',
+      entry: revenue,
+    });
+  }
+  const observations = [10, 11, 12, 13, 14].map((multiple, index) => ({
+    symbol: `P${index + 1}`,
+    sector: 'Technology',
+    industry: 'Consumer Electronics',
+    price: multiple * 2,
+    priceAsOf: '2026-07-24T00:00:00.000Z',
+    enterpriseValue: multiple * 100,
+    enterpriseValueAsOf: '2026-07-24T00:00:00.000Z',
+    forwardEps: 2,
+    forwardRevenue: 100,
+    estimatePeriod: '2026-12-31',
+    estimateAsOf: '2026-07-24T00:00:00.000Z',
+    provider: 'persistent-test-source',
+    candidateSource: 'provider-peers' as const,
+    currency: 'USD',
+  }));
+  const peerEntry = lkgEntry('peer-forward-pe', {
+    metric: 'forward-pe',
+    candidates: observations.map((peer) => peer.symbol),
+    accepted: observations.map((peer) => peer.symbol),
+    rejected: [],
+    observations,
+  }, { period: '2026-12-31' });
+  snapshot.peers.push({
+    metric: 'forward-pe',
+    candidates: observations.map((peer) => peer.symbol),
+    accepted: observations.map((peer) => peer.symbol),
+    rejected: [],
+    observations,
+    state: 'fresh',
+    entry: peerEntry,
+  });
+  return snapshot;
+}
+
 describe('Fair Value orchestration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     arrangeProviders();
-    mocks.getGroundedFinancialResearchService.mockReturnValue({ research: mocks.research });
+    mocks.getGroundedFinancialResearchService.mockReturnValue({
+      research: mocks.research,
+      researchPeers: mocks.researchPeers,
+    });
     mocks.research.mockResolvedValue({
       metrics: [],
       rejectedReasons: [],
       cache: 'negative',
       unavailableReason: 'no-validated-grounded-evidence',
+    });
+    mocks.researchPeers.mockResolvedValue({
+      candidates: [],
+      rejected: [],
+      cache: 'negative',
+      unavailableReason: 'no-validated-peer-candidates',
     });
     mocks.getHistoricalMarketDataService.mockReturnValue({
       getHistoricalPrices: vi.fn(async (symbol: string) => ({
@@ -204,8 +333,186 @@ describe('Fair Value orchestration', () => {
         provider: 'historical-provider',
       })),
     });
+    mocks.readValuationLkg.mockResolvedValue(emptyValuationInputLkgSnapshot('AAPL'));
+    mocks.writeValuationLkg.mockResolvedValue(undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  });
+
+  it('persists validated resolved inputs after a cold provider-backed calculation', async () => {
+    const result = await loadFairValue('AAPL');
+
+    expect(result.status).toBe('available');
+    expect(mocks.writeValuationLkg).toHaveBeenCalledOnce();
+    const entries = mocks.writeValuationLkg.mock.calls[0]?.[0] as ValuationInputLkgEntry[];
+    expect(entries.map((entry) => entry.metric)).toEqual(expect.arrayContaining([
+      'beta',
+      'risk-free-rate',
+      'equity-risk-premium',
+      'forward-eps',
+      'forward-revenue',
+      'peer-forward-pe',
+    ]));
+  });
+
+  it('evaluates from a warm persistent snapshot without FMP, Gemini, or history calls', async () => {
+    const snapshot = warmLkgSnapshot();
+    mocks.readValuationLkg.mockResolvedValue(snapshot);
+    const valuationProvider = mocks.getFmpValuationProvider();
+    valuationProvider.getValuationDataset.mockRejectedValue(
+      new MarketDataError('rate-limited', 'FMP throttled'),
+    );
+
+    const result = await loadFairValue('AAPL');
+
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model))
+      .toEqual(expect.arrayContaining(['fcff-dcf', 'pe']));
+    expect(valuationProvider.getValuationDataset).not.toHaveBeenCalled();
+    expect(mocks.research).not.toHaveBeenCalled();
+    expect(mocks.researchPeers).not.toHaveBeenCalled();
+    expect(mocks.getHistoricalMarketDataService().getHistoricalPrices).not.toHaveBeenCalled();
+    expect(mocks.writeValuationLkg).not.toHaveBeenCalled();
+  });
+
+  it('uses cached Beta before provider and never fetches target or SPY history', async () => {
+    const snapshot = emptyValuationInputLkgSnapshot('AAPL');
+    const beta = lkgEntry('beta', { value: 1.72 });
+    snapshot.company.beta = { value: 1.72, state: 'fresh', entry: beta };
+    mocks.readValuationLkg.mockResolvedValue(snapshot);
+    const history = mocks.getHistoricalMarketDataService();
+
+    const result = await loadFairValue('AAPL');
+
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.inputs.waccMarketInputs).toMatchObject({ beta: 1.72 });
+    expect(history.getHistoricalPrices).not.toHaveBeenCalled();
+  });
+
+  it('passes Forward EV/Sales from cached revenue, peers, and existing bridge inputs', async () => {
+    const snapshot = warmLkgSnapshot();
+    snapshot.company.forwardEps = [];
+    const peerSet = snapshot.peers[0]!;
+    peerSet.metric = 'forward-ev-sales';
+    peerSet.entry.metric = 'peer-forward-ev-sales';
+    peerSet.entry.data = {
+      ...(peerSet.entry.data as Record<string, unknown>),
+      metric: 'forward-ev-sales',
+    };
+    mocks.readValuationLkg.mockResolvedValue(snapshot);
+    const valuationProvider = mocks.getFmpValuationProvider();
+    valuationProvider.getValuationDataset.mockRejectedValue(
+      new MarketDataError('rate-limited', 'FMP throttled'),
+    );
+
+    const result = await loadFairValue('AAPL');
+
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model))
+      .toEqual(expect.arrayContaining(['fcff-dcf', 'ev-sales']));
+    expect(result.inputs.analystEstimates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        periodEnd: '2026-12-31',
+        estimatedEps: null,
+        estimatedRevenue: 1_080,
+      }),
+    ]));
+    expect(mocks.research).not.toHaveBeenCalled();
+    expect(mocks.researchPeers).not.toHaveBeenCalled();
+  });
+
+  it('uses stale validated forward estimates only after FMP and Gemini are throttled', async () => {
+    const snapshot = warmLkgSnapshot();
+    snapshot.peers = [];
+    for (const item of [...snapshot.company.forwardEps, ...snapshot.company.forwardRevenue]) {
+      item.state = 'stale';
+      item.entry.freshness = 'stale';
+      item.entry.asOf = '2026-03-01T00:00:00.000Z';
+      item.entry.origin = 'gemini-grounded';
+      item.entry.provenance = {
+        ...item.entry.provenance!,
+        asOf: '2026-03-01T00:00:00.000Z',
+        sourceType: 'gemini-grounded',
+      };
+    }
+    mocks.readValuationLkg.mockResolvedValue(snapshot);
+    const valuationProvider = mocks.getFmpValuationProvider();
+    valuationProvider.getValuationDataset.mockRejectedValue(
+      new MarketDataError('rate-limited', 'FMP throttled'),
+    );
+    mocks.research.mockResolvedValue({
+      metrics: [],
+      rejectedReasons: [],
+      cache: 'negative',
+      unavailableReason: 'gemini-rate-limited',
+    });
+
+    const result = await loadFairValue('AAPL');
+
+    expect(valuationProvider.getValuationDataset).toHaveBeenCalledOnce();
+    expect(mocks.research).toHaveBeenCalled();
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toContain('fcff-dcf');
+    expect(result.inputs.analystEstimates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        periodEnd: '2026-12-31',
+        estimatedEps: 2,
+        estimatedRevenue: 1_080,
+      }),
+    ]));
+    expect(result.dataStatus).toBe('stale');
+    expect(mocks.writeValuationLkg).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates concurrent Fair Value requests for one symbol', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.readValuationLkg.mockImplementation(async () => {
+      await gate;
+      return emptyValuationInputLkgSnapshot('AAPL');
+    });
+
+    const first = loadFairValue('aapl');
+    const second = loadFairValue('AAPL');
+    release();
+    const [left, right] = await Promise.all([first, second]);
+
+    expect(left).toEqual(right);
+    expect(mocks.readValuationLkg).toHaveBeenCalledOnce();
+  });
+
+  it('reuses one shared US market snapshot across NVDA, AAPL, and MSFT without market-input provider calls', async () => {
+    mocks.readValuationLkg.mockImplementation(async (symbol: string) => {
+      const snapshot = warmLkgSnapshot();
+      snapshot.symbol = symbol;
+      snapshot.company.beta!.entry.ownerKey = symbol;
+      for (const item of [
+        ...snapshot.company.forwardEps,
+        ...snapshot.company.forwardRevenue,
+      ]) {
+        item.entry.ownerKey = symbol;
+      }
+      for (const peer of snapshot.peers) peer.entry.ownerKey = symbol;
+      return snapshot;
+    });
+    const valuationProvider = mocks.getFmpValuationProvider();
+
+    const results = await Promise.all([
+      loadFairValue('NVDA'),
+      loadFairValue('AAPL'),
+      loadFairValue('MSFT'),
+    ]);
+
+    expect(results.every((result) => result.status === 'available')).toBe(true);
+    expect(valuationProvider.getValuationDataset).not.toHaveBeenCalled();
+    expect(mocks.research).not.toHaveBeenCalled();
+    expect(mocks.readValuationLkg).toHaveBeenCalledTimes(3);
   });
 
   it('combines independently sourced market, financial, estimate, peer, and WACC inputs', async () => {
@@ -219,6 +526,135 @@ describe('Fair Value orchestration', () => {
     expect(result.currency).toBe('USD');
     expect(result.displayFx).toBeNull();
     expect(mocks.research).not.toHaveBeenCalled();
+  });
+
+  it('passes resolved Beta, Rf, ERP, forward EPS, and forward revenue into the engine', async () => {
+    const result = await loadFairValue('AAPL');
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.inputs.waccMarketInputs).toMatchObject({
+      beta: 1.2,
+      riskFreeRate: 0.04,
+      equityRiskPremium: 0.05,
+    });
+    expect(result.inputs.analystEstimates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        periodEnd: '2026-12-31',
+        estimatedEps: 2,
+        estimatedRevenue: 1_080,
+      }),
+    ]));
+    expect(result.modelResults.map((model) => model.model))
+      .toEqual(expect.arrayContaining(['fcff-dcf', 'pe']));
+  });
+
+  it('falls back from rate-limited FMP peers to one grounded candidate batch', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      peers: [],
+      peerCandidates: [],
+      peerRejections: [],
+      endpointErrors: {
+        ...dataset.endpointErrors,
+        'stock-peers': 'rate-limited',
+        'company-screener:industry': 'rate-limited',
+        'company-screener:sector': 'rate-limited',
+      },
+    });
+    const candidateSymbols = ['P1', 'P2', 'P3', 'P4', 'P5'];
+    mocks.researchPeers.mockResolvedValue({
+      candidates: candidateSymbols.map((peerSymbol) => ({
+        symbol: peerSymbol,
+        company: `${peerSymbol} Corporation`,
+        sector: 'Technology',
+        industry: 'Consumer Electronics',
+        businessContext: `${peerSymbol} competes in consumer electronics hardware markets.`,
+        asOf: '2026-07-24',
+        sourceName: 'Nasdaq',
+        sourceUrl: `https://www.nasdaq.com/market-activity/stocks/${peerSymbol.toLowerCase()}`,
+        evidence: [{
+          url: `https://www.nasdaq.com/market-activity/stocks/${peerSymbol.toLowerCase()}`,
+          publisher: 'Nasdaq',
+          publishedAt: '2026-07-24',
+          evidence: `${peerSymbol} operates in the consumer electronics industry.`,
+          quality: 'reputable',
+        }],
+      })),
+      rejected: [],
+      cache: 'miss',
+      unavailableReason: null,
+    });
+    const multiples = [10, 11, 12, 13, 1_000];
+    const marketProvider = mocks.getMarketDataProvider();
+    marketProvider.getQuote.mockImplementation(async (peerSymbol: string) => {
+      const index = candidateSymbols.indexOf(peerSymbol);
+      return {
+        data: {
+          symbol: peerSymbol,
+          currency: 'USD',
+          price: multiples[index] * 2,
+        },
+        freshness: {
+          status: 'realtime',
+          asOf: '2026-07-24T20:00:00.000Z',
+          maxAgeSeconds: 60,
+        },
+        provider: 'polygon',
+      };
+    });
+    mocks.research.mockResolvedValue({
+      metrics: candidateSymbols.map((peerSymbol) => ({
+        symbol: peerSymbol,
+        metric: 'eps',
+        field: 'eps',
+        fiscalYear: 2026,
+        periodEnd: '2026-12-31',
+        period: '2026-12-31',
+        value: 2,
+        unit: 'USD/share',
+        currency: 'USD',
+        asOf: '2026-07-24',
+        sourceName: 'Nasdaq',
+        sourceUrl: `https://www.nasdaq.com/market-activity/stocks/${peerSymbol.toLowerCase()}/earnings`,
+        analystCount: 8,
+        confidence: 'medium',
+        provenance: {
+          provider: 'gemini-grounded-research',
+          sourceType: 'gemini-grounded',
+          field: 'analystConsensusEps',
+          fiscalPeriod: '2026-12-31',
+          asOf: '2026-07-24',
+          evidence: [{
+            url: `https://www.nasdaq.com/market-activity/stocks/${peerSymbol.toLowerCase()}/earnings`,
+            publisher: 'Nasdaq',
+            publishedAt: '2026-07-24',
+            evidence: `${peerSymbol} forward EPS consensus is 2.00 USD.`,
+            quality: 'reputable',
+          }],
+          evidenceQuality: 'medium',
+        },
+      })),
+      rejectedReasons: [],
+      cache: 'miss',
+      unavailableReason: null,
+    });
+
+    const result = await loadFairValue('AAPL');
+
+    expect(mocks.researchPeers).toHaveBeenCalledTimes(1);
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+    expect(mocks.research.mock.calls[0][0].symbols).toEqual(candidateSymbols);
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toContain('pe');
+    expect(result.peerAudit?.candidates).toEqual(candidateSymbols);
+    expect(result.peerAudit?.accepted).toHaveLength(4);
+    expect(result.peerAudit?.rejected).toContainEqual(expect.objectContaining({
+      symbol: 'P5',
+      reason: 'engine-quality-gate-or-outlier',
+    }));
   });
 
   it('continues through bounded research after valuation-provider throttling', async () => {
@@ -383,6 +819,19 @@ describe('Fair Value orchestration', () => {
         field: 'beta',
         origin: 'derived',
       }));
+      const persisted = mocks.writeValuationLkg.mock.calls
+        .flatMap(([entries]) => entries as ValuationInputLkgEntry[])
+        .find((entry) => entry.metric === 'beta');
+      expect(persisted).toMatchObject({
+        origin: 'derived',
+        provenance: expect.objectContaining({
+          benchmark: 'SPY',
+          frequency: 'daily',
+          sampleSize: expect.any(Number),
+          start: expect.any(String),
+          end: expect.any(String),
+        }),
+      });
     }
   });
 

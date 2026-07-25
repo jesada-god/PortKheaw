@@ -143,7 +143,18 @@ export interface DerivedBeta {
   provenance: MetricProvenance;
 }
 
-export function deriveHistoricalBeta(
+export interface HistoricalBetaAudit {
+  targetRows: number;
+  benchmarkRows: number;
+  alignedObservations: number;
+  minimumSamples: number;
+  frequency: 'daily';
+  period: string | null;
+  derivedBeta: number | null;
+  reason: 'derived' | 'insufficient-aligned-observations' | 'zero-benchmark-variance' | 'invalid-derived-beta';
+}
+
+export function resolveHistoricalBeta(
   stockPrices: readonly HistoricalPrice[],
   benchmarkPrices: readonly HistoricalPrice[],
   input: {
@@ -152,7 +163,7 @@ export function deriveHistoricalBeta(
     benchmark?: string;
     minimumSamples?: number;
   },
-): DerivedBeta | null {
+): { beta: DerivedBeta | null; audit: HistoricalBetaAudit } {
   const stockReturns = returnsByDate(stockPrices);
   const benchmarkReturns = returnsByDate(benchmarkPrices);
   const observations = [...stockReturns.entries()]
@@ -161,7 +172,27 @@ export function deriveHistoricalBeta(
       return benchmarkReturn === undefined ? [] : [{ date, stockReturn, benchmarkReturn }];
     });
   const minimumSamples = input.minimumSamples ?? MINIMUM_BETA_SAMPLES;
-  if (observations.length < minimumSamples) return null;
+  const first = observations.at(0)?.date ?? null;
+  const last = observations.at(-1)?.date ?? null;
+  const period = first && last ? `${first}/${last}` : null;
+  const auditBase = {
+    targetRows: stockPrices.length,
+    benchmarkRows: benchmarkPrices.length,
+    alignedObservations: observations.length,
+    minimumSamples,
+    frequency: 'daily' as const,
+    period,
+  };
+  if (observations.length < minimumSamples) {
+    return {
+      beta: null,
+      audit: {
+        ...auditBase,
+        derivedBeta: null,
+        reason: 'insufficient-aligned-observations',
+      },
+    };
+  }
 
   const stockMean = observations.reduce((sum, item) => sum + item.stockReturn, 0)
     / observations.length;
@@ -174,36 +205,61 @@ export function deriveHistoricalBeta(
       * (observation.benchmarkReturn - benchmarkMean);
     benchmarkVariance += (observation.benchmarkReturn - benchmarkMean) ** 2;
   }
-  if (!(benchmarkVariance > 0)) return null;
+  if (!(benchmarkVariance > 0)) {
+    return {
+      beta: null,
+      audit: { ...auditBase, derivedBeta: null, reason: 'zero-benchmark-variance' },
+    };
+  }
   const beta = covariance / benchmarkVariance;
-  if (!positive(beta) || Math.abs(beta) > MAXIMUM_ABSOLUTE_BETA) return null;
-  const first = observations.at(0)!.date;
-  const last = observations.at(-1)!.date;
+  if (!positive(beta) || Math.abs(beta) > MAXIMUM_ABSOLUTE_BETA) {
+    return {
+      beta: null,
+      audit: { ...auditBase, derivedBeta: null, reason: 'invalid-derived-beta' },
+    };
+  }
   const benchmark = input.benchmark ?? 'SPY';
   return {
-    value: beta,
-    provenance: {
-      provider: `nexora-historical-beta:${input.stockProvider}+${input.benchmarkProvider}`,
-      sourceType: 'derived',
-      field: 'beta',
-      fiscalPeriod: `${first}/${last}`,
-      asOf: last,
-      evidence: [],
-      evidenceQuality: 'medium',
-      methodology: 'OLS beta = covariance(daily log stock returns, benchmark returns) / variance(benchmark returns)',
-      benchmark,
-      sampleSize: observations.length,
-      frequency: 'daily',
-      start: first,
-      end: last,
+    beta: {
+      value: beta,
+      provenance: {
+        provider: `nexora-historical-beta:${input.stockProvider}+${input.benchmarkProvider}`,
+        sourceType: 'derived',
+        field: 'beta',
+        fiscalPeriod: period!,
+        asOf: last!,
+        evidence: [],
+        evidenceQuality: 'medium',
+        methodology: 'OLS beta = covariance(daily log stock returns, benchmark returns) / variance(benchmark returns)',
+        benchmark,
+        sampleSize: observations.length,
+        frequency: 'daily',
+        start: first!,
+        end: last!,
+      },
     },
+    audit: { ...auditBase, derivedBeta: beta, reason: 'derived' },
   };
+}
+
+export function deriveHistoricalBeta(
+  stockPrices: readonly HistoricalPrice[],
+  benchmarkPrices: readonly HistoricalPrice[],
+  input: {
+    stockProvider: string;
+    benchmarkProvider: string;
+    benchmark?: string;
+    minimumSamples?: number;
+  },
+): DerivedBeta | null {
+  return resolveHistoricalBeta(stockPrices, benchmarkPrices, input).beta;
 }
 
 export interface DeterministicResolution {
   marketCapitalization: number | null;
   marketCapitalizationProvenance: MetricProvenance | null;
   beta: DerivedBeta | null;
+  betaAudit: HistoricalBetaAudit;
   diagnostics: ValuationDiagnostic[];
 }
 
@@ -250,14 +306,17 @@ export function resolveDeterministicInputs(input: {
     });
   }
 
-  const beta = input.stockPrices && input.benchmarkPrices
-    && input.stockHistoryProvider && input.benchmarkHistoryProvider
-    ? deriveHistoricalBeta(input.stockPrices, input.benchmarkPrices, {
-        stockProvider: input.stockHistoryProvider,
-        benchmarkProvider: input.benchmarkHistoryProvider,
-        benchmark: input.benchmark,
-      })
-    : null;
+  const betaResolution = resolveHistoricalBeta(
+    input.stockPrices ?? [],
+    input.benchmarkPrices ?? [],
+    {
+      stockProvider: input.stockHistoryProvider ?? 'historical-provider-unavailable',
+      benchmarkProvider: input.benchmarkHistoryProvider ?? 'historical-provider-unavailable',
+      benchmark: input.benchmark,
+    },
+  );
+  const beta = input.stockHistoryProvider && input.benchmarkHistoryProvider
+    ? betaResolution.beta : null;
   if (beta) {
     diagnostics.push({
       field: 'beta',
@@ -275,6 +334,7 @@ export function resolveDeterministicInputs(input: {
     marketCapitalization,
     marketCapitalizationProvenance,
     beta,
+    betaAudit: betaResolution.audit,
     diagnostics,
   };
 }

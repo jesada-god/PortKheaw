@@ -36,6 +36,10 @@ interface LoadedPayload {
   cache: CacheState;
 }
 
+export interface FmpValuationRequestOptions {
+  includeMarketInputs?: boolean;
+}
+
 interface PeerLoadResult {
   observation: PeerObservation | null;
   cacheStates: CacheState[];
@@ -166,6 +170,7 @@ export class FinancialModelingPrepValuationProvider {
   private readonly cache = new Map<string, CachedPayload>();
   private readonly inflight = new Map<string, Promise<LoadedPayload>>();
   private activeNetworkRequests = 0;
+  private blockedUntil = 0;
   private readonly networkQueue: Array<() => void> = [];
 
   constructor(
@@ -200,6 +205,13 @@ export class FinancialModelingPrepValuationProvider {
 
   private async network(path: string, params: Record<string, string>): Promise<unknown> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (this.blockedUntil > this.now()) {
+        throw new MarketDataError(
+          'rate-limited',
+          'FMP is in Retry-After cooldown',
+          Math.max(1, Math.ceil((this.blockedUntil - this.now()) / 1_000)),
+        );
+      }
       const url = new URL(`${BASE_URL}/${path}`);
       for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
       let response: Response;
@@ -231,6 +243,10 @@ export class FinancialModelingPrepValuationProvider {
           payload,
           retryAfterSeconds: retryAfter,
         });
+        if (error.code === 'rate-limited') {
+          this.blockedUntil = this.now() + (retryAfter ?? 60) * 1_000;
+          throw error;
+        }
         if (attempt < 2 && error.retryable) {
           await this.sleep((retryAfter ?? attempt + 1) * 1_000);
           continue;
@@ -380,8 +396,12 @@ export class FinancialModelingPrepValuationProvider {
       .map((item) => item.symbol);
   }
 
-  async getValuationDataset(rawSymbol: string): Promise<FmpValuationDataset> {
+  async getValuationDataset(
+    rawSymbol: string,
+    options: FmpValuationRequestOptions = {},
+  ): Promise<FmpValuationDataset> {
     const symbol = rawSymbol.trim().toUpperCase();
+    const includeMarketInputs = options.includeMarketInputs ?? true;
     const today = new Date(this.now()).toISOString().slice(0, 10);
     const endpointNames = [
       'analyst-estimates',
@@ -400,8 +420,12 @@ export class FinancialModelingPrepValuationProvider {
         this.load('quote', { symbol }, FRESH_MS.quote),
         this.load('enterprise-values', { symbol, period: 'annual', limit: '1' }, FRESH_MS.financial),
         this.load('shares-float', { symbol }, FRESH_MS.financial),
-        this.load('treasury-rates', {}, FRESH_MS.financial),
-        this.load('market-risk-premium', {}, FRESH_MS.financial),
+        includeMarketInputs
+          ? this.load('treasury-rates', {}, FRESH_MS.financial)
+          : Promise.resolve(null),
+        includeMarketInputs
+          ? this.load('market-risk-premium', {}, FRESH_MS.financial)
+          : Promise.resolve(null),
       ]);
     const endpointErrors: Record<string, string> = {};
     const results = settled.map((result, index) => {
@@ -645,13 +669,44 @@ export class FinancialModelingPrepValuationProvider {
         sharesResult ? 'shares-float' : 'enterprise-values'),
       diagnostic('cash', cash, balanceSheetAsOf, datasetAsOf, 'enterprise-values'),
       diagnostic('totalDebt', totalDebt, balanceSheetAsOf, datasetAsOf, 'enterprise-values'),
-      diagnostic('peerObservations', peers.length, 'forward annual', datasetAsOf, 'stock-peers'),
-      ...estimates.flatMap((estimate) => [
-        diagnostic('forwardRevenue', estimate.estimatedRevenue, estimate.periodEnd,
-          estimate.asOf, 'analyst-estimates'),
-        diagnostic('forwardEps', estimate.estimatedEps, estimate.periodEnd,
-          estimate.asOf, 'analyst-estimates'),
-      ]),
+      {
+        field: 'peerObservations',
+        value: peers.length,
+        period: 'forward annual',
+        provider: this.id,
+        asOf: datasetAsOf,
+        status: peers.length > 0 ? 'available' : 'missing',
+        provenance: 'provider',
+        reason: peers.length > 0
+          ? null
+          : endpointErrors['stock-peers']
+            ?? endpointErrors['company-screener:industry']
+            ?? endpointErrors['company-screener:sector']
+            ?? 'provider-field-missing',
+      },
+      ...(estimates.length
+        ? estimates.flatMap((estimate) => [
+            diagnostic('forwardRevenue', estimate.estimatedRevenue, estimate.periodEnd,
+              estimate.asOf, 'analyst-estimates'),
+            diagnostic('forwardEps', estimate.estimatedEps, estimate.periodEnd,
+              estimate.asOf, 'analyst-estimates'),
+          ])
+        : [
+            diagnostic(
+              'forwardRevenue',
+              null,
+              null,
+              datasetAsOf,
+              'analyst-estimates',
+            ),
+            diagnostic(
+              'forwardEps',
+              null,
+              null,
+              datasetAsOf,
+              'analyst-estimates',
+            ),
+          ]),
     ];
     return {
       provider: this.id,

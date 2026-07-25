@@ -36,11 +36,37 @@ export interface FairValueFieldLogEntry {
 export interface FairValueRuntimeLogEntry {
   event: 'fair_value_runtime_configuration';
   symbol: string;
+  secUserAgentConfigured: boolean;
   geminiConfigured: boolean;
   groundingConfigured: boolean;
   fundamentalsProviderConfigured: boolean;
   valuationProviderConfigured: boolean;
   historyProviderConfigured: boolean;
+  lkgReadConfigured: boolean;
+  lkgWriteConfigured: boolean;
+  valuationLkgReadConfigured?: boolean;
+  valuationLkgWriteConfigured?: boolean;
+}
+
+export interface FairValueResolutionAuditLogEntry {
+  event: 'fair_value_resolution_audit';
+  symbol: string;
+  field: 'beta' | 'riskFreeRate' | 'equityRiskPremium' | 'targetForwardEstimate';
+  stage: 'history' | 'normalization' | 'future-estimate-validation';
+  provider?: string;
+  available: boolean;
+  reason?: string;
+  asOf: string;
+  targetRows?: number;
+  benchmarkRows?: number;
+  alignedObservations?: number;
+  minimumSamples?: number;
+  frequency?: 'daily';
+  period?: string | null;
+  value?: number | null;
+  currency?: string | null;
+  schemaPassed?: boolean;
+  validFutureEstimatePassed?: boolean;
 }
 
 const SAFE_ERROR_CODES = new Set([
@@ -93,5 +119,12 @@ export function writeFairValueFieldLog(entry: FairValueFieldLogEntry): void {
 
 /** Boolean-only production configuration trace; credentials are never serialized. */
 export function writeFairValueRuntimeLog(entry: FairValueRuntimeLogEntry): void {
+  console.info(JSON.stringify(entry));
+}
+
+/** Sanitized numeric audit for model inputs; no credentials or raw model text are accepted. */
+export function writeFairValueResolutionAuditLog(
+  entry: FairValueResolutionAuditLogEntry,
+): void {
   console.info(JSON.stringify(entry));
 }

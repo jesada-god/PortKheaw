@@ -4,7 +4,9 @@ vi.mock('server-only', () => ({}));
 
 import {
   GroundedFinancialResearchService,
+  validateGroundedPeerResearch,
   validateGroundedResearch,
+  type GroundedPeerResearchRequest,
   type GroundedResearchRequest,
 } from './grounded-research';
 
@@ -15,6 +17,14 @@ const REQUEST: GroundedResearchRequest = {
   symbols: ['NVTS'],
   metrics: ['revenue', 'eps'],
   fiscalYears: [2027],
+};
+const PEER_REQUEST: GroundedPeerResearchRequest = {
+  symbol: 'NVDA',
+  company: 'NVIDIA Corporation',
+  sector: 'Technology',
+  industry: 'Semiconductors',
+  metric: 'forward-pe',
+  period: '2027-01-31',
 };
 
 function metric(overrides: Record<string, unknown> = {}) {
@@ -49,6 +59,31 @@ function payload(estimates = [metric()], extra: Record<string, unknown> = {}) {
     retrievedAt: '2026-07-25T00:00:00.000Z',
     estimates,
     ...extra,
+  };
+}
+
+function peerCandidate(overrides: Record<string, unknown> = {}) {
+  return {
+    symbol: 'AMD',
+    company: 'Advanced Micro Devices, Inc.',
+    sector: 'Technology',
+    industry: 'Semiconductors',
+    businessContext: 'AMD designs accelerated computing processors and competes in data-center chips.',
+    asOf: '2026-07-24',
+    sources: [{
+      url: URL,
+      publisher: 'Nasdaq',
+      publishedAt: '2026-07-24',
+      evidence: 'AMD is a semiconductor company serving data-center and accelerated-computing markets.',
+    }],
+    ...overrides,
+  };
+}
+
+function peerPayload(candidates = [peerCandidate()]) {
+  return {
+    retrievedAt: '2026-07-25T00:00:00.000Z',
+    candidates,
   };
 }
 
@@ -194,6 +229,46 @@ describe('Gemini grounded evidence validator', () => {
     });
   });
 
+  it('normalizes an explicitly labelled market percentage into the engine decimal contract', () => {
+    const marketRequest: GroundedResearchRequest = {
+      symbols: [],
+      metrics: ['riskFreeRate'],
+      fiscalYears: [2026],
+    };
+    const candidate = metric({
+      symbol: null,
+      metric: 'riskFreeRate',
+      fiscalYear: 2026,
+      periodEnd: '2026-07-24',
+      value: 4.25,
+      unit: 'percent',
+      analystCount: null,
+      forward: false,
+      consensus: false,
+      sources: [{
+        url: TREASURY_URL,
+        publisher: 'U.S. Department of the Treasury',
+        publishedAt: '2026-07-24',
+        evidence: 'The published 10-year U.S. Treasury rate was 4.25 percent on July 24, 2026.',
+        reportedValue: 4.25,
+        currency: 'USD',
+        unit: 'percent',
+      }],
+    });
+    const result = validateGroundedResearch(
+      payload([candidate]),
+      marketRequest,
+      [TREASURY_URL],
+      NOW,
+    );
+    expect(result.metrics[0]).toMatchObject({
+      field: 'riskFreeRate',
+      value: 0.0425,
+      unit: 'decimal',
+    });
+    expect(result.rejectedReasons).not.toContain('unit-ambiguous');
+  });
+
   it('requires two independent reputable sources for a non-primary critical value', () => {
     const marketRequest: GroundedResearchRequest = {
       symbols: [],
@@ -223,6 +298,57 @@ describe('Gemini grounded evidence validator', () => {
     const result = validateGroundedResearch(payload([candidate]), marketRequest, [URL], NOW);
     expect(result.metrics).toEqual([]);
     expect(result.rejectedReasons).toContain('insufficient-evidence');
+  });
+});
+
+describe('Gemini grounded peer-candidate validator', () => {
+  it('rejects a peer candidate without evidence', () => {
+    const result = validateGroundedPeerResearch(
+      peerPayload([peerCandidate({ sources: [] })]),
+      PEER_REQUEST,
+      [URL],
+      NOW,
+    );
+    expect(result.candidates).toEqual([]);
+    expect(result.rejected).toContainEqual({
+      symbol: 'AMD',
+      reason: 'missing-evidence',
+    });
+  });
+
+  it('rejects target, duplicate, and irrelevant candidates before valuation', () => {
+    const result = validateGroundedPeerResearch(
+      peerPayload([
+        peerCandidate({ symbol: 'NVDA' }),
+        peerCandidate(),
+        peerCandidate(),
+        peerCandidate({
+          symbol: 'KO',
+          company: 'The Coca-Cola Company',
+          sector: 'Consumer Defensive',
+          industry: 'Beverages',
+          businessContext: 'KO produces and distributes non-alcoholic beverages worldwide.',
+          sources: [{
+            url: URL,
+            publisher: 'Nasdaq',
+            publishedAt: '2026-07-24',
+            evidence: 'KO is a beverage company with a global non-alcoholic drinks portfolio.',
+          }],
+        }),
+      ]),
+      PEER_REQUEST,
+      [URL],
+      NOW,
+    );
+    expect(result.candidates.map((candidate) => candidate.symbol)).toEqual(['AMD']);
+    expect(result.rejected).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: 'NVDA', reason: expect.stringContaining('target-company') }),
+      expect.objectContaining({ symbol: 'AMD', reason: expect.stringContaining('duplicate-peer') }),
+      expect.objectContaining({
+        symbol: 'KO',
+        reason: expect.stringContaining('business-relevance-mismatch'),
+      }),
+    ]));
   });
 });
 
@@ -290,20 +416,32 @@ describe('grounded research cache and rate-limit safety', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds a 429 retry and returns unavailable without a fake value', async () => {
+  it('does not retry 429 and applies provider-wide Retry-After backoff', async () => {
+    let clock = NOW;
     const generate = vi.fn(async () => {
-      throw Object.assign(new Error('rate limited'), { status: 429 });
+      throw Object.assign(new Error('rate limited'), {
+        status: 429,
+        retryAfterSeconds: 120,
+      });
     });
     const sleep = vi.fn(async () => undefined);
-    const service = new GroundedFinancialResearchService(generate, () => NOW, sleep);
+    const service = new GroundedFinancialResearchService(generate, () => clock, sleep);
     const result = await service.research(REQUEST);
-    expect(generate).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledTimes(1);
+    const blocked = await service.research({
+      ...REQUEST,
+      metrics: ['revenue'],
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       metrics: [],
       cache: 'negative',
       unavailableReason: 'gemini-rate-limited',
     });
+    expect(blocked.unavailableReason).toBe('gemini-rate-limited');
+    clock += 121_000;
+    await service.research({ ...REQUEST, metrics: ['eps'] });
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it('bounds timeouts and exposes unavailable rather than model memory', async () => {
@@ -317,5 +455,29 @@ describe('grounded research cache and rate-limit safety', () => {
     expect(generate).toHaveBeenCalledTimes(2);
     expect(result.metrics).toEqual([]);
     expect(result.unavailableReason).toBe('gemini-timeout');
+  });
+
+  it('keys peer research by symbol, metric, and period and dedupes concurrent requests', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const generatePeers = vi.fn(async () => {
+      await gate;
+      return { payload: peerPayload(), groundingUrls: [URL] };
+    });
+    const service = new GroundedFinancialResearchService(
+      vi.fn(async () => ({ payload: payload(), groundingUrls: [URL] })),
+      () => NOW,
+      async () => undefined,
+      2,
+      generatePeers,
+    );
+    const first = service.researchPeers(PEER_REQUEST);
+    const second = service.researchPeers({ ...PEER_REQUEST });
+    release();
+    const [left, right] = await Promise.all([first, second]);
+    expect(generatePeers).toHaveBeenCalledTimes(1);
+    expect(left.candidates).toEqual(right.candidates);
+    expect((await service.researchPeers(PEER_REQUEST)).cache).toBe('hit');
+    expect(generatePeers).toHaveBeenCalledTimes(1);
   });
 });

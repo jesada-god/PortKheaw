@@ -71,6 +71,27 @@ function payload(url: URL) {
 }
 
 describe('FMP deterministic valuation data provider', () => {
+  it('skips shared market endpoints when fresh persistent market inputs already exist', async () => {
+    const endpoints: string[] = [];
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      endpoints.push(url.pathname.split('/').at(-1) ?? '');
+      return json(payload(url));
+    });
+    const provider = new FinancialModelingPrepValuationProvider(
+      'secret',
+      fetcher as typeof fetch,
+      () => NOW,
+      async () => undefined,
+    );
+
+    await provider.getValuationDataset('TARGET', { includeMarketInputs: false });
+
+    expect(endpoints).not.toContain('treasury-rates');
+    expect(endpoints).not.toContain('market-risk-premium');
+    expect(endpoints).toContain('analyst-estimates');
+  });
+
   it('normalizes documented fields, uses dynamic peers, and keeps the API key server-side', async () => {
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -184,8 +205,50 @@ describe('FMP deterministic valuation data provider', () => {
     const result = await provider.getValuationDataset('TARGET');
     expect(result.estimates).toEqual([]);
     expect(result.endpointErrors).toMatchObject({ 'analyst-estimates': 'rate-limited' });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        field: 'forwardEps',
+        status: 'missing',
+        reason: 'rate-limited',
+      }),
+      expect.objectContaining({
+        field: 'forwardRevenue',
+        status: 'missing',
+        reason: 'rate-limited',
+      }),
+    ]));
     expect(result.marketPrice).toBe(20);
-    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('marks zero peer observations missing when every candidate endpoint is rate-limited', async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const endpoint = url.pathname.split('/').at(-1);
+      if (endpoint === 'stock-peers' || endpoint === 'company-screener') {
+        return json({ 'Error Message': 'rate limit exceeded' }, 429, {
+          'retry-after': '0',
+        });
+      }
+      return json(payload(url));
+    });
+    const provider = new FinancialModelingPrepValuationProvider(
+      'secret',
+      fetcher as typeof fetch,
+      () => NOW,
+      async () => undefined,
+    );
+
+    const result = await provider.getValuationDataset('TARGET');
+
+    expect(result.peerCandidates).toEqual([]);
+    expect(result.peers).toEqual([]);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      field: 'peerObservations',
+      value: 0,
+      status: 'missing',
+      reason: 'rate-limited',
+    }));
   });
 
   it('expands and deduplicates industry candidates before the sector fallback', async () => {

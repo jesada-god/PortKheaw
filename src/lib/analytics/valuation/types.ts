@@ -200,6 +200,8 @@ export interface AnalystEstimate {
 
 export interface PeerObservation {
   symbol: string;
+  company?: string | null;
+  businessContext?: string | null;
   sector: string | null;
   industry: string | null;
   price: number | null;
@@ -212,7 +214,8 @@ export interface PeerObservation {
   estimateAsOf: string | null;
   provider: string;
   estimateProvenance?: MetricProvenance | null;
-  candidateSource?: 'provider-peers' | 'industry' | 'sector';
+  candidateProvenance?: MetricProvenance | null;
+  candidateSource?: 'provider-peers' | 'industry' | 'sector' | 'gemini-grounded';
   currency?: string | null;
 }
 

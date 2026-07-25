@@ -140,6 +140,27 @@ describe('Nexora deterministic Fair Value engine', () => {
       status: 'unavailable',
       missingFields: expect.arrayContaining(['forwardRevenueEstimates', 'targetForwardEstimate']),
     });
+    if (missingEstimates.status === 'unavailable') {
+      const dcfDiagnostic = missingEstimates.diagnostics.find((item) =>
+        item.field === 'model:fcff-dcf');
+      const multiplesDiagnostic = missingEstimates.diagnostics.find((item) =>
+        item.field === 'model:forward-multiples');
+      const peDiagnostic = missingEstimates.diagnostics.find((item) =>
+        item.field === 'model:forward-pe');
+      const evSalesDiagnostic = missingEstimates.diagnostics.find((item) =>
+        item.field === 'model:forward-ev-sales');
+      expect(dcfDiagnostic?.reason).toBe('unavailable:forwardRevenueEstimates');
+      expect(multiplesDiagnostic?.reason).toBe('unavailable:targetForwardEstimate');
+      expect(multiplesDiagnostic?.reason).not.toMatch(/beta|riskFreeRate|equityRiskPremium/);
+      expect(peDiagnostic?.reason).toBe(
+        'unavailable:targetForwardEps,validForwardPePeers>=4',
+      );
+      expect(evSalesDiagnostic?.reason).toBe(
+        'unavailable:targetForwardRevenue,validForwardEvSalesPeers>=4',
+      );
+      expect(peDiagnostic?.reason).not.toMatch(/beta|riskFreeRate|equityRiskPremium/);
+      expect(evSalesDiagnostic?.reason).not.toMatch(/beta|riskFreeRate|equityRiskPremium/);
+    }
     const peers = calculateFairValue({
       ...input,
       peerObservations: input.peerObservations!.slice(0, 3),

@@ -82,8 +82,23 @@ function unavailableReason(missingFields: string[]): string {
   return `ยังคำนวณ Fair Value ไม่ได้ เพราะขาดข้อมูลสำคัญ: ${missingFields.join(', ')}`;
 }
 
-function unavailable(input: ValuationInput, calculatedAt: string, missingFields: string[]): FairValueResult {
+function unavailable(
+  input: ValuationInput,
+  calculatedAt: string,
+  missingFields: string[],
+  modelMissing: {
+    dcf: string[];
+    multiples: string[];
+    forwardPe?: string[];
+    forwardEvSales?: string[];
+  } = {
+    dcf: missingFields,
+    multiples: missingFields,
+  },
+): FairValueResult {
   const fields = unique(missingFields);
+  const dcfFields = unique(modelMissing.dcf);
+  const multiplesFields = unique(modelMissing.multiples);
   const marketModelFailure = fields.some((field) =>
     /forward|peer|wacc|beta|riskFree|equityRisk/i.test(field));
   const provider = marketModelFailure
@@ -116,7 +131,7 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
         asOf: calculatedAt,
         status: 'rejected',
         provenance: 'validation',
-        reason: `unavailable:${fields.join(',')}`,
+        reason: `unavailable:${dcfFields.join(',')}`,
       },
       {
         field: 'model:forward-multiples',
@@ -126,8 +141,28 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
         asOf: calculatedAt,
         status: 'rejected',
         provenance: 'validation',
-        reason: `unavailable:${fields.join(',')}`,
+        reason: `unavailable:${multiplesFields.join(',')}`,
       },
+      ...(modelMissing.forwardPe ? [{
+        field: 'model:forward-pe',
+        value: null,
+        period: input.analystEstimates?.at(0)?.periodEnd ?? null,
+        provider: input.peerObservations?.at(0)?.provider ?? provider ?? null,
+        asOf: calculatedAt,
+        status: 'rejected' as const,
+        provenance: 'validation' as const,
+        reason: `unavailable:${unique(modelMissing.forwardPe).join(',')}`,
+      }] : []),
+      ...(modelMissing.forwardEvSales ? [{
+        field: 'model:forward-ev-sales',
+        value: null,
+        period: input.analystEstimates?.at(0)?.periodEnd ?? null,
+        provider: input.peerObservations?.at(0)?.provider ?? provider ?? null,
+        asOf: calculatedAt,
+        status: 'rejected' as const,
+        provenance: 'validation' as const,
+        reason: `unavailable:${unique(modelMissing.forwardEvSales).join(',')}`,
+      }] : []),
       ...fields.map((field): ValuationDiagnostic => ({
         field,
         value: null,
@@ -195,7 +230,7 @@ export function meaningfulModelGate(
   };
 }
 
-function validFutureEstimates(
+export function validFutureEstimates(
   estimates: AnalystEstimate[],
   actualPeriodEnd: string | null,
   now: number,
@@ -501,6 +536,60 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   const multiplesMissing: string[] = [];
   if (!targetEstimate) multiplesMissing.push('targetForwardEstimate');
   const positiveTargetEps = positive(targetEstimate?.estimatedEps);
+  const peerCountForBranch = (branch: 'pe' | 'ev-sales'): number => {
+    if (!targetEstimate) return 0;
+    const seen = new Set<string>();
+    const normalizedSector = input.sector.trim().toLowerCase();
+    const normalizedIndustry = input.industry.trim().toLowerCase();
+    return (input.peerObservations ?? []).filter((peer) => {
+      const peerSymbol = peer.symbol.trim().toUpperCase();
+      const relevant = Boolean(
+        normalizedIndustry && peer.industry?.trim().toLowerCase() === normalizedIndustry,
+      ) || Boolean(
+        normalizedSector && peer.sector?.trim().toLowerCase() === normalizedSector,
+      );
+      const branchInputsValid = branch === 'pe'
+        ? positive(peer.price)
+          && positive(peer.forwardEps)
+          && dateWithinAge(peer.priceAsOf, now, MAX_PEER_PRICE_AGE_MS)
+        : positive(peer.enterpriseValue)
+          && positive(peer.forwardRevenue)
+          && dateWithinAge(
+            peer.enterpriseValueAsOf,
+            now,
+            MAX_PEER_ENTERPRISE_VALUE_AGE_MS,
+          );
+      const valid = peerSymbol !== input.symbol.trim().toUpperCase()
+        && !seen.has(peerSymbol)
+        && relevant
+        && (peer.currency == null || peer.currency === 'USD')
+        && peer.estimatePeriod === targetEstimate.periodEnd
+        && dateWithinAge(
+          peer.estimateAsOf,
+          now,
+          peer.estimateProvenance?.sourceType === 'gemini-grounded'
+            ? MAX_GROUNDED_ESTIMATE_AGE_MS : MAX_ESTIMATE_AGE_MS,
+        )
+        && branchInputsValid;
+      if (valid) seen.add(peerSymbol);
+      return valid;
+    }).length;
+  };
+  const forwardPeMissing: string[] = [];
+  if (!positive(targetEstimate?.estimatedEps)) forwardPeMissing.push('targetForwardEps');
+  if (peerCountForBranch('pe') < MINIMUM_VALID_PEERS) {
+    forwardPeMissing.push('validForwardPePeers>=4');
+  }
+  const forwardEvSalesMissing: string[] = [];
+  if (!positive(targetEstimate?.estimatedRevenue)) {
+    forwardEvSalesMissing.push('targetForwardRevenue');
+  }
+  if (peerCountForBranch('ev-sales') < MINIMUM_VALID_PEERS) {
+    forwardEvSalesMissing.push('validForwardEvSalesPeers>=4');
+  }
+  if (!shares) forwardEvSalesMissing.push('dilutedSharesOrSharesOutstanding');
+  if (!finite(bridgeCash) || bridgeCash < 0) forwardEvSalesMissing.push('cash');
+  if (!finite(bridgeDebt) || bridgeDebt < 0) forwardEvSalesMissing.push('totalDebt');
   if (targetEstimate && !positiveTargetEps) {
     if (!shares) multiplesMissing.push('dilutedSharesOrSharesOutstanding');
     if (!finite(bridgeCash) || bridgeCash < 0) multiplesMissing.push('cash');
@@ -561,7 +650,17 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   }
 
   if (!dcf && !multiples) {
-    return unavailable(input, calculatedAt, unique([...dcfMissing, ...multiplesMissing]));
+    return unavailable(
+      input,
+      calculatedAt,
+      unique([...dcfMissing, ...multiplesMissing]),
+      {
+        dcf: dcfMissing,
+        multiples: multiplesMissing,
+        forwardPe: forwardPeMissing,
+        forwardEvSales: forwardEvSalesMissing,
+      },
+    );
   }
 
   const modelResults: Array<ModelResult & { weight: number }> = [];
