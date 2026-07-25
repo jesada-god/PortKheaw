@@ -4,11 +4,17 @@ import {
   getMarketDataProvider,
 } from '@/src/lib/market-data';
 import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
-import { getFundamentalsProvider } from '../fundamentals/provider';
+import {
+  getFundamentalsProvider,
+  type FundamentalsSnapshot,
+} from '../fundamentals/provider';
 import { calculateFairValue } from './engine';
+import { datasetFreshness } from './freshness';
 import {
   safeFairValueErrorCode,
   writeFairValueLog,
+  writeFairValueFieldLog,
+  writeFairValueRuntimeLog,
   type FairValueLogger,
 } from './logging';
 import {
@@ -31,12 +37,23 @@ import type {
   FairValueResult,
   FairValueUnavailable,
   AnalystEstimate,
+  InputResolutionAudit,
   MetricProvenance,
+  ModelId,
   PeerObservation,
   ValuationInput,
   ValuationDiagnostic,
   WaccMarketInputs,
 } from './types';
+
+function recordResolvedInput(
+  audit: InputResolutionAudit,
+  resolution: InputResolutionAudit['resolved'][number],
+): void {
+  const existing = audit.resolved.findIndex((item) => item.field === resolution.field);
+  if (existing >= 0) audit.resolved[existing] = resolution;
+  else audit.resolved.push(resolution);
+}
 
 function unavailable(
   failureKind: FairValueFailureKind,
@@ -260,6 +277,9 @@ function emptyValuationDataset(
     marketCapitalization: null,
     sharesOutstanding: null,
     sharesOutstandingAsOf: null,
+    cash: null,
+    totalDebt: null,
+    balanceSheetAsOf: null,
     sector: null,
     industry: null,
     asOf,
@@ -271,6 +291,53 @@ function emptyValuationDataset(
   };
 }
 
+function emptyFundamentalsSnapshot(
+  symbol: string,
+  asOf: string,
+  reason: string,
+): FundamentalsSnapshot {
+  return {
+    symbol: symbol.trim().toUpperCase(),
+    periods: [],
+    quarterlyPeriods: [],
+    annualRecords: [],
+    quarterlyRecords: [],
+    asOf: asOf.slice(0, 10),
+    fetchedAt: asOf,
+    currency: '',
+    dilutedEpsTtm: null,
+    dilutedEpsAsOf: null,
+    missingInputs: ['financialStatements'],
+    datasetErrors: {
+      'income-statement': reason,
+      'balance-sheet': reason,
+      'cash-flow': reason,
+    },
+    diagnostics: {
+      provider: 'fundamentals-unavailable',
+      capabilities: [],
+      datasets: {
+        'income-statement': 'unavailable',
+        'balance-sheet': 'unavailable',
+        'cash-flow': 'unavailable',
+      },
+      cache: {
+        'income-statement': 'miss',
+        'balance-sheet': 'miss',
+        'cash-flow': 'miss',
+      },
+      datasetFetchedAt: {
+        'income-statement': null,
+        'balance-sheet': null,
+        'cash-flow': null,
+      },
+      latencyMs: 0,
+      normalizedPeriodCount: { annual: 0, quarterly: 0 },
+    },
+    providerUsed: 'fundamentals-unavailable',
+  };
+}
+
 interface ResearchCounters {
   requests: number;
   cacheHits: number;
@@ -278,6 +345,10 @@ interface ResearchCounters {
   negativeCacheHits: number;
   evidenceSourceCount: number;
   rejectedReasons: string[];
+  plannedFields: string[];
+  executedFields: string[];
+  modelsUnlocked: ModelId[];
+  budget: number;
 }
 
 function recordResearch(
@@ -301,12 +372,32 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   const calculatedAt = new Date().toISOString();
   const fundamentals = getFundamentalsProvider();
   const configuredValuationProvider = getFmpValuationProvider();
+  const groundedResearch = getGroundedFinancialResearchService();
+  let historicalMarketDataService: ReturnType<
+    typeof getHistoricalMarketDataService
+  > | null = null;
+  let historyProviderConfigured = false;
+  try {
+    historicalMarketDataService = getHistoricalMarketDataService();
+    historyProviderConfigured = Boolean(historicalMarketDataService);
+  } catch {
+    historyProviderConfigured = false;
+  }
+  writeFairValueRuntimeLog({
+    event: 'fair_value_runtime_configuration',
+    symbol,
+    geminiConfigured: Boolean(groundedResearch),
+    groundingConfigured: Boolean(groundedResearch),
+    fundamentalsProviderConfigured: Boolean(fundamentals),
+    valuationProviderConfigured: Boolean(configuredValuationProvider),
+    historyProviderConfigured,
+  });
   const valuationProvider = configuredValuationProvider ?? {
     id: 'financial-modeling-prep' as const,
     getValuationDataset: async () =>
       emptyValuationDataset(calculatedAt, 'provider-not-configured'),
   };
-  if (!fundamentals) {
+  if (!fundamentals && !configuredValuationProvider) {
     return logUnavailable(unavailable(
       'provider-unavailable',
       symbol,
@@ -340,11 +431,26 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     await Promise.allSettled([
       loadResilientQuote(symbol),
       market ? market.getCompanyProfile(symbol) : Promise.reject(marketProviderCause),
-      fundamentals.getFinancialPeriods(symbol),
+      fundamentals
+        ? fundamentals.getFinancialPeriods(symbol).catch((cause) =>
+            emptyFundamentalsSnapshot(
+              symbol,
+              calculatedAt,
+              safeFairValueErrorCode(cause),
+            ))
+        : Promise.resolve(emptyFundamentalsSnapshot(
+            symbol,
+            calculatedAt,
+            'provider-not-configured',
+          )),
       valuationProvider.getValuationDataset(symbol),
     ]);
   const required = [
-    { field: 'financialStatements', provider: fundamentals.id, result: financialsResult },
+    {
+      field: 'financialStatements',
+      provider: fundamentals?.id ?? 'fundamentals-unavailable',
+      result: financialsResult,
+    },
   ];
   const failed = required.find((item) => item.result.status === 'rejected');
   if (failed?.result.status === 'rejected') {
@@ -412,7 +518,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       marketFailure,
     );
   }
-  if (!financials.periods.length) {
+  if (!financials.periods.length && !valuation.estimates.length && !groundedResearch) {
     const errorCodes = Object.values(financials.datasetErrors ?? {});
     const rateLimited = errorCodes.includes('rate-limited');
     return logUnavailable(
@@ -425,10 +531,10 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           : 'ยังคำนวณ Fair Value ไม่ได้ เพราะขาดงบการเงินจริง',
         [...financials.missingInputs, 'financialStatements'],
         financials.currency || null,
-        financials.providerUsed ?? fundamentals.id,
+        financials.providerUsed ?? fundamentals?.id ?? valuation.provider,
         financials.asOf || calculatedAt,
       ),
-      financials.providerUsed ?? fundamentals.id,
+      financials.providerUsed ?? fundamentals?.id ?? valuation.provider,
       rateLimited ? 'rate-limited' : undefined,
     );
   }
@@ -440,7 +546,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     ?? valuation.currency
     ?? ''
   ).toUpperCase();
-  if (financialCurrency !== 'USD' || quoteCurrency !== 'USD') {
+  if ((financials.periods.length > 0 && financialCurrency !== 'USD')
+    || quoteCurrency !== 'USD') {
     return logUnavailable(unavailable(
       'currency-mismatch',
       symbol,
@@ -448,13 +555,22 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       'Fair Value v2 คำนวณจากข้อมูล USD เท่านั้น และไม่แปลงสกุลเงินระหว่างคำนวณ',
       ['valuationInputsNormalizedToUSD'],
       financialCurrency || quoteCurrency || null,
-      financials.providerUsed ?? fundamentals.id,
+      financials.providerUsed ?? fundamentals?.id ?? valuation.provider,
       financials.asOf,
     ));
   }
 
-  const providerUsed = financials.providerUsed ?? fundamentals.id;
-  const providerStatus = valuation.cacheStatus === 'stale'
+  const providerUsed = financials.periods.length > 0
+    ? financials.providerUsed ?? fundamentals?.id ?? valuation.provider
+    : valuation.provider;
+  const latestFinancialPeriod = [...financials.periods]
+    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
+    .at(-1);
+  const providerStatus = datasetFreshness(
+    'financialStatements',
+    latestFinancialPeriod?.periodEnd,
+  ) === 'stale'
+    || valuation.cacheStatus === 'stale'
     || Object.values(financials.diagnostics.cache).includes('stale')
     ? 'stale' as const
     : valuation.cacheStatus === 'hit'
@@ -462,9 +578,6 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       ? 'cached' as const
       : quote?.freshness.status === 'delayed' || quote?.freshness.status === 'end-of-day'
         ? 'delayed' as const : 'live' as const;
-  const latestFinancialPeriod = [...financials.periods]
-    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
-    .at(-1);
   let marketCapitalization =
     profile?.data.marketCapitalization ?? valuation.marketCapitalization;
   let marketCapitalizationProvenance: MetricProvenance | null =
@@ -507,6 +620,31 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     peers,
     waccMarketInputs,
   });
+  const providerFieldState = (
+    field: string,
+    available: boolean,
+    provider = valuation.provider,
+    asOf = valuation.asOf,
+  ) => writeFairValueFieldLog({
+    event: 'fair_value_field_resolution',
+    symbol,
+    field,
+    state: available ? 'provider-hit' : 'provider-miss',
+    provider,
+    reason: available ? undefined : 'provider-field-missing',
+    asOf,
+  });
+  providerFieldState('beta', positive(waccMarketInputs.beta));
+  providerFieldState('riskFreeRate', positive(waccMarketInputs.riskFreeRate));
+  providerFieldState(
+    'equityRiskPremium',
+    positive(waccMarketInputs.equityRiskPremium),
+  );
+  providerFieldState(
+    'targetForwardEstimate',
+    estimates.some((estimate) =>
+      positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue)),
+  );
 
   let historicalPrices: ValuationInput['historicalPrices'] = [];
   let historySource = '';
@@ -519,7 +657,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   let benchmarkSource = '';
   if (!positive(waccMarketInputs.beta)) {
     try {
-      const history = getHistoricalMarketDataService();
+      const history = historicalMarketDataService;
+      if (!history) throw new Error('Historical provider is unavailable');
       const [stockHistory, benchmarkHistory] = await Promise.all([
         history.getHistoricalPrices(symbol, '5y'),
         history.getHistoricalPrices('SPY', '5y'),
@@ -531,8 +670,17 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       benchmarkSource = benchmarkHistory.provider
         ?? benchmarkHistory.data.providerUsed
         ?? 'historical-provider';
-    } catch {
+    } catch (cause) {
       // Beta remains researchable; a history failure must not fail the request.
+      writeFairValueFieldLog({
+        event: 'fair_value_field_resolution',
+        symbol,
+        field: 'beta',
+        state: 'provider-miss',
+        provider: 'historical-provider',
+        reason: safeFairValueErrorCode(cause),
+        asOf: calculatedAt,
+      });
     }
   }
   const deterministic = resolveDeterministicInputs({
@@ -561,23 +709,40 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       betaProvenance: deterministic.beta.provenance,
       provider: `${waccMarketInputs.provider}+${deterministic.beta.provenance.provider}`,
     };
-    inputResolution.resolved.push({
+    recordResolvedInput(inputResolution, {
       field: 'beta',
       origin: 'derived',
       provider: deterministic.beta.provenance.provider,
       asOf: deterministic.beta.provenance.asOf,
     });
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: 'beta',
+      state: 'derived',
+      provider: deterministic.beta.provenance.provider,
+      reason: `historical-beta:${deterministic.beta.provenance.benchmark}:${deterministic.beta.provenance.sampleSize}`,
+      asOf: deterministic.beta.provenance.asOf,
+    });
   }
   if (deterministic.marketCapitalizationProvenance) {
-    inputResolution.resolved.push({
+    recordResolvedInput(inputResolution, {
       field: 'marketCapitalization',
       origin: 'derived',
       provider: deterministic.marketCapitalizationProvenance.provider,
       asOf: deterministic.marketCapitalizationProvenance.asOf,
     });
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: 'marketCapitalization',
+      state: 'derived',
+      provider: deterministic.marketCapitalizationProvenance.provider,
+      reason: 'market-price-times-shares',
+      asOf: deterministic.marketCapitalizationProvenance.asOf,
+    });
   }
 
-  const groundedResearch = getGroundedFinancialResearchService();
   const researchCounters: ResearchCounters = {
     requests: 0,
     cacheHits: 0,
@@ -585,11 +750,75 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     negativeCacheHits: 0,
     evidenceSourceCount: 0,
     rejectedReasons: [],
+    plannedFields: [],
+    executedFields: [],
+    modelsUnlocked: [],
+    budget: 3,
   };
+  const financialModelPossible = Boolean(latestFinancialPeriod);
+  researchCounters.plannedFields.push('forwardEps', 'forwardRevenue', 'peerForwardEstimates');
+  if (financialModelPossible) {
+    researchCounters.plannedFields.push(
+      'beta',
+      'riskFreeRate',
+      'equityRiskPremium',
+    );
+  }
   let groundedValueUsed = false;
   const groundedDiagnostics: ValuationDiagnostic[] = [];
-  const research = async (request: GroundedResearchRequest) =>
-    recordResearch(await groundedResearch!.research(request), researchCounters);
+  const research = async (request: GroundedResearchRequest) => {
+    if (researchCounters.requests >= researchCounters.budget) {
+      researchCounters.rejectedReasons.push('research-budget-exhausted');
+      return {
+        metrics: [],
+        rejectedReasons: [],
+        cache: 'negative' as const,
+        unavailableReason: 'research-budget-exhausted',
+      };
+    }
+    researchCounters.executedFields.push(...request.metrics);
+    for (const field of request.metrics) {
+      writeFairValueFieldLog({
+        event: 'fair_value_field_resolution',
+        symbol,
+        field,
+        state: 'research-started',
+        provider: 'gemini-grounded-research',
+        asOf: calculatedAt,
+      });
+    }
+    const outcome = recordResearch(
+      await groundedResearch!.research(request),
+      researchCounters,
+    );
+    for (const field of request.metrics) {
+      const matches = outcome.metrics.filter((metric) => metric.metric === field);
+      if (matches.length) {
+        writeFairValueFieldLog({
+          event: 'fair_value_field_resolution',
+          symbol,
+          field,
+          state: 'research-hit',
+          provider: 'gemini-grounded-research',
+          asOf: matches.map((metric) => metric.asOf).toSorted().at(-1) ?? calculatedAt,
+        });
+        continue;
+      }
+      const reason = outcome.unavailableReason
+        ?? outcome.rejectedReasons.at(0)
+        ?? 'no-validated-grounded-evidence';
+      writeFairValueFieldLog({
+        event: 'fair_value_field_resolution',
+        symbol,
+        field,
+        state: reason.startsWith('gemini-') ? 'research-error' : 'research-rejected',
+        provider: 'gemini-grounded-research',
+        reason,
+        asOf: calculatedAt,
+      });
+    }
+    return outcome;
+  };
 
   if (groundedResearch) {
     const currentYear = Number(calculatedAt.slice(0, 4));
@@ -598,7 +827,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     if (!positive(waccMarketInputs.equityRiskPremium)) {
       missingMarketMetrics.push('equityRiskPremium');
     }
-    if (missingMarketMetrics.length) {
+    if (financialModelPossible && missingMarketMetrics.length) {
       const rescued = await research({
         symbols: [],
         metrics: missingMarketMetrics,
@@ -620,7 +849,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           continue;
         }
         groundedValueUsed = true;
-        inputResolution.resolved.push({
+        recordResolvedInput(inputResolution, {
           field: metric.field,
           origin: 'gemini-grounded',
           provider: metric.provenance.provider,
@@ -634,6 +863,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           asOf: metric.asOf,
           status: 'available',
           provenance: 'gemini-grounded',
+          sourceState: 'gemini',
           sourceType: 'gemini-grounded',
           sourceUrl: metric.provenance.sourceUrl,
           evidence: metric.provenance.evidence,
@@ -643,9 +873,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     }
 
     const missingCompanyMetrics: GroundedResearchRequest['metrics'] = [];
-    if (!positive(waccMarketInputs.beta)) missingCompanyMetrics.push('beta');
-    if (!positive(sharesOutstanding) && !positive(latestFinancialPeriod?.dilutedShares)) {
-      missingCompanyMetrics.push('shares');
+    if (financialModelPossible && !positive(waccMarketInputs.beta)) {
+      missingCompanyMetrics.push('beta');
     }
     if (missingCompanyMetrics.length) {
       const rescued = await research({
@@ -666,7 +895,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           continue;
         }
         groundedValueUsed = true;
-        inputResolution.resolved.push({
+        recordResolvedInput(inputResolution, {
           field: metric.field,
           origin: 'gemini-grounded',
           provider: metric.provenance.provider,
@@ -680,6 +909,7 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           asOf: metric.asOf,
           status: 'available',
           provenance: 'gemini-grounded',
+          sourceState: 'gemini',
           sourceType: 'gemini-grounded',
           sourceUrl: metric.provenance.sourceUrl,
           evidence: metric.provenance.evidence,
@@ -703,19 +933,29 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     marketCapitalizationProvenance = afterResearch.marketCapitalizationProvenance;
     deterministic.diagnostics.push(...afterResearch.diagnostics);
     if (afterResearch.marketCapitalizationProvenance) {
-      inputResolution.resolved.push({
+      recordResolvedInput(inputResolution, {
         field: 'marketCapitalization',
         origin: 'derived',
         provider: afterResearch.marketCapitalizationProvenance.provider,
         asOf: afterResearch.marketCapitalizationProvenance.asOf,
       });
+      writeFairValueFieldLog({
+        event: 'fair_value_field_resolution',
+        symbol,
+        field: 'marketCapitalization',
+        state: 'derived',
+        provider: afterResearch.marketCapitalizationProvenance.provider,
+        reason: 'market-price-times-shares',
+        asOf: afterResearch.marketCapitalizationProvenance.asOf,
+      });
     }
   }
 
-  if (latestFinancialPeriod && groundedResearch) {
-    const fiscalYears = futureFiscalYears(latestFinancialPeriod.periodEnd, calculatedAt);
+  const researchBoundary = latestFinancialPeriod?.periodEnd ?? calculatedAt.slice(0, 10);
+  if (groundedResearch) {
+    const fiscalYears = futureFiscalYears(researchBoundary, calculatedAt);
     const future = estimates.filter((estimate) =>
-      estimate.periodEnd > latestFinancialPeriod.periodEnd);
+      estimate.periodEnd > researchBoundary);
     const missingTargetMetrics: Array<'revenue' | 'eps'> = [];
     const futureRevenueCount = future.filter((estimate) =>
       finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0).length;
@@ -744,12 +984,35 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
         fiscalYears,
       });
       estimates = mergeGroundedTargetEstimates(estimates, rescued.metrics, symbol);
-      if (rescued.metrics.length) groundedValueUsed = true;
+      for (const metric of rescued.metrics.filter((item) => item.symbol === symbol)) {
+        const field = metric.metric === 'revenue' ? 'forwardRevenue' : 'forwardEps';
+        recordResolvedInput(inputResolution, {
+          field,
+          origin: 'gemini-grounded',
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+        });
+        groundedDiagnostics.push({
+          field,
+          value: metric.value,
+          period: metric.period,
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+          status: 'available',
+          provenance: 'gemini-grounded',
+          sourceState: 'gemini',
+          sourceType: 'gemini-grounded',
+          sourceUrl: metric.provenance.sourceUrl,
+          evidence: metric.provenance.evidence,
+          reason: null,
+        });
+        groundedValueUsed = true;
+      }
     }
 
     const targetEstimate = estimates
       .filter((estimate) =>
-        estimate.periodEnd > latestFinancialPeriod.periodEnd
+        estimate.periodEnd > researchBoundary
         && ((finite(estimate.estimatedEps) && estimate.estimatedEps > 0)
           || (finite(estimate.estimatedRevenue) && estimate.estimatedRevenue > 0)))
       .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
@@ -757,6 +1020,24 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     if (targetEstimate) {
       const branch = finite(targetEstimate.estimatedEps) && targetEstimate.estimatedEps > 0
         ? 'eps' as const : 'revenue' as const;
+      if (branch === 'revenue'
+        && !positive(sharesOutstanding)
+        && !positive(latestFinancialPeriod?.dilutedShares)) {
+        researchCounters.plannedFields.push('shares');
+        const rescuedShares = await research({
+          symbols: [symbol],
+          metrics: ['shares'],
+          fiscalYears: [Number(targetEstimate.periodEnd.slice(0, 4))],
+        });
+        const metric = rescuedShares.metrics.find((item) =>
+          item.symbol === symbol && item.field === 'shares');
+        if (metric && positive(metric.value)) {
+          sharesOutstanding = metric.value;
+          sharesOutstandingAsOf = metric.period;
+          sharesOutstandingProvenance = metric.provenance;
+          groundedValueUsed = true;
+        }
+      }
       const validPeerCount = peers.filter((peer) =>
         branch === 'eps'
           ? finite(peer.price) && peer.price > 0 && finite(peer.forwardEps) && peer.forwardEps > 0
@@ -782,16 +1063,122 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
             branch,
             targetEstimate.periodEnd,
           );
-          if (rescued.metrics.length) groundedValueUsed = true;
+          if (rescued.metrics.length) {
+            const latestMetric = rescued.metrics
+              .toSorted((left, right) =>
+                (left.asOf ?? left.provenance.asOf)
+                  .localeCompare(right.asOf ?? right.provenance.asOf))
+              .at(-1)!;
+            recordResolvedInput(inputResolution, {
+              field: 'peerForwardEstimates',
+              origin: 'gemini-grounded',
+              provider: latestMetric.provenance.provider,
+              asOf: latestMetric.asOf ?? latestMetric.provenance.asOf,
+            });
+            groundedValueUsed = true;
+          }
         }
       }
     }
   }
 
+  const finalTargetEstimate = estimates
+    .filter((estimate) => estimate.periodEnd > researchBoundary
+      && (positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue)))
+    .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
+    .at(0);
+  if (finalTargetEstimate) {
+    const branch = positive(finalTargetEstimate.estimatedEps) ? 'pe' : 'ev-sales';
+    const validPeers = peers.filter((peer) =>
+      peer.estimatePeriod === finalTargetEstimate.periodEnd
+      && (peer.currency == null || peer.currency === 'USD')
+      && (branch === 'pe'
+        ? positive(peer.price) && positive(peer.forwardEps)
+        : positive(peer.enterpriseValue) && positive(peer.forwardRevenue)));
+    if (validPeers.length >= 4
+      && (branch === 'pe'
+        || (positive(sharesOutstanding ?? latestFinancialPeriod?.dilutedShares)
+          && positive(valuation.cash)
+          && positive(valuation.totalDebt)))) {
+      researchCounters.modelsUnlocked.push(branch);
+    }
+  }
+  const finalFieldStates = [
+    {
+      field: 'beta',
+      available: positive(waccMarketInputs.beta),
+      provider: waccMarketInputs.betaProvenance?.provider ?? waccMarketInputs.provider,
+      asOf: waccMarketInputs.betaAsOf ?? calculatedAt,
+    },
+    {
+      field: 'riskFreeRate',
+      available: positive(waccMarketInputs.riskFreeRate),
+      provider: waccMarketInputs.riskFreeRateProvenance?.provider ?? waccMarketInputs.provider,
+      asOf: waccMarketInputs.riskFreeAsOf ?? calculatedAt,
+    },
+    {
+      field: 'equityRiskPremium',
+      available: positive(waccMarketInputs.equityRiskPremium),
+      provider: waccMarketInputs.equityRiskPremiumProvenance?.provider
+        ?? waccMarketInputs.provider,
+      asOf: waccMarketInputs.equityRiskPremiumAsOf ?? calculatedAt,
+    },
+    {
+      field: 'targetForwardEstimate',
+      available: Boolean(finalTargetEstimate),
+      provider: finalTargetEstimate?.provider ?? valuation.provider,
+      asOf: finalTargetEstimate?.asOf ?? calculatedAt,
+    },
+    {
+      field: 'peerObservations',
+      available: peers.length > 0,
+      provider: peers.at(0)?.provider ?? valuation.provider,
+      asOf: peers.map((peer) => peer.estimateAsOf ?? '')
+        .filter(Boolean)
+        .toSorted()
+        .at(-1) ?? calculatedAt,
+    },
+  ];
+  for (const field of finalFieldStates) {
+    writeFairValueFieldLog({
+      event: 'fair_value_field_resolution',
+      symbol,
+      field: field.field,
+      state: field.available ? 'merged' : 'final-missing',
+      provider: field.provider,
+      reason: field.available ? undefined : 'no-validated-canonical-value',
+      asOf: field.asOf,
+    });
+  }
+
   const diagnostics: ValuationDiagnostic[] = [
     ...(valuation.diagnostics ?? []),
-    ...deterministic.diagnostics,
+    ...deterministic.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      sourceState: 'derived' as const,
+    })),
     ...groundedDiagnostics,
+    {
+      field: 'financialStatements',
+      value: financials.periods.length,
+      period: latestFinancialPeriod?.periodEnd ?? null,
+      provider: financials.providerUsed ?? financials.diagnostics.provider,
+      asOf: financials.asOf || calculatedAt,
+      status: financials.periods.length === 0
+        ? 'missing'
+        : financials.dataState === 'provider-stale' ? 'stale' : 'available',
+      provenance: 'provider',
+      sourceState: financials.periods.length === 0
+        ? 'missing'
+        : financials.dataState === 'provider-cached'
+          ? 'provider-cached'
+          : financials.dataState === 'provider-stale'
+            ? 'provider-stale'
+            : 'provider-live',
+      reason: financials.periods.length === 0
+        ? Object.values(financials.datasetErrors).join(',') || 'provider-field-missing'
+        : null,
+    },
     {
       field: 'marketPrice',
       value: marketPrice,
@@ -800,6 +1187,9 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       asOf: marketPriceAsOf,
       status: providerStatus === 'stale' ? 'stale' : 'available',
       provenance: 'provider',
+      sourceState: providerStatus === 'stale'
+        ? 'provider-stale'
+        : providerStatus === 'cached' ? 'provider-cached' : 'provider-live',
       reason: providerStatus === 'stale' ? 'stale-provider-cache' : null,
     },
     {
@@ -815,6 +1205,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       status: marketCapitalization == null ? 'missing' : 'available',
       provenance: marketCapitalizationProvenance?.sourceType === 'derived'
         ? 'derived' : 'provider',
+      sourceState: marketCapitalizationProvenance?.sourceType === 'derived'
+        ? 'derived' : 'provider-live',
       sourceType: marketCapitalizationProvenance?.sourceType ?? 'structured-provider',
       reason: marketCapitalization == null ? 'provider-field-missing' : null,
     },
@@ -898,6 +1290,10 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       cacheHits: researchCounters.cacheHits,
       cacheMisses: researchCounters.cacheMisses,
       negativeCacheHits: researchCounters.negativeCacheHits,
+      plannedFields: [...new Set(researchCounters.plannedFields)],
+      executedFields: [...new Set(researchCounters.executedFields)],
+      modelsUnlocked: [...new Set(researchCounters.modelsUnlocked)],
+      budget: researchCounters.budget,
     },
     inputResolution,
     peerAudit: {
@@ -905,6 +1301,15 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       rejected: valuation.peerRejections,
     },
     diagnostics,
+    balanceSheetBridge: valuation.balanceSheetAsOf
+      ? {
+          cash: valuation.cash,
+          debt: valuation.totalDebt,
+          currency: valuation.currency ?? 'USD',
+          asOf: valuation.balanceSheetAsOf,
+          provider: valuation.provider,
+        }
+      : null,
     displayFx: null,
     calculatedAt,
   });

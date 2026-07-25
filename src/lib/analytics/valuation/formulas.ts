@@ -341,15 +341,12 @@ function retainedPeerMultiples(peers: Array<{ symbol: string; multiple: number }
 export function calculateForwardMultiples(input: {
   targetForwardEps: number | null;
   targetForwardRevenue: number | null;
-  cash: number;
-  debt: number;
-  shares: number;
+  cash: number | null;
+  debt: number | null;
+  shares: number | null;
   peers: ForwardMultiplePeer[];
   minimumPeers?: number;
 }): ForwardMultiplesResult {
-  assertFinite({ cash: input.cash, debt: input.debt, shares: input.shares });
-  positive(input.shares, 'shares');
-  if (input.cash < 0 || input.debt < 0) throw new RangeError('cash and debt must be non-negative');
   const minimumPeers = input.minimumPeers ?? 4;
   if (!Number.isInteger(minimumPeers) || minimumPeers < 4) throw new RangeError('minimumPeers must be at least four');
 
@@ -379,6 +376,12 @@ export function calculateForwardMultiples(input: {
   if (input.targetForwardRevenue === null || !Number.isFinite(input.targetForwardRevenue) || input.targetForwardRevenue <= 0) {
     throw new RangeError('targetForwardRevenue is required when targetForwardEps is non-positive');
   }
+  if (input.cash === null || input.debt === null || input.shares === null) {
+    throw new RangeError('cash, debt, and shares are required for forward EV/Sales');
+  }
+  assertFinite({ cash: input.cash, debt: input.debt, shares: input.shares });
+  positive(input.shares, 'shares');
+  if (input.cash < 0 || input.debt < 0) throw new RangeError('cash and debt must be non-negative');
   const retained = retainedPeerMultiples(input.peers.map((peer) => ({
     symbol: peer.symbol,
     multiple: peer.enterpriseValue != null && peer.forwardRevenue != null

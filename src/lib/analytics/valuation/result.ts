@@ -3,6 +3,7 @@ import {
   type FairValueFailureKind,
   type FairValueUnavailable,
   type InputResolutionAudit,
+  type ValuationInput,
   type ValuationDiagnostic,
 } from './types';
 
@@ -19,6 +20,8 @@ export function createFairValueUnavailable(input: {
   limitations: string[];
   diagnostics?: ValuationDiagnostic[];
   inputResolution?: InputResolutionAudit;
+  researchAudit?: ValuationInput['researchAudit'];
+  peerAudit?: ValuationInput['peerAudit'];
 }): FairValueUnavailable {
   const missingFields = [...new Set(input.missingFields ?? [])];
   return {
@@ -37,5 +40,7 @@ export function createFairValueUnavailable(input: {
     limitations: input.limitations,
     diagnostics: input.diagnostics ?? [],
     ...(input.inputResolution ? { inputResolution: input.inputResolution } : {}),
+    ...(input.researchAudit ? { researchAudit: input.researchAudit } : {}),
+    ...(input.peerAudit ? { peerAudit: input.peerAudit } : {}),
   };
 }

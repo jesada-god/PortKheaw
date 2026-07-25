@@ -70,10 +70,49 @@ const valuationDiagnosticSchema = z.object({
   sourceType: z.enum(['structured-provider', 'gemini-grounded', 'derived']).optional(),
   sourceUrl: z.url().optional(),
   evidence: z.array(evidenceSourceSchema).optional(),
+  sourceState: z.enum([
+    'provider-live',
+    'provider-cached',
+    'provider-stale',
+    'derived',
+    'gemini',
+    'missing',
+  ]).optional(),
 });
 const excludedModelSchema = z.object({
   model: modelIdSchema,
   reason: z.string(),
+});
+const researchAuditSchema = z.object({
+  geminiUsed: z.boolean(),
+  evidenceSourceCount: z.number().int().nonnegative(),
+  rejectedReasons: z.array(z.string()),
+  requests: z.number().int().nonnegative().optional(),
+  cacheHits: z.number().int().nonnegative().optional(),
+  cacheMisses: z.number().int().nonnegative().optional(),
+  negativeCacheHits: z.number().int().nonnegative().optional(),
+  plannedFields: z.array(z.string()).optional(),
+  executedFields: z.array(z.string()).optional(),
+  modelsUnlocked: z.array(modelIdSchema).optional(),
+  budget: z.number().int().positive().optional(),
+});
+const peerAuditSchema = z.object({
+  candidates: z.array(z.string()),
+  accepted: z.array(z.object({
+    symbol: z.string(),
+    metric: z.enum(['forward-pe', 'forward-ev-sales']),
+    period: z.string(),
+    source: z.string(),
+    asOf: z.string(),
+  })).optional(),
+  rejected: z.array(z.object({
+    symbol: z.string(),
+    reason: z.string(),
+    metric: z.enum(['forward-pe', 'forward-ev-sales']).nullable().optional(),
+    period: z.string().nullable().optional(),
+    source: z.string().nullable().optional(),
+    asOf: z.string().nullable().optional(),
+  })),
 });
 const unavailableSchema = z.object({
   status: z.literal('unavailable'),
@@ -91,6 +130,8 @@ const unavailableSchema = z.object({
   limitations: z.array(z.string()),
   diagnostics: z.array(valuationDiagnosticSchema),
   inputResolution: inputResolutionSchema.optional(),
+  researchAudit: researchAuditSchema.optional(),
+  peerAudit: peerAuditSchema.optional(),
 });
 const availableSchema = z.object({
   status: z.literal('available'),
@@ -199,15 +240,8 @@ const availableSchema = z.object({
   }).nullable().optional(),
   inputs: z.record(z.string(), z.unknown()),
   assumptions: z.record(z.string(), z.unknown()),
-  researchAudit: z.object({
-    geminiUsed: z.boolean(),
-    evidenceSourceCount: z.number().int().nonnegative(),
-    rejectedReasons: z.array(z.string()),
-    requests: z.number().int().nonnegative().optional(),
-    cacheHits: z.number().int().nonnegative().optional(),
-    cacheMisses: z.number().int().nonnegative().optional(),
-    negativeCacheHits: z.number().int().nonnegative().optional(),
-  }).optional(),
+  researchAudit: researchAuditSchema.optional(),
+  peerAudit: peerAuditSchema.optional(),
   inputResolution: inputResolutionSchema.optional(),
   sources: z.array(z.object({
     name: z.string(),

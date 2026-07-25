@@ -5,6 +5,7 @@ import {
   calculateForwardMultiples,
 } from './formulas';
 import { createFairValueUnavailable } from './result';
+import { DATASET_FRESHNESS_POLICY, datasetFreshness } from './freshness';
 import {
   METHODOLOGY_VERSION,
   SECTOR_RULE_VERSION,
@@ -22,9 +23,9 @@ const PERPETUAL_GROWTH = 0.025;
 const DCF_WEIGHT = 0.6;
 const MULTIPLES_WEIGHT = 0.4;
 const MINIMUM_VALID_PEERS = 4;
-const MAX_ESTIMATE_AGE_MS = 7 * 86_400_000;
-const MAX_GROUNDED_ESTIMATE_AGE_MS = 180 * 86_400_000;
-const MAX_PEER_PRICE_AGE_MS = 7 * 86_400_000;
+const MAX_ESTIMATE_AGE_MS = DATASET_FRESHNESS_POLICY.forwardEstimates.freshMs;
+const MAX_GROUNDED_ESTIMATE_AGE_MS = DATASET_FRESHNESS_POLICY.forwardEstimates.staleMs;
+const MAX_PEER_PRICE_AGE_MS = DATASET_FRESHNESS_POLICY.marketPrice.staleMs;
 const MAX_PEER_ENTERPRISE_VALUE_AGE_MS = 550 * 86_400_000;
 
 function finite(value: number | null | undefined): value is number {
@@ -49,6 +50,23 @@ function dateWithinAge(value: string | null, now: number, maximumAgeMs: number):
 
 function latestPeriod(periods: FinancialPeriod[]): FinancialPeriod | null {
   return [...periods].toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd)).at(-1) ?? null;
+}
+
+function financialPeriodIssues(
+  periods: FinancialPeriod[],
+  valuationCurrency: string,
+): string[] {
+  if (!periods.length) return [];
+  const issues: string[] = [];
+  const dates = periods.map((period) => period.periodEnd);
+  if (new Set(dates).size !== dates.length) issues.push('duplicateFinancialPeriods');
+  if (periods.some((period) => period.currency !== valuationCurrency)) {
+    issues.push('financialPeriodCurrencyMismatch');
+  }
+  if (dates.some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
+    issues.push('invalidFinancialPeriod');
+  }
+  return issues;
 }
 
 function unavailableReason(missingFields: string[]): string {
@@ -90,6 +108,26 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
     ],
     diagnostics: [
       ...(input.diagnostics ?? []),
+      {
+        field: 'model:fcff-dcf',
+        value: null,
+        period: latestPeriod(input.periods)?.periodEnd ?? null,
+        provider: input.source || null,
+        asOf: calculatedAt,
+        status: 'rejected',
+        provenance: 'validation',
+        reason: `unavailable:${fields.join(',')}`,
+      },
+      {
+        field: 'model:forward-multiples',
+        value: null,
+        period: input.analystEstimates?.at(0)?.periodEnd ?? null,
+        provider: input.peerObservations?.at(0)?.provider ?? provider ?? null,
+        asOf: calculatedAt,
+        status: 'rejected',
+        provenance: 'validation',
+        reason: `unavailable:${fields.join(',')}`,
+      },
       ...fields.map((field): ValuationDiagnostic => ({
         field,
         value: null,
@@ -102,6 +140,8 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
       })),
     ],
     inputResolution: input.inputResolution,
+    researchAudit: input.researchAudit,
+    peerAudit: input.peerAudit,
   });
 }
 
@@ -118,7 +158,8 @@ export function dataSufficiency(input: Partial<ValuationInput>, now = Date.now()
   if (!input.analystEstimates?.length) missingInputs.push('forwardEstimates');
   if (!input.waccMarketInputs) missingInputs.push('waccMarketInputs');
   if (!input.peerObservations?.length) missingInputs.push('peerObservations');
-  if (input.priceAsOf && now - Date.parse(input.priceAsOf) > 7 * 86_400_000) {
+  if (input.priceAsOf
+    && now - Date.parse(input.priceAsOf) > DATASET_FRESHNESS_POLICY.marketPrice.freshMs) {
     staleInputs.push('marketPrice');
   }
   return { ok: missingInputs.length === 0, missingInputs: unique(missingInputs), staleInputs };
@@ -156,9 +197,10 @@ export function meaningfulModelGate(
 
 function validFutureEstimates(
   estimates: AnalystEstimate[],
-  actualPeriodEnd: string,
+  actualPeriodEnd: string | null,
   now: number,
 ): AnalystEstimate[] {
+  const boundary = actualPeriodEnd ?? new Date(now).toISOString().slice(0, 10);
   return estimates
     .filter((estimate) => {
       const grounded = estimate.revenueProvenance?.sourceType === 'gemini-grounded'
@@ -172,7 +214,7 @@ function validFutureEstimates(
         && (estimate.revenueAnalystCount === null || estimate.revenueAnalystCount > 0);
       const epsAvailable = finite(estimate.estimatedEps)
         && (estimate.epsAnalystCount === null || estimate.epsAnalystCount > 0);
-      return estimate.periodEnd > actualPeriodEnd
+      return estimate.periodEnd > boundary
         && fresh
         && (estimate.currency === undefined || estimate.currency === 'USD')
         && (revenueAvailable || epsAvailable);
@@ -356,29 +398,62 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   const calculatedAt = input.calculatedAt ?? new Date(now).toISOString();
   const gate = dataSufficiency(input, now);
   const structuralMissing = gate.missingInputs.filter((field) =>
-    !['forwardEstimates', 'waccMarketInputs', 'peerObservations'].includes(field));
+    !['historicalFinancials', 'forwardEstimates', 'waccMarketInputs', 'peerObservations']
+      .includes(field));
   if (structuralMissing.length) return unavailable(input, calculatedAt, structuralMissing);
+  const periodIssues = financialPeriodIssues(input.periods, input.currency);
+  if (periodIssues.length) return unavailable(input, calculatedAt, periodIssues);
   const latest = latestPeriod(input.periods);
-  if (!latest) return unavailable(input, calculatedAt, ['historicalFinancials']);
-  const futureEstimates = validFutureEstimates(input.analystEstimates ?? [], latest.periodEnd, now);
+  const futureEstimates = validFutureEstimates(
+    input.analystEstimates ?? [],
+    latest?.periodEnd ?? null,
+    now,
+  );
   const targetEstimate = futureEstimates.find((estimate) =>
     positive(estimate.estimatedEps) || positive(estimate.estimatedRevenue)) ?? null;
   const marketWacc = input.waccMarketInputs;
-  const dilutedShares = positive(latest.dilutedShares) ? latest.dilutedShares : null;
+  const dilutedShares = positive(latest?.dilutedShares) ? latest.dilutedShares : null;
   const fallbackShares = positive(input.sharesOutstanding) ? input.sharesOutstanding : null;
   const shares = dilutedShares ?? fallbackShares;
+  const bridge = input.balanceSheetBridge?.currency === 'USD'
+    ? input.balanceSheetBridge : null;
+  const bridgeCash = latest && finite(latest.cash) && latest.cash >= 0
+    ? latest.cash : bridge?.cash ?? null;
+  const bridgeDebt = latest && finite(latest.totalDebt) && latest.totalDebt >= 0
+    ? latest.totalDebt : bridge?.debt ?? null;
   const dcfMissing: string[] = [];
-  if (!positive(latest.freeCashFlow)) dcfMissing.push('latestRealFreeCashFlow');
-  if (!positive(latest.revenue)) dcfMissing.push('latestRealRevenue');
+  if (!latest) dcfMissing.push('historicalFinancials');
+  if (!positive(latest?.freeCashFlow)) dcfMissing.push('latestRealFreeCashFlow');
+  if (!positive(latest?.revenue)) dcfMissing.push('latestRealRevenue');
   if (!positive(input.marketCapitalization)) dcfMissing.push('marketCapitalization');
   if (!marketWacc || !positive(marketWacc.beta)) dcfMissing.push('beta');
   if (!marketWacc || !positive(marketWacc.riskFreeRate)) dcfMissing.push('riskFreeRate');
   if (!marketWacc || !positive(marketWacc.equityRiskPremium)) dcfMissing.push('equityRiskPremium');
-  if (!finite(latest.incomeBeforeTax) || latest.incomeBeforeTax <= 0) dcfMissing.push('incomeBeforeTax');
-  if (!finite(latest.incomeTaxExpense) || latest.incomeTaxExpense < 0) dcfMissing.push('incomeTaxExpense');
-  if (!finite(latest.interestExpense) || latest.interestExpense < 0) dcfMissing.push('interestExpense');
-  if (!finite(latest.cash) || latest.cash < 0) dcfMissing.push('cash');
-  if (!finite(latest.totalDebt) || latest.totalDebt < 0) dcfMissing.push('totalDebt');
+  if (marketWacc && positive(marketWacc.beta)
+    && !['fresh', 'stale'].includes(datasetFreshness('beta', marketWacc.betaAsOf, now))) {
+    dcfMissing.push('betaFreshness');
+  }
+  if (marketWacc && positive(marketWacc.riskFreeRate)
+    && !['fresh', 'stale'].includes(
+      datasetFreshness('riskFreeRate', marketWacc.riskFreeAsOf, now),
+    )) {
+    dcfMissing.push('riskFreeRateFreshness');
+  }
+  if (marketWacc && positive(marketWacc.equityRiskPremium)
+    && !['fresh', 'stale'].includes(
+      datasetFreshness(
+        'equityRiskPremium',
+        marketWacc.equityRiskPremiumAsOf,
+        now,
+      ),
+    )) {
+    dcfMissing.push('equityRiskPremiumFreshness');
+  }
+  if (!finite(latest?.incomeBeforeTax) || latest.incomeBeforeTax <= 0) dcfMissing.push('incomeBeforeTax');
+  if (!finite(latest?.incomeTaxExpense) || latest.incomeTaxExpense < 0) dcfMissing.push('incomeTaxExpense');
+  if (!finite(latest?.interestExpense) || latest.interestExpense < 0) dcfMissing.push('interestExpense');
+  if (!finite(latest?.cash) || latest.cash < 0) dcfMissing.push('cash');
+  if (!finite(latest?.totalDebt) || latest.totalDebt < 0) dcfMissing.push('totalDebt');
   if (!shares) dcfMissing.push('dilutedSharesOrSharesOutstanding');
 
   let growth: ReturnType<typeof annualGrowthRates> | null = null;
@@ -386,14 +461,14 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   let costDebt: number | null = null;
   let wacc: ReturnType<typeof calculateDeterministicWacc> | null = null;
   let dcf: ReturnType<typeof calculateDeterministicDcf> | null = null;
-  if (!dcfMissing.length) {
+  if (!dcfMissing.length && latest) {
     try {
       growth = annualGrowthRates(latest.revenue, latest.periodEnd, futureEstimates);
     } catch {
       dcfMissing.push('forwardRevenueEstimates');
     }
   }
-  if (!dcfMissing.length && growth) {
+  if (!dcfMissing.length && growth && latest) {
     taxRate = latest.incomeTaxExpense! / latest.incomeBeforeTax!;
     costDebt = latest.totalDebt === 0 ? 0 : Math.abs(latest.interestExpense) / latest.totalDebt;
     try {
@@ -425,16 +500,30 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
 
   const multiplesMissing: string[] = [];
   if (!targetEstimate) multiplesMissing.push('targetForwardEstimate');
-  if (!shares) multiplesMissing.push('dilutedSharesOrSharesOutstanding');
-  if (!finite(latest.cash) || latest.cash < 0) multiplesMissing.push('cash');
-  if (!finite(latest.totalDebt) || latest.totalDebt < 0) multiplesMissing.push('totalDebt');
+  const positiveTargetEps = positive(targetEstimate?.estimatedEps);
+  if (targetEstimate && !positiveTargetEps) {
+    if (!shares) multiplesMissing.push('dilutedSharesOrSharesOutstanding');
+    if (!finite(bridgeCash) || bridgeCash < 0) multiplesMissing.push('cash');
+    if (!finite(bridgeDebt) || bridgeDebt < 0) multiplesMissing.push('totalDebt');
+  }
   let multiples: ReturnType<typeof calculateForwardMultiples> | null = null;
   let currentPeers = [] as NonNullable<ValuationInput['peerObservations']>;
   if (!multiplesMissing.length && targetEstimate) {
-    const positiveTargetEps = positive(targetEstimate.estimatedEps);
-    currentPeers = (input.peerObservations ?? []).filter((peer) =>
-      peer.estimatePeriod !== null
-      && peer.estimatePeriod > latest.periodEnd
+    const seen = new Set<string>();
+    const normalizedSector = input.sector.trim().toLowerCase();
+    const normalizedIndustry = input.industry.trim().toLowerCase();
+    currentPeers = (input.peerObservations ?? []).filter((peer) => {
+      const peerSymbol = peer.symbol.trim().toUpperCase();
+      const relevant = Boolean(
+        normalizedIndustry && peer.industry?.trim().toLowerCase() === normalizedIndustry,
+      ) || Boolean(
+        normalizedSector && peer.sector?.trim().toLowerCase() === normalizedSector,
+      );
+      const valid = peerSymbol !== input.symbol.trim().toUpperCase()
+      && !seen.has(peerSymbol)
+      && relevant
+      && (peer.currency == null || peer.currency === 'USD')
+      && peer.estimatePeriod === targetEstimate.periodEnd
       && dateWithinAge(
         peer.estimateAsOf,
         now,
@@ -445,14 +534,17 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         positiveTargetEps
           ? dateWithinAge(peer.priceAsOf, now, MAX_PEER_PRICE_AGE_MS)
           : dateWithinAge(peer.enterpriseValueAsOf, now, MAX_PEER_ENTERPRISE_VALUE_AGE_MS)
-      ));
+      );
+      if (valid) seen.add(peerSymbol);
+      return valid;
+    });
     try {
       multiples = calculateForwardMultiples({
         targetForwardEps: targetEstimate.estimatedEps,
         targetForwardRevenue: targetEstimate.estimatedRevenue,
-        cash: latest.cash,
-        debt: latest.totalDebt,
-        shares: shares!,
+        cash: positiveTargetEps ? null : bridgeCash,
+        debt: positiveTargetEps ? null : bridgeDebt,
+        shares: positiveTargetEps ? null : shares,
         peers: currentPeers.map((peer) => ({
           symbol: peer.symbol,
           price: peer.price,
@@ -473,7 +565,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   }
 
   const modelResults: Array<ModelResult & { weight: number }> = [];
-  if (dcf && growth && wacc) {
+  if (dcf && growth && wacc && latest) {
     modelResults.push({
       model: 'fcff-dcf',
       fairValue: dcf.fairValue,
@@ -525,7 +617,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         medianMultiple: multiples.medianMultiple,
         targetEnterpriseValue: multiples.targetEnterpriseValue ?? 'not-applicable',
         targetEquityValue: multiples.targetEquityValue ?? 'not-applicable',
-        shares: shares!,
+        shares: multiples.method === 'forward-pe' ? 'not-required' : shares!,
       },
       assumptions: {},
       limitations: ['Only positive, finite multiples with current forward estimates are retained.'],
@@ -546,7 +638,13 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     input.marketCapitalizationProvenance?.sourceType,
     input.sharesOutstandingProvenance?.sourceType,
   ].includes('gemini-grounded');
-  const stale = gate.staleInputs.length > 0 || input.providerStatus === 'stale';
+  const stale = gate.staleInputs.length > 0
+    || input.providerStatus === 'stale'
+    || [
+      datasetFreshness('beta', marketWacc?.betaAsOf, now),
+      datasetFreshness('riskFreeRate', marketWacc?.riskFreeAsOf, now),
+      datasetFreshness('equityRiskPremium', marketWacc?.equityRiskPremiumAsOf, now),
+    ].includes('stale');
   const completeModels = Boolean(dcf && multiples);
   const quality = valuationQuality({
     completeModels,
@@ -613,11 +711,13 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       ? 'Shares Outstanding (financial-statement fallback)'
       : 'Diluted Shares Outstanding'
     : 'Shares Outstanding (provider fallback)';
-  const sharesAsOf = dilutedShares ? latest.periodEnd : input.sharesOutstandingAsOf ?? latest.periodEnd;
+  const sharesAsOf = dilutedShares
+    ? latest?.periodEnd ?? calculatedAt
+    : input.sharesOutstandingAsOf ?? bridge?.asOf ?? calculatedAt;
   const inputDetails: ValuationInputDisclosure[] = [
     inputDetail({ field: 'Current Price', value: input.marketPrice, currency: 'USD', period: input.priceAsOf, provider: input.marketPriceSource ?? input.source, asOf: input.priceAsOf }),
   ];
-  if (dcf && growth && wacc && taxRate !== null && costDebt !== null) {
+  if (dcf && growth && wacc && latest && taxRate !== null && costDebt !== null) {
     inputDetails.push(
       inputDetail({ field: 'Latest Real FCF', value: latest.freeCashFlow, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
       ...growth.estimates.map((estimate) => inputDetail({
@@ -701,22 +801,40 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         evidence: targetProvenance?.evidence,
         status: targetProvenance?.sourceType === 'gemini-grounded' ? 'limited' : 'available',
       }),
-      inputDetail({
-        field: sharesSource,
-        value: shares!,
-        period: sharesAsOf,
-        asOf: sharesAsOf,
-        ...provenanceDisclosure(
-          dilutedShares ? null : input.sharesOutstandingProvenance,
-          dilutedShares ? input.source : estimateProvider,
-        ),
-      }),
-      inputDetail({ field: 'Cash', value: latest.cash, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
-      inputDetail({ field: 'Total Debt', value: latest.totalDebt, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
       inputDetail({ field: 'Peer List', value: multiples.peers.map((peer) => peer.symbol).join(','), period: targetEstimate.periodEnd, provider: peerProvider, asOf: targetEstimate.asOf, sourceType: groundedCritical ? 'gemini-grounded' : 'structured-provider', evidence: peerEvidence, status: groundedCritical ? 'limited' : 'available' }),
     inputDetail({ field: 'Peer Multiples', value: multiples.peers.map((peer) => `${peer.symbol}:${peer.multiple}`).join(','), period: multiples.method, provider: peerProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
     inputDetail({ field: 'Median Peer Multiple', value: multiples.medianMultiple, period: multiples.method, provider: peerProvider, asOf: targetEstimate!.asOf, origin: 'derived' }),
     );
+    if (multiples.method === 'forward-ev-sales') {
+      inputDetails.push(
+        inputDetail({
+          field: sharesSource,
+          value: shares!,
+          period: sharesAsOf,
+          asOf: sharesAsOf,
+          ...provenanceDisclosure(
+            dilutedShares ? null : input.sharesOutstandingProvenance,
+            dilutedShares ? input.source : estimateProvider,
+          ),
+        }),
+        inputDetail({
+          field: 'Cash',
+          value: bridgeCash!,
+          currency: 'USD',
+          period: latest?.periodEnd ?? bridge!.asOf,
+          provider: latest ? input.source : bridge!.provider,
+          asOf: latest?.periodEnd ?? bridge!.asOf,
+        }),
+        inputDetail({
+          field: 'Total Debt',
+          value: bridgeDebt!,
+          currency: 'USD',
+          period: latest?.periodEnd ?? bridge!.asOf,
+          provider: latest ? input.source : bridge!.provider,
+          asOf: latest?.periodEnd ?? bridge!.asOf,
+        }),
+      );
+    }
   }
   const upsideAmount = publishableValue - input.marketPrice;
   const upsidePercent = upsideAmount / input.marketPrice * 100;
@@ -729,7 +847,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         : input.providerStatus === 'delayed' ? 'delayed' as const : 'live' as const;
   const latestDataAt = [
     input.priceAsOf,
-    latest.periodEnd,
+    latest?.periodEnd ?? '',
     targetEstimate?.asOf ?? '',
     growth?.estimates.at(-1)?.asOf ?? '',
     marketWacc?.riskFreeAsOf ?? '',
@@ -747,7 +865,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     {
       field: 'model:fcff-dcf',
       value: dcf?.fairValue ?? null,
-      period: latest.periodEnd,
+      period: latest?.periodEnd ?? null,
       provider: input.source,
       asOf: calculatedAt,
       status: dcf ? 'available' : 'rejected',
@@ -765,6 +883,34 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       reason: multiples ? null : unique(multiplesMissing).join(', '),
     },
   ];
+  const acceptedPeerSymbols = new Set(multiples?.peers.map((peer) => peer.symbol) ?? []);
+  const peerQualityAudit = {
+    candidates: input.peerAudit?.candidates
+      ?? (input.peerObservations ?? []).map((peer) => peer.symbol),
+    accepted: (multiples?.peers ?? []).map((peer) => {
+      const observation = currentPeers.find((item) => item.symbol === peer.symbol);
+      return {
+        symbol: peer.symbol,
+        metric: multiples!.method,
+        period: observation?.estimatePeriod ?? targetEstimate?.periodEnd ?? calculatedAt.slice(0, 10),
+        source: observation?.provider ?? peerProvider,
+        asOf: observation?.estimateAsOf ?? targetEstimate?.asOf ?? calculatedAt,
+      };
+    }),
+    rejected: [
+      ...(input.peerAudit?.rejected ?? []),
+      ...(input.peerObservations ?? [])
+        .filter((peer) => !acceptedPeerSymbols.has(peer.symbol))
+        .map((peer) => ({
+          symbol: peer.symbol,
+          reason: 'engine-quality-gate-or-outlier',
+          metric: positiveTargetEps ? 'forward-pe' as const : 'forward-ev-sales' as const,
+          period: peer.estimatePeriod,
+          source: peer.provider,
+          asOf: peer.estimateAsOf,
+        })),
+    ],
+  };
 
   return {
     status: 'available',
@@ -857,17 +1003,20 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       analystEstimates: input.analystEstimates,
       peerObservations: input.peerObservations,
       waccMarketInputs: input.waccMarketInputs,
-      peerAudit: input.peerAudit,
+      peerAudit: peerQualityAudit,
     },
     assumptions: {
       perpetualGrowth: PERPETUAL_GROWTH,
       weights: { dcf: DCF_WEIGHT, forwardMultiples: MULTIPLES_WEIGHT },
     },
     sources: [
-      { name: input.source, asOf: latest.periodEnd, sourceType: input.sourceType },
+      ...(latest
+        ? [{ name: input.source, asOf: latest.periodEnd, sourceType: input.sourceType }]
+        : []),
       { name: estimateProvider, asOf: targetEstimate?.asOf ?? calculatedAt, sourceType: 'provider-supplied' },
     ],
     researchAudit: input.researchAudit,
+    peerAudit: peerQualityAudit,
     inputResolution: input.inputResolution,
     latestDataAt,
     calculatedAt,

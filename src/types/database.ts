@@ -161,6 +161,20 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_fx_rates']['Insert']>;
         Relationships: [];
       };
+      analytics_fundamentals_lkg: {
+        Row: {
+          symbol: string; dataset: string; financial_periods: Json; snapshot: Json;
+          provider: string; source_as_of: string; fetched_at: string; validated_at: string;
+          schema_version: number; created_at: string; updated_at: string;
+        };
+        Insert: {
+          symbol: string; dataset: string; financial_periods: Json; snapshot: Json;
+          provider: string; source_as_of: string; fetched_at: string; validated_at: string;
+          schema_version: number; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['analytics_fundamentals_lkg']['Insert']>;
+        Relationships: [];
+      };
       price_alerts: {
         Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; created_at: string; updated_at: string };
         Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; created_at?: string; updated_at?: string };

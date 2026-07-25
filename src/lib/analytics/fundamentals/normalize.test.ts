@@ -56,5 +56,17 @@ describe('fundamentals normalization', () => {
     expect(result.missingInputs).toContain('annual:2024-12-31:alignedStatements');
     expect(result.missingInputs).toContain('annual:2024-12-31:currency');
   });
+
+  it('does not derive TTM from duplicate or non-contiguous quarters', () => {
+    const quarterDates = ['2023-03-31', '2023-06-30', '2024-09-30', '2024-12-31'];
+    const result = normalizeFinancialStatements(
+      'GAP',
+      payload([], rows(quarterDates, 'income')),
+      payload([], rows(quarterDates, 'balance')),
+      payload([], rows(quarterDates, 'cash')),
+    );
+    expect(result.dilutedEpsTtm).toBeNull();
+    expect(result.missingInputs).toContain('dilutedEpsTtm:fourCompleteQuarterlyPeriods');
+  });
 });
 

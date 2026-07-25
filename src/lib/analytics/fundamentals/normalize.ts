@@ -178,7 +178,15 @@ export function normalizeFinancialStatements(symbol: string, income: RawStatemen
   const latestFour = quarterlyIncome.slice(-4);
   const epsRows = latestFour.map(([periodEnd, row]) => ({ periodEnd, currency: text(row.reportedCurrency), value: safeNumber(row.dilutedEPS) }));
   const epsCurrencies = new Set(epsRows.map((row) => row.currency).filter(Boolean));
-  const dilutedEpsTtm = epsRows.length === 4 && epsRows.every((row) => row.value !== null) && epsCurrencies.size === 1
+  const completeQuarterSequence = epsRows.length === 4
+    && new Set(epsRows.map((row) => row.periodEnd)).size === 4
+    && epsRows.slice(1).every((row, index) => {
+      const days = (Date.parse(row.periodEnd) - Date.parse(epsRows[index].periodEnd)) / 86_400_000;
+      return days >= 60 && days <= 120;
+    })
+    && !epsRows.some((row) =>
+      missing.has(`quarterly:${row.periodEnd}:duplicate:income-statement`));
+  const dilutedEpsTtm = completeQuarterSequence && epsRows.every((row) => row.value !== null) && epsCurrencies.size === 1
     ? epsRows.reduce((sum, row) => sum + row.value!, 0) : null;
   if (dilutedEpsTtm === null) missing.add('dilutedEpsTtm:fourCompleteQuarterlyPeriods');
   const allCurrencies = [...annual, ...quarterly].map((period) => period.currency);

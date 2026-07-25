@@ -40,6 +40,9 @@ export interface MetricProvenance {
   methodology?: string;
   benchmark?: string;
   sampleSize?: number;
+  frequency?: 'daily' | 'weekly' | 'monthly';
+  start?: string;
+  end?: string;
 }
 
 export interface InputResolutionAudit {
@@ -100,6 +103,16 @@ export interface ValuationInput {
   sharesOutstandingAsOf?: string | null;
   sharesOutstandingProvenance?: MetricProvenance | null;
   dilutedSharesSource?: 'diluted' | 'shares-outstanding-fallback' | null;
+  sharesBasis?: 'diluted' | 'basic' | 'provider-fallback' | null;
+  balanceSheetBridge?: {
+    cash: number | null;
+    debt: number | null;
+    currency: string;
+    asOf: string;
+    provider: string;
+    cashProvenance?: MetricProvenance | null;
+    debtProvenance?: MetricProvenance | null;
+  } | null;
   periods: FinancialPeriod[];
   historicalPrices: HistoricalPrice[];
   historySource: string;
@@ -138,11 +151,29 @@ export interface ValuationInput {
     cacheHits?: number;
     cacheMisses?: number;
     negativeCacheHits?: number;
+    plannedFields?: string[];
+    executedFields?: string[];
+    modelsUnlocked?: ModelId[];
+    budget?: number;
   };
   inputResolution?: InputResolutionAudit;
   peerAudit?: {
     candidates: string[];
-    rejected: Array<{ symbol: string; reason: string }>;
+    accepted?: Array<{
+      symbol: string;
+      metric: 'forward-pe' | 'forward-ev-sales';
+      period: string;
+      source: string;
+      asOf: string;
+    }>;
+    rejected: Array<{
+      symbol: string;
+      reason: string;
+      metric?: 'forward-pe' | 'forward-ev-sales' | null;
+      period?: string | null;
+      source?: string | null;
+      asOf?: string | null;
+    }>;
   };
   diagnostics?: ValuationDiagnostic[];
   displayFx?: {
@@ -182,6 +213,7 @@ export interface PeerObservation {
   provider: string;
   estimateProvenance?: MetricProvenance | null;
   candidateSource?: 'provider-peers' | 'industry' | 'sector';
+  currency?: string | null;
 }
 
 export interface WaccMarketInputs {
@@ -252,6 +284,13 @@ export interface ValuationDiagnostic {
   sourceType?: ValuationEvidenceSourceType;
   sourceUrl?: string;
   evidence?: ValuationEvidenceSource[];
+  sourceState?:
+    | 'provider-live'
+    | 'provider-cached'
+    | 'provider-stale'
+    | 'derived'
+    | 'gemini'
+    | 'missing';
 }
 export interface ValuationAssumptionDisclosure {
   field: string;
@@ -277,6 +316,8 @@ export interface FairValueUnavailable {
   limitations: string[];
   diagnostics: ValuationDiagnostic[];
   inputResolution?: InputResolutionAudit;
+  researchAudit?: ValuationInput['researchAudit'];
+  peerAudit?: ValuationInput['peerAudit'];
 }
 
 export interface FairValueAvailable {
@@ -324,7 +365,12 @@ export interface FairValueAvailable {
     cacheHits?: number;
     cacheMisses?: number;
     negativeCacheHits?: number;
+    plannedFields?: string[];
+    executedFields?: string[];
+    modelsUnlocked?: ModelId[];
+    budget?: number;
   };
+  peerAudit?: ValuationInput['peerAudit'];
   inputResolution?: InputResolutionAudit;
   latestDataAt: string; calculatedAt: string; methodologyVersion: typeof METHODOLOGY_VERSION; limitations: string[];
 }

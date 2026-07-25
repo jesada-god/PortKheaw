@@ -54,6 +54,8 @@ function payload(url: URL) {
       enterpriseValue: 1_000,
       marketCapitalization: 800,
       numberOfShares: 40,
+      minusCashAndCashEquivalents: 120,
+      addTotalDebt: 250,
     }];
   }
   if (endpoint === 'shares-float') {
@@ -100,6 +102,11 @@ describe('FMP deterministic valuation data provider', () => {
       currency: 'USD',
     });
     expect(result.sharesOutstanding).toBe(42);
+    expect(result).toMatchObject({
+      cash: 120,
+      totalDebt: 250,
+      balanceSheetAsOf: '2026-06-30',
+    });
     expect(result.peerCandidates).toEqual(PEERS);
     const peerCalls = fetcher.mock.calls.map(([input]) => new URL(String(input)))
       .filter((url) => PEERS.includes(url.searchParams.get('symbol') ?? ''));

@@ -385,11 +385,75 @@ function SourcesTab({
   );
 }
 
-function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnostic[] {
+function canonicalDiagnosticField(field: string): string {
+  const normalized = field.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (normalized === 'currentprice' || normalized === 'marketprice') return 'marketPrice';
+  if (normalized === 'marketcap' || normalized === 'marketcapitalization') {
+    return 'marketCapitalization';
+  }
+  if (normalized === 'riskfree' || normalized === 'riskfreerate') return 'riskFreeRate';
+  if (normalized === 'erp' || normalized === 'equityriskpremium') {
+    return 'equityRiskPremium';
+  }
+  if (normalized === 'beta') return 'beta';
+  if (normalized === 'cash') return 'cash';
+  if (normalized === 'debt' || normalized === 'totaldebt') return 'totalDebt';
+  if (
+    normalized.includes('dilutedshares')
+    || normalized.includes('sharesoutstanding')
+    || normalized === 'shares'
+  ) return 'shares';
+  if (normalized === 'latestrealfcf' || normalized === 'freecashflow') return 'freeCashFlow';
+  if (
+    normalized.startsWith('targetforwardeps')
+    || normalized === 'forwardeps'
+  ) return 'forwardEps';
+  if (
+    normalized.startsWith('targetforwardrevenue')
+    || normalized.startsWith('consensusrevenue')
+    || normalized === 'forwardrevenue'
+  ) return 'forwardRevenue';
+  if (
+    normalized === 'peerlist'
+    || normalized === 'peerobservations'
+    || normalized === 'peerforwardestimates'
+  ) return 'peerObservations';
+  return normalized || field;
+}
+
+function canonicalDiagnosticKey(item: ValuationDiagnostic): string {
+  const field = canonicalDiagnosticField(item.field);
+  const periodSpecific = field === 'forwardEps' || field === 'forwardRevenue';
+  return `${field}:${periodSpecific ? item.period ?? '' : ''}`;
+}
+
+function diagnosticPrecedence(item: ValuationDiagnostic): number {
+  const status = item.status === 'available' ? 400
+    : item.status === 'stale' ? 300
+      : item.status === 'rejected' ? 100 : 0;
+  const origin = item.provenance === 'derived' ? 30
+    : item.provenance === 'gemini-grounded' ? 20
+      : item.provenance === 'provider' ? 10 : 0;
+  return status + origin + (item.value === null ? 0 : 5) + (item.reason ? 1 : 0);
+}
+
+function canonicalizeDiagnostics(items: ValuationDiagnostic[]): ValuationDiagnostic[] {
+  const canonical = new Map<string, ValuationDiagnostic>();
+  for (const item of items) {
+    const key = canonicalDiagnosticKey(item);
+    const existing = canonical.get(key);
+    if (!existing || diagnosticPrecedence(item) > diagnosticPrecedence(existing)) {
+      canonical.set(key, item);
+    }
+  }
+  return [...canonical.values()];
+}
+
+export function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnostic[] {
   if (!data) return [];
   if (data.status === 'unavailable') {
-    if (data.diagnostics.length) return data.diagnostics;
-    return data.missingFields.map((field) => ({
+    if (data.diagnostics.length) return canonicalizeDiagnostics(data.diagnostics);
+    return canonicalizeDiagnostics(data.missingFields.map((field) => ({
       field,
       value: null,
       period: null,
@@ -398,7 +462,7 @@ function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnosti
       status: 'missing',
       provenance: 'validation',
       reason: 'required-model-input-failed-validation',
-    }));
+    })));
   }
   const disclosed = data.inputDetails.map((item): ValuationDiagnostic => ({
     field: item.field,
@@ -406,7 +470,7 @@ function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnosti
     period: item.period,
     provider: item.provider,
     asOf: item.asOf,
-    status: item.status === 'available' ? 'available' : 'stale',
+    status: item.status === 'stale' ? 'stale' : 'available',
     provenance: item.origin,
     sourceType: item.sourceType,
     sourceUrl: item.sourceUrl,
@@ -415,12 +479,12 @@ function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnosti
   }));
   const disclosedKeys = new Set(disclosed.map((item) =>
     `${item.field.toLowerCase()}:${item.period ?? ''}`));
-  return [
+  return canonicalizeDiagnostics([
     ...disclosed,
     ...data.diagnostics.filter((item) =>
       item.status !== 'available'
       || !disclosedKeys.has(`${item.field.toLowerCase()}:${item.period ?? ''}`)),
-  ];
+  ]);
 }
 
 function diagnosticSourceStatus(item: ValuationDiagnostic): string {

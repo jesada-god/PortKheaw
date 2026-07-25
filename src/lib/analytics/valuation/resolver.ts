@@ -23,6 +23,30 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Normalizes an explicitly labelled percentage into the decimal convention
+ * used by the valuation engine. The caller must provide the source unit so an
+ * ambiguous value is never silently multiplied or divided by 100.
+ */
+export function normalizePercentage(
+  value: unknown,
+  unit: 'percent' | 'decimal',
+  range: { minimum?: number; maximum?: number } = {},
+): number | null {
+  const trimmed = typeof value === 'string' ? value.trim() : value;
+  const raw = typeof trimmed === 'string' && unit === 'percent'
+    ? trimmed.replace(/%$/, '').trim()
+    : trimmed;
+  const numeric = typeof raw === 'number'
+    ? raw
+    : typeof raw === 'string' && raw.length > 0 ? Number(raw.replaceAll(',', '')) : Number.NaN;
+  if (!Number.isFinite(numeric)) return null;
+  const normalized = unit === 'percent' ? numeric / 100 : numeric;
+  const minimum = range.minimum ?? 0;
+  const maximum = range.maximum ?? 1;
+  return normalized >= minimum && normalized <= maximum ? normalized : null;
+}
+
 function hasForwardMetric(
   estimates: readonly AnalystEstimate[],
   field: 'estimatedRevenue' | 'estimatedEps',
@@ -169,6 +193,9 @@ export function deriveHistoricalBeta(
       methodology: 'OLS beta = covariance(daily log stock returns, benchmark returns) / variance(benchmark returns)',
       benchmark,
       sampleSize: observations.length,
+      frequency: 'daily',
+      start: first,
+      end: last,
     },
   };
 }

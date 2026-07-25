@@ -239,6 +239,72 @@ describe('Fair Value orchestration', () => {
       .toEqual(expect.arrayContaining(['forwardRevenue', 'riskFreeRate']));
   });
 
+  it('does not let dual fundamentals throttling kill an independently valid Forward P/E', async () => {
+    mocks.getFundamentalsProvider.mockReturnValue({
+      id: 'alpha-vantage',
+      getFinancialPeriods: vi.fn().mockResolvedValue({
+        symbol: 'AAPL',
+        periods: [],
+        quarterlyPeriods: [],
+        annualRecords: [],
+        quarterlyRecords: [],
+        asOf: '2026-07-25',
+        fetchedAt: '2026-07-25T00:00:00.000Z',
+        currency: '',
+        dilutedEpsTtm: null,
+        dilutedEpsAsOf: null,
+        missingInputs: ['financialStatements'],
+        datasetErrors: {
+          'income-statement': 'rate-limited',
+          'balance-sheet': 'rate-limited',
+          'cash-flow': 'rate-limited',
+        },
+        diagnostics: {
+          provider: 'alpha-vantage',
+          capabilities: [],
+          datasets: {},
+          cache: { income: 'miss', balance: 'miss', cashFlow: 'miss' },
+          datasetFetchedAt: {},
+          latencyMs: 1,
+          normalizedPeriodCount: { annual: 0, quarterly: 0 },
+        },
+        primaryProvider: 'alpha-vantage',
+        providerUsed: 'alpha-vantage',
+        fallbackReason: 'PRIMARY_RATE_LIMITED; SECONDARY_RATE_LIMITED',
+      }),
+    });
+    const result = await loadFairValue('AAPL');
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toEqual(['pe']);
+    expect(result.fairValue.label).toBe('Relative Fair Value');
+    expect(result.excludedModels).toContainEqual(expect.objectContaining({
+      model: 'fcff-dcf',
+      reason: expect.stringContaining('historicalFinancials'),
+    }));
+    expect(mocks.research).not.toHaveBeenCalled();
+  });
+
+  it('caps model-aware research instead of searching every missing field', async () => {
+    mocks.getFundamentalsProvider.mockReturnValue({
+      id: 'alpha-vantage',
+      getFinancialPeriods: vi.fn().mockRejectedValue(
+        new MarketDataError('rate-limited', 'fundamentals throttled'),
+      ),
+    });
+    mocks.getFmpValuationProvider.mockReturnValue({
+      id: 'financial-modeling-prep',
+      getValuationDataset: vi.fn().mockRejectedValue(
+        new MarketDataError('rate-limited', 'valuation throttled'),
+      ),
+    });
+    const result = await loadFairValue('AAPL');
+    expect(result.status).toBe('unavailable');
+    expect(mocks.research.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(mocks.research.mock.calls.flatMap(([request]) => request.metrics))
+      .not.toEqual(expect.arrayContaining(['riskFreeRate', 'equityRiskPremium', 'beta']));
+  });
+
   it('uses the traceable FMP quote when the primary market quote is throttled', async () => {
     mocks.loadResilientQuote.mockRejectedValue(
       new MarketDataError('rate-limited', 'primary throttled'),
@@ -525,6 +591,14 @@ describe('Fair Value orchestration', () => {
     expect(result.status).toBe('available');
     if (result.status === 'available') {
       expect(result.modelResults.map((model) => model.model)).toContain('ev-sales');
+      expect(result.inputResolution?.resolved).toContainEqual(expect.objectContaining({
+        field: 'forwardRevenue',
+        origin: 'gemini-grounded',
+      }));
+      expect(result.inputs.analystEstimates).toContainEqual(expect.objectContaining({
+        periodEnd: '2026-12-31',
+        estimatedRevenue: 1_080,
+      }));
     }
   });
 
@@ -576,6 +650,18 @@ describe('Fair Value orchestration', () => {
     if (result.status === 'available') {
       expect(result.modelResults.map((model) => model.model)).toContain('pe');
       expect(result.dataQualityLabel).toBe('Medium');
+      expect(result.inputResolution?.resolved).toContainEqual(expect.objectContaining({
+        field: 'peerForwardEstimates',
+        origin: 'gemini-grounded',
+      }));
+      expect(result.inputs.peerObservations).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          forwardEps: 2,
+          estimateProvenance: expect.objectContaining({
+            sourceType: 'gemini-grounded',
+          }),
+        }),
+      ]));
     }
   });
 });

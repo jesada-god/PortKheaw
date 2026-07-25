@@ -12,6 +12,37 @@ export interface FairValueLogEntry {
 
 export type FairValueLogger = (entry: FairValueLogEntry) => void;
 
+export type FairValueFieldState =
+  | 'provider-hit'
+  | 'provider-miss'
+  | 'derived'
+  | 'research-started'
+  | 'research-hit'
+  | 'research-rejected'
+  | 'research-error'
+  | 'merged'
+  | 'final-missing';
+
+export interface FairValueFieldLogEntry {
+  event: 'fair_value_field_resolution';
+  symbol: string;
+  field: string;
+  state: FairValueFieldState;
+  provider?: string;
+  reason?: string;
+  asOf: string;
+}
+
+export interface FairValueRuntimeLogEntry {
+  event: 'fair_value_runtime_configuration';
+  symbol: string;
+  geminiConfigured: boolean;
+  groundingConfigured: boolean;
+  fundamentalsProviderConfigured: boolean;
+  valuationProviderConfigured: boolean;
+  historyProviderConfigured: boolean;
+}
+
 const SAFE_ERROR_CODES = new Set([
   'provider-not-configured',
   'invalid-request',
@@ -49,3 +80,18 @@ export const writeFairValueLog: FairValueLogger = (entry) => {
   if (entry.status === 'available') console.info(serialized);
   else console.warn(serialized);
 };
+
+/** Safe field-level trace: the contract intentionally has no value or secret fields. */
+export function writeFairValueFieldLog(entry: FairValueFieldLogEntry): void {
+  const serialized = JSON.stringify(entry);
+  if (entry.state === 'research-error' || entry.state === 'final-missing') {
+    console.warn(serialized);
+  } else {
+    console.info(serialized);
+  }
+}
+
+/** Boolean-only production configuration trace; credentials are never serialized. */
+export function writeFairValueRuntimeLog(entry: FairValueRuntimeLogEntry): void {
+  console.info(JSON.stringify(entry));
+}

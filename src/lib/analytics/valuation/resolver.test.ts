@@ -3,6 +3,7 @@ import type { HistoricalPrice } from '@/src/lib/market-data/types';
 import {
   classifyValuationInputs,
   deriveHistoricalBeta,
+  normalizePercentage,
   resolveDeterministicInputs,
 } from './resolver';
 
@@ -58,6 +59,9 @@ describe('Fair Value missing-input resolver', () => {
       sourceType: 'derived',
       benchmark: 'SPY',
       sampleSize: 89,
+      frequency: 'daily',
+      start: '2026-01-02',
+      end: '2026-03-31',
     });
   });
 
@@ -95,5 +99,14 @@ describe('Fair Value missing-input resolver', () => {
     });
     expect(authoritative.marketCapitalization).toBe(2_100);
     expect(authoritative.marketCapitalizationProvenance).toBeNull();
+  });
+
+  it('normalizes explicitly labelled percentages once and rejects ambiguous ranges', () => {
+    expect(normalizePercentage('4.25%', 'percent', { maximum: 0.25 })).toBe(0.0425);
+    expect(normalizePercentage(4.25, 'percent', { maximum: 0.25 })).toBe(0.0425);
+    expect(normalizePercentage(0.0425, 'decimal', { maximum: 0.25 })).toBe(0.0425);
+    expect(normalizePercentage(4.25, 'decimal', { maximum: 0.25 })).toBeNull();
+    expect(normalizePercentage(0.0425, 'percent', { maximum: 0.25 }))
+      .toBeCloseTo(0.000425);
   });
 });

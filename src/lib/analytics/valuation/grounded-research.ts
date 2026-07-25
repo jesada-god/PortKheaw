@@ -7,6 +7,7 @@ import type {
   MetricProvenance,
   ValuationEvidenceSource,
 } from './types';
+import { normalizePercentage } from './resolver';
 
 const RESEARCH_TIMEOUT_MS = 18_000;
 const POSITIVE_CACHE_MS = 18 * 60 * 60_000;
@@ -319,7 +320,11 @@ function valuePlausible(metric: GroundedMetricName, value: number): boolean {
   if (metric === 'revenue' || metric === 'marketCap') return value > 0 && value <= 1e15;
   if (metric === 'shares') return value > 0 && value <= 1e14;
   if (metric === 'riskFreeRate' || metric === 'equityRiskPremium') {
-    return value > 0 && value <= 0.25;
+    return normalizePercentage(
+      value,
+      'decimal',
+      { minimum: Number.EPSILON, maximum: 0.25 },
+    ) !== null;
   }
   if (metric === 'beta') return value > 0 && value <= 10;
   return Math.abs(value) <= 10_000;

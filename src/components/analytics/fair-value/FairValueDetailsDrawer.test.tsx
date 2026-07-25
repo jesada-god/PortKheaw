@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { createFairValueUnavailable } from '@/src/lib/analytics/valuation/result';
 import { calculateFairValue } from '@/src/lib/analytics/valuation/engine';
 import type { ValuationInput } from '@/src/lib/analytics/valuation/types';
-import { FairValueDetailsDrawer } from './FairValueDetailsDrawer';
+import {
+  FairValueDetailsDrawer,
+  normalizedDiagnostics,
+} from './FairValueDetailsDrawer';
 
 const NOW = Date.parse('2026-07-25T00:00:00.000Z');
 const input: ValuationInput = {
@@ -90,5 +93,61 @@ describe('Fair Value details rendering', () => {
     expect(html).toContain('Unavailable');
     expect(html).toContain('ข้อมูลจริงไม่ผ่านเกณฑ์ขั้นต่ำ');
     expect(html).not.toContain('$0.00');
+  });
+
+  it('publishes one canonical UI state when a provider miss is later resolved', () => {
+    const result = calculateFairValue({
+      ...input,
+      waccMarketInputs: {
+        ...input.waccMarketInputs!,
+        betaProvenance: {
+          provider: 'nexora-historical-beta',
+          sourceType: 'derived',
+          field: 'beta',
+          fiscalPeriod: '2026-01-02/2026-03-31',
+          asOf: '2026-03-31',
+          evidence: [],
+          evidenceQuality: 'medium',
+          methodology: 'OLS beta from aligned daily returns',
+          benchmark: 'SPY',
+          sampleSize: 89,
+          frequency: 'daily',
+          start: '2026-01-02',
+          end: '2026-03-31',
+        },
+      },
+      diagnostics: [
+        {
+          field: 'beta',
+          value: null,
+          period: 'latest profile',
+          provider: 'financial-modeling-prep',
+          asOf: '2026-07-25T00:00:00.000Z',
+          status: 'missing',
+          provenance: 'provider',
+          reason: 'provider-field-missing',
+        },
+        {
+          field: 'beta',
+          value: 1.5,
+          period: '2026-01-02/2026-03-31',
+          provider: 'nexora-historical-beta',
+          asOf: '2026-03-31',
+          status: 'available',
+          provenance: 'derived',
+          sourceType: 'derived',
+          reason: 'derived-historical-beta:SPY:89',
+        },
+      ],
+    }, NOW);
+    const diagnostics = normalizedDiagnostics(result);
+    const beta = diagnostics.filter((item) =>
+      item.field.toLowerCase().replace(/[^a-z]/g, '') === 'beta');
+    expect(beta).toHaveLength(1);
+    expect(beta[0]).toMatchObject({
+      status: 'available',
+      provenance: 'derived',
+      value: 1.5,
+    });
   });
 });

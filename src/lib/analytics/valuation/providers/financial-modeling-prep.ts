@@ -8,6 +8,7 @@ import type {
   ValuationDiagnostic,
   WaccMarketInputs,
 } from '../types';
+import { normalizePercentage } from '../resolver';
 
 const BASE_URL = 'https://financialmodelingprep.com/stable';
 const TIMEOUT_MS = 10_000;
@@ -52,6 +53,9 @@ export interface FmpValuationDataset {
   marketCapitalization: number | null;
   sharesOutstanding: number | null;
   sharesOutstandingAsOf: string | null;
+  cash: number | null;
+  totalDebt: number | null;
+  balanceSheetAsOf: string | null;
   sector: string | null;
   industry: string | null;
   asOf: string;
@@ -78,11 +82,6 @@ function isoFromTimestamp(value: unknown): string | null {
   const milliseconds = numeric >= 1e12 ? numeric : numeric * 1_000;
   const date = new Date(milliseconds);
   return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
-}
-
-function percentage(value: unknown): number | null {
-  const numeric = safeNumber(value);
-  return numeric === null ? null : numeric / 100;
 }
 
 function firstNumber(row: RawRow | undefined, fields: string[]): number | null {
@@ -312,7 +311,17 @@ export class FinancialModelingPrepValuationProvider {
     );
     const price = firstNumber(quote, ['price']);
     const enterpriseValue = firstNumber(enterprise, ['enterpriseValue']);
+    const relevant = Boolean(
+      target.industry && peerIdentity.industry
+      && target.industry.toLowerCase() === peerIdentity.industry.toLowerCase(),
+    ) || Boolean(
+      target.sector && peerIdentity.sector
+      && target.sector.toLowerCase() === peerIdentity.sector.toLowerCase(),
+    );
+    const currency = 'USD';
     const rejectionReasons = [
+      ...(!relevant ? ['business-relevance-mismatch'] : []),
+      ...(currency !== 'USD' ? ['currency-mismatch'] : []),
       ...(!price ? ['missing-quote'] : []),
       ...(branch !== 'eps' && !enterpriseValue ? ['missing-EV'] : []),
       ...(!estimate || (estimate.estimatedEps === null && estimate.estimatedRevenue === null)
@@ -337,6 +346,7 @@ export class FinancialModelingPrepValuationProvider {
           ? estimate.epsProvenance ?? null
           : estimate?.revenueProvenance ?? null,
         candidateSource,
+        currency,
       },
       cacheStates,
       rejectionReasons,
@@ -581,9 +591,25 @@ export class FinancialModelingPrepValuationProvider {
       ?? firstDate(enterprise, ['date']);
     const marketCapitalization = firstNumber(profile, ['marketCap'])
       ?? firstNumber(enterprise, ['marketCapitalization']);
+    const cash = firstNumber(enterprise, [
+      'cashAndCashEquivalents',
+      'cashAndShortTermInvestments',
+      'cash',
+      'minusCashAndCashEquivalents',
+    ]);
+    const totalDebt = firstNumber(enterprise, ['totalDebt', 'addTotalDebt']);
+    const balanceSheetAsOf = firstDate(enterprise, ['date']);
     const beta = firstNumber(profile, ['beta']);
-    const riskFreeRate = percentage(latestTreasury?.year10);
-    const equityRiskPremium = percentage(usPremium?.totalEquityRiskPremium);
+    const riskFreeRate = normalizePercentage(
+      latestTreasury?.year10,
+      'percent',
+      { maximum: 0.25 },
+    );
+    const equityRiskPremium = normalizePercentage(
+      usPremium?.totalEquityRiskPremium,
+      'percent',
+      { maximum: 0.25 },
+    );
     const diagnostic = (
       field: string,
       value: number | string | null,
@@ -617,6 +643,8 @@ export class FinancialModelingPrepValuationProvider {
       diagnostic('sharesOutstanding', sharesOutstanding, sharesOutstandingAsOf,
         sharesResult ? new Date(sharesResult.fetchedAt).toISOString() : datasetAsOf,
         sharesResult ? 'shares-float' : 'enterprise-values'),
+      diagnostic('cash', cash, balanceSheetAsOf, datasetAsOf, 'enterprise-values'),
+      diagnostic('totalDebt', totalDebt, balanceSheetAsOf, datasetAsOf, 'enterprise-values'),
       diagnostic('peerObservations', peers.length, 'forward annual', datasetAsOf, 'stock-peers'),
       ...estimates.flatMap((estimate) => [
         diagnostic('forwardRevenue', estimate.estimatedRevenue, estimate.periodEnd,
@@ -678,6 +706,9 @@ export class FinancialModelingPrepValuationProvider {
       marketCapitalization,
       sharesOutstanding,
       sharesOutstandingAsOf,
+      cash,
+      totalDebt,
+      balanceSheetAsOf,
       sector: target.sector,
       industry: target.industry,
       asOf: datasetAsOf,

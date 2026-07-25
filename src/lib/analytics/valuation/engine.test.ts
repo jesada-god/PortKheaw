@@ -268,6 +268,93 @@ describe('Nexora deterministic Fair Value engine', () => {
       .every((item) => item.value === null)).toBe(true);
   });
 
+  it('publishes Forward P/E without financial statements, cash, debt, or shares', () => {
+    const result = calculateFairValue({
+      ...input,
+      periods: [],
+      marketCapitalization: null,
+      sharesOutstanding: null,
+      waccMarketInputs: null,
+    }, Date.parse('2026-07-25'));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toEqual(['pe']);
+    expect(result.fairValue).toMatchObject({
+      type: 'relative',
+      label: 'Relative Fair Value',
+    });
+    expect(result.missingInputs).toContain('historicalFinancials');
+    expect(result.inputDetails.map((detail) => detail.field)).not.toContain('Cash');
+    expect(result.inputDetails.map((detail) => detail.field))
+      .not.toContain('Shares Outstanding (provider fallback)');
+  });
+
+  it('publishes Forward EV/Sales without statements only with a dated USD bridge', () => {
+    const result = calculateFairValue({
+      ...input,
+      periods: [],
+      waccMarketInputs: null,
+      sharesOutstanding: 100,
+      sharesOutstandingAsOf: '2026-06-30',
+      balanceSheetBridge: {
+        cash: 100,
+        debt: 200,
+        currency: 'USD',
+        asOf: '2026-06-30',
+        provider: 'financial-modeling-prep',
+      },
+      analystEstimates: input.analystEstimates!.map((estimate) => ({
+        ...estimate,
+        estimatedEps: null,
+        epsAnalystCount: null,
+      })),
+    }, Date.parse('2026-07-25'));
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.modelResults.map((model) => model.model)).toEqual(['ev-sales']);
+    expect(result.inputDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'Cash', period: '2026-06-30' }),
+      expect.objectContaining({ field: 'Total Debt', period: '2026-06-30' }),
+    ]));
+  });
+
+  it('does not count duplicate, mismatched-period, wrong-currency, or irrelevant peers', () => {
+    const invalidPeers = [
+      ...input.peerObservations!.slice(0, 2),
+      { ...input.peerObservations![2], estimatePeriod: '2027-12-31' },
+      { ...input.peerObservations![3], currency: 'EUR' },
+      { ...input.peerObservations![4], sector: 'Healthcare', industry: 'Biotech' },
+      { ...input.peerObservations![0] },
+    ];
+    const result = calculateFairValue({
+      ...input,
+      periods: [],
+      waccMarketInputs: null,
+      peerObservations: invalidPeers,
+    }, Date.parse('2026-07-25'));
+    expect(result).toMatchObject({
+      status: 'unavailable',
+      missingFields: expect.arrayContaining(['validForwardPeers>=4']),
+    });
+  });
+
+  it('rejects mismatched or duplicate financial periods before any model calculation', () => {
+    expect(calculateFairValue({
+      ...input,
+      periods: [{ ...latest, currency: 'EUR' }],
+    }, Date.parse('2026-07-25'))).toMatchObject({
+      status: 'unavailable',
+      missingFields: ['financialPeriodCurrencyMismatch'],
+    });
+    expect(calculateFairValue({
+      ...input,
+      periods: [latest, { ...latest }],
+    }, Date.parse('2026-07-25'))).toMatchObject({
+      status: 'unavailable',
+      missingFields: ['duplicateFinancialPeriods'],
+    });
+  });
+
   it('deterministically caps quality at Medium and discloses grounded evidence', () => {
     const source = {
       url: 'https://www.nasdaq.com/market-activity/stocks/test/earnings',

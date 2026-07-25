@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MarketDataError } from '../../market-data/errors';
-import { FundamentalsService, type FundamentalsServiceLog } from './service';
+import {
+  FundamentalsService,
+  type FundamentalsLkgEntry,
+  type FundamentalsLkgRepository,
+  type FundamentalsServiceLog,
+} from './service';
 import type { FundamentalsProvider, FundamentalsSnapshot } from './provider';
 
 vi.mock('server-only', () => ({}));
@@ -126,5 +131,108 @@ describe('FundamentalsService fallback', () => {
     expect(result.periods).toHaveLength(1);
     expect(result.periods[0].revenue).toBe(999);
     expect(result.providerUsed).toBe('financial-modeling-prep');
+  });
+
+  it('persists a validated LKG and restores it through a new service instance', async () => {
+    const entries = new Map<string, FundamentalsLkgEntry>();
+    const repository: FundamentalsLkgRepository = {
+      get: async (symbol, dataset) => entries.get(`${symbol}:${dataset}`) ?? null,
+      upsert: async (entry) => { entries.set(`${entry.symbol}:${entry.dataset}`, entry); },
+    };
+    const clock = Date.parse('2025-01-10T00:00:00.000Z');
+    const live = provider('alpha-vantage', async () => snap());
+    const first = new FundamentalsService(
+      live,
+      null,
+      () => clock,
+      () => {},
+      { repository },
+    );
+    await first.getFinancialPeriods('XYZ');
+    expect(entries.size).toBe(1);
+
+    const afterRestart = provider('alpha-vantage', async () => rateLimited);
+    const second = new FundamentalsService(
+      afterRestart,
+      null,
+      () => clock,
+      () => {},
+      { repository },
+    );
+    const restored = await second.getFinancialPeriods('XYZ');
+    expect(restored.dataState).toBe('provider-cached');
+    expect(restored.fallbackReason).toBe('PERSISTENT_LKG_FRESH');
+    expect(afterRestart.getFinancialPeriods).not.toHaveBeenCalled();
+  });
+
+  it('uses stale persistent LKG after live providers rate-limit and never overwrites it', async () => {
+    const original = snap({
+      asOf: '2023-06-30',
+      fetchedAt: '2023-07-01T00:00:00.000Z',
+    });
+    let stored: FundamentalsLkgEntry = {
+      symbol: 'XYZ',
+      dataset: 'financial-statements',
+      financialPeriods: original.periods,
+      snapshot: original,
+      provider: 'alpha-vantage',
+      sourceAsOf: original.asOf,
+      fetchedAt: original.fetchedAt,
+      validatedAt: original.fetchedAt,
+      schemaVersion: 1,
+    };
+    const upsert = vi.fn(async (entry: FundamentalsLkgEntry) => { stored = entry; });
+    const repository: FundamentalsLkgRepository = {
+      get: async () => stored,
+      upsert,
+    };
+    const service = new FundamentalsService(
+      provider('alpha-vantage', async () => rateLimited),
+      provider('financial-modeling-prep', async () => {
+        throw new MarketDataError('rate-limited', 'throttled');
+      }),
+      () => Date.parse('2025-01-10T00:00:00.000Z'),
+      () => {},
+      { repository },
+    );
+    const result = await service.getFinancialPeriods('XYZ');
+    expect(result.dataState).toBe('provider-stale');
+    expect(result.periods).toEqual(original.periods);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('uses authoritative filing data on cold start after both structured providers fail', async () => {
+    const upsert = vi.fn(async () => {});
+    const service = new FundamentalsService(
+      provider('alpha-vantage', async () => rateLimited),
+      provider('financial-modeling-prep', async () => {
+        throw new MarketDataError('rate-limited', 'throttled');
+      }),
+      () => Date.parse('2025-01-10T00:00:00.000Z'),
+      () => {},
+      {
+        repository: { get: async () => null, upsert },
+        authoritativeFallback: provider('sec-companyfacts', async () =>
+          snap({ diagnostics: { ...snap().diagnostics, provider: 'sec-companyfacts' } })),
+      },
+    );
+    const result = await service.getFinancialPeriods('XYZ');
+    expect(result.providerUsed).toBe('sec-companyfacts');
+    expect(result.dataState).toBe('authoritative-filing');
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent fundamentals requests by symbol', async () => {
+    let resolveSnapshot!: (value: FundamentalsSnapshot) => void;
+    const pending = new Promise<FundamentalsSnapshot>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const primary = provider('alpha-vantage', async () => pending);
+    const service = new FundamentalsService(primary, null, () => 0, () => {});
+    const first = service.getFinancialPeriods('xyz');
+    const second = service.getFinancialPeriods('XYZ');
+    resolveSnapshot(snap());
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(primary.getFinancialPeriods).toHaveBeenCalledTimes(1);
   });
 });
