@@ -1,36 +1,61 @@
-/**
- * Shared types for analyst price-target consensus — EXTERNAL reference data,
- * distinct from the Nexora Fair Value model. Kept in a client-safe module (no
- * `server-only`) so the card component and the server service share one contract
- * without the client importing provider/secret code.
- */
+export type AnalystTargetProvider = 'finnhub' | 'alpha-vantage';
 
-export interface AnalystPriceTarget {
-  status: 'available';
+export type AnalystConsensusStatus =
+  | 'available'
+  | 'fallback'
+  | 'stale'
+  | 'not-entitled'
+  | 'rate-limited'
+  | 'unavailable'
+  | 'provider-error';
+
+export type ProviderAvailabilityStatus =
+  | 'available'
+  | 'unconfigured'
+  | 'not-entitled'
+  | 'rate-limited'
+  | 'invalid-key'
+  | 'unavailable'
+  | 'provider-error';
+
+export interface ProviderAvailability {
+  provider: AnalystTargetProvider;
+  providerLabel: string;
+  endpoint: 'stock/price-target' | 'OVERVIEW';
+  status: ProviderAvailabilityStatus;
+  message: string;
+  checkedAt: string;
+}
+
+export interface AnalystTargetSnapshot {
   symbol: string;
-  low: number;
-  /** Median consensus target, when the provider reports one. */
-  median: number | null;
-  /** Mean (average) consensus target. */
-  average: number;
-  high: number;
-  /** Number of contributing analysts for the freshest window, when known. */
+  targetPrice: number;
+  medianTarget: number | null;
+  highTarget: number | null;
+  lowTarget: number | null;
   analystCount: number | null;
-  /** Trailing window the count/coverage reflects, when derived from a count. */
-  coverageWindow: 'last-quarter' | 'last-year' | 'all-time' | null;
-  /** Listing currency of the targets, resolved by the caller (never fabricated). */
+  provider: AnalystTargetProvider;
+  providerLabel: 'Finnhub' | 'Alpha Vantage';
   currency: string | null;
-  /** Provider-reported as-of date (ISO), when available; otherwise null. */
-  asOf: string | null;
-  /** When the app retrieved this from the provider (freshness). */
-  retrievedAt: string;
-  source: 'financial-modeling-prep';
+  lastUpdated: string | null;
 }
 
-export interface AnalystPriceTargetUnavailable {
-  status: 'unavailable';
+export interface AnalystConsensusResult {
   symbol: string;
-  reason: string;
+  targetPrice: number | null;
+  medianTarget: number | null;
+  highTarget: number | null;
+  lowTarget: number | null;
+  analystCount: number | null;
+  currentPrice: number | null;
+  currentPriceAsOf: string | null;
+  upsideDownsidePct: number | null;
+  provider: AnalystTargetProvider | null;
+  providerLabel: string | null;
+  currency: string | null;
+  lastUpdated: string | null;
+  cachedAt: string | null;
+  stale: boolean;
+  status: AnalystConsensusStatus;
+  coverage: ProviderAvailability[];
 }
-
-export type AnalystTargetResult = AnalystPriceTarget | AnalystPriceTargetUnavailable;

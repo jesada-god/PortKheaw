@@ -35,7 +35,11 @@ describe('FX service', () => {
     const primary = provider('primary', new Error('offline'));
     const secondary = provider('secondary', quote('secondary'));
     const store = repository({ ...quote('database'), cached: true, stale: true });
-    const result = await getFxRate('USD', 'THB', { providers: [primary, secondary], repository: store });
+    const result = await getFxRate('USD', 'THB', {
+      providers: [primary, secondary],
+      repository: store,
+      now: Date.parse(fetchedAt),
+    });
     expect(result.quote).toMatchObject({ source: 'secondary', cached: false, stale: false });
     expect(store.get).not.toHaveBeenCalled();
   });

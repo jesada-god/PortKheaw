@@ -3,6 +3,33 @@ import type { DataFreshness, HistoricalPrice } from '@/src/lib/market-data/types
 export type AnalyticsSourceType = 'provider-supplied' | 'calculated' | 'estimated' | 'user-provided';
 export type MetricStatus = 'available' | 'unavailable' | 'not-meaningful' | 'delayed' | 'stale';
 
+export interface FinancialPeriod {
+  periodEnd: string;
+  currency: string;
+  revenue: number;
+  operatingIncome: number;
+  netIncome: number;
+  depreciationAmortization: number;
+  capitalExpenditure: number;
+  changeInWorkingCapital: number | null;
+  operatingCashFlow: number;
+  freeCashFlow: number;
+  dividendsPaid: number | null;
+  interestExpense: number;
+  totalDebt: number;
+  cash: number;
+  totalAssets: number;
+  totalLiabilities: number;
+  dilutedShares: number;
+  incomeBeforeTax?: number | null;
+  incomeTaxExpense?: number | null;
+  grossProfit?: number | null;
+  ebitda?: number | null;
+  dilutedEps?: number | null;
+  totalEquity?: number | null;
+  restated?: boolean;
+}
+
 export interface MetricMetadata {
   symbol: string;
   currency: string | null;

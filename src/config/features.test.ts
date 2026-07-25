@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fairValueEnabled, featureFlagEnabled } from './features';
+import { analystConsensusEnabled, featureFlagEnabled } from './features';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -13,15 +13,15 @@ describe('server feature flags', () => {
     expect(featureFlagEnabled(' TRUE ')).toBe(true);
   });
 
-  it('enables Fair Value by default but honors an explicit disable', () => {
-    delete process.env.FEATURE_FAIR_VALUE;
-    expect(fairValueEnabled()).toBe(true);
+  it('enables Analyst Consensus by default but honors an explicit disable', () => {
+    delete process.env.FEATURE_ANALYST_CONSENSUS;
+    expect(analystConsensusEnabled()).toBe(true);
 
-    vi.stubEnv('FEATURE_FAIR_VALUE', 'false');
-    expect(fairValueEnabled()).toBe(false);
+    vi.stubEnv('FEATURE_ANALYST_CONSENSUS', 'false');
+    expect(analystConsensusEnabled()).toBe(false);
 
-    vi.stubEnv('FEATURE_FAIR_VALUE', 'true');
-    expect(fairValueEnabled()).toBe(true);
+    vi.stubEnv('FEATURE_ANALYST_CONSENSUS', 'true');
+    expect(analystConsensusEnabled()).toBe(true);
   });
 });
 

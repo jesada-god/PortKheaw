@@ -1,20 +1,11 @@
 'use client';
 import { useState } from 'react';
 import Header from '@/src/components/layout/Header';
-import { Target, Shuffle, TrendingUp, ChevronRight, Lock } from 'lucide-react';
+import { Shuffle, TrendingUp, ChevronRight, Lock } from 'lucide-react';
 import { Tabs } from '@/src/components/ui/Tabs';
 import { useRouter } from 'next/navigation';
 
 const toolsList = [
-  {
-    id: 'price-target',
-    title: 'คำนวณราคาเป้าหมาย (Price Target)',
-    description: 'ประเมินมูลค่าหุ้นพื้นฐานด้วย DCF และ PE Multiple',
-    icon: Target,
-    tag: 'FREE',
-    category: 'ราคาเป้าหมาย',
-    route: '/tools/price-target'
-  },
   {
     id: 'what-if',
     title: 'จำลองสถานการณ์ (What-If Analysis)',
@@ -45,11 +36,11 @@ export default function ToolsPage() {
 
   return (
     <div>
-      <Header title="เครื่องมือวิเคราะห์ (Tools)" subtitle="เครื่องมือคำนวณและจำลองสถานการณ์" />
+      <Header title="เครื่องมือวิเคราะห์ (Tools)" subtitle="เครื่องมือจำลองสถานการณ์และความเสี่ยง" />
       
       <div className="p-4 md:p-8 space-y-6">
         <Tabs 
-          tabs={['ทั้งหมด', 'ราคาเป้าหมาย', 'จำลองสถานการณ์', 'วิเคราะห์ความเสี่ยง']} 
+          tabs={['ทั้งหมด', 'จำลองสถานการณ์', 'วิเคราะห์ความเสี่ยง']}
           activeTab={activeTab} 
           onChange={setActiveTab} 
         />

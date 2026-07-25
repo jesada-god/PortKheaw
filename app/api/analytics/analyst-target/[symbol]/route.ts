@@ -1,17 +1,12 @@
 import { NextResponse } from 'next/server';
-import { loadAnalystTarget } from '@/src/lib/analytics/analyst-target/service';
+import { loadAnalystConsensus } from '@/src/lib/analytics/analyst-target/service';
 import { checkAnalyticsRateLimit } from '@/src/lib/analytics/rate-limit';
 import { getMarketDataGateway } from '@/src/lib/market-data/gateway/service';
+import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import { symbolSchema } from '@/src/lib/market-data/validation';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Analyst price-target consensus — EXTERNAL reference data, served separately
- * from the Nexora Fair Value model. Always returns a structured result:
- * `available` with real provider numbers, or `unavailable` with a reason. Never a
- * fabricated target.
- */
 export async function GET(
   request: Request,
   context: { params: Promise<{ symbol: string }> },
@@ -26,25 +21,48 @@ export async function GET(
   const symbol = parsed.data;
 
   const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const identity = forwardedFor && /^[0-9a-f:.]{3,64}$/i.test(forwardedFor) ? forwardedFor : 'anonymous';
+  const identity = forwardedFor && /^[0-9a-f:.]{3,64}$/i.test(forwardedFor)
+    ? forwardedFor : 'anonymous';
   const rate = checkAnalyticsRateLimit(`analyst-target:${identity}`, 20);
   if (!rate.allowed) {
     return NextResponse.json(
-      { data: { status: 'unavailable', symbol, reason: 'ระบบจำกัดคำขอชั่วคราว กรุณาลองใหม่ภายหลัง' } },
-      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+      {
+        error: {
+          code: 'rate-limited',
+          message: 'ระบบจำกัดคำขอชั่วคราว กรุณาลองใหม่ภายหลัง',
+        },
+      },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(rate.retryAfterSeconds) },
+      },
     );
   }
 
-  // Resolve the listing currency so the card can label the targets truthfully.
-  // Best-effort: a resolution failure simply omits the currency, never blocks.
-  let currency: string | null = null;
+  let listingCurrency: string | null = null;
+  let currentPrice: number | null = null;
+  let currentPriceAsOf: string | null = null;
   try {
-    const instrument = await getMarketDataGateway().resolveInstrument(symbol);
-    currency = instrument.currency ?? null;
+    const gateway = getMarketDataGateway();
+    const instrument = await gateway.resolveInstrument(symbol);
+    listingCurrency = instrument.currency;
+    const quote = await loadResilientQuote(symbol, gateway, undefined, instrument);
+    listingCurrency = quote.data.currency ?? listingCurrency;
+    currentPrice = Number.isFinite(quote.data.price) && quote.data.price > 0
+      ? quote.data.price : null;
+    currentPriceAsOf = quote.freshness.asOf;
   } catch {
-    currency = null;
+    // Consensus may still be shown without upside/downside. We never replace a
+    // missing accepted market quote with a provider target or zero.
   }
 
-  const data = await loadAnalystTarget(symbol, { currency });
-  return NextResponse.json({ data }, { headers: { 'Cache-Control': 'private, no-store' } });
+  const data = await loadAnalystConsensus(symbol, {
+    listingCurrency,
+    currentPrice,
+    currentPriceAsOf,
+  });
+  return NextResponse.json(
+    { data },
+    { headers: { 'Cache-Control': 'private, no-store' } },
+  );
 }

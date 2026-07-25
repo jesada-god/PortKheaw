@@ -1,7 +1,6 @@
 import 'server-only';
 import { MarketDataError } from '../../market-data/errors';
-import { datasetFreshness } from '../valuation/freshness';
-import type { FinancialPeriod } from '../valuation/types';
+import type { FinancialPeriod } from './types';
 import type { FundamentalsProvider, FundamentalsSnapshot } from './provider';
 import { validateFundamentalsSnapshot } from './validation';
 
@@ -26,6 +25,21 @@ const ELIGIBLE_CODES = new Set([
 const DEFAULT_COOLDOWN_SECONDS = 60;
 const LKG_DATASET = 'financial-statements';
 const LKG_SCHEMA_VERSION = 1;
+const DAY_MS = 86_400_000;
+
+function financialStatementsFreshness(
+  asOf: string | null | undefined,
+  now = Date.now(),
+): 'fresh' | 'stale' | 'expired' | 'missing' {
+  if (!asOf) return 'missing';
+  const timestamp = Date.parse(asOf);
+  if (!Number.isFinite(timestamp)) return 'missing';
+  const age = now - timestamp;
+  if (age < -DAY_MS) return 'expired';
+  if (age <= 550 * DAY_MS) return 'fresh';
+  if (age <= 800 * DAY_MS) return 'stale';
+  return 'expired';
+}
 
 export interface FundamentalsServiceLog {
   event: string;
@@ -133,7 +147,7 @@ export class FundamentalsService implements FundamentalsProvider {
 
   private async resolve(symbol: string, signal?: AbortSignal): Promise<FundamentalsSnapshot> {
     const lkg = await this.readLkg(symbol);
-    if (lkg && datasetFreshness('financialStatements', lkg.sourceAsOf, this.now()) === 'fresh') {
+    if (lkg && financialStatementsFreshness(lkg.sourceAsOf, this.now()) === 'fresh') {
       this.log({
         event: 'fundamentals-lkg-used',
         symbol,
@@ -342,7 +356,7 @@ export class FundamentalsService implements FundamentalsProvider {
     thrown?: MarketDataError,
   ): Promise<FundamentalsSnapshot> {
     const lkgFreshness = lkg
-      ? datasetFreshness('financialStatements', lkg.sourceAsOf, this.now())
+      ? financialStatementsFreshness(lkg.sourceAsOf, this.now())
       : 'missing';
     if (lkg && lkgFreshness === 'stale') {
       this.log({

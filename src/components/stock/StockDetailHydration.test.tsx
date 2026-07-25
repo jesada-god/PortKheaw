@@ -5,7 +5,6 @@ import { hydrateRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, Quote } from '@/src/lib/market-data/types';
-import { createDcfOnlyFairValueResult } from '@/src/test/fixtures/fair-value';
 import { StockDetailClient } from './StockDetailClient';
 
 vi.stubGlobal('React', React);
@@ -113,24 +112,67 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   extendedIndicatorsEnabled: false,
   supportResistanceEnabled: false,
   keyStatisticsEnabled: false,
-  fairValueEnabled: true,
+  analystConsensusEnabled: true,
 };
 
-const unavailableFairValue = {
-  status: 'unavailable',
-  failureKind: 'provider-unavailable',
+const unavailableConsensus = {
+  status: 'not-entitled',
   symbol: 'RKLB',
   currency: 'USD',
-  provider: 'alpha-vantage',
-  reason: 'Provider has no complete financial statements for RKLB.',
-  missingFields: ['historicalFinancials>=3Periods'],
-  missingInputs: ['historicalFinancials>=3Periods'],
-  staleInputs: [],
-  asOf: '2026-07-17',
-  calculatedAt: '2026-07-20T06:00:00.000Z',
-  methodologyVersion: 'nexora-fv-v2',
-  limitations: ['No data is fabricated.'],
-  diagnostics: [],
+  currentPrice: 51.23,
+  currentPriceAsOf: '2026-07-17T20:00:00.000Z',
+  targetPrice: null,
+  medianTarget: null,
+  lowTarget: null,
+  highTarget: null,
+  analystCount: null,
+  upsideDownsidePct: null,
+  provider: null,
+  providerLabel: null,
+  lastUpdated: null,
+  coverage: [
+    {
+      provider: 'finnhub',
+      providerLabel: 'Finnhub',
+      endpoint: 'stock/price-target',
+      status: 'not-entitled',
+      message: 'Finnhub: API plan ปัจจุบันไม่รองรับ Price Target',
+      checkedAt: '2026-07-20T06:00:00.000Z',
+    },
+    {
+      provider: 'alpha-vantage',
+      providerLabel: 'Alpha Vantage',
+      endpoint: 'OVERVIEW',
+      status: 'unavailable',
+      message: 'Alpha Vantage: ไม่พบ Analyst Target',
+      checkedAt: '2026-07-20T06:00:00.000Z',
+    },
+  ],
+  cachedAt: null,
+  stale: false,
+};
+
+const availableConsensus = {
+  ...unavailableConsensus,
+  status: 'available',
+  targetPrice: 55,
+  medianTarget: 55,
+  lowTarget: 50,
+  highTarget: 60,
+  analystCount: 18,
+  upsideDownsidePct: 7.36,
+  provider: 'finnhub',
+  providerLabel: 'Finnhub',
+  lastUpdated: '2026-07-18T00:00:00.000Z',
+  cachedAt: '2026-07-20T06:00:00.000Z',
+  coverage: [{
+    provider: 'finnhub',
+    providerLabel: 'Finnhub',
+    endpoint: 'stock/price-target',
+    status: 'available',
+    message: 'Finnhub: ใช้งานได้',
+    checkedAt: '2026-07-20T06:00:00.000Z',
+  }],
 };
 const originalTimeZone = process.env.TZ;
 
@@ -162,7 +204,7 @@ describe('Stock Detail hydration regression', () => {
       expect(clientInitialMarkup).toBe(serverMarkup);
       expect(serverMarkup).toContain('ข้อมูล ณ 17 ก.ค. 2569');
       expect(serverMarkup).not.toContain('17 ก.ค. 2569 00:00');
-      expect(serverMarkup).toContain('Loading Fair Value…');
+      expect(serverMarkup).toContain('Loading Analyst Consensus');
       expect(serverMarkup).toContain('December');
     } finally {
       if (original === undefined) delete process.env.TZ;
@@ -174,7 +216,7 @@ describe('Stock Detail hydration regression', () => {
     const recoverable: unknown[] = [];
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      data: unavailableFairValue,
+      data: unavailableConsensus,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -194,10 +236,8 @@ describe('Stock Detail hydration regression', () => {
       );
     });
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Provider data unavailable');
-      expect(container.textContent).toContain(
-        'Provider has no complete financial statements for RKLB.',
-      );
+      expect(container.textContent).toContain('ยังไม่มีราคาเป้าหมายนักวิเคราะห์ที่พร้อมใช้งาน');
+      expect(container.textContent).toContain('Finnhub: API plan ปัจจุบันไม่รองรับ Price Target');
     });
 
     expect(recoverable).toEqual([]);
@@ -209,11 +249,9 @@ describe('Stock Detail hydration regression', () => {
     container.remove();
   });
 
-  it('keeps standalone DCF available in the Overview card and details drawer', async () => {
-    const dcfOnly = createDcfOnlyFairValueResult();
-    expect(dcfOnly.baseStatus).toBe('unavailable');
+  it('shows Finnhub consensus and opens the source detail panel', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      data: dcfOnly,
+      data: availableConsensus,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -227,21 +265,19 @@ describe('Stock Detail hydration regression', () => {
       root = hydrateRoot(container, <StockDetailClient {...props} />);
     });
     await vi.waitFor(() => {
-      const fairValueMetric = [...container.querySelectorAll('dt')]
-        .find((item) => item.textContent === 'DCF Fair Value');
-      expect(fairValueMetric?.nextElementSibling?.textContent)
-        .toBe(`$${dcfOnly.fairValue.value.toFixed(2)}`);
+      expect(container.textContent).toContain('$55.00');
+      expect(container.textContent).toContain('18 Analysts');
     });
 
     const detailsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-controls^="fair-value-details-"]',
+      'button[aria-controls^="analyst-sources-"]',
     );
     expect(detailsButton).not.toBeNull();
     await act(async () => detailsButton?.click());
 
     const dialog = container.querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain(`$${dcfOnly.fairValue.value.toFixed(2)}`);
-    expect(dialog?.textContent).toContain('DCF');
+    expect(dialog?.textContent).toContain('✓ Finnhub');
+    expect(dialog?.textContent).toContain('ผู้ให้ข้อมูลไม่ได้ระบุชื่อสถาบันรายตัว');
 
     await act(async () => root?.unmount());
     container.remove();

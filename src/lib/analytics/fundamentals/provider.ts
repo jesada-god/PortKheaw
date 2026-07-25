@@ -1,6 +1,6 @@
 import 'server-only';
 import { serverEnv } from '@/src/config/env/server';
-import type { FinancialPeriod } from '../valuation/types';
+import type { FinancialPeriod } from './types';
 import { AlphaVantageFundamentalsProvider } from './providers/alpha-vantage';
 import { FinancialModelingPrepFundamentalsProvider } from './providers/financial-modeling-prep';
 import { SecCompanyFactsFundamentalsProvider } from './providers/sec-companyfacts';
@@ -32,8 +32,8 @@ export interface FundamentalsSnapshot {
   missingInputs: string[];
   /**
    * Provider error code per dataset that failed to load (e.g. `rate-limited`,
-   * `provider-unauthorized`). Lets the valuation orchestration report a truthful
-   * typed reason instead of mislabelling a throttled provider as "insufficient data".
+   * `provider-unauthorized`). Lets downstream analytics report a truthful typed
+   * reason instead of mislabelling a throttled provider as "insufficient data".
    */
   datasetErrors: Record<string, string>;
   diagnostics: FundamentalsDiagnostics;

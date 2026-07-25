@@ -43,7 +43,6 @@ interface Props {
   advancedChartTypesEnabled: boolean;
   extendedIndicatorsEnabled: boolean;
   supportResistanceEnabled: boolean;
-  fairValueEnabled: boolean;
 }
 
 export function ChartPanel({

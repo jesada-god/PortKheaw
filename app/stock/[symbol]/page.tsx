@@ -8,8 +8,8 @@ import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-s
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import {
   advancedChartTypesEnabled,
+  analystConsensusEnabled,
   extendedIndicatorsEnabled,
-  fairValueEnabled,
   keyStatisticsEnabled,
   supportResistanceEnabled,
   technicalIndicatorsEnabled,
@@ -66,7 +66,7 @@ export default async function StockDetailPage({
       extendedIndicatorsEnabled={extendedIndicatorsEnabled()}
       supportResistanceEnabled={supportResistanceEnabled()}
       keyStatisticsEnabled={keyStatisticsEnabled()}
-      fairValueEnabled={fairValueEnabled()}
+      analystConsensusEnabled={analystConsensusEnabled()}
     />
   );
 }

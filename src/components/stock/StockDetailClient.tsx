@@ -12,8 +12,6 @@ import { useAppVisible } from '@/src/hooks/useAppVisible';
 import { useMarketSource } from './useMarketSource';
 import { selectionKeyOf, type AcceptedPriceCandidate, type MarketSelection, type MarketSessionKind } from '@/src/lib/stock-detail/market-source';
 import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/KeyStatisticsSection';
-import { FairValueSection } from '@/src/components/analytics/fair-value/FairValueSection';
-import { FairValueCard } from '@/src/components/analytics/fair-value/FairValueCard';
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import { formatMarketCapitalization } from '@/src/lib/stock-detail/profile-presentation';
@@ -76,7 +74,7 @@ interface StockDetailClientProps {
   extendedIndicatorsEnabled: boolean;
   supportResistanceEnabled: boolean;
   keyStatisticsEnabled: boolean;
-  fairValueEnabled: boolean;
+  analystConsensusEnabled: boolean;
 }
 
 function MetricCard({
@@ -118,7 +116,7 @@ export function StockDetailClient({
   extendedIndicatorsEnabled,
   supportResistanceEnabled,
   keyStatisticsEnabled,
-  fairValueEnabled,
+  analystConsensusEnabled,
 }: StockDetailClientProps) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -398,7 +396,7 @@ export function StockDetailClient({
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
               keyStatisticsEnabled={keyStatisticsEnabled}
-              fairValueEnabled={fairValueEnabled}
+              analystConsensusEnabled={analystConsensusEnabled}
             />
           )}
           {tab === 'Chart' && (
@@ -421,15 +419,12 @@ export function StockDetailClient({
               advancedChartTypesEnabled={advancedChartTypesEnabled}
               extendedIndicatorsEnabled={extendedIndicatorsEnabled}
               supportResistanceEnabled={supportResistanceEnabled}
-              fairValueEnabled={fairValueEnabled}
             />
           )}
           {tab === 'News' && <NewsFeed symbol={symbol} />}
           {tab === 'Financials' && (
             <div className="space-y-4">
-              {fairValueEnabled ? <FairValueSection symbol={symbol} /> : <ComingSoon title="Financials" />}
-              {/* External analyst consensus — a distinct card, never merged with the model FV. */}
-              <AnalystTargetSection symbol={symbol} />
+              <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
             </div>
           )}
           {tab === 'Analysis' && (
@@ -459,7 +454,7 @@ function Overview({
   profileLanguage,
   onProfileLanguageChange,
   keyStatisticsEnabled,
-  fairValueEnabled,
+  analystConsensusEnabled,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -471,16 +466,14 @@ function Overview({
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
   keyStatisticsEnabled: boolean;
-  fairValueEnabled: boolean;
+  analystConsensusEnabled: boolean;
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
-  const beforeFairValue = [
+  const marketMetrics = [
     { label: 'Open', value: numberValue(quote?.open) },
     { label: 'High', value: numberValue(quote?.high) },
     { label: 'Low', value: numberValue(quote?.low) },
-  ];
-  const afterFairValue = [
     { label: 'Volume', value: numberValue(quote?.volume) },
     {
       label: 'Market cap',
@@ -496,13 +489,13 @@ function Overview({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {beforeFairValue.map((metric) => <MetricCard key={metric.label} {...metric} />)}
-        <FairValueCard
+        {marketMetrics.slice(0, 3).map((metric) => <MetricCard key={metric.label} {...metric} />)}
+        <AnalystTargetSection
           symbol={symbol}
-          enabled={fairValueEnabled}
-          language={profileLanguage}
+          enabled={analystConsensusEnabled}
+          className="col-span-2 md:col-span-4"
         />
-        {afterFairValue.map((metric) => <MetricCard key={metric.label} {...metric} />)}
+        {marketMetrics.slice(3).map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
       {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
       <CompanyProfileCard

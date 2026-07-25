@@ -1,7 +1,11 @@
-import type { FinancialPeriod } from '../valuation/types';
-import { normalizeCapitalExpenditure } from '../valuation/formulas';
+import type { FinancialPeriod } from './types';
 
 export type ReportingFrequency = 'annual' | 'quarterly';
+
+function normalizeCapitalExpenditure(value: number): number {
+  if (!Number.isFinite(value)) throw new RangeError('capitalExpenditure must be finite');
+  return Math.abs(value);
+}
 export type DatasetName = 'income-statement' | 'balance-sheet' | 'cash-flow';
 export interface RawReport { [key: string]: unknown }
 export interface RawStatementPayload { symbol?: unknown; annualReports?: unknown; quarterlyReports?: unknown }
@@ -138,7 +142,7 @@ function fields(i: RawReport, b: RawReport, c: RawReport, previousBalance: RawRe
     // fields only exist for other vendors. Fall back to the balance sheet's
     // period-end shares outstanding (the sole share figure Alpha Vantage returns)
     // so real filings are not dropped as "missing dilutedShares". This is a field
-    // mapping only — no valuation formula changes.
+    // mapping only — no analytics formula changes.
     dilutedShares: firstNumber(i, ['dilutedAverageShares', 'weightedAverageDilutedSharesOutstanding', 'weightedAverageShsOutDil'])
       ?? firstNumber(b, ['commonStockSharesOutstanding', 'commonStockSharesOutstandingDiluted']),
   };

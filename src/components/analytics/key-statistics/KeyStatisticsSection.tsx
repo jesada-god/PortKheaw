@@ -11,7 +11,7 @@ function display(metric: MetricResult | undefined) {
   return { value: `${metric.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${metric.unit === 'x' ? '×' : metric.unit === '%' ? '%' : ''}`, reason: metric.limitations.join(' ') };
 }
 
-const primary = [{ key: 'trailingPe', label: 'P/E Ratio' }, { key: 'fairValueRange', label: 'Fair Value' }, { key: 'currentVolume', label: 'Volume' }, { key: 'putCallVolume', label: 'Put/Call Ratio' }];
+const primary = [{ key: 'trailingPe', label: 'P/E Ratio' }, { key: 'marketCap', label: 'Market Cap' }, { key: 'currentVolume', label: 'Volume' }, { key: 'putCallVolume', label: 'Put/Call Ratio' }];
 export function KeyStatisticsSection({ symbol }: { symbol: string }) {
   const [data, setData] = useState<KeyStatisticsResult | null>(null); const [error, setError] = useState<string | null>(null);
   useEffect(() => { const controller = new AbortController(); void fetch(`/api/analytics/key-statistics/${encodeURIComponent(symbol)}`, { signal: controller.signal }).then(async (response) => { if (!response.ok) throw new Error(response.status === 404 ? 'ฟีเจอร์ถูกปิด' : 'โหลด Key Statistics ไม่สำเร็จ'); return response.json(); }).then((body) => setData(body.data)).catch((cause) => { if (cause instanceof Error && cause.name !== 'AbortError') setError(cause.message); }); return () => controller.abort(); }, [symbol]);

@@ -15,7 +15,7 @@ describe('isProtectedPath', () => {
       '/api/market/candles',
       '/api/market/history/intraday',
       '/api/market/options/chain',
-      '/api/analytics/fair-value/RKLB',
+      '/api/analytics/analyst-target/RKLB',
     ]) {
       expect(isProtectedPath(path)).toBe(false);
     }

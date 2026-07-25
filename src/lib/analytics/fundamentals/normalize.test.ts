@@ -35,7 +35,7 @@ describe('fundamentals normalization', () => {
   it('derives dilutedShares from the balance-sheet shares outstanding when the income statement omits a share count', () => {
     // Mirrors the real Alpha Vantage schema: INCOME_STATEMENT carries no share
     // count, while BALANCE_SHEET exposes commonStockSharesOutstanding. Without the
-    // fallback every period is dropped as "missing dilutedShares" (the Fair Value
+    // fallback every period is dropped as "missing dilutedShares" (the downstream
     // mapping-error root cause).
     const annualDates = ['2024-12-31', '2023-12-31', '2022-12-31'];
     const income = annualDates.map((fiscalDateEnding, index) => ({ fiscalDateEnding, reportedCurrency: 'USD', totalRevenue: '1000', operatingIncome: '200', netIncome: '100', interestExpense: '10', dilutedEPS: String(index + 1) }));

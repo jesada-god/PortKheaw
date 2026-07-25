@@ -9,7 +9,6 @@ import type { AdvancedChartType } from '@/src/lib/analytics/chart-types/types';
 import { calculateSupportResistance } from '@/src/lib/analytics/support-resistance/calculations';
 import { Select } from '@/src/components/ui/Select';
 import { useToast } from '@/src/components/ui/Toast';
-import { toggleFairValueLayer } from './fair-value/load-policy';
 import { calculateVolumeProfile } from '@/src/lib/analytics/volume-profile/calculations';
 import { calculateFibonacci } from '@/src/lib/analytics/fibonacci/calculations';
 import { DEFAULT_CHART_LAYERS, parseChartLayers, parseChartType, parseIndicatorIds, type ChartLayerPreferences } from '@/src/lib/analytics/chart-layers/preferences';
@@ -55,7 +54,6 @@ interface Props {
   advancedChartTypesEnabled: boolean;
   extendedIndicatorsEnabled: boolean;
   supportResistanceEnabled: boolean;
-  fairValueEnabled: boolean;
   visibleBarCount: number;
   onRequestMoreHistory?: (minimumDataPoints: number) => void;
   currentPrice?: number | null;
@@ -67,13 +65,12 @@ interface Props {
   tooltipContext?: ChartTooltipContext;
 }
 
-export function TechnicalIndicatorControls({ history, meta, technicalIndicatorsEnabled, advancedChartTypesEnabled, extendedIndicatorsEnabled, supportResistanceEnabled, fairValueEnabled, visibleBarCount, onRequestMoreHistory, currentPrice, marketLabel, datasetKey, interval, tooltipContext }: Props) {
+export function TechnicalIndicatorControls({ history, meta, technicalIndicatorsEnabled, advancedChartTypesEnabled, extendedIndicatorsEnabled, supportResistanceEnabled, visibleBarCount, onRequestMoreHistory, currentPrice, marketLabel, datasetKey, interval, tooltipContext }: Props) {
   const indicators = useMemo(() => [...(technicalIndicatorsEnabled ? BASE_INDICATORS : []), ...(extendedIndicatorsEnabled ? EXTENDED_INDICATORS : [])], [extendedIndicatorsEnabled, technicalIndicatorsEnabled]);
   const [enabled, setEnabled] = useState<TechnicalIndicatorId[]>([]);
   const [chartType, setChartType] = useState<AdvancedChartType>(advancedChartTypesEnabled ? 'candlestick' : 'area');
   const [isMobile, setIsMobile] = useState(false);
   const [layers, setLayers] = useState<ChartLayerPreferences>(DEFAULT_CHART_LAYERS);
-  const [showFairValue, setShowFairValue] = useState(false);
   const { addToast } = useToast();
 
   useEffect(() => {
@@ -166,7 +163,6 @@ export function TechnicalIndicatorControls({ history, meta, technicalIndicatorsE
       })}</div></fieldset>)}</div>}
       {isMobile && <p className="mt-2 text-xs text-slate-500">บนมือถือเปิดได้สูงสุด 3 layers พร้อมกัน</p>}
       <fieldset className="mt-4 border-t border-slate-800 pt-3"><legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">Chart layers</legend><div className="mt-2 flex flex-wrap gap-2">{([['volume', 'Volume'], ['vpvr', 'VPVR'], ['fibonacci', 'Fibonacci']] as const).map(([id, label]) => <button key={id} type="button" aria-label={`${layers[id] ? 'ปิด' : 'เปิด'} ${label}`} aria-pressed={layers[id]} onClick={() => toggleLayer(id)} className={`min-h-11 rounded-lg border px-3 text-xs ${layers[id] ? 'border-[#D4FF00] text-[#D4FF00]' : 'border-slate-700 text-slate-300'}`}>{label}</button>)}</div>{layers.vpvr && volumeProfile?.status === 'unavailable' && <p className="mt-2 text-xs text-amber-300">VPVR unavailable: {volumeProfile.reason}</p>}{layers.fibonacci && fibonacci?.status === 'unavailable' && <p className="mt-2 text-xs text-amber-300">Fibonacci unavailable: {fibonacci.reason}</p>}<p className="mt-2 text-xs text-slate-500">ทุก layer คำนวณจาก history.prices ชุดเดิม การเปิด/ปิดไม่เรียก provider และไม่เปลี่ยน timeframe</p></fieldset>
-      {fairValueEnabled && <fieldset className="mt-4 border-t border-slate-800 pt-3"><legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">Fundamental Fair Value</legend><button type="button" aria-label={`${showFairValue ? 'ปิด' : 'เปิด'} Fundamental Fair Value Zone`} aria-pressed={showFairValue} onClick={() => setShowFairValue(toggleFairValueLayer)} className={`mt-2 min-h-11 rounded-lg border px-3 text-xs ${showFairValue ? 'border-[#D4FF00] text-[#D4FF00]' : 'border-slate-700 text-slate-300'}`}>Fundamental Fair Value Zone</button>{showFairValue && <p className="mt-2 text-xs text-amber-300">Unavailable จนกว่าจะมีงบการเงินจริงและผล valuation ที่ผ่าน validation การเปิด/ปิด layer นี้ไม่เรียก provider เพิ่ม</p>}</fieldset>}
       <details className="mt-3 border-t border-slate-800 pt-3 text-xs text-slate-400"><summary className="cursor-pointer text-slate-300">รายละเอียดวิธีคำนวณและแหล่งข้อมูล</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Symbol: <span className="text-slate-200">{analysis.symbol}</span></div><div>Source: <span className="text-slate-200">{analysis.dataSource ?? 'unavailable'}</span></div><div>Data points: <span className="text-slate-200">{analysis.dataPoints}</span></div><div>Latest data: <span className="text-slate-200">{analysis.latestDataAt ?? 'unavailable'}</span></div><div>Calculated: <span className="text-slate-200">{formatBangkokDateTime(analysis.calculatedAt)}</span></div><div>Freshness: <span className="text-slate-200">{analysis.freshness.status}</span></div><div className="sm:col-span-2">Method: <span className="text-slate-200">{analysis.methodology}; raw OHLCV, close field</span></div></dl><ul className="mt-2 list-disc space-y-1 pl-4">{analysis.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul><p className="mt-2 text-amber-300">ค่าทั้งหมดคำนวณจากข้อมูลย้อนหลัง ไม่ใช่คำแนะนำหรือการรับประกันผลตอบแทน</p></details>
     </details>
     {chartType === 'heikin-ashi' && <p role="note" className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">Heikin Ashi เป็นค่าที่แปลงจาก OHLC ไม่ใช่ราคาซื้อขายจริง</p>}

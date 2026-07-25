@@ -23,7 +23,7 @@ interface Cached { rows: RawRow[]; fetchedAt: number }
 /** Map a Financial Modeling Prep statement row onto the Alpha-Vantage-shaped field
  * names the shared normalizer already understands. This is a pure rename — no
  * value is fabricated, rescaled, or derived — so both providers flow through the
- * single deterministic `normalizeFinancialStatements` mapping and `nexora-fv-v1`. */
+ * single deterministic `normalizeFinancialStatements` mapping. */
 function toRawReport(dataset: DatasetName, row: RawRow): RawReport {
   const common: RawReport = {
     fiscalDateEnding: row.date,

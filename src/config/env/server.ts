@@ -54,6 +54,7 @@ export function parseServerEnv(input: Record<string, unknown>) {
       GEMINI_MODEL: read('GEMINI_MODEL', geminiModel, DEFAULT_GEMINI_MODEL),
       ALPHA_VANTAGE_API_KEY: read('ALPHA_VANTAGE_API_KEY', optionalSecret, undefined),
       FMP_API_KEY: read('FMP_API_KEY', optionalSecret, undefined),
+      FINNHUB_API_KEY: read('FINNHUB_API_KEY', optionalSecret, undefined),
       SEC_USER_AGENT: read('SEC_USER_AGENT', optionalSecret, undefined),
       POLYGON_API_KEY: read('POLYGON_API_KEY', optionalSecret, undefined),
       MARKET_DATA_PROVIDER: read('MARKET_DATA_PROVIDER', optionalSecret, undefined),

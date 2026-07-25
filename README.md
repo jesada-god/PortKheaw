@@ -1,27 +1,30 @@
 # Nexora AI
 
-## Phase 10.4 analytics provider
+## Analytics providers
 
 When `ALPHA_VANTAGE_API_KEY` is configured, the server-side fundamentals adapter loads Alpha Vantage `INCOME_STATEMENT`, `BALANCE_SHEET`, and `CASH_FLOW` datasets. It normalizes annual and quarterly periods without converting missing values to zero. Trailing P/E requires four complete quarterly diluted-EPS values, matching quote/reporting currencies, positive EPS, and a quote no older than seven days.
 
-Fundamentals are held in a private in-process cache for 24 hours (stale fallback up to seven days after a transient provider failure), with per-provider/symbol/dataset/period keys and in-flight request deduplication. Provider responses are never publicly cached by the authenticated analytics routes. Missing statements produce structured unavailable results; no production fallback financial values are generated. `FEATURE_OPTIONS_STATISTICS` and `FEATURE_ANALYST_CONSENSUS` must remain disabled until real providers for those capabilities are integrated.
+Fundamentals are held in a private in-process cache for 24 hours (stale fallback up to seven days after a transient provider failure), with per-provider/symbol/dataset/period keys and in-flight request deduplication. Provider responses are never publicly cached by the authenticated analytics routes. Missing statements produce structured unavailable results; no production fallback financial values are generated.
 
-### Fair Value on Vercel
+### Analyst Consensus
 
-Fair Value is enabled by default. For an explicit production configuration, set these values in the Vercel **Production** environment and redeploy:
+Analyst Consensus requests Finnhub `stock/price-target` first and uses `targetMean` as the target. When that endpoint is unavailable, not entitled, or rate limited, the server falls back to Alpha Vantage `OVERVIEW.AnalystTargetPrice`. Provider values are alternatives and are never averaged together. FMP is not part of the Analyst Consensus runtime.
+
+Targets are cached server-side for 24 hours under `analyst-target:v2:{symbol}`. After a provider failure, a previously valid target may be served as explicitly stale data for no more than 48 hours from its original cache time. Current price is loaded through the accepted Nexora quote pipeline and is never stored in the target cache.
+
+For production, configure only server-side keys and confirm the applicable provider display/redistribution license before enabling public access:
 
 ```dotenv
-FEATURE_FAIR_VALUE=true
+FEATURE_ANALYST_CONSENSUS=true
+FINNHUB_API_KEY=
 ALPHA_VANTAGE_API_KEY=
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 ```
 
-`ALPHA_VANTAGE_API_KEY` is server-only and supplies the quote, profile, normalized financial statements, and primary historical data used by `nexora-fv-v1`. The Supabase browser configuration is required because `/api/analytics/fair-value/[symbol]` is authenticated. `FMP_API_KEY` is only a Company Profile fallback and does not replace the financial-statement provider. Set `FEATURE_FAIR_VALUE=false` only for an operational rollback; omitting the flag leaves Fair Value enabled.
+API keys never enter browser bundles. Finnhub uses the `X-Finnhub-Token` request header, and no provider token is logged. A missing, unentitled, rate-limited, or unavailable provider is displayed truthfully and never replaced with a calculated or fabricated target. The provider responses do not include individual institution names, so the UI does not invent them.
 
 Intelligent Investment Analytics — แพลตฟอร์มวิเคราะห์ ติดตามพอร์ต และจำลองการลงทุนด้วยข้อมูลและ AI
 
-Nexora AI เป็นเว็บแอป Next.js สำหรับติดตาม Watchlist, บันทึกข้อมูลพอร์ตด้วยตนเอง, ตั้ง Price Alert และใช้เครื่องมือ What-If, Price Target และ Monte Carlo โดยไม่มีระบบส่งคำสั่งซื้อขายจริง
+Nexora AI เป็นเว็บแอป Next.js สำหรับติดตาม Watchlist, บันทึกข้อมูลพอร์ตด้วยตนเอง, ตั้ง Price Alert และใช้เครื่องมือ What-If กับ Monte Carlo โดยไม่มีระบบส่งคำสั่งซื้อขายจริง
 
 ## เริ่มใช้งาน
 
