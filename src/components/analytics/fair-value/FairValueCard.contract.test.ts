@@ -29,6 +29,10 @@ describe('Stock Overview Fair Value contract', () => {
     }
     expect(drawer).toContain('title="วิธีคำนวณ Fair Value"');
     expect(drawer).toContain('variant="responsive-dialog"');
+    expect(drawer).toContain('◈ คำนวณจากข้อมูลจริง');
+    expect(drawer).toContain('◐ ค้นคว้าจากแหล่งภายนอก');
+    expect(drawer).toContain('item.evidence');
+    expect(drawer).toContain('rel="noreferrer"');
   });
 
   it('keeps the responsive dialog inside the viewport and preserves dialog accessibility', () => {

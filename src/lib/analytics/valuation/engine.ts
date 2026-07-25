@@ -11,6 +11,7 @@ import {
   type AnalystEstimate,
   type FairValueResult,
   type FinancialPeriod,
+  type MetricProvenance,
   type ModelResult,
   type ValuationInput,
   type ValuationDiagnostic,
@@ -100,6 +101,7 @@ function unavailable(input: ValuationInput, calculatedAt: string, missingFields:
         reason: 'required-model-input-failed-validation',
       })),
     ],
+    inputResolution: input.inputResolution,
   });
 }
 
@@ -240,6 +242,10 @@ function inputDetail(input: {
   sourceUrl?: string;
   evidence?: ValuationInputDisclosure['evidence'];
 }): ValuationInputDisclosure {
+  const sourceType = input.sourceType
+    ?? (input.origin === 'derived' ? 'derived' : 'structured-provider');
+  const origin = input.origin
+    ?? (sourceType === 'gemini-grounded' ? 'gemini-grounded' : 'provider');
   return {
     field: input.field,
     value: input.value,
@@ -248,14 +254,102 @@ function inputDetail(input: {
     provider: input.provider,
     asOf: input.asOf,
     status: input.status ?? 'available',
-    origin: input.origin ?? 'provider',
-    sourceType: input.sourceType ?? (input.origin === 'derived' ? 'derived' : 'structured-provider'),
+    origin,
+    sourceType,
     ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}),
     ...(input.evidence ? {
       evidence: input.evidence,
       evidenceCount: input.evidence.length,
     } : {}),
   };
+}
+
+function metricSourceScore(provenance: MetricProvenance | null | undefined): number {
+  if (!provenance || provenance.sourceType === 'structured-provider') return 100;
+  if (provenance.sourceType === 'derived') return 85;
+  return provenance.evidenceQuality === 'high' ? 70 : 55;
+}
+
+function provenanceDisclosure(
+  provenance: MetricProvenance | null | undefined,
+  fallbackProvider: string,
+) {
+  const sourceType = provenance?.sourceType ?? 'structured-provider';
+  return {
+    provider: provenance?.provider ?? fallbackProvider,
+    sourceType,
+    origin: sourceType === 'derived'
+      ? 'derived' as const
+      : sourceType === 'gemini-grounded' ? 'gemini-grounded' as const : 'provider' as const,
+    sourceUrl: provenance?.sourceUrl,
+    evidence: provenance?.evidence,
+    status: sourceType === 'gemini-grounded' ? 'limited' as const : 'available' as const,
+  };
+}
+
+function valuationQuality(input: {
+  completeModels: boolean;
+  dcfAvailable: boolean;
+  multiplesAvailable: boolean;
+  estimateMode: 'annual-series' | 'consensus-cagr' | null;
+  targetEstimateAvailable: boolean;
+  peerCount: number;
+  stale: boolean;
+  providerStatus: ValuationInput['providerStatus'];
+  provenances: Array<MetricProvenance | null | undefined>;
+}): {
+  score: number;
+  label: 'High' | 'Medium' | 'Low';
+  confidence: 'High' | 'Medium' | 'Low';
+  components: Record<string, number>;
+} {
+  const modelCoverage = input.completeModels ? 100
+    : input.dcfAvailable || input.multiplesAvailable ? 60 : 0;
+  const estimateCoverage = input.estimateMode === 'annual-series' ? 100
+    : input.estimateMode === 'consensus-cagr' ? 78
+      : input.targetEstimateAvailable ? 65 : 0;
+  // Peer coverage is optional for a valid standalone DCF. Model coverage
+  // already reflects that Forward Multiples was excluded.
+  const peerCoverage = input.multiplesAvailable
+    ? Math.min(100, input.peerCount / MINIMUM_VALID_PEERS * 100)
+    : input.dcfAvailable ? 100 : 0;
+  const freshness = input.stale ? 35
+    : input.providerStatus === 'cached' ? 80
+      : input.providerStatus === 'delayed' ? 75
+        : input.providerStatus === 'limited' ? 70 : 100;
+  const relevant = input.provenances.filter(
+    (item): item is MetricProvenance => item !== null && item !== undefined,
+  );
+  const sourceQuality = relevant.length
+    ? relevant.reduce((sum, item) => sum + metricSourceScore(item), 0) / relevant.length
+    : 100;
+  const grounded = relevant.filter((item) => item.sourceType === 'gemini-grounded');
+  const evidenceQuality = grounded.length
+    ? grounded.reduce(
+        (sum, item) => sum + (item.evidenceQuality === 'high' ? 80 : 65),
+        0,
+      ) / grounded.length
+    : 100;
+  const components = {
+    modelCoverage,
+    sourceQuality,
+    freshness,
+    estimateCoverage,
+    peerCoverage,
+    evidenceQuality,
+  };
+  const score = modelCoverage * 0.25
+    + sourceQuality * 0.2
+    + freshness * 0.15
+    + estimateCoverage * 0.15
+    + peerCoverage * 0.15
+    + evidenceQuality * 0.1;
+  const label = score >= 93 ? 'High' as const
+    : score >= 65 ? 'Medium' as const : 'Low' as const;
+  const confidence = input.completeModels && score >= 93
+    ? 'High' as const
+    : score >= 65 ? 'Medium' as const : 'Low' as const;
+  return { score, label, confidence, components };
 }
 
 export function calculateFairValue(input: ValuationInput, now = Date.now()): FairValueResult {
@@ -446,13 +540,37 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
     targetEstimate?.revenueProvenance?.sourceType,
     targetEstimate?.epsProvenance?.sourceType,
     ...currentPeers.map((peer) => peer.estimateProvenance?.sourceType),
+    marketWacc?.betaProvenance?.sourceType,
+    marketWacc?.riskFreeRateProvenance?.sourceType,
+    marketWacc?.equityRiskPremiumProvenance?.sourceType,
+    input.marketCapitalizationProvenance?.sourceType,
+    input.sharesOutstandingProvenance?.sourceType,
   ].includes('gemini-grounded');
   const stale = gate.staleInputs.length > 0 || input.providerStatus === 'stale';
   const completeModels = Boolean(dcf && multiples);
-  const dataQualityLabel = stale ? 'Low' as const
-    : groundedCritical || !completeModels ? 'Medium' as const : 'High' as const;
-  const qualityScore = dataQualityLabel === 'High' ? 95
-    : dataQualityLabel === 'Medium' ? (completeModels ? 82 : 74) : 55;
+  const quality = valuationQuality({
+    completeModels,
+    dcfAvailable: Boolean(dcf),
+    multiplesAvailable: Boolean(multiples),
+    estimateMode: growth?.estimateMode ?? null,
+    targetEstimateAvailable: Boolean(targetEstimate),
+    peerCount: multiples?.peers.length ?? 0,
+    stale,
+    providerStatus: input.providerStatus,
+    provenances: [
+      ...(growth?.estimates ?? []).map((estimate) => estimate.revenueProvenance),
+      positive(targetEstimate?.estimatedEps)
+        ? targetEstimate?.epsProvenance : targetEstimate?.revenueProvenance,
+      ...currentPeers.map((peer) => peer.estimateProvenance),
+      marketWacc?.betaProvenance,
+      marketWacc?.riskFreeRateProvenance,
+      marketWacc?.equityRiskPremiumProvenance,
+      input.marketCapitalizationProvenance,
+      input.sharesOutstandingProvenance,
+    ],
+  });
+  const dataQualityLabel = quality.label;
+  const qualityScore = quality.score;
   const baseAvailable = completeModels;
   if (!baseAvailable) {
     for (const model of modelResults) delete model.normalizedWeight;
@@ -475,27 +593,14 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
   }
   const fairValueType = baseAvailable ? 'base' as const
     : dcf ? 'dcf' as const : 'relative' as const;
-  const confidence = baseAvailable
-    ? stale || groundedCritical || input.providerStatus === 'limited'
-      ? 'Medium' as const : 'High' as const
-    : stale || groundedCritical ? 'Low' as const : 'Medium' as const;
+  const confidence = quality.confidence;
   const lowerModel = baseAvailable ? Math.min(dcf!.fairValue, multiples!.fairValue) : null;
   const upperModel = baseAvailable ? Math.max(dcf!.fairValue, multiples!.fairValue) : null;
-  const estimateCoverage = growth
-    ? growth.estimateMode === 'annual-series' ? 30 : 22
-    : targetEstimate ? 16 : 0;
-  const peerCoverage = multiples ? (multiples.peers.length >= 5 ? 30 : 24) : 0;
-  const shareCoverage = dilutedShares ? 15 : 10;
   const modelReliability = {
     level: confidence === 'High' ? 'High' as const
       : confidence === 'Medium' ? 'Moderate' as const : 'Low' as const,
     score: qualityScore,
-    components: {
-      estimateCoverage,
-      peerCoverage,
-      waccTraceability: dcf ? 25 : 0,
-      shareCoverage,
-    },
+    components: quality.components,
     explanation: 'Data Quality measures input coverage and traceability, not the probability of an investment return.',
   };
   const classification = classifyCompany(input.sector, input.industry, input.periods);
@@ -528,15 +633,53 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       status: estimate.revenueProvenance?.sourceType === 'gemini-grounded' ? 'limited' : 'available',
     })),
       inputDetail({ field: 'Consensus Growth Rates', value: growth.rates.join(','), period: growth.method, provider: estimateProvider, asOf: growth.estimates.at(-1)?.asOf ?? calculatedAt, origin: 'derived' }),
-    inputDetail({ field: 'Risk-free Rate', value: marketWacc!.riskFreeRate!, period: '10Y Treasury', provider: marketWacc!.provider, asOf: marketWacc!.riskFreeAsOf ?? calculatedAt }),
-    inputDetail({ field: 'Beta', value: marketWacc!.beta!, period: 'latest profile', provider: marketWacc!.provider, asOf: marketWacc!.betaAsOf ?? calculatedAt }),
-    inputDetail({ field: 'Equity Risk Premium', value: marketWacc!.equityRiskPremium!, period: 'United States', provider: marketWacc!.provider, asOf: marketWacc!.equityRiskPremiumAsOf ?? calculatedAt }),
+    inputDetail({
+      field: 'Risk-free Rate',
+      value: marketWacc!.riskFreeRate!,
+      period: marketWacc!.riskFreeRateProvenance?.fiscalPeriod ?? '10Y Treasury',
+      asOf: marketWacc!.riskFreeAsOf ?? calculatedAt,
+      ...provenanceDisclosure(marketWacc!.riskFreeRateProvenance, marketWacc!.provider),
+    }),
+    inputDetail({
+      field: 'Beta',
+      value: marketWacc!.beta!,
+      period: marketWacc!.betaProvenance?.fiscalPeriod ?? 'latest profile',
+      asOf: marketWacc!.betaAsOf ?? calculatedAt,
+      ...provenanceDisclosure(marketWacc!.betaProvenance, marketWacc!.provider),
+    }),
+    inputDetail({
+      field: 'Equity Risk Premium',
+      value: marketWacc!.equityRiskPremium!,
+      period: marketWacc!.equityRiskPremiumProvenance?.fiscalPeriod ?? 'United States',
+      asOf: marketWacc!.equityRiskPremiumAsOf ?? calculatedAt,
+      ...provenanceDisclosure(
+        marketWacc!.equityRiskPremiumProvenance,
+        marketWacc!.provider,
+      ),
+    }),
     inputDetail({ field: 'Cost of Debt', value: costDebt, period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd, origin: 'derived' }),
     inputDetail({ field: 'Tax Rate', value: taxRate, period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd, origin: 'derived' }),
     inputDetail({ field: 'WACC', value: wacc.wacc, period: 'current capital structure', provider: `${marketWacc!.provider}+${input.source}`, asOf: calculatedAt, origin: 'derived' }),
+    inputDetail({
+      field: 'Market Capitalization',
+      value: input.marketCapitalization!,
+      currency: 'USD',
+      period: input.marketCapitalizationProvenance?.fiscalPeriod ?? input.priceAsOf,
+      asOf: input.marketCapitalizationProvenance?.asOf ?? input.priceAsOf,
+      ...provenanceDisclosure(input.marketCapitalizationProvenance, input.marketPriceSource ?? input.source),
+    }),
     inputDetail({ field: 'Cash', value: latest.cash, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
     inputDetail({ field: 'Total Debt', value: latest.totalDebt, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
-    inputDetail({ field: sharesSource, value: shares!, period: sharesAsOf, provider: dilutedShares ? input.source : estimateProvider, asOf: sharesAsOf }),
+    inputDetail({
+      field: sharesSource,
+      value: shares!,
+      period: sharesAsOf,
+      asOf: sharesAsOf,
+      ...provenanceDisclosure(
+        dilutedShares ? null : input.sharesOutstandingProvenance,
+        dilutedShares ? input.source : estimateProvider,
+      ),
+    }),
     );
   }
   if (multiples && targetEstimate) {
@@ -558,7 +701,16 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
         evidence: targetProvenance?.evidence,
         status: targetProvenance?.sourceType === 'gemini-grounded' ? 'limited' : 'available',
       }),
-      inputDetail({ field: sharesSource, value: shares!, period: sharesAsOf, provider: dilutedShares ? input.source : estimateProvider, asOf: sharesAsOf }),
+      inputDetail({
+        field: sharesSource,
+        value: shares!,
+        period: sharesAsOf,
+        asOf: sharesAsOf,
+        ...provenanceDisclosure(
+          dilutedShares ? null : input.sharesOutstandingProvenance,
+          dilutedShares ? input.source : estimateProvider,
+        ),
+      }),
       inputDetail({ field: 'Cash', value: latest.cash, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
       inputDetail({ field: 'Total Debt', value: latest.totalDebt, currency: 'USD', period: latest.periodEnd, provider: input.source, asOf: latest.periodEnd }),
       inputDetail({ field: 'Peer List', value: multiples.peers.map((peer) => peer.symbol).join(','), period: targetEstimate.periodEnd, provider: peerProvider, asOf: targetEstimate.asOf, sourceType: groundedCritical ? 'gemini-grounded' : 'structured-provider', evidence: peerEvidence, status: groundedCritical ? 'limited' : 'available' }),
@@ -716,6 +868,7 @@ export function calculateFairValue(input: ValuationInput, now = Date.now()): Fai
       { name: estimateProvider, asOf: targetEstimate?.asOf ?? calculatedAt, sourceType: 'provider-supplied' },
     ],
     researchAudit: input.researchAudit,
+    inputResolution: input.inputResolution,
     latestDataAt,
     calculatedAt,
     methodologyVersion: METHODOLOGY_VERSION,

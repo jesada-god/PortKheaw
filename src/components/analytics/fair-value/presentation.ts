@@ -179,6 +179,13 @@ export function fairValueUnavailableReason(
 
 export function diagnosticReasonLabel(diagnostic: ValuationDiagnostic): string {
   if (!diagnostic.reason) return diagnostic.status === 'available' ? 'ข้อมูลพร้อมใช้งาน' : 'ไม่ระบุเหตุผล';
+  if (diagnostic.reason === 'derived-market-price-times-shares') {
+    return 'คำนวณจากราคาตลาด × จำนวนหุ้นที่รายงาน';
+  }
+  if (diagnostic.reason.startsWith('derived-historical-beta:')) {
+    const [, benchmark, sampleSize] = diagnostic.reason.split(':');
+    return `คำนวณ Beta จากผลตอบแทนรายวันเทียบ ${benchmark || 'benchmark'} (${sampleSize || 'ไม่ระบุ'} ตัวอย่าง)`;
+  }
   const safeLabels: Record<string, string> = {
     'provider-field-missing': 'ผู้ให้บริการไม่ส่งค่านี้',
     'provider-not-configured': 'ยังไม่ได้ตั้งค่าผู้ให้บริการ',

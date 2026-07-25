@@ -10,6 +10,7 @@ import {
 
 const NOW = Date.parse('2026-07-25T00:00:00.000Z');
 const URL = 'https://www.nasdaq.com/market-activity/stocks/nvts/earnings';
+const TREASURY_URL = 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates';
 const REQUEST: GroundedResearchRequest = {
   symbols: ['NVTS'],
   metrics: ['revenue', 'eps'],
@@ -151,6 +152,78 @@ describe('Gemini grounded evidence validator', () => {
     expect(validateGroundedResearch(payload([metric()], { fairValue: 99 }), REQUEST, [URL], NOW))
       .toMatchObject({ metrics: [], rejectedReasons: ['invalid-json'] });
   });
+
+  it('accepts an authoritative market-level risk-free rate with no ticker', () => {
+    const marketRequest: GroundedResearchRequest = {
+      symbols: [],
+      metrics: ['riskFreeRate'],
+      fiscalYears: [2026],
+    };
+    const candidate = metric({
+      symbol: null,
+      metric: 'riskFreeRate',
+      fiscalYear: 2026,
+      periodEnd: '2026-07-24',
+      value: 0.043,
+      unit: 'decimal',
+      analystCount: null,
+      forward: false,
+      consensus: false,
+      sources: [{
+        url: TREASURY_URL,
+        publisher: 'U.S. Department of the Treasury',
+        publishedAt: '2026-07-24',
+        evidence: 'The 10-year U.S. Treasury rate was published as 4.30 percent on July 24, 2026.',
+        reportedValue: 0.043,
+        currency: 'USD',
+        unit: 'decimal',
+      }],
+    });
+    const result = validateGroundedResearch(
+      payload([candidate]),
+      marketRequest,
+      [TREASURY_URL],
+      NOW,
+    );
+    expect(result.metrics[0]).toMatchObject({
+      symbol: null,
+      field: 'riskFreeRate',
+      value: 0.043,
+      unit: 'decimal',
+      confidence: 'high',
+    });
+  });
+
+  it('requires two independent reputable sources for a non-primary critical value', () => {
+    const marketRequest: GroundedResearchRequest = {
+      symbols: [],
+      metrics: ['equityRiskPremium'],
+      fiscalYears: [2026],
+    };
+    const candidate = metric({
+      symbol: null,
+      metric: 'equityRiskPremium',
+      fiscalYear: 2026,
+      periodEnd: '2026-07-24',
+      value: 0.05,
+      unit: 'decimal',
+      analystCount: null,
+      forward: false,
+      consensus: false,
+      sources: [{
+        url: URL,
+        publisher: 'Nasdaq',
+        publishedAt: '2026-07-24',
+        evidence: 'The published U.S. equity risk premium was 5.00 percent on July 24, 2026.',
+        reportedValue: 0.05,
+        currency: 'USD',
+        unit: 'decimal',
+      }],
+    });
+    const result = validateGroundedResearch(payload([candidate]), marketRequest, [URL], NOW);
+    expect(result.metrics).toEqual([]);
+    expect(result.rejectedReasons).toContain('insufficient-evidence');
+  });
 });
 
 describe('grounded research cache and rate-limit safety', () => {
@@ -177,6 +250,43 @@ describe('grounded research cache and rate-limit safety', () => {
     const service = new GroundedFinancialResearchService(generate, () => NOW);
     expect((await service.research(REQUEST)).cache).toBe('negative');
     expect((await service.research(REQUEST)).cache).toBe('negative');
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the market-level cache across ticker-independent requests', async () => {
+    const request: GroundedResearchRequest = {
+      symbols: [],
+      metrics: ['riskFreeRate'],
+      fiscalYears: [2026],
+    };
+    const marketPayload = payload([metric({
+      symbol: null,
+      metric: 'riskFreeRate',
+      fiscalYear: 2026,
+      periodEnd: '2026-07-24',
+      value: 0.043,
+      unit: 'decimal',
+      analystCount: null,
+      forward: false,
+      consensus: false,
+      sources: [{
+        url: TREASURY_URL,
+        publisher: 'U.S. Department of the Treasury',
+        publishedAt: '2026-07-24',
+        evidence: 'The 10-year U.S. Treasury rate was published as 4.30 percent on July 24, 2026.',
+        reportedValue: 0.043,
+        currency: 'USD',
+        unit: 'decimal',
+      }],
+    })]);
+    const generate = vi.fn(async () => ({
+      payload: marketPayload,
+      groundingUrls: [TREASURY_URL],
+    }));
+    const service = new GroundedFinancialResearchService(generate, () => NOW);
+
+    expect((await service.research(request)).cache).toBe('miss');
+    expect((await service.research({ ...request, symbols: [] })).cache).toBe('hit');
     expect(generate).toHaveBeenCalledTimes(1);
   });
 

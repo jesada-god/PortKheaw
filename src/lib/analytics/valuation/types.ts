@@ -30,13 +30,31 @@ export interface ValuationEvidenceSource {
 
 export interface MetricProvenance {
   provider: string;
-  sourceType: Exclude<ValuationEvidenceSourceType, 'derived'>;
+  sourceType: ValuationEvidenceSourceType;
   field: string;
   fiscalPeriod: string;
   asOf: string;
   sourceUrl?: string;
   evidence: ValuationEvidenceSource[];
   evidenceQuality: EvidenceQuality;
+  methodology?: string;
+  benchmark?: string;
+  sampleSize?: number;
+}
+
+export interface InputResolutionAudit {
+  /** Classification immediately after structured providers have settled. */
+  available: string[];
+  derivable: string[];
+  researchable: string[];
+  missing: string[];
+  /** Fields that were subsequently resolved without overwriting provider data. */
+  resolved: Array<{
+    field: string;
+    origin: 'derived' | 'gemini-grounded';
+    provider: string;
+    asOf: string;
+  }>;
 }
 
 export interface FinancialPeriod {
@@ -77,8 +95,10 @@ export interface ValuationInput {
   sector: string;
   industry: string;
   marketCapitalization?: number | null;
+  marketCapitalizationProvenance?: MetricProvenance | null;
   sharesOutstanding?: number | null;
   sharesOutstandingAsOf?: string | null;
+  sharesOutstandingProvenance?: MetricProvenance | null;
   dilutedSharesSource?: 'diluted' | 'shares-outstanding-fallback' | null;
   periods: FinancialPeriod[];
   historicalPrices: HistoricalPrice[];
@@ -114,7 +134,12 @@ export interface ValuationInput {
     geminiUsed: boolean;
     evidenceSourceCount: number;
     rejectedReasons: string[];
+    requests?: number;
+    cacheHits?: number;
+    cacheMisses?: number;
+    negativeCacheHits?: number;
   };
+  inputResolution?: InputResolutionAudit;
   peerAudit?: {
     candidates: string[];
     rejected: Array<{ symbol: string; reason: string }>;
@@ -162,10 +187,13 @@ export interface PeerObservation {
 export interface WaccMarketInputs {
   beta: number | null;
   betaAsOf: string | null;
+  betaProvenance?: MetricProvenance | null;
   riskFreeRate: number | null;
   riskFreeAsOf: string | null;
+  riskFreeRateProvenance?: MetricProvenance | null;
   equityRiskPremium: number | null;
   equityRiskPremiumAsOf: string | null;
+  equityRiskPremiumProvenance?: MetricProvenance | null;
   provider: string;
 }
 
@@ -205,7 +233,7 @@ export interface ValuationInputDisclosure {
   provider: string;
   asOf: string;
   status: 'available' | 'limited' | 'stale';
-  origin: 'provider' | 'derived';
+  origin: 'provider' | 'derived' | 'gemini-grounded';
   sourceType: ValuationEvidenceSourceType;
   sourceUrl?: string;
   evidenceCount?: number;
@@ -219,8 +247,11 @@ export interface ValuationDiagnostic {
   provider: string | null;
   asOf: string;
   status: 'available' | 'missing' | 'stale' | 'rejected';
-  provenance: 'provider' | 'derived' | 'validation';
+  provenance: 'provider' | 'derived' | 'gemini-grounded' | 'validation';
   reason: string | null;
+  sourceType?: ValuationEvidenceSourceType;
+  sourceUrl?: string;
+  evidence?: ValuationEvidenceSource[];
 }
 export interface ValuationAssumptionDisclosure {
   field: string;
@@ -245,6 +276,7 @@ export interface FairValueUnavailable {
   methodologyVersion: typeof METHODOLOGY_VERSION;
   limitations: string[];
   diagnostics: ValuationDiagnostic[];
+  inputResolution?: InputResolutionAudit;
 }
 
 export interface FairValueAvailable {
@@ -288,7 +320,12 @@ export interface FairValueAvailable {
     geminiUsed: boolean;
     evidenceSourceCount: number;
     rejectedReasons: string[];
+    requests?: number;
+    cacheHits?: number;
+    cacheMisses?: number;
+    negativeCacheHits?: number;
   };
+  inputResolution?: InputResolutionAudit;
   latestDataAt: string; calculatedAt: string; methodologyVersion: typeof METHODOLOGY_VERSION; limitations: string[];
 }
 

@@ -12,6 +12,7 @@ import type {
 const BASE_URL = 'https://financialmodelingprep.com/stable';
 const TIMEOUT_MS = 10_000;
 const MAX_PEER_CANDIDATES = 16;
+const MAX_NETWORK_CONCURRENCY = 4;
 const FRESH_MS = {
   quote: 5 * 60_000,
   profile: 7 * 86_400_000,
@@ -161,25 +162,12 @@ function nearestFutureEstimate(estimates: AnalystEstimate[], today: string): Ana
     .at(0) ?? null;
 }
 
-function sameIndustryOrSector(
-  target: { sector: string | null; industry: string | null },
-  peer: { sector: string | null; industry: string | null },
-): boolean {
-  const normalize = (value: string | null) => value?.trim().toLowerCase() ?? '';
-  const targetIndustry = normalize(target.industry);
-  const targetSector = normalize(target.sector);
-  const peerIndustry = normalize(peer.industry);
-  const peerSector = normalize(peer.sector);
-  return Boolean(
-    (targetIndustry && peerIndustry && targetIndustry === peerIndustry)
-    || (targetSector && peerSector && targetSector === peerSector),
-  );
-}
-
 export class FinancialModelingPrepValuationProvider {
   readonly id = 'financial-modeling-prep' as const;
   private readonly cache = new Map<string, CachedPayload>();
   private readonly inflight = new Map<string, Promise<LoadedPayload>>();
+  private activeNetworkRequests = 0;
+  private readonly networkQueue: Array<() => void> = [];
 
   constructor(
     private readonly apiKey: string,
@@ -196,6 +184,19 @@ export class FinancialModelingPrepValuationProvider {
     if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
     const date = Date.parse(raw);
     return Number.isFinite(date) ? Math.max(0, Math.ceil((date - this.now()) / 1_000)) : undefined;
+  }
+
+  private async withNetworkPermit<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.activeNetworkRequests >= MAX_NETWORK_CONCURRENCY) {
+      await new Promise<void>((resolve) => this.networkQueue.push(resolve));
+    }
+    this.activeNetworkRequests += 1;
+    try {
+      return await operation();
+    } finally {
+      this.activeNetworkRequests -= 1;
+      this.networkQueue.shift()?.();
+    }
   }
 
   private async network(path: string, params: Record<string, string>): Promise<unknown> {
@@ -260,7 +261,7 @@ export class FinancialModelingPrepValuationProvider {
         return { ...cached, cache: 'hit' as const };
       }
       try {
-        const payload = await this.network(path, params);
+        const payload = await this.withNetworkPermit(() => this.network(path, params));
         const fetchedAt = this.now();
         this.cache.set(key, { payload, fetchedAt });
         return { payload, fetchedAt, cache: 'miss' as const };
@@ -280,33 +281,25 @@ export class FinancialModelingPrepValuationProvider {
     target: { sector: string | null; industry: string | null },
     today: string,
     candidateSource: NonNullable<PeerObservation['candidateSource']>,
+    quote: RawRow | undefined,
+    quoteResult: LoadedPayload | null,
+    branch: 'eps' | 'revenue' | null,
   ): Promise<PeerLoadResult> {
-    const [profileSettled, quoteSettled, enterpriseSettled, estimatesSettled] = await Promise.allSettled([
-      this.load('profile', { symbol }, FRESH_MS.profile),
-      this.load('quote', { symbol }, FRESH_MS.quote),
-      this.load('enterprise-values', { symbol, period: 'annual', limit: '1' }, FRESH_MS.financial),
+    const [enterpriseSettled, estimatesSettled] = await Promise.allSettled([
+      branch === 'eps'
+        ? Promise.resolve<LoadedPayload | null>(null)
+        : this.load('enterprise-values', { symbol, period: 'annual', limit: '1' }, FRESH_MS.financial),
       this.load('analyst-estimates', { symbol, period: 'annual', page: '0', limit: '10' }, FRESH_MS.financial),
     ]);
-    const profileResult = profileSettled.status === 'fulfilled' ? profileSettled.value : null;
-    const quoteResult = quoteSettled.status === 'fulfilled' ? quoteSettled.value : null;
     const enterpriseResult = enterpriseSettled.status === 'fulfilled' ? enterpriseSettled.value : null;
     const estimatesResult = estimatesSettled.status === 'fulfilled' ? estimatesSettled.value : null;
-    const cacheStates = [profileResult, quoteResult, enterpriseResult, estimatesResult]
+    const cacheStates = [quoteResult, enterpriseResult, estimatesResult]
       .filter((result): result is LoadedPayload => result !== null)
       .map((result) => result.cache);
-    const profile = rows(profileResult?.payload).at(0);
     const peerIdentity = {
-      sector: text(profile?.sector),
-      industry: text(profile?.industry),
+      sector: target.sector,
+      industry: target.industry,
     };
-    if (!profile || !sameIndustryOrSector(target, peerIdentity)) {
-      return {
-        observation: null,
-        cacheStates,
-        rejectionReasons: [!profile ? 'missing-profile' : 'industry-sector-mismatch'],
-      };
-    }
-    const quote = rows(quoteResult?.payload).at(0);
     const enterprise = newestByDate(rows(enterpriseResult?.payload));
     const estimate = nearestFutureEstimate(
       rows(estimatesResult?.payload)
@@ -321,7 +314,7 @@ export class FinancialModelingPrepValuationProvider {
     const enterpriseValue = firstNumber(enterprise, ['enterpriseValue']);
     const rejectionReasons = [
       ...(!price ? ['missing-quote'] : []),
-      ...(!enterpriseValue ? ['missing-EV'] : []),
+      ...(branch !== 'eps' && !enterpriseValue ? ['missing-EV'] : []),
       ...(!estimate || (estimate.estimatedEps === null && estimate.estimatedRevenue === null)
         ? ['missing-estimate'] : []),
     ];
@@ -431,6 +424,15 @@ export class FinancialModelingPrepValuationProvider {
       .map((row) => normalizedEstimate(row, estimatesAsOf))
       .filter((estimate): estimate is AnalystEstimate => estimate !== null)
       .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd));
+    const targetEstimate = nearestFutureEstimate(estimates, today);
+    const peerBranch = targetEstimate?.estimatedEps !== null
+      && targetEstimate?.estimatedEps !== undefined
+      && targetEstimate.estimatedEps > 0
+      ? 'eps' as const
+      : targetEstimate?.estimatedRevenue !== null
+        && targetEstimate?.estimatedRevenue !== undefined
+        && targetEstimate.estimatedRevenue > 0
+        ? 'revenue' as const : null;
     const providerSymbols = [...new Set(rows(peersResult?.payload)
       .flatMap((row) => {
         const nested = Array.isArray(row.peersList)
@@ -469,12 +471,31 @@ export class FinancialModelingPrepValuationProvider {
     const observeNewCandidates = async () => {
       const pending = [...candidateSource.keys()]
         .filter((peer) => !settledPeers.has(peer));
+      if (!pending.length) return;
+      let batchQuoteResult: LoadedPayload | null = null;
+      try {
+        batchQuoteResult = await this.load(
+          'batch-quote',
+          { symbols: pending.join(',') },
+          FRESH_MS.quote,
+        );
+      } catch (cause) {
+        endpointErrors['batch-quote'] = this.safeError(cause);
+      }
+      const quotesBySymbol = new Map(rows(batchQuoteResult?.payload)
+        .flatMap((row) => {
+          const rowSymbol = text(row.symbol)?.toUpperCase();
+          return rowSymbol ? [[rowSymbol, row] as const] : [];
+        }));
       const results = await Promise.allSettled(
         pending.map((peer) => this.peerObservation(
           peer,
           target,
           today,
           candidateSource.get(peer) ?? 'provider-peers',
+          quotesBySymbol.get(peer),
+          batchQuoteResult,
+          peerBranch,
         )),
       );
       pending.forEach((peer, index) => settledPeers.set(peer, results[index]));
@@ -617,11 +638,41 @@ export class FinancialModelingPrepValuationProvider {
       waccMarketInputs: {
         beta,
         betaAsOf: profileResult ? new Date(profileResult.fetchedAt).toISOString() : null,
+        betaProvenance: beta === null ? null : {
+          provider: this.id,
+          sourceType: 'structured-provider',
+          field: 'beta',
+          fiscalPeriod: 'latest profile',
+          asOf: profileResult ? new Date(profileResult.fetchedAt).toISOString() : datasetAsOf,
+          sourceUrl: `${BASE_URL}/profile`,
+          evidence: [],
+          evidenceQuality: 'high',
+        },
         riskFreeRate,
         riskFreeAsOf: firstDate(latestTreasury, ['date']),
+        riskFreeRateProvenance: riskFreeRate === null ? null : {
+          provider: this.id,
+          sourceType: 'structured-provider',
+          field: 'riskFreeRate',
+          fiscalPeriod: '10Y Treasury',
+          asOf: firstDate(latestTreasury, ['date']) ?? datasetAsOf,
+          sourceUrl: `${BASE_URL}/treasury-rates`,
+          evidence: [],
+          evidenceQuality: 'high',
+        },
         equityRiskPremium,
         equityRiskPremiumAsOf: premiumResult
           ? new Date(premiumResult.fetchedAt).toISOString() : null,
+        equityRiskPremiumProvenance: equityRiskPremium === null ? null : {
+          provider: this.id,
+          sourceType: 'structured-provider',
+          field: 'equityRiskPremium',
+          fiscalPeriod: 'United States',
+          asOf: premiumResult ? new Date(premiumResult.fetchedAt).toISOString() : datasetAsOf,
+          sourceUrl: `${BASE_URL}/market-risk-premium`,
+          evidence: [],
+          evidenceQuality: 'high',
+        },
         provider: this.id,
       },
       marketCapitalization,

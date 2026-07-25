@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  diagnosticReasonLabel,
   fairValueMissingFieldsSummary,
   fairValueUnavailableLabel,
   fairValueUnavailableReason,
@@ -62,5 +63,28 @@ describe('Fair Value presentation', () => {
       limitations: [],
       diagnostics: [],
     }, 'th')).toContain('ยังคำนวณไม่ได้');
+  });
+
+  it('explains deterministic derivations without exposing raw resolver keys', () => {
+    expect(diagnosticReasonLabel({
+      field: 'marketCapitalization',
+      value: 2_000,
+      period: '2026-07-24',
+      provider: 'nexora-derived',
+      asOf: '2026-07-24',
+      status: 'available',
+      provenance: 'derived',
+      reason: 'derived-market-price-times-shares',
+    })).toContain('ราคาตลาด × จำนวนหุ้น');
+    expect(diagnosticReasonLabel({
+      field: 'beta',
+      value: 1.2,
+      period: '2025-01-01/2026-07-24',
+      provider: 'nexora-historical-beta',
+      asOf: '2026-07-24',
+      status: 'available',
+      provenance: 'derived',
+      reason: 'derived-historical-beta:SPY:250',
+    })).toContain('SPY');
   });
 });

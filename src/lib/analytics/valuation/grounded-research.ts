@@ -16,6 +16,16 @@ const MAX_EVIDENCE_AGE_MS = 365 * 86_400_000;
 const MAX_CONSENSUS_AGE_MS = 180 * 86_400_000;
 const MAX_SYMBOLS_PER_REQUEST = 12;
 
+const groundedMetricNameSchema = z.enum([
+  'revenue',
+  'eps',
+  'beta',
+  'riskFreeRate',
+  'equityRiskPremium',
+  'shares',
+  'marketCap',
+]);
+
 const sourceSchema = z.object({
   url: z.url(),
   publisher: z.string().trim().min(2).max(120),
@@ -27,8 +37,9 @@ const sourceSchema = z.object({
 }).strict();
 
 const groundedMetricSchema = z.object({
-  symbol: z.string().trim().min(1).max(20).transform((value) => value.toUpperCase()),
-  metric: z.enum(['revenue', 'eps']),
+  symbol: z.string().trim().min(1).max(20)
+    .transform((value) => value.toUpperCase()).nullable(),
+  metric: groundedMetricNameSchema,
   fiscalYear: z.number().int().min(2000).max(2200),
   periodEnd: z.iso.date(),
   value: z.number().finite(),
@@ -64,13 +75,27 @@ const RESPONSE_JSON_SCHEMA = {
           'unit', 'analystCount', 'asOf', 'forward', 'consensus', 'inferred', 'sources',
         ],
         properties: {
-          symbol: { type: 'string' },
-          metric: { type: 'string', enum: ['revenue', 'eps'] },
+          symbol: { type: ['string', 'null'] },
+          metric: {
+            type: 'string',
+            enum: [
+              'revenue',
+              'eps',
+              'beta',
+              'riskFreeRate',
+              'equityRiskPremium',
+              'shares',
+              'marketCap',
+            ],
+          },
           fiscalYear: { type: 'integer' },
           periodEnd: { type: 'string', format: 'date' },
           value: { type: 'number' },
           currency: { type: 'string', enum: ['USD'] },
-          unit: { type: 'string', enum: ['USD', 'USD/share'] },
+          unit: {
+            type: 'string',
+            enum: ['USD', 'USD/share', 'decimal', 'coefficient', 'shares'],
+          },
           analystCount: { type: ['integer', 'null'], minimum: 1 },
           asOf: { type: 'string' },
           forward: { type: 'boolean', enum: [true] },
@@ -91,7 +116,10 @@ const RESPONSE_JSON_SCHEMA = {
                 evidence: { type: 'string' },
                 reportedValue: { type: 'number' },
                 currency: { type: 'string', enum: ['USD'] },
-                unit: { type: 'string', enum: ['USD', 'USD/share'] },
+                unit: {
+                  type: 'string',
+                  enum: ['USD', 'USD/share', 'decimal', 'coefficient', 'shares'],
+                },
               },
             },
           },
@@ -102,6 +130,7 @@ const RESPONSE_JSON_SCHEMA = {
 } as const;
 
 export type GroundedMetric = z.infer<typeof groundedMetricSchema>;
+export type GroundedMetricName = z.infer<typeof groundedMetricNameSchema>;
 export type GroundedRejectedReason =
   | 'invalid-json'
   | 'missing-grounding'
@@ -122,17 +151,25 @@ export type GroundedRejectedReason =
 
 export interface GroundedResearchRequest {
   symbols: string[];
-  metrics: Array<'revenue' | 'eps'>;
+  metrics: GroundedMetricName[];
   fiscalYears: number[];
 }
 
 export interface ValidatedGroundedMetric {
-  symbol: string;
-  metric: 'revenue' | 'eps';
+  symbol: string | null;
+  metric: GroundedMetricName;
+  field: GroundedMetricName;
   fiscalYear: number;
   periodEnd: string;
+  period: string;
   value: number;
+  unit: string;
+  currency: string;
+  asOf: string;
+  sourceName: string;
+  sourceUrl: string;
   analystCount: number | null;
+  confidence: EvidenceQuality;
   provenance: MetricProvenance;
 }
 
@@ -183,6 +220,10 @@ function normalizedUrl(value: string): string | null {
 
 const REPUTABLE_HOSTS = [
   'sec.gov',
+  'treasury.gov',
+  'federalreserve.gov',
+  'fred.stlouisfed.org',
+  'pages.stern.nyu.edu',
   'nasdaq.com',
   'nyse.com',
   'reuters.com',
@@ -235,7 +276,13 @@ function sourceQuality(
   const trustedHostname = attributedSourceHostname(url, groundingTitle);
   if (AI_HOSTS.some((host) => hostnameMatches(hostname, host))) return null;
   if (AI_HOSTS.some((host) => hostnameMatches(trustedHostname, host))) return null;
-  if (hostnameMatches(trustedHostname, 'sec.gov')
+  if ([
+    'sec.gov',
+    'treasury.gov',
+    'federalreserve.gov',
+    'fred.stlouisfed.org',
+    'pages.stern.nyu.edu',
+  ].some((host) => hostnameMatches(trustedHostname, host))
     || (/^(?:ir|investors?)\./i.test(trustedHostname)
       && /\b(investor relations|annual report|quarterly report|company guidance|filing)\b/i.test(publisher))) {
     return 'primary';
@@ -251,9 +298,31 @@ function freshDate(value: string, now: number, maxAgeMs: number): boolean {
   return age >= -86_400_000 && age <= maxAgeMs;
 }
 
-function valuePlausible(metric: GroundedMetric['metric'], value: number): boolean {
-  return Number.isFinite(value)
-    && (metric === 'revenue' ? value > 0 && value <= 1e15 : Math.abs(value) <= 10_000);
+function expectedUnit(metric: GroundedMetricName): string {
+  if (metric === 'eps') return 'USD/share';
+  if (metric === 'riskFreeRate' || metric === 'equityRiskPremium') return 'decimal';
+  if (metric === 'beta') return 'coefficient';
+  if (metric === 'shares') return 'shares';
+  return 'USD';
+}
+
+function companyMetric(metric: GroundedMetricName): boolean {
+  return ['revenue', 'eps', 'beta', 'shares', 'marketCap'].includes(metric);
+}
+
+function consensusMetric(metric: GroundedMetricName): boolean {
+  return metric === 'revenue' || metric === 'eps';
+}
+
+function valuePlausible(metric: GroundedMetricName, value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  if (metric === 'revenue' || metric === 'marketCap') return value > 0 && value <= 1e15;
+  if (metric === 'shares') return value > 0 && value <= 1e14;
+  if (metric === 'riskFreeRate' || metric === 'equityRiskPremium') {
+    return value > 0 && value <= 0.25;
+  }
+  if (metric === 'beta') return value > 0 && value <= 10;
+  return Math.abs(value) <= 10_000;
 }
 
 function closeEnough(left: number, right: number, tolerance = 0.01): boolean {
@@ -269,20 +338,35 @@ function rejectionForMetric(
   groundingTitles: Record<string, string>,
 ): { accepted: ValidatedGroundedMetric | null; reasons: GroundedRejectedReason[] } {
   const reasons: GroundedRejectedReason[] = [];
-  if (!request.symbols.includes(metric.symbol)) reasons.push('symbol-mismatch');
+  const isCompanyMetric = companyMetric(metric.metric);
+  const isConsensusMetric = consensusMetric(metric.metric);
+  if (isCompanyMetric && (!metric.symbol || !request.symbols.includes(metric.symbol))) {
+    reasons.push('symbol-mismatch');
+  }
+  if (!isCompanyMetric && metric.symbol !== null) reasons.push('symbol-mismatch');
   if (!request.metrics.includes(metric.metric)) reasons.push('metric-mismatch');
-  if (!metric.forward || metric.inferred) reasons.push('unsupported-inference');
-  if (!metric.consensus) reasons.push('insufficient-evidence');
+  if (metric.inferred) reasons.push('unsupported-inference');
+  if (isConsensusMetric && !metric.forward) reasons.push('historical-not-forward');
+  if (isConsensusMetric && !metric.consensus) reasons.push('insufficient-evidence');
+  if (!isConsensusMetric && (metric.forward || metric.consensus)) {
+    reasons.push('unsupported-inference');
+  }
   if (!request.fiscalYears.includes(metric.fiscalYear)
     || Number(metric.periodEnd.slice(0, 4)) !== metric.fiscalYear) {
     reasons.push('fiscal-year-mismatch');
   }
-  if (metric.fiscalYear <= new Date(now).getUTCFullYear() - 1) reasons.push('historical-not-forward');
+  if (isConsensusMetric && metric.fiscalYear <= new Date(now).getUTCFullYear() - 1) {
+    reasons.push('historical-not-forward');
+  }
   if (metric.currency !== 'USD') reasons.push('currency-mismatch');
-  const expectedUnit = metric.metric === 'revenue' ? 'USD' : 'USD/share';
-  if (metric.unit !== expectedUnit) reasons.push('unit-ambiguous');
+  const requiredUnit = expectedUnit(metric.metric);
+  if (metric.unit !== requiredUnit) reasons.push('unit-ambiguous');
   if (!valuePlausible(metric.metric, metric.value)) reasons.push('invalid-number');
-  if (!freshDate(metric.asOf, now, MAX_CONSENSUS_AGE_MS)) reasons.push('stale');
+  const maximumMetricAge = metric.metric === 'riskFreeRate'
+    ? 31 * 86_400_000
+    : metric.metric === 'equityRiskPremium'
+      ? MAX_EVIDENCE_AGE_MS : MAX_CONSENSUS_AGE_MS;
+  if (!freshDate(metric.asOf, now, maximumMetricAge)) reasons.push('stale');
 
   const urls = new Set<string>();
   const evidence: ValuationEvidenceSource[] = [];
@@ -305,14 +389,13 @@ function rejectionForMetric(
       continue;
     }
     if (quality === 'secondary') {
-      reasons.push('insufficient-evidence');
       continue;
     }
     if (!freshDate(rawSource.publishedAt, now, MAX_EVIDENCE_AGE_MS)) {
       reasons.push('stale');
       continue;
     }
-    if (rawSource.currency !== 'USD' || rawSource.unit !== expectedUnit) {
+    if (rawSource.currency !== 'USD' || rawSource.unit !== requiredUnit) {
       reasons.push(rawSource.currency !== 'USD' ? 'currency-mismatch' : 'unit-ambiguous');
       continue;
     }
@@ -325,8 +408,12 @@ function rejectionForMetric(
       reasons.push('unsupported-inference');
       continue;
     }
-    if (!new RegExp(`\\b${metric.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
-      .test(rawSource.evidence) || !/\d/.test(rawSource.evidence)) {
+    const symbolSupported = !isCompanyMetric || (
+      metric.symbol !== null
+      && new RegExp(`\\b${metric.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+        .test(rawSource.evidence)
+    );
+    if (!symbolSupported || !/\d/.test(rawSource.evidence)) {
       reasons.push('symbol-mismatch');
       continue;
     }
@@ -339,7 +426,12 @@ function rejectionForMetric(
     });
     evidenceHosts.push(attributedSourceHostname(url, groundingTitles[url]));
   }
-  if (!evidence.length) reasons.push('insufficient-evidence');
+  const independentHosts = new Set(evidenceHosts).size;
+  const authoritative = evidence.some((source) => source.quality === 'primary');
+  if (!evidence.length
+    || (!isConsensusMetric && !authoritative && independentHosts < 2)) {
+    reasons.push('insufficient-evidence');
+  }
   if (reportedValues.length > 1) {
     const low = Math.min(...reportedValues);
     const high = Math.max(...reportedValues);
@@ -364,20 +456,30 @@ function rejectionForMetric(
   if (reasons.some((reason) => fatal.has(reason))) {
     return { accepted: null, reasons: [...new Set(reasons)] };
   }
-  const independentHosts = new Set(evidenceHosts).size;
-  const evidenceQuality: EvidenceQuality = independentHosts >= 2 ? 'high' : 'medium';
+  const evidenceQuality: EvidenceQuality = authoritative || independentHosts >= 2
+    ? 'high' : 'medium';
   return {
     accepted: {
       symbol: metric.symbol,
       metric: metric.metric,
+      field: metric.metric,
       fiscalYear: metric.fiscalYear,
       periodEnd: metric.periodEnd,
+      period: metric.periodEnd,
       value: metric.value,
+      unit: metric.unit,
+      currency: metric.currency,
+      asOf: metric.asOf,
+      sourceName: evidence[0]!.publisher,
+      sourceUrl: evidence[0]!.url,
       analystCount: metric.analystCount,
+      confidence: evidenceQuality,
       provenance: {
         provider: 'gemini-grounded-research',
         sourceType: 'gemini-grounded',
-        field: metric.metric === 'revenue' ? 'analystConsensusRevenue' : 'analystConsensusEps',
+        field: metric.metric === 'revenue'
+          ? 'analystConsensusRevenue'
+          : metric.metric === 'eps' ? 'analystConsensusEps' : metric.metric,
         fiscalPeriod: metric.periodEnd,
         asOf: metric.asOf,
         sourceUrl: evidence[0]?.url,
@@ -496,7 +598,10 @@ export class GroundedFinancialResearchService {
 
   research(rawRequest: GroundedResearchRequest): Promise<GroundedResearchOutcome> {
     const request = normalizedRequest(rawRequest);
-    if (!request.symbols.length || !request.metrics.length || !request.fiscalYears.length) {
+    const requiresCompanySymbol = request.metrics.some(companyMetric);
+    if ((requiresCompanySymbol && !request.symbols.length)
+      || !request.metrics.length
+      || !request.fiscalYears.length) {
       return Promise.resolve({
         metrics: [],
         rejectedReasons: [],
@@ -574,12 +679,16 @@ function configuredGenerator(apiKey: string, model: string): GroundedResearchGen
     const response = await client.models.generateContent({
       model,
       contents: [
-        'Research only the requested forward analyst-consensus financial inputs.',
-        `Symbols: ${request.symbols.join(', ')}`,
-        `Metrics: ${request.metrics.join(', ')}`,
-        `Fiscal years: ${request.fiscalYears.join(', ')}`,
+        'Research only the requested financial input fields; never perform a valuation.',
+        `Symbols (null applies only to US market-level fields): ${request.symbols.join(', ') || 'none'}`,
+        `Fields: ${request.metrics.join(', ')}`,
+        `Fiscal years or as-of years: ${request.fiscalYears.join(', ')}`,
+        'For revenue/EPS return published forward analyst consensus with forward=true and consensus=true.',
+        'For beta, shares, marketCap, riskFreeRate, and equityRiskPremium return the explicitly published current value with forward=false and consensus=false.',
+        'Use decimal units for riskFreeRate and equityRiskPremium (for example 0.043, not 4.3). Use coefficient for beta and shares for share count.',
+        'Use symbol=null only for riskFreeRate and equityRiskPremium. All company fields must use the exact requested ticker.',
         'Use Google Search. For sources[].url copy the exact attribution URI from grounding metadata, including a Google attribution redirect URI when supplied, and copy exact short evidence from the source.',
-        'Return only genuinely published forward consensus. Do not estimate, extrapolate, average conflicts, or use historical growth as consensus.',
+        'Return only genuinely published values. Do not estimate, extrapolate, calculate, average conflicts, or use historical growth as consensus.',
         'Do not calculate or mention Fair Value, DCF, WACC, peer multiples, or a target price.',
         'If a requested value is not verifiable, omit it from estimates.',
       ].join('\n'),

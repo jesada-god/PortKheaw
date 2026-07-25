@@ -5,6 +5,7 @@ import type { AnalystEstimate, ValuationInput } from './types';
 const mocks = vi.hoisted(() => ({
   getFundamentalsProvider: vi.fn(),
   getMarketDataProvider: vi.fn(),
+  getHistoricalMarketDataService: vi.fn(),
   loadResilientQuote: vi.fn(),
   getFmpValuationProvider: vi.fn(),
   research: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('server-only', () => ({}));
 vi.mock('@/src/lib/market-data', () => ({
   getMarketDataProvider: mocks.getMarketDataProvider,
+  getHistoricalMarketDataService: mocks.getHistoricalMarketDataService,
 }));
 vi.mock('@/src/lib/market-data/quote-service', () => ({
   loadResilientQuote: mocks.loadResilientQuote,
@@ -52,6 +54,21 @@ const financialPeriod = {
   dilutedShares: 100,
   dilutedEps: 1.4,
 };
+
+function priceHistory(multiplier: number) {
+  let close = 100;
+  return Array.from({ length: 90 }, (_, index) => {
+    close *= Math.exp((((index % 7) - 3) / 1_000) * multiplier);
+    return {
+      date: new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10),
+      open: close,
+      high: close,
+      low: close,
+      close,
+      volume: 1_000,
+    };
+  });
+}
 
 function arrangeProviders() {
   const quote = {
@@ -170,6 +187,23 @@ describe('Fair Value orchestration', () => {
       cache: 'negative',
       unavailableReason: 'no-validated-grounded-evidence',
     });
+    mocks.getHistoricalMarketDataService.mockReturnValue({
+      getHistoricalPrices: vi.fn(async (symbol: string) => ({
+        data: {
+          symbol,
+          range: '5y',
+          interval: '1d',
+          prices: priceHistory(symbol === 'SPY' ? 1 : 1.4),
+          providerUsed: 'historical-provider',
+        },
+        freshness: {
+          status: 'cached',
+          asOf: '2026-03-31T00:00:00.000Z',
+          maxAgeSeconds: 86_400,
+        },
+        provider: 'historical-provider',
+      })),
+    });
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
   });
@@ -187,7 +221,7 @@ describe('Fair Value orchestration', () => {
     expect(mocks.research).not.toHaveBeenCalled();
   });
 
-  it('maps provider throttling to a typed unavailable result', async () => {
+  it('continues through bounded research after valuation-provider throttling', async () => {
     mocks.getFmpValuationProvider.mockReturnValue({
       id: 'financial-modeling-prep',
       getValuationDataset: vi.fn().mockRejectedValue(
@@ -197,10 +231,12 @@ describe('Fair Value orchestration', () => {
     const result = await loadFairValue('AAPL');
     expect(result).toMatchObject({
       status: 'unavailable',
-      failureKind: 'provider-rate-limited',
-      provider: 'financial-modeling-prep',
-      missingFields: ['forwardEstimates'],
+      provider: expect.stringContaining('financial-modeling-prep'),
+      missingFields: expect.arrayContaining(['targetForwardEstimate']),
     });
+    expect(mocks.research).toHaveBeenCalled();
+    expect(result.inputResolution?.researchable)
+      .toEqual(expect.arrayContaining(['forwardRevenue', 'riskFreeRate']));
   });
 
   it('uses the traceable FMP quote when the primary market quote is throttled', async () => {
@@ -220,15 +256,15 @@ describe('Fair Value orchestration', () => {
     }));
   });
 
-  it('does not calculate when the server-only FMP provider is not configured', async () => {
+  it('uses the resolver and grounded-research path when FMP is not configured', async () => {
     mocks.getFmpValuationProvider.mockReturnValue(null);
     const result = await loadFairValue('AAPL');
     expect(result).toMatchObject({
       status: 'unavailable',
-      failureKind: 'provider-unavailable',
-      missingFields: expect.arrayContaining(['forwardEstimates', 'stockPeers', 'waccMarketInputs']),
+      missingFields: expect.arrayContaining(['targetForwardEstimate']),
     });
-    expect(mocks.getMarketDataProvider).not.toHaveBeenCalled();
+    expect(mocks.getMarketDataProvider).toHaveBeenCalled();
+    expect(mocks.research).toHaveBeenCalled();
   });
 
   it('redacts calculation exceptions and exposes no numeric fallback', () => {
@@ -252,6 +288,138 @@ describe('Fair Value orchestration', () => {
     });
     expect(result).not.toHaveProperty('fundamentalFairValue');
     expect(JSON.stringify(logger.mock.calls)).not.toContain('must-not-appear');
+  });
+
+  it('derives a missing beta from stock and benchmark history without Gemini', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      waccMarketInputs: {
+        ...dataset.waccMarketInputs,
+        beta: null,
+        betaAsOf: null,
+      },
+    });
+
+    const result = await loadFairValue('AAPL');
+
+    expect(mocks.getHistoricalMarketDataService).toHaveBeenCalledTimes(1);
+    expect(mocks.research).not.toHaveBeenCalled();
+    expect(result.status).toBe('available');
+    if (result.status === 'available') {
+      expect(result.inputDetails).toContainEqual(expect.objectContaining({
+        field: 'Beta',
+        sourceType: 'derived',
+        origin: 'derived',
+      }));
+      expect(result.inputResolution?.resolved).toContainEqual(expect.objectContaining({
+        field: 'beta',
+        origin: 'derived',
+      }));
+    }
+  });
+
+  it('rescues missing market-level WACC inputs in one shared-scope research request', async () => {
+    const valuationProvider = mocks.getFmpValuationProvider();
+    const dataset = await valuationProvider.getValuationDataset();
+    valuationProvider.getValuationDataset.mockResolvedValue({
+      ...dataset,
+      waccMarketInputs: {
+        ...dataset.waccMarketInputs,
+        riskFreeRate: null,
+        riskFreeAsOf: null,
+        equityRiskPremium: null,
+        equityRiskPremiumAsOf: null,
+      },
+    });
+    mocks.research.mockResolvedValue({
+      metrics: [
+        {
+          symbol: null,
+          metric: 'riskFreeRate',
+          field: 'riskFreeRate',
+          fiscalYear: 2026,
+          periodEnd: '2026-07-24',
+          period: '2026-07-24',
+          value: 0.043,
+          unit: 'decimal',
+          currency: 'USD',
+          asOf: '2026-07-24',
+          analystCount: null,
+          confidence: 'high',
+          provenance: {
+            provider: 'gemini-grounded-research',
+            sourceType: 'gemini-grounded',
+            field: 'riskFreeRate',
+            fiscalPeriod: '2026-07-24',
+            asOf: '2026-07-24',
+            evidence: [{
+              url: 'https://home.treasury.gov/rates',
+              publisher: 'U.S. Treasury',
+              publishedAt: '2026-07-24',
+              evidence: 'The published 10-year rate was 4.3 percent.',
+              quality: 'primary',
+            }],
+            evidenceQuality: 'high',
+          },
+        },
+        {
+          symbol: null,
+          metric: 'equityRiskPremium',
+          field: 'equityRiskPremium',
+          fiscalYear: 2026,
+          periodEnd: '2026-07-24',
+          period: '2026-07-24',
+          value: 0.05,
+          unit: 'decimal',
+          currency: 'USD',
+          asOf: '2026-07-24',
+          analystCount: null,
+          confidence: 'high',
+          provenance: {
+            provider: 'gemini-grounded-research',
+            sourceType: 'gemini-grounded',
+            field: 'equityRiskPremium',
+            fiscalPeriod: '2026-07-24',
+            asOf: '2026-07-24',
+            evidence: [{
+              url: 'https://pages.stern.nyu.edu/~adamodar/',
+              publisher: 'NYU Stern',
+              publishedAt: '2026-07-24',
+              evidence: 'The published U.S. equity risk premium was 5.0 percent.',
+              quality: 'primary',
+            }],
+            evidenceQuality: 'high',
+          },
+        },
+      ],
+      rejectedReasons: [],
+      cache: 'miss',
+      unavailableReason: null,
+    });
+
+    const result = await loadFairValue('AAPL');
+
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+    expect(mocks.research).toHaveBeenCalledWith({
+      symbols: [],
+      metrics: ['riskFreeRate', 'equityRiskPremium'],
+      fiscalYears: [2026],
+    });
+    expect(result.status).toBe('available');
+    if (result.status === 'available') {
+      expect(result.dataQualityLabel).toBe('Medium');
+      expect(result.inputDetails).toContainEqual(expect.objectContaining({
+        field: 'Risk-free Rate',
+        sourceType: 'gemini-grounded',
+      }));
+      expect(result.researchAudit).toMatchObject({
+        geminiUsed: true,
+        requests: 1,
+        cacheMisses: 1,
+      });
+    }
   });
 
   it('uses provider forward revenue without researching or fabricating missing EPS', async () => {

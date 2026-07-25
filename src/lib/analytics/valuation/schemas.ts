@@ -39,6 +39,25 @@ const analyticsSourceTypeSchema = z.enum([
   'user-provided',
 ]);
 const rangeSchema = z.object({ low: finite.nullable(), high: finite.nullable() });
+const evidenceSourceSchema = z.object({
+  url: z.url(),
+  publisher: z.string(),
+  publishedAt: z.string(),
+  evidence: z.string(),
+  quality: z.enum(['primary', 'reputable', 'secondary']),
+});
+const inputResolutionSchema = z.object({
+  available: z.array(z.string()),
+  derivable: z.array(z.string()),
+  researchable: z.array(z.string()),
+  missing: z.array(z.string()),
+  resolved: z.array(z.object({
+    field: z.string(),
+    origin: z.enum(['derived', 'gemini-grounded']),
+    provider: z.string(),
+    asOf: z.string(),
+  })),
+});
 const valuationDiagnosticSchema = z.object({
   field: z.string(),
   value: z.union([finite, z.string()]).nullable(),
@@ -46,8 +65,11 @@ const valuationDiagnosticSchema = z.object({
   provider: z.string().nullable(),
   asOf: z.string(),
   status: z.enum(['available', 'missing', 'stale', 'rejected']),
-  provenance: z.enum(['provider', 'derived', 'validation']),
+  provenance: z.enum(['provider', 'derived', 'gemini-grounded', 'validation']),
   reason: z.string().nullable(),
+  sourceType: z.enum(['structured-provider', 'gemini-grounded', 'derived']).optional(),
+  sourceUrl: z.url().optional(),
+  evidence: z.array(evidenceSourceSchema).optional(),
 });
 const excludedModelSchema = z.object({
   model: modelIdSchema,
@@ -68,6 +90,7 @@ const unavailableSchema = z.object({
   methodologyVersion: z.literal(METHODOLOGY_VERSION),
   limitations: z.array(z.string()),
   diagnostics: z.array(valuationDiagnosticSchema),
+  inputResolution: inputResolutionSchema.optional(),
 });
 const availableSchema = z.object({
   status: z.literal('available'),
@@ -155,17 +178,11 @@ const availableSchema = z.object({
     provider: z.string(),
     asOf: z.string(),
     status: z.enum(['available', 'limited', 'stale']),
-    origin: z.enum(['provider', 'derived']),
+    origin: z.enum(['provider', 'derived', 'gemini-grounded']),
     sourceType: z.enum(['structured-provider', 'gemini-grounded', 'derived']),
     sourceUrl: z.url().optional(),
     evidenceCount: z.number().int().nonnegative().optional(),
-    evidence: z.array(z.object({
-      url: z.url(),
-      publisher: z.string(),
-      publishedAt: z.string(),
-      evidence: z.string(),
-      quality: z.enum(['primary', 'reputable', 'secondary']),
-    })).optional(),
+    evidence: z.array(evidenceSourceSchema).optional(),
   })),
   diagnostics: z.array(valuationDiagnosticSchema),
   assumptionDetails: z.array(z.object({
@@ -186,7 +203,12 @@ const availableSchema = z.object({
     geminiUsed: z.boolean(),
     evidenceSourceCount: z.number().int().nonnegative(),
     rejectedReasons: z.array(z.string()),
+    requests: z.number().int().nonnegative().optional(),
+    cacheHits: z.number().int().nonnegative().optional(),
+    cacheMisses: z.number().int().nonnegative().optional(),
+    negativeCacheHits: z.number().int().nonnegative().optional(),
   }).optional(),
+  inputResolution: inputResolutionSchema.optional(),
   sources: z.array(z.object({
     name: z.string(),
     asOf: z.string(),

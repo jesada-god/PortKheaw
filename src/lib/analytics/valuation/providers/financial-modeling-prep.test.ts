@@ -43,6 +43,10 @@ function payload(url: URL) {
   if (endpoint === 'quote') {
     return [{ symbol, price: 20, timestamp: NOW / 1_000 }];
   }
+  if (endpoint === 'batch-quote') {
+    return (url.searchParams.get('symbols') ?? '').split(',').filter(Boolean)
+      .map((item) => ({ symbol: item, price: 20, timestamp: NOW / 1_000 }));
+  }
   if (endpoint === 'enterprise-values') {
     return [{
       symbol,
@@ -97,6 +101,13 @@ describe('FMP deterministic valuation data provider', () => {
     });
     expect(result.sharesOutstanding).toBe(42);
     expect(result.peerCandidates).toEqual(PEERS);
+    const peerCalls = fetcher.mock.calls.map(([input]) => new URL(String(input)))
+      .filter((url) => PEERS.includes(url.searchParams.get('symbol') ?? ''));
+    expect(peerCalls.some((url) => url.pathname.endsWith('/profile'))).toBe(false);
+    expect(peerCalls.some((url) => url.pathname.endsWith('/quote'))).toBe(false);
+    expect(peerCalls.some((url) => url.pathname.endsWith('/enterprise-values'))).toBe(false);
+    expect(fetcher.mock.calls.filter(([input]) =>
+      new URL(String(input)).pathname.endsWith('/batch-quote'))).toHaveLength(1);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       field: 'sharesOutstanding',
       value: 42,
@@ -124,6 +135,28 @@ describe('FMP deterministic valuation data provider', () => {
     const cached = await provider.getValuationDataset('TARGET');
     expect(fetcher).toHaveBeenCalledTimes(afterConcurrent);
     expect(cached.cacheStatus).toBe('hit');
+  });
+
+  it('bounds upstream concurrency while loading peer coverage', async () => {
+    let active = 0;
+    let maximum = 0;
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return json(payload(new URL(String(input))));
+    });
+    const provider = new FinancialModelingPrepValuationProvider(
+      'secret',
+      fetcher as typeof fetch,
+      () => NOW,
+      async () => undefined,
+    );
+
+    await provider.getValuationDataset('TARGET');
+
+    expect(maximum).toBeLessThanOrEqual(4);
   });
 
   it('keeps a partial dataset after an estimate 429 and never returns fabricated estimates', async () => {

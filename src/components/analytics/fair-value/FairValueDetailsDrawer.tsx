@@ -266,7 +266,7 @@ function InputsTab({ diagnostics }: { diagnostics: ValuationDiagnostic[] }) {
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:content-none">
             <span className="min-w-0 font-medium text-slate-200">{readableFieldLabel(item.field)}</span>
             <span className={item.status === 'available' ? 'text-emerald-400' : 'text-amber-300'}>
-              {item.status === 'available' ? 'พร้อม' : item.status === 'stale' ? 'เก่า' : 'ไม่พร้อม'}
+              {diagnosticSourceStatus(item)}
             </span>
           </summary>
           <dl className="grid grid-cols-[minmax(5rem,auto)_minmax(0,1fr)] gap-x-3 border-t border-slate-800 px-4 py-3 text-xs">
@@ -277,6 +277,34 @@ function InputsTab({ diagnostics }: { diagnostics: ValuationDiagnostic[] }) {
             <Technical label="Provenance" value={item.provenance} />
             <Technical label="สถานะ" value={diagnosticReasonLabel(item)} />
           </dl>
+          {(item.sourceUrl || item.evidence?.length) && (
+            <div className="space-y-2 border-t border-slate-800 px-4 py-3 text-xs">
+              {item.sourceUrl && (
+                <a
+                  href={item.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-11 items-center overflow-wrap-anywhere text-sky-300 underline decoration-sky-500/50 underline-offset-2"
+                >
+                  เปิดแหล่งข้อมูล
+                </a>
+              )}
+              {item.evidence?.map((source) => (
+                <article key={`${item.field}:${source.url}`} className="rounded-lg bg-slate-900/70 p-3">
+                  <p className="font-medium text-slate-200">{source.publisher}</p>
+                  <p className="mt-1 text-slate-400">{source.evidence}</p>
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex min-h-11 items-center overflow-wrap-anywhere text-sky-300 underline decoration-sky-500/50 underline-offset-2"
+                  >
+                    ดูหลักฐานต้นทาง
+                  </a>
+                </article>
+              ))}
+            </div>
+          )}
         </details>
       ))}
     </div>
@@ -300,6 +328,9 @@ function SourcesTab({
   diagnostics: ValuationDiagnostic[];
 }) {
   const providers = new Map<string, { asOf: string; freshness: string }>();
+  const evidence = data?.status === 'available'
+    ? data.inputDetails.flatMap((item) => item.evidence ?? [])
+    : diagnostics.flatMap((item) => item.evidence ?? []);
   for (const item of diagnostics) {
     if (!item.provider) continue;
     const existing = providers.get(item.provider);
@@ -331,6 +362,20 @@ function SourcesTab({
       {!providers.size && (
         <p className="rounded-xl border border-slate-800 p-4 text-slate-400">ยังไม่มีแหล่งข้อมูลที่ยืนยันได้</p>
       )}
+      {[...new Map(evidence.map((source) => [source.url, source])).values()].map((source) => (
+        <article key={source.url} className="rounded-xl border border-slate-800 p-4">
+          <h3 className="font-semibold text-white">{source.publisher}</h3>
+          <p className="mt-1 text-xs text-slate-400">{source.evidence}</p>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-flex min-h-11 items-center overflow-wrap-anywhere text-xs text-sky-300 underline decoration-sky-500/50 underline-offset-2"
+          >
+            เปิดหลักฐาน
+          </a>
+        </article>
+      ))}
       {data?.status === 'available' && (
         <p className="text-xs text-slate-500">
           คำนวณ {formatBangkokDateTime(data.calculatedAt)} · {data.methodologyVersion}
@@ -342,8 +387,8 @@ function SourcesTab({
 
 function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnostic[] {
   if (!data) return [];
-  if (data.diagnostics.length) return data.diagnostics;
   if (data.status === 'unavailable') {
+    if (data.diagnostics.length) return data.diagnostics;
     return data.missingFields.map((field) => ({
       field,
       value: null,
@@ -355,7 +400,7 @@ function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnosti
       reason: 'required-model-input-failed-validation',
     }));
   }
-  return data.inputDetails.map((item) => ({
+  const disclosed = data.inputDetails.map((item): ValuationDiagnostic => ({
     field: item.field,
     value: item.value,
     period: item.period,
@@ -363,8 +408,31 @@ function normalizedDiagnostics(data: FairValueResult | null): ValuationDiagnosti
     asOf: item.asOf,
     status: item.status === 'available' ? 'available' : 'stale',
     provenance: item.origin,
+    sourceType: item.sourceType,
+    sourceUrl: item.sourceUrl,
+    evidence: item.evidence,
     reason: item.status === 'available' ? null : 'stale-provider-cache',
   }));
+  const disclosedKeys = new Set(disclosed.map((item) =>
+    `${item.field.toLowerCase()}:${item.period ?? ''}`));
+  return [
+    ...disclosed,
+    ...data.diagnostics.filter((item) =>
+      item.status !== 'available'
+      || !disclosedKeys.has(`${item.field.toLowerCase()}:${item.period ?? ''}`)),
+  ];
+}
+
+function diagnosticSourceStatus(item: ValuationDiagnostic): string {
+  if (item.status === 'missing' || item.status === 'rejected') return '✕ ไม่พบ';
+  if (item.status === 'stale') return '△ ข้อมูลเก่า';
+  if (item.sourceType === 'gemini-grounded' || item.provenance === 'gemini-grounded') {
+    return '◐ ค้นคว้าจากแหล่งภายนอก';
+  }
+  if (item.sourceType === 'derived' || item.provenance === 'derived') {
+    return '◈ คำนวณจากข้อมูลจริง';
+  }
+  return '✓ พร้อมจาก Provider';
 }
 
 function freshnessLabel(status: FairValueAvailable['dataStatus']): string {

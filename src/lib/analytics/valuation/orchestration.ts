@@ -1,5 +1,8 @@
 import 'server-only';
-import { getMarketDataProvider } from '@/src/lib/market-data';
+import {
+  getHistoricalMarketDataService,
+  getMarketDataProvider,
+} from '@/src/lib/market-data';
 import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import { getFundamentalsProvider } from '../fundamentals/provider';
 import { calculateFairValue } from './engine';
@@ -8,20 +11,31 @@ import {
   writeFairValueLog,
   type FairValueLogger,
 } from './logging';
-import { getFmpValuationProvider } from './providers/financial-modeling-prep';
+import {
+  getFmpValuationProvider,
+  type FmpValuationDataset,
+} from './providers/financial-modeling-prep';
 import {
   getGroundedFinancialResearchService,
+  type GroundedResearchOutcome,
+  type GroundedResearchRequest,
   type ValidatedGroundedMetric,
 } from './grounded-research';
+import {
+  classifyValuationInputs,
+  resolveDeterministicInputs,
+} from './resolver';
 import { createFairValueUnavailable } from './result';
 import type {
   FairValueFailureKind,
   FairValueResult,
   FairValueUnavailable,
   AnalystEstimate,
+  MetricProvenance,
   PeerObservation,
   ValuationInput,
   ValuationDiagnostic,
+  WaccMarketInputs,
 } from './types';
 
 function unavailable(
@@ -219,10 +233,79 @@ function finite(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function positive(value: number | null | undefined): value is number {
+  return finite(value) && value > 0;
+}
+
+function emptyValuationDataset(
+  asOf: string,
+  reason: string,
+): FmpValuationDataset {
+  return {
+    provider: 'financial-modeling-prep',
+    marketPrice: null,
+    marketPriceAsOf: null,
+    currency: null,
+    estimates: [],
+    peers: [],
+    waccMarketInputs: {
+      beta: null,
+      betaAsOf: null,
+      riskFreeRate: null,
+      riskFreeAsOf: null,
+      equityRiskPremium: null,
+      equityRiskPremiumAsOf: null,
+      provider: 'financial-modeling-prep',
+    },
+    marketCapitalization: null,
+    sharesOutstanding: null,
+    sharesOutstandingAsOf: null,
+    sector: null,
+    industry: null,
+    asOf,
+    cacheStatus: 'miss',
+    peerCandidates: [],
+    peerRejections: [],
+    endpointErrors: { valuationDataset: reason },
+    diagnostics: [],
+  };
+}
+
+interface ResearchCounters {
+  requests: number;
+  cacheHits: number;
+  cacheMisses: number;
+  negativeCacheHits: number;
+  evidenceSourceCount: number;
+  rejectedReasons: string[];
+}
+
+function recordResearch(
+  outcome: GroundedResearchOutcome,
+  counters: ResearchCounters,
+): GroundedResearchOutcome {
+  counters.requests += 1;
+  if (outcome.cache === 'hit') counters.cacheHits += 1;
+  else if (outcome.cache === 'miss') counters.cacheMisses += 1;
+  else counters.negativeCacheHits += 1;
+  counters.evidenceSourceCount += outcome.metrics.reduce(
+    (sum, metric) => sum + metric.provenance.evidence.length,
+    0,
+  );
+  counters.rejectedReasons.push(...outcome.rejectedReasons);
+  if (outcome.unavailableReason) counters.rejectedReasons.push(outcome.unavailableReason);
+  return outcome;
+}
+
 export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   const calculatedAt = new Date().toISOString();
   const fundamentals = getFundamentalsProvider();
-  const valuationProvider = getFmpValuationProvider();
+  const configuredValuationProvider = getFmpValuationProvider();
+  const valuationProvider = configuredValuationProvider ?? {
+    id: 'financial-modeling-prep' as const,
+    getValuationDataset: async () =>
+      emptyValuationDataset(calculatedAt, 'provider-not-configured'),
+  };
   if (!fundamentals) {
     return logUnavailable(unavailable(
       'provider-unavailable',
@@ -245,29 +328,6 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       }],
     ));
   }
-  if (!valuationProvider) {
-    return logUnavailable(unavailable(
-      'provider-unavailable',
-      symbol,
-      calculatedAt,
-      'ยังคำนวณ Fair Value ไม่ได้ เพราะขาด Forward Estimates จาก FMP',
-      ['forwardEstimates', 'stockPeers', 'waccMarketInputs'],
-      null,
-      'financial-modeling-prep',
-      calculatedAt,
-      ['forwardEstimates', 'stockPeers', 'waccMarketInputs'].map((field) => ({
-        field,
-        value: null,
-        period: null,
-        provider: 'financial-modeling-prep',
-        asOf: calculatedAt,
-        status: 'missing' as const,
-        provenance: 'provider' as const,
-        reason: 'provider-not-configured',
-      })),
-    ));
-  }
-
   let market: ReturnType<typeof getMarketDataProvider> | null = null;
   let marketProviderCause: unknown = new Error('Market provider is unavailable');
   try {
@@ -285,7 +345,6 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     ]);
   const required = [
     { field: 'financialStatements', provider: fundamentals.id, result: financialsResult },
-    { field: 'forwardEstimates', provider: valuationProvider.id, result: valuationResult },
   ];
   const failed = required.find((item) => item.result.status === 'rejected');
   if (failed?.result.status === 'rejected') {
@@ -306,7 +365,6 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   }
   if (
     financialsResult.status !== 'fulfilled'
-    || valuationResult.status !== 'fulfilled'
   ) {
     return logUnavailable(unavailable(
       'calculation-error',
@@ -320,7 +378,12 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
   const quote = quoteResult.status === 'fulfilled' ? quoteResult.value : null;
   const profile = profileResult.status === 'fulfilled' ? profileResult.value : null;
   const financials = financialsResult.value;
-  const valuation = valuationResult.value;
+  const valuation = valuationResult.status === 'fulfilled'
+    ? valuationResult.value
+    : emptyValuationDataset(
+        calculatedAt,
+        safeFairValueErrorCode(valuationResult.reason),
+      );
   const marketPrice = quote && Number.isFinite(quote.data.price) && quote.data.price > 0
     ? quote.data.price
     : valuation.marketPrice;
@@ -399,18 +462,256 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       ? 'cached' as const
       : quote?.freshness.status === 'delayed' || quote?.freshness.status === 'end-of-day'
         ? 'delayed' as const : 'live' as const;
-  const marketCapitalization =
-    profile?.data.marketCapitalization ?? valuation.marketCapitalization;
   const latestFinancialPeriod = [...financials.periods]
     .toSorted((left, right) => left.periodEnd.localeCompare(right.periodEnd))
     .at(-1);
-
+  let marketCapitalization =
+    profile?.data.marketCapitalization ?? valuation.marketCapitalization;
+  let marketCapitalizationProvenance: MetricProvenance | null =
+    valuation.marketCapitalization === marketCapitalization
+    && marketCapitalization !== null
+    ? {
+        provider: valuation.provider,
+        sourceType: 'structured-provider' as const,
+        field: 'marketCapitalization',
+        fiscalPeriod: 'latest',
+        asOf: valuation.asOf,
+        evidence: [],
+        evidenceQuality: 'high' as const,
+      }
+    : null;
+  let sharesOutstanding = valuation.sharesOutstanding;
+  let sharesOutstandingAsOf = valuation.sharesOutstandingAsOf;
+  let sharesOutstandingProvenance: MetricProvenance | null = positive(sharesOutstanding)
+    ? {
+        provider: valuation.provider,
+        sourceType: 'structured-provider' as const,
+        field: 'shares',
+        fiscalPeriod: sharesOutstandingAsOf ?? valuation.asOf,
+        asOf: valuation.asOf,
+        evidence: [],
+        evidenceQuality: 'high' as const,
+      }
+    : null;
+  let waccMarketInputs: WaccMarketInputs = {
+    ...valuation.waccMarketInputs,
+  };
   let estimates = valuation.estimates;
   let peers = valuation.peers;
+  const inputResolution = classifyValuationInputs({
+    marketPrice,
+    marketCapitalization,
+    sharesOutstanding,
+    dilutedShares: latestFinancialPeriod?.dilutedShares ?? null,
+    analystEstimates: estimates,
+    peers,
+    waccMarketInputs,
+  });
+
+  let historicalPrices: ValuationInput['historicalPrices'] = [];
+  let historySource = '';
+  let historyFreshness: ValuationInput['historyFreshness'] = {
+    status: 'unavailable',
+    asOf: null,
+    maxAgeSeconds: null,
+  };
+  let benchmarkPrices: ValuationInput['historicalPrices'] = [];
+  let benchmarkSource = '';
+  if (!positive(waccMarketInputs.beta)) {
+    try {
+      const history = getHistoricalMarketDataService();
+      const [stockHistory, benchmarkHistory] = await Promise.all([
+        history.getHistoricalPrices(symbol, '5y'),
+        history.getHistoricalPrices('SPY', '5y'),
+      ]);
+      historicalPrices = stockHistory.data.prices;
+      historySource = stockHistory.provider ?? stockHistory.data.providerUsed ?? 'historical-provider';
+      historyFreshness = stockHistory.freshness;
+      benchmarkPrices = benchmarkHistory.data.prices;
+      benchmarkSource = benchmarkHistory.provider
+        ?? benchmarkHistory.data.providerUsed
+        ?? 'historical-provider';
+    } catch {
+      // Beta remains researchable; a history failure must not fail the request.
+    }
+  }
+  const deterministic = resolveDeterministicInputs({
+    marketPrice,
+    priceAsOf: marketPriceAsOf,
+    marketPriceProvider: marketPriceSource,
+    marketCapitalization,
+    shares: positive(sharesOutstanding)
+      ? sharesOutstanding : latestFinancialPeriod?.dilutedShares ?? null,
+    sharesAsOf: sharesOutstandingAsOf ?? latestFinancialPeriod?.periodEnd ?? null,
+    sharesProvider: positive(sharesOutstanding) ? valuation.provider : providerUsed,
+    stockPrices: historicalPrices,
+    benchmarkPrices,
+    stockHistoryProvider: historySource || undefined,
+    benchmarkHistoryProvider: benchmarkSource || undefined,
+    benchmark: 'SPY',
+  });
+  marketCapitalization = deterministic.marketCapitalization;
+  marketCapitalizationProvenance =
+    deterministic.marketCapitalizationProvenance ?? marketCapitalizationProvenance;
+  if (!positive(waccMarketInputs.beta) && deterministic.beta) {
+    waccMarketInputs = {
+      ...waccMarketInputs,
+      beta: deterministic.beta.value,
+      betaAsOf: deterministic.beta.provenance.asOf,
+      betaProvenance: deterministic.beta.provenance,
+      provider: `${waccMarketInputs.provider}+${deterministic.beta.provenance.provider}`,
+    };
+    inputResolution.resolved.push({
+      field: 'beta',
+      origin: 'derived',
+      provider: deterministic.beta.provenance.provider,
+      asOf: deterministic.beta.provenance.asOf,
+    });
+  }
+  if (deterministic.marketCapitalizationProvenance) {
+    inputResolution.resolved.push({
+      field: 'marketCapitalization',
+      origin: 'derived',
+      provider: deterministic.marketCapitalizationProvenance.provider,
+      asOf: deterministic.marketCapitalizationProvenance.asOf,
+    });
+  }
+
   const groundedResearch = getGroundedFinancialResearchService();
-  const rejectedReasons: string[] = [];
-  let geminiUsed = false;
-  let evidenceSourceCount = 0;
+  const researchCounters: ResearchCounters = {
+    requests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    negativeCacheHits: 0,
+    evidenceSourceCount: 0,
+    rejectedReasons: [],
+  };
+  let groundedValueUsed = false;
+  const groundedDiagnostics: ValuationDiagnostic[] = [];
+  const research = async (request: GroundedResearchRequest) =>
+    recordResearch(await groundedResearch!.research(request), researchCounters);
+
+  if (groundedResearch) {
+    const currentYear = Number(calculatedAt.slice(0, 4));
+    const missingMarketMetrics: GroundedResearchRequest['metrics'] = [];
+    if (!positive(waccMarketInputs.riskFreeRate)) missingMarketMetrics.push('riskFreeRate');
+    if (!positive(waccMarketInputs.equityRiskPremium)) {
+      missingMarketMetrics.push('equityRiskPremium');
+    }
+    if (missingMarketMetrics.length) {
+      const rescued = await research({
+        symbols: [],
+        metrics: missingMarketMetrics,
+        fiscalYears: [currentYear],
+      });
+      for (const metric of rescued.metrics) {
+        if (metric.field === 'riskFreeRate' && !positive(waccMarketInputs.riskFreeRate)) {
+          waccMarketInputs.riskFreeRate = metric.value;
+          waccMarketInputs.riskFreeAsOf = metric.asOf;
+          waccMarketInputs.riskFreeRateProvenance = metric.provenance;
+        } else if (
+          metric.field === 'equityRiskPremium'
+          && !positive(waccMarketInputs.equityRiskPremium)
+        ) {
+          waccMarketInputs.equityRiskPremium = metric.value;
+          waccMarketInputs.equityRiskPremiumAsOf = metric.asOf;
+          waccMarketInputs.equityRiskPremiumProvenance = metric.provenance;
+        } else {
+          continue;
+        }
+        groundedValueUsed = true;
+        inputResolution.resolved.push({
+          field: metric.field,
+          origin: 'gemini-grounded',
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+        });
+        groundedDiagnostics.push({
+          field: metric.field,
+          value: metric.value,
+          period: metric.period,
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+          status: 'available',
+          provenance: 'gemini-grounded',
+          sourceType: 'gemini-grounded',
+          sourceUrl: metric.provenance.sourceUrl,
+          evidence: metric.provenance.evidence,
+          reason: null,
+        });
+      }
+    }
+
+    const missingCompanyMetrics: GroundedResearchRequest['metrics'] = [];
+    if (!positive(waccMarketInputs.beta)) missingCompanyMetrics.push('beta');
+    if (!positive(sharesOutstanding) && !positive(latestFinancialPeriod?.dilutedShares)) {
+      missingCompanyMetrics.push('shares');
+    }
+    if (missingCompanyMetrics.length) {
+      const rescued = await research({
+        symbols: [symbol],
+        metrics: missingCompanyMetrics,
+        fiscalYears: [currentYear],
+      });
+      for (const metric of rescued.metrics.filter((item) => item.symbol === symbol)) {
+        if (metric.field === 'beta' && !positive(waccMarketInputs.beta)) {
+          waccMarketInputs.beta = metric.value;
+          waccMarketInputs.betaAsOf = metric.asOf;
+          waccMarketInputs.betaProvenance = metric.provenance;
+        } else if (metric.field === 'shares' && !positive(sharesOutstanding)) {
+          sharesOutstanding = metric.value;
+          sharesOutstandingAsOf = metric.period;
+          sharesOutstandingProvenance = metric.provenance;
+        } else {
+          continue;
+        }
+        groundedValueUsed = true;
+        inputResolution.resolved.push({
+          field: metric.field,
+          origin: 'gemini-grounded',
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+        });
+        groundedDiagnostics.push({
+          field: metric.field,
+          value: metric.value,
+          period: metric.period,
+          provider: metric.provenance.provider,
+          asOf: metric.asOf,
+          status: 'available',
+          provenance: 'gemini-grounded',
+          sourceType: 'gemini-grounded',
+          sourceUrl: metric.provenance.sourceUrl,
+          evidence: metric.provenance.evidence,
+          reason: null,
+        });
+      }
+    }
+  }
+
+  if (!positive(marketCapitalization) && positive(sharesOutstanding)) {
+    const afterResearch = resolveDeterministicInputs({
+      marketPrice,
+      priceAsOf: marketPriceAsOf,
+      marketPriceProvider: marketPriceSource,
+      marketCapitalization,
+      shares: sharesOutstanding,
+      sharesAsOf: sharesOutstandingAsOf,
+      sharesProvider: sharesOutstandingProvenance?.provider ?? valuation.provider,
+    });
+    marketCapitalization = afterResearch.marketCapitalization;
+    marketCapitalizationProvenance = afterResearch.marketCapitalizationProvenance;
+    deterministic.diagnostics.push(...afterResearch.diagnostics);
+    if (afterResearch.marketCapitalizationProvenance) {
+      inputResolution.resolved.push({
+        field: 'marketCapitalization',
+        origin: 'derived',
+        provider: afterResearch.marketCapitalizationProvenance.provider,
+        asOf: afterResearch.marketCapitalizationProvenance.asOf,
+      });
+    }
+  }
+
   if (latestFinancialPeriod && groundedResearch) {
     const fiscalYears = futureFiscalYears(latestFinancialPeriod.periodEnd, calculatedAt);
     const future = estimates.filter((estimate) =>
@@ -437,19 +738,13 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       }
     }
     if (missingTargetMetrics.length) {
-      const rescued = await groundedResearch.research({
+      const rescued = await research({
         symbols: [symbol],
         metrics: missingTargetMetrics,
         fiscalYears,
       });
-      geminiUsed = true;
       estimates = mergeGroundedTargetEstimates(estimates, rescued.metrics, symbol);
-      rejectedReasons.push(...rescued.rejectedReasons);
-      evidenceSourceCount += rescued.metrics.reduce(
-        (sum, metric) => sum + metric.provenance.evidence.length,
-        0,
-      );
-      if (rescued.unavailableReason) rejectedReasons.push(rescued.unavailableReason);
+      if (rescued.metrics.length) groundedValueUsed = true;
     }
 
     const targetEstimate = estimates
@@ -476,24 +771,18 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
           .map((peer) => peer.symbol)
           .slice(0, 12);
         if (candidates.length) {
-          const rescued = await groundedResearch.research({
+          const rescued = await research({
             symbols: candidates,
             metrics: [branch],
             fiscalYears: [Number(targetEstimate.periodEnd.slice(0, 4))],
           });
-          geminiUsed = true;
           peers = mergeGroundedPeerEstimates(
             peers,
             rescued.metrics,
             branch,
             targetEstimate.periodEnd,
           );
-          rejectedReasons.push(...rescued.rejectedReasons);
-          evidenceSourceCount += rescued.metrics.reduce(
-            (sum, metric) => sum + metric.provenance.evidence.length,
-            0,
-          );
-          if (rescued.unavailableReason) rejectedReasons.push(rescued.unavailableReason);
+          if (rescued.metrics.length) groundedValueUsed = true;
         }
       }
     }
@@ -501,6 +790,8 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
 
   const diagnostics: ValuationDiagnostic[] = [
     ...(valuation.diagnostics ?? []),
+    ...deterministic.diagnostics,
+    ...groundedDiagnostics,
     {
       field: 'marketPrice',
       value: marketPrice,
@@ -515,10 +806,16 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
       field: 'marketCapitalization',
       value: marketCapitalization ?? null,
       period: 'latest',
-      provider: profile?.provider ?? valuation.provider,
-      asOf: profile?.freshness.asOf ?? valuation.asOf,
+      provider: marketCapitalizationProvenance?.provider
+        ?? profile?.provider
+        ?? valuation.provider,
+      asOf: marketCapitalizationProvenance?.asOf
+        ?? profile?.freshness.asOf
+        ?? valuation.asOf,
       status: marketCapitalization == null ? 'missing' : 'available',
-      provenance: 'provider',
+      provenance: marketCapitalizationProvenance?.sourceType === 'derived'
+        ? 'derived' : 'provider',
+      sourceType: marketCapitalizationProvenance?.sourceType ?? 'structured-provider',
       reason: marketCapitalization == null ? 'provider-field-missing' : null,
     },
     ...(latestFinancialPeriod ? [
@@ -571,8 +868,10 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     marketPrice,
     marketPriceSource,
     marketCapitalization,
-    sharesOutstanding: valuation.sharesOutstanding,
-    sharesOutstandingAsOf: valuation.sharesOutstandingAsOf,
+    marketCapitalizationProvenance,
+    sharesOutstanding,
+    sharesOutstandingAsOf,
+    sharesOutstandingProvenance,
     dilutedSharesSource: latestFinancialPeriod
       && Number.isFinite(latestFinancialPeriod.dilutedShares)
       && latestFinancialPeriod.dilutedShares > 0
@@ -584,22 +883,23 @@ export async function loadFairValue(symbol: string): Promise<FairValueResult> {
     sector: profile?.data.sector ?? valuation.sector ?? '',
     industry: profile?.data.industry ?? valuation.industry ?? '',
     periods: financials.periods,
-    historicalPrices: [],
-    historySource: '',
-    historyFreshness: {
-      status: 'unavailable',
-      asOf: null,
-      maxAgeSeconds: null,
-    },
+    historicalPrices,
+    historySource,
+    historyFreshness,
     analystEstimates: estimates,
     peerObservations: peers,
-    waccMarketInputs: valuation.waccMarketInputs,
-    providerStatus: geminiUsed ? 'limited' : providerStatus,
+    waccMarketInputs,
+    providerStatus: groundedValueUsed ? 'limited' : providerStatus,
     researchAudit: {
-      geminiUsed,
-      evidenceSourceCount,
-      rejectedReasons: [...new Set(rejectedReasons)],
+      geminiUsed: groundedValueUsed,
+      evidenceSourceCount: researchCounters.evidenceSourceCount,
+      rejectedReasons: [...new Set(researchCounters.rejectedReasons)],
+      requests: researchCounters.requests,
+      cacheHits: researchCounters.cacheHits,
+      cacheMisses: researchCounters.cacheMisses,
+      negativeCacheHits: researchCounters.negativeCacheHits,
     },
+    inputResolution,
     peerAudit: {
       candidates: valuation.peerCandidates,
       rejected: valuation.peerRejections,
