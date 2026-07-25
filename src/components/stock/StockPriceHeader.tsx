@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Info } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
 import type {
@@ -40,7 +40,15 @@ export interface ExtendedHoursQuote {
   provider: string | null;
 }
 
-export type TransientPriceSink = (price: number) => void;
+interface TransientPriceMetadata {
+  asOf: string | null;
+  feed: string | null;
+}
+
+export type TransientPriceSink = (
+  price: number,
+  metadata?: TransientPriceMetadata,
+) => void;
 
 interface StockPriceHeaderProps {
   symbol: string;
@@ -179,7 +187,12 @@ export function StockPriceHeader({
   const [currency, setCurrency] = useState<PriceDisplayCurrency>('USD');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const priceDisplayRef = useRef<HTMLSpanElement>(null);
-  const lastTransientUsdPriceRef = useRef<number | null>(null);
+  const lastTransientUsdPriceRef = useRef<{
+    symbol: string;
+    price: number;
+    asOf: string | null;
+    feed: string | null;
+  } | null>(null);
   const normalizedSourceCurrency = sourceCurrency?.toUpperCase() ?? null;
   const verifiedUsdSource = normalizedSourceCurrency === 'USD';
   const fxRate = fxQuote ? Number(fxQuote.rate) : null;
@@ -244,9 +257,14 @@ export function StockPriceHeader({
 
   useEffect(() => {
     if (!transientPriceSinkRef) return;
-    const sink: TransientPriceSink = (price) => {
+    const sink: TransientPriceSink = (price, metadata) => {
       if (!Number.isFinite(price) || price <= 0) return;
-      lastTransientUsdPriceRef.current = price;
+      lastTransientUsdPriceRef.current = {
+        symbol,
+        price,
+        asOf: metadata?.asOf ?? null,
+        feed: metadata?.feed ?? null,
+      };
       const nextDisplayPrice = verifiedUsdSource
         ? convertUsdForDisplay(price, selectedCurrency, fxRate)
         : price;
@@ -258,11 +276,30 @@ export function StockPriceHeader({
     transientPriceSinkRef.current = sink;
     // Re-apply the newest tick after a USD/THB toggle without waiting for another
     // market event; React may just have rendered the slower bar-backed price.
-    if (lastTransientUsdPriceRef.current !== null) sink(lastTransientUsdPriceRef.current);
+    const latest = lastTransientUsdPriceRef.current;
+    if (latest?.symbol === symbol) {
+      sink(latest.price, { asOf: latest.asOf, feed: latest.feed });
+    }
     return () => {
       if (transientPriceSinkRef.current === sink) transientPriceSinkRef.current = null;
     };
-  }, [fxRate, selectedCurrency, transientPriceSinkRef, verifiedUsdSource]);
+  }, [fxRate, selectedCurrency, symbol, transientPriceSinkRef, verifiedUsdSource]);
+
+  useLayoutEffect(() => {
+    const latest = lastTransientUsdPriceRef.current;
+    if (
+      latest?.symbol !== symbol
+      || (!realtime && connectionState !== 'connected')
+    ) return;
+    const nextDisplayPrice = verifiedUsdSource
+      ? convertUsdForDisplay(latest.price, selectedCurrency, fxRate)
+      : latest.price;
+    if (priceDisplayRef.current) {
+      // React may just have committed an older REST/error value. Restore the
+      // newest live observation before paint without scheduling another render.
+      priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
+    }
+  });
 
   return <>
     <section className="min-h-32 min-w-0 overflow-hidden rounded-2xl border border-border bg-bg-card p-4 shadow-xl sm:p-5">

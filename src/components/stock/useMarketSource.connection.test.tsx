@@ -93,6 +93,29 @@ function update(connectionState?: MarketUpdate['connectionState']): MarketUpdate
   };
 }
 
+function liveSnapshot(): MarketUpdate {
+  return {
+    symbol: 'AAPL',
+    price: 206.87,
+    quote: null,
+    candle: null,
+    label: {
+      mode: 'REAL-TIME',
+      provider: 'alpaca:iex',
+      source: 'aggregate-fallback',
+      exchangeTimestamp: '2026-07-24T20:26:14.801Z',
+      receivedAt: '2026-07-24T20:26:14.900Z',
+      delayAgeSeconds: 0,
+      fallbackNote: null,
+      realtime: true,
+      feed: 'iex',
+    },
+    error: null,
+    connectionState: 'connected',
+    eventKind: 'snapshot',
+  };
+}
+
 async function loadHook(wsUrl?: string): Promise<UseMarketSource> {
   vi.resetModules();
   if (wsUrl) process.env.NEXT_PUBLIC_MARKET_WS_URL = wsUrl;
@@ -159,6 +182,25 @@ describe('useMarketSource connection state', () => {
     emit('reconnecting');
     expect(latest?.connectionState).toBe('reconnecting');
     emit('connected');
+    expect(latest?.connectionState).toBe('connected');
+    view.unmount();
+  });
+
+  it('commits a live snapshot and sends its price plus provenance to the imperative sink', async () => {
+    const sink = vi.fn();
+    const useHook = await loadHook(WS_URL);
+    const view = mount(useHook, baseOptions({
+      transientPriceSinkRef: { current: sink },
+    }));
+
+    act(() => { rec.listener?.(liveSnapshot()); });
+
+    expect(sink).toHaveBeenCalledWith(206.87, {
+      asOf: '2026-07-24T20:26:14.801Z',
+      feed: 'iex',
+    });
+    expect(latest?.quoteResource.data?.price).toBe(206.87);
+    expect(latest?.dataLabel?.realtime).toBe(true);
     expect(latest?.connectionState).toBe('connected');
     view.unmount();
   });

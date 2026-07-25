@@ -94,6 +94,22 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.1234');
   });
 
+  it('does not let an unrelated React render overwrite the latest transient price', () => {
+    const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
+    render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
+    transientPriceSinkRef.current?.(206.87, {
+      asOf: '2026-07-24T20:26:14.801Z',
+      feed: 'iex',
+    });
+
+    render(baseProps({ ...BASE_QUOTE, price: 212.06 }, {
+      transientPriceSinkRef,
+      connectionState: 'connected',
+    }));
+
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
+  });
+
   it('renders change + percent from a REST quote with price and previous close', () => {
     // Provider omitted its own change: derive from the real previous close.
     render(baseProps({ ...BASE_QUOTE, change: null, changePercent: null }));

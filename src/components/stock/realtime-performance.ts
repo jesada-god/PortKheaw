@@ -16,7 +16,7 @@ export function realtimeUpdatePolicy(
     return { transientPrice: false, commitMarketState: true };
   }
 
-  const transientPrice = update.eventKind === 'trade'
+  const transientPrice = (update.eventKind === 'trade' || update.eventKind === 'snapshot')
     && update.price !== null
     && Number.isFinite(update.price);
   const firstPricedLiveEvent = !hasCommittedLivePrice

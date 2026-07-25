@@ -29,6 +29,13 @@ describe('realtimeUpdatePolicy', () => {
     )).toEqual({ transientPrice: true, commitMarketState: false });
   });
 
+  it('writes a live snapshot to the imperative price sink and commits its provenance', () => {
+    expect(realtimeUpdatePolicy(
+      { eventKind: 'snapshot', label: LIVE_LABEL, price: 206.87 },
+      false,
+    )).toEqual({ transientPrice: true, commitMarketState: true });
+  });
+
   it('commits an official bar so Lightweight Charts can call update()', () => {
     expect(realtimeUpdatePolicy(
       { eventKind: 'bar', label: LIVE_LABEL, price: 173.30 },

@@ -55,7 +55,10 @@ export interface UseMarketSourceOptions {
    * directly instead of scheduling a React render for every trade.
    */
   transientPriceSinkRef?: {
-    current: ((price: number) => void) | null;
+    current: ((price: number, metadata?: {
+      asOf: string | null;
+      feed: string | null;
+    }) => void) | null;
   };
 }
 
@@ -235,7 +238,11 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       if (policy.transientPrice && update.price !== null) {
         // Direct DOM update via StockPriceHeader's ref-backed sink. This is the
         // hot path: no useState, no parent render, no chart reconciliation.
-        options.transientPriceSinkRef?.current?.(update.price);
+        // Metadata keeps the cached observation tied to its exchange time/feed.
+        options.transientPriceSinkRef?.current?.(update.price, {
+          asOf: update.label.exchangeTimestamp,
+          feed: update.label.feed ?? null,
+        });
       }
       if (policy.commitMarketState) {
         if (candidate?.source === 'snapshot' && update.quote) {
