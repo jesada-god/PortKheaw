@@ -13,7 +13,12 @@ import { optionIntrinsicValue, optionMarketQuote } from '@/src/lib/market-data/q
 import { MarketTracer } from '@/src/lib/market-data/realtime';
 import { parseStrikeLines, type StrikeLine } from '@/src/lib/analytics/chart-layers/strike-lines';
 import type { MarketDataLabel } from '@/src/lib/stock-detail/market-source';
-import { optionsChainCoordinator, optionsExpirationsCoordinator } from '@/src/lib/stock-detail/options-source';
+import {
+  DEFAULT_EXPIRATIONS_COOLDOWN_MS,
+  OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS,
+  optionsChainCoordinator,
+  optionsExpirationsCoordinator,
+} from '@/src/lib/stock-detail/options-source';
 
 const optionsTracer = new MarketTracer();
 
@@ -102,6 +107,17 @@ export function optionsPanelErrorLabel(code: string | undefined, cooldownSeconds
   return errorLabel(code);
 }
 
+export function optionsPanelRetrySeconds(
+  code: string | undefined,
+  retryAfterSeconds: number | null | undefined,
+  fallbackCooldownMs: number,
+): number {
+  if (retryAfterSeconds !== null && retryAfterSeconds !== undefined && retryAfterSeconds > 0) {
+    return retryAfterSeconds;
+  }
+  return code === 'rate-limited' ? Math.ceil(fallbackCooldownMs / 1_000) : 0;
+}
+
 export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   symbol: string;
   acceptedPrice: number | null;
@@ -134,7 +150,11 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     try {
       const outcome = await optionsExpirationsCoordinator.load(symbol);
       if (!outcome.ok) {
-        const retry = outcome.retryAfterSeconds ?? 0;
+        const retry = optionsPanelRetrySeconds(
+          outcome.classification?.reason,
+          outcome.retryAfterSeconds,
+          DEFAULT_EXPIRATIONS_COOLDOWN_MS,
+        );
         if (retry > 0) { const deadline = Date.now() + retry * 1_000; setNow(Date.now()); setCooldownUntil(deadline); }
         throw Object.assign(new Error(errorLabel(outcome.classification?.reason)), { code: outcome.classification?.reason });
       }
@@ -158,7 +178,11 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
       if (force && !optionsChainCoordinator.reset(symbol, targetExpiration)) return;
       const outcome = await optionsChainCoordinator.load(symbol, targetExpiration, acceptedPrice);
       if (!outcome.ok || !outcome.chain) {
-        const retry = outcome.retryAfterSeconds ?? 0;
+        const retry = optionsPanelRetrySeconds(
+          outcome.classification?.reason,
+          outcome.retryAfterSeconds,
+          OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS,
+        );
         if (retry > 0) { const deadline = Date.now() + retry * 1_000; setNow(Date.now()); setCooldownUntil(deadline); }
         throw Object.assign(new Error(errorLabel(outcome.classification?.reason)), { code: outcome.classification?.reason });
       }

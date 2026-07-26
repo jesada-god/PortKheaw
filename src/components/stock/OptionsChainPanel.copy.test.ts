@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { optionsPanelErrorLabel } from './OptionsChainPanel';
+import { optionsPanelErrorLabel, optionsPanelRetrySeconds } from './OptionsChainPanel';
 
 describe('OptionsChainPanel state copy', () => {
   it('shows the live Retry-After countdown for a handled 429', () => {
@@ -10,5 +10,11 @@ describe('OptionsChainPanel state copy', () => {
   it('distinguishes a truthful no-data state from a rate limit', () => {
     expect(optionsPanelErrorLabel('not-found', 0))
       .toBe('ไม่พบข้อมูลออปชันสำหรับช่วงนี้');
+  });
+
+  it('uses the local cooldown when a handled 429 omits Retry-After', () => {
+    expect(optionsPanelRetrySeconds('rate-limited', null, 60_000)).toBe(60);
+    expect(optionsPanelRetrySeconds('rate-limited', 37, 60_000)).toBe(37);
+    expect(optionsPanelRetrySeconds('provider-unavailable', null, 60_000)).toBe(0);
   });
 });

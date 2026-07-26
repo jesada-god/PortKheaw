@@ -134,4 +134,19 @@ describe('real options provider boundary', () => {
     await expect(service.getExpirations('AAPL')).rejects.toMatchObject({ code: 'rate-limited', retryAfterSeconds: 15 });
     expect(provider.getOptionsContracts).toHaveBeenCalledTimes(1);
   });
+
+  it('adds a 60-second server cooldown when an upstream 429 omits Retry-After', async () => {
+    let now = 1_000;
+    const provider = {
+      id: 'limited-options',
+      getOptionsContracts: vi.fn(async () => { throw new MarketDataError('rate-limited', 'quota'); }),
+    };
+    const service = new OptionsMarketDataService(provider, { getQuote: vi.fn() } as never, undefined, () => now);
+    await expect(service.getExpirations('AAPL'))
+      .rejects.toMatchObject({ code: 'rate-limited', retryAfterSeconds: 60 });
+    now += 30_000;
+    await expect(service.getExpirations('AAPL'))
+      .rejects.toMatchObject({ code: 'rate-limited', retryAfterSeconds: 30 });
+    expect(provider.getOptionsContracts).toHaveBeenCalledTimes(1);
+  });
 });

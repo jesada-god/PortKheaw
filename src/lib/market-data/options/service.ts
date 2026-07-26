@@ -81,11 +81,15 @@ export class OptionsMarketDataService {
         );
         return { snapshot: resolution.value, state: resolution.state };
       } catch (cause) {
-        const failure = cause instanceof MarketDataError
+        let failure = cause instanceof MarketDataError
           ? cause
           : new MarketDataError('provider-unavailable', 'Options provider failed');
         if (failure.code === 'rate-limited') {
-          this.providerBlockedUntil.set(provider.id, this.now() + (failure.retryAfterSeconds ?? 60) * 1_000);
+          const retryAfterSeconds = failure.retryAfterSeconds ?? 60;
+          this.providerBlockedUntil.set(provider.id, this.now() + retryAfterSeconds * 1_000);
+          if (failure.retryAfterSeconds === undefined) {
+            failure = new MarketDataError('rate-limited', failure.message, retryAfterSeconds);
+          }
         }
         failures.push(failure);
       }
