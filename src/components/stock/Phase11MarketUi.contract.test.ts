@@ -20,8 +20,19 @@ describe('Phase 11 market UI production contract', () => {
     expect(candleChart).not.toMatch(/onPan|onZoom|wheel.*fetch|pointer.*fetch/i);
   });
 
-  it('uses one server-normalized gateway route and drives the chart from the persisted interval/range selection', () => {
-    expect(candleChart).toContain('/api/market/chart?');
+  it('loads historical candles from the Yahoo pipeline, with Polygon off the critical path', () => {
+    // One server-normalized historical pipeline: the Yahoo Finance Chart JSON
+    // route. The Polygon gateway chart route and its client adapter must not be
+    // reachable from the chart, so a Polygon free-tier 429 cannot break candles,
+    // volume, 12 เดือน/5Y, the indicators, VPVR, S/R or Heikin-Ashi.
+    expect(candleChart).toContain('/api/market/candles?');
+    expect(candleChart).not.toContain('/api/market/chart?');
+    expect(candleChart).not.toContain('polygon');
+    expect(candleChart).not.toContain('chartGatewayResponseSchema');
+    expect(candleChart).toContain('normalizedCandleResultSchema.safeParse(payload.data)');
+  });
+
+  it('drives the chart from the persisted interval/range selection', () => {
     expect(candleChart).not.toContain('aggregateSessionAwareIntraday');
     expect(candleChart).toContain('No candle is mocked, interpolated, forward-filled, or replaced by another provider');
     expect(candleChart).toContain('TechnicalAnalysisChart');

@@ -13,7 +13,7 @@
  */
 
 import { candleIntervalSchema, candleRangeSchema, type CandleInterval, type CandleRange } from '@/src/lib/market-data/candles/contracts';
-import { isCompatibleSelection, supportedRangesForInterval } from '@/src/lib/market-data/gateway/capabilities';
+import { chartSupportedRanges, isChartSelectionSupported } from './compatibility';
 
 export type IntervalGroup = 'minute' | 'hour' | 'day';
 
@@ -127,19 +127,21 @@ export function intervalsByGroup(group: IntervalGroup): IntervalOption[] {
 /**
  * Whether a range can currently be requested for the selected interval. An
  * unsupported combination is *disabled with a reason*, never a request that
- * errors after the click.
+ * errors after the click. The answer comes from the chart compatibility matrix,
+ * which already intersects readability with what the Yahoo historical primary
+ * actually serves — so an offered range is always loadable.
  */
 export function isRangeEnabled(interval: CandleInterval, range: CandleRange): boolean {
-  return isCompatibleSelection(interval, range);
+  return isChartSelectionSupported(interval, range);
 }
 
 /** Whether any range at all supports this interval (always true today; guards future edits). */
 export function isIntervalEnabled(interval: CandleInterval): boolean {
-  return supportedRangesForInterval(interval).length > 0;
+  return chartSupportedRanges(interval).length > 0;
 }
 
 export function unsupportedReason(interval: CandleInterval, range: CandleRange): string | null {
   if (isRangeEnabled(interval, range)) return null;
-  const supported = supportedRangesForInterval(interval).map((id) => rangeOption(id).label).join(' · ');
+  const supported = chartSupportedRanges(interval).map((id) => rangeOption(id).label).join(' · ');
   return `แท่ง ${intervalOption(interval).label} ใช้ได้กับช่วง ${supported}`;
 }

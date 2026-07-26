@@ -16,6 +16,13 @@ export {
   type RangeOption,
 } from './catalog';
 export {
+  chartCompatibleSelection,
+  chartSupportedRanges,
+  defaultIntervalForChartRange,
+  isChartSelectionSupported,
+  type ChartCompatibleSelection,
+} from './compatibility';
+export {
   CHART_PREFERENCES_STORAGE_KEY,
   DEFAULT_CHART_PREFERENCES,
   mergeChartPreferences,

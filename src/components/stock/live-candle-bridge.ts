@@ -8,7 +8,14 @@ export interface ChartDisplayBar {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  /**
+   * Real provider volume, or `null` when the provider reported none. Never
+   * coerced to `0`: a fabricated zero is indistinguishable from a real flat
+   * bucket and would silently invent traded size.
+   */
+  volume: number | null;
+  /** True while the bucket is still forming; analytics must exclude it. */
+  partial?: boolean;
 }
 
 /**
@@ -66,7 +73,20 @@ function sameOhlcv(bar: ChartDisplayBar, candle: LiveCandle): boolean {
     && bar.high === candle.high
     && bar.low === candle.low
     && bar.close === candle.close
-    && bar.volume === candle.volume;
+    && bar.volume === candle.volume
+    && bar.partial === true;
+}
+
+/**
+ * Cumulative bucket volume across a history baseline and a live delta. The two
+ * provider totals are never added (an overlapping minute would be double
+ * counted): the greatest real observed cumulative value wins, and a bucket with
+ * no reported volume on either side stays `null`.
+ */
+function mergedVolume(historyVolume: number | null, liveVolume: number | null): number | null {
+  if (historyVolume == null) return liveVolume;
+  if (liveVolume == null) return historyVolume;
+  return Math.max(historyVolume, liveVolume);
 }
 
 /**
@@ -102,10 +122,11 @@ export function mergeLiveCandleIntoBars<T extends ChartDisplayBar>(
         high: Math.max(last.high, candle.high),
         low: Math.min(last.low, candle.low),
         close: candle.close,
-        // Polygon is the historical baseline and Finnhub is the live delta. We
-        // never add the two provider totals (which could double an overlapping
-        // minute); keep the greatest observed real cumulative value.
-        volume: Math.max(last.volume, candle.volume),
+        // Yahoo is the historical baseline and the accepted stream is the live
+        // delta for the same bucket; see mergedVolume for why they are not summed.
+        volume: mergedVolume(last.volume, candle.volume),
+        // The bucket the live candle belongs to is by definition still forming.
+        partial: true,
       } as T;
       return next;
     }
@@ -125,13 +146,17 @@ export function mergeLiveCandleIntoBars<T extends ChartDisplayBar>(
     low: candle.low,
     close: candle.close,
     volume: candle.volume,
+    // The live bucket is still forming until the stream finalizes it, so it must
+    // never be read as a completed bar (pivot basis, indicator warm-up, the
+    // header's newest-completed-bar fallback).
+    partial: true,
   };
 
   if (candle.time === lastTime) {
     // Same bucket → replace in place. Skip the copy when nothing changed.
     if (sameOhlcv(last, candle)) return bars as T[];
     const next = bars.slice();
-    next[next.length - 1] = liveBar as T;
+    next[next.length - 1] = { ...last, ...liveBar } as T;
     return next;
   }
 

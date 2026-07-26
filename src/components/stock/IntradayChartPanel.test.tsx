@@ -35,50 +35,40 @@ function candle(timestamp: number, close: number) {
   };
 }
 
-function polygonEnvelope(symbol: string, interval: CandleInterval, count = 2) {
+/**
+ * The exact body `/api/market/candles` serializes: the server-validated Yahoo
+ * Finance Chart JSON result. Polygon is not on this path at all.
+ */
+function yahooEnvelope(symbol: string, interval: CandleInterval, count = 2) {
   const candles = count === 0
     ? []
     : [candle(START, 100), candle(START + 300, 101)];
   return {
     data: {
-      instrument: {
-        canonicalSymbol: symbol,
-        providerSymbol: symbol,
-        name: symbol,
-        assetType: 'stock',
-        exchange: 'NASDAQ',
-        mic: 'XNAS',
-        currency: 'USD',
-        timezone: 'America/New_York',
-        active: true,
-        supported: true,
-        unsupportedReason: null,
-      },
-      bars: {
-        symbol,
-        provider: 'polygon',
-        interval,
-        range: '1m',
-        adjusted: false,
-        session: 'extended',
-        timezone: 'America/New_York',
-        currency: 'USD',
-        firstTimestamp: candles[0]?.timestamp ?? null,
-        lastTimestamp: candles.at(-1)?.timestamp ?? null,
-        asOf: candles.at(-1)?.timestamp ?? null,
-        dataStatus: 'delayed',
-        delayedByMinutes: 0,
-        bars: candles.map((item) => ({
-          time: item.timestamp,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close,
-          volume: item.volume,
-          partial: false,
-        })),
-        warnings: [],
-      },
+      symbol,
+      provider: 'yahoo-finance-chart',
+      attemptedProviders: ['yahoo-finance-chart'],
+      requestedInterval: interval,
+      actualInterval: interval,
+      sourceInterval: interval,
+      requestedRange: '1m',
+      actualStart: candles[0]?.timestamp ?? null,
+      actualEnd: candles.at(-1)?.timestamp ?? null,
+      exchangeTimezone: 'America/New_York',
+      currency: 'USD',
+      dataStatus: 'delayed',
+      delayedByMinutes: 0,
+      adjusted: false,
+      aggregated: false,
+      cacheStatus: 'miss',
+      candles,
+      warnings: [],
+      fallbackReason: null,
+    },
+    meta: {
+      provider: 'yahoo-finance-chart',
+      timestamp: new Date(START * 1_000).toISOString(),
+      freshness: { status: 'delayed', asOf: null, maxAgeSeconds: 60 },
     },
   };
 }
@@ -127,8 +117,8 @@ afterEach(() => {
 });
 
 describe('MarketCandleChartPanel request lifecycle', () => {
-  it('collapses the Strict Mode mount into one Polygon history request', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => response(polygonEnvelope('AAPL', '5m')));
+  it('collapses the Strict Mode mount into one Yahoo history request', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response(yahooEnvelope('AAPL', '5m')));
     vi.stubGlobal('fetch', fetchMock);
     const host = document.createElement('div');
     document.body.append(host);
@@ -138,7 +128,9 @@ describe('MarketCandleChartPanel request lifecycle', () => {
       <StrictMode><MarketCandleChartPanel {...props()} /></StrictMode>,
     ));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/market/chart?');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/market/candles?');
+    // Polygon must not be on the chart's historical critical path at all.
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('/api/market/chart?');
     await act(async () => root.unmount());
   });
 
@@ -175,14 +167,14 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
 
     await act(async () => {
-      second.resolve(response(polygonEnvelope('MSFT', '10m')));
+      second.resolve(response(yahooEnvelope('MSFT', '10m')));
       await second.promise;
     });
     await vi.waitFor(() => expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-symbol')).toBe('MSFT'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-interval')).toBe('10m');
 
     await act(async () => {
-      first.resolve(response(polygonEnvelope('AAPL', '5m')));
+      first.resolve(response(yahooEnvelope('AAPL', '5m')));
       await first.promise;
     });
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-symbol')).toBe('MSFT');
@@ -192,7 +184,7 @@ describe('MarketCandleChartPanel request lifecycle', () => {
   it('renders truthful empty and provider-error states without candles', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => (
       String(input).includes('symbol=EMPTY')
-        ? response(polygonEnvelope('EMPTY', '5m', 0))
+        ? response(yahooEnvelope('EMPTY', '5m', 0))
         : response({
           data: null,
           error: { code: 'rate-limited', message: 'upstream detail', retryable: true },
@@ -204,12 +196,54 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     const root = createRoot(host);
 
     await act(async () => root.render(<MarketCandleChartPanel {...props('ERROR')} />));
-    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('Polygon is cooling down'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('จำกัดอัตราการเรียก'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
 
     await act(async () => root.render(<MarketCandleChartPanel {...props('EMPTY')} />));
-    await vi.waitFor(() => expect(host.textContent).toContain('No validated Polygon candles'));
+    await vi.waitFor(() => expect(host.textContent).toContain('ไม่มีแท่งเทียนที่ผ่านการตรวจสอบ'));
     expect(host.querySelector('[data-testid="ported-chart-renderer"]')).toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it('costs zero market requests for an indicator or favourite toggle', async () => {
+    // Every toolbar toggle is a pure re-derivation of bars already in memory.
+    // Only a genuine interval/range change may reach the network.
+    const fetchMock = vi.fn<typeof fetch>(async () => response(yahooEnvelope('AAPL', '5m')));
+    vi.stubGlobal('fetch', fetchMock);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => root.render(<MarketCandleChartPanel {...props()} />));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const toggles: Array<Partial<typeof DEFAULT_CHART_PREFERENCES>> = [
+      { ema100: true },
+      { ema200: true },
+      { rsi: true },
+      { macd: true },
+      { vpvr: true },
+      { supportResistance: false },
+      { volume: false },
+      { chartType: 'heikin-ashi' },
+      { favoriteIntervals: ['1D'] },
+      { favoriteRanges: ['1y', '5y'] },
+    ];
+    for (const change of toggles) {
+      await act(async () => root.render(<MarketCandleChartPanel
+        {...props()}
+        preferences={{ ...DEFAULT_CHART_PREFERENCES, ...change }}
+      />));
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The one served result is still mounted (no throwaway remount either).
+    expect(host.querySelector('[data-testid="ported-chart-renderer"]')?.getAttribute('data-symbol')).toBe('AAPL');
+
+    // A real range change is the only thing that loads new history.
+    await act(async () => root.render(<MarketCandleChartPanel {...props()} range="3m" />));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1][0])).toContain('range=3m');
     await act(async () => root.unmount());
   });
 });

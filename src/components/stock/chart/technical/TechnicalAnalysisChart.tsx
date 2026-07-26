@@ -33,8 +33,9 @@ import type { PriceAdjustmentMeta } from '@/src/lib/analytics/price-adjustment';
 import { MarketTracer } from '@/src/lib/market-data/realtime';
 import { mergeLiveCandleIntoBars } from '../../live-candle-bridge';
 import type { CanonicalLiveUpdateSink } from '../../useMarketSource';
-import { optionToolPivotLevelsSchema, type OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels';
+import type { OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels';
 import { useOptionsSupportResistance } from '../useOptionsSupportResistance';
+import { levelsRequestKey, requestChartLevels } from './levels-client';
 import { ChartToolbar, type ToolbarToggleKey } from './ChartToolbar';
 import { TechnicalChartHost, type ChartPriceLineSpec, type EmaLineSpec, type VisibleLogicalRange } from './TechnicalChartHost';
 import { SupportResistancePanel, volumeProfileConfirmation, type SupportResistanceRow } from './SupportResistancePanel';
@@ -178,29 +179,22 @@ export function TechnicalAnalysisChart({
   );
 
   // ── S/R levels (existing classic-pivot engine) ─────────────────────────────
-  const levelKey = `${symbol}:${interval}`;
+  // Keyed on the pivot *basis*, not the interval or the range: the levels come
+  // from the last completed daily/weekly bar, so 6M → 12 เดือน → 5Y and 5m → 1h
+  // all reuse the same cached result instead of re-requesting an identical one.
+  const levelKey = levelsRequestKey(symbol, interval);
   useEffect(() => {
-    const controller = new AbortController();
     let cancelled = false;
     // Strict Mode runs setup/cleanup/setup once in development; deferring one
-    // microtask lets the throwaway setup abort before any request is made.
+    // microtask lets the throwaway setup drop out before any request is made.
     queueMicrotask(() => {
       if (cancelled) return;
       void (async () => {
         try {
-          const query = new URLSearchParams({ symbol, timeframe: interval });
-          const response = await fetch(`/api/market/chart-levels?${query.toString()}`, {
-            signal: controller.signal,
-            headers: { Accept: 'application/json' },
-            cache: 'no-store',
-          });
-          const payload = await response.json() as { data: unknown; error?: { message?: string } };
-          if (!response.ok) throw new Error(payload.error?.message ?? 'ยังไม่มีข้อมูลแนวรับ–แนวต้านสำหรับช่วงนี้');
-          const parsed = optionToolPivotLevelsSchema.safeParse(payload.data);
-          if (!parsed.success) throw new Error('ข้อมูลแนวรับ–แนวต้านไม่ผ่านการตรวจสอบ');
-          if (!controller.signal.aborted) setLevelState({ key: levelKey, levels: parsed.data, error: null });
+          const levels = await requestChartLevels({ symbol, interval });
+          if (!cancelled) setLevelState({ key: levelKey, levels, error: null });
         } catch (cause) {
-          if (controller.signal.aborted) return;
+          if (cancelled) return;
           setLevelState({
             key: levelKey,
             levels: null,
@@ -209,7 +203,7 @@ export function TechnicalAnalysisChart({
         }
       })();
     });
-    return () => { cancelled = true; controller.abort(); };
+    return () => { cancelled = true; };
   }, [levelKey, symbol, interval]);
 
   const activeLevels = levelState.key === levelKey ? levelState.levels : null;
@@ -286,13 +280,16 @@ export function TechnicalAnalysisChart({
         const current = previous?.key === datasetKey ? previous.bars : historyBars;
         if (!current.length) return previous;
         const bucketInterval = interval === '1D' || interval === 'Week' ? interval : undefined;
+        // A missing provider volume stays null across the bridge: coercing it to
+        // 0 would invent traded size for a bucket the provider never reported.
         const bridge = current.map((bar) => ({
           date: new Date(bar.time * 1_000).toISOString(),
           open: bar.open,
           high: bar.high,
           low: bar.low,
           close: bar.close,
-          volume: bar.volume ?? 0,
+          volume: bar.volume,
+          partial: bar.partial,
         }));
         const merged = mergeLiveCandleIntoBars(bridge, candle, bucketInterval);
         if (merged === bridge) return previous;

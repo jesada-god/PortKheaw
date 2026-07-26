@@ -4,10 +4,10 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import { useToast } from '@/src/components/ui/Toast';
-import { compatibleSelection } from '@/src/lib/market-data/gateway/capabilities';
 import type { CandleInterval, HistoricalRange, MarketSessionMode } from '@/src/lib/market-data/gateway/contracts';
 import type { AcceptedPriceCandidate, LiveCandle, MarketDataLabel, MarketSelection } from '@/src/lib/stock-detail/market-source';
 import {
+  chartCompatibleSelection as compatibleSelection,
   rangeOption,
   toggleFavoriteInterval,
   toggleFavoriteRange,
@@ -78,8 +78,10 @@ export function ChartPanel({
   const range = preferences.selectedRange;
   const [session, setSession] = useState<MarketSessionMode>('regular');
   const intraday = !isAdjustableInterval(interval);
-  // Daily/weekly/monthly history uses Polygon-adjusted prices (splits/dividends);
-  // intraday candles are the raw market prints and are never claimed adjusted.
+  // Daily/weekly/monthly history requests Yahoo's adjusted series (splits and
+  // dividends, via the provider's own adjusted close); intraday candles are the
+  // raw market prints and are never claimed adjusted. One series is never a mix:
+  // the request either asks for adjusted or it does not.
   const adjusted = !intraday;
 
   useEffect(() => {

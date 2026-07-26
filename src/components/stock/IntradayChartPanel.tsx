@@ -13,11 +13,9 @@ import {
   type CandleRange as HistoricalRange,
   type CandleSession as MarketSessionMode,
 } from '@/src/lib/market-data/candles/contracts';
-import { chartGatewayResponseSchema } from '@/src/lib/market-data/gateway/contracts';
 import { historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCandle, type MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 import { resolveChartProvenance } from './chart-live-provenance';
 import type { CanonicalLiveUpdateSink } from './useMarketSource';
-import { polygonBarsToChartResult } from './polygon-history-adapter';
 import { resolvePriceAdjustment } from '@/src/lib/analytics/price-adjustment';
 import type { ChartPreferences } from '@/src/lib/analytics/timeframe';
 import type { ToolbarToggleKey } from './chart/technical/ChartToolbar';
@@ -58,13 +56,13 @@ interface Props {
 }
 
 function limitationMessage(code: string | undefined): string {
-  if (code === 'provider-not-configured') return 'Polygon market candles are not configured.';
-  if (code === 'forbidden' || code === 'provider-unauthorized') return 'Polygon did not authorize this market-data operation.';
-  if (code === 'rate-limited') return 'Polygon is cooling down after a rate limit.';
-  if (code === 'unsupported') return 'This instrument or interval/range combination is unsupported.';
-  if (code === 'invalid-symbol') return 'This instrument is delisted or cannot be resolved safely.';
-  if (code === 'not-found' || code === 'insufficient-data') return 'No Polygon OHLCV is available for this symbol and selection.';
-  return 'Market candles are temporarily unavailable.';
+  if (code === 'provider-not-configured') return 'ยังไม่ได้ตั้งค่าแหล่งข้อมูลแท่งเทียนย้อนหลัง';
+  if (code === 'forbidden' || code === 'provider-unauthorized') return 'แหล่งข้อมูลย้อนหลังไม่อนุญาตให้เรียกข้อมูลนี้';
+  if (code === 'rate-limited') return 'แหล่งข้อมูลย้อนหลังกำลังจำกัดอัตราการเรียก กรุณารอสักครู่';
+  if (code === 'unsupported') return 'หลักทรัพย์นี้ หรือคู่แท่งเทียน/ช่วงข้อมูลที่เลือก ไม่รองรับ';
+  if (code === 'invalid-symbol') return 'หลักทรัพย์นี้ถูกถอนออกจากตลาด หรือไม่สามารถระบุได้อย่างปลอดภัย';
+  if (code === 'not-found' || code === 'insufficient-data') return 'ไม่มีข้อมูล OHLCV จริงสำหรับหลักทรัพย์และช่วงที่เลือก';
+  return 'ข้อมูลแท่งเทียนใช้งานไม่ได้ชั่วคราว';
 }
 
 export function MarketCandleChartPanel(props: Props) {
@@ -77,7 +75,7 @@ export function MarketCandleChartPanel(props: Props) {
   const appActive = useAppActive();
   // When the current selection is the exact bucket the shared market source
   // streams, the chart consumes that single accepted candle instead of running a
-  // duplicate history poll. Polygon REST history still loads once below.
+  // duplicate history poll. The Yahoo history still loads exactly once below.
   const coveredByLiveSource = Boolean(liveActive) && matchesLiveSelection(interval, session);
   const [resultState, setResultState] = useState<KeyedChartResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -126,7 +124,12 @@ export function MarketCandleChartPanel(props: Props) {
     const operation = (async () => {
       try {
         const query = new URLSearchParams({ symbol, interval, range, adjusted: String(adjusted), session });
-        const response = await fetch(`/api/market/chart?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
+        // Historical primary: the server-side Yahoo Finance Chart JSON pipeline
+        // (`/api/market/candles`). It is already normalized, validated, aggregated
+        // and cached server-side, and it is the SAME pipeline the shared market
+        // source and the S/R level engine read — so the chart, the header fallback
+        // and the pivot basis can never disagree about what a bar was.
+        const response = await fetch(`/api/market/candles?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' }, cache: 'no-store' });
         const payload = await response.json() as Envelope;
         if (!response.ok) {
           const retry = Number(response.headers.get('Retry-After') ?? payload.error?.retryAfterSeconds ?? 0);
@@ -137,10 +140,8 @@ export function MarketCandleChartPanel(props: Props) {
             diagnostics: process.env.NODE_ENV === 'development' ? payload.error?.reason ?? payload.error?.message : undefined,
           });
         }
-        const gateway = chartGatewayResponseSchema.safeParse(payload.data);
-        if (!gateway.success) throw Object.assign(new Error('Polygon candle response failed validation.'), { code: 'invalid-provider-response' });
-        const parsed = normalizedCandleResultSchema.safeParse(polygonBarsToChartResult(gateway.data.bars));
-        if (!parsed.success) throw Object.assign(new Error('Polygon chart adapter failed validation.'), { code: 'invalid-provider-response' });
+        const parsed = normalizedCandleResultSchema.safeParse(payload.data);
+        if (!parsed.success) throw Object.assign(new Error('ข้อมูลแท่งเทียนย้อนหลังไม่ผ่านการตรวจสอบ'), { code: 'invalid-provider-response' });
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
         cache.current.set(requestKey, parsed.data);
         setResultState({ requestKey, data: parsed.data });
@@ -273,7 +274,7 @@ export function MarketCandleChartPanel(props: Props) {
       onToggle={onToggle}
       liveUpdateSinkRef={liveUpdateSinkRef}
     />}
-    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">No validated Polygon candles are available for this selection.</p>}
+    {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">ไม่มีแท่งเทียนที่ผ่านการตรวจสอบสำหรับช่วงที่เลือก</p>}
     {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div></dl></details>}
   </div>;
 }

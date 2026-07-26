@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { matchesLiveSelection, mergeLiveCandleIntoBars, shouldPollChart } from './live-candle-bridge';
+import { matchesLiveSelection, mergeLiveCandleIntoBars, shouldPollChart, type ChartDisplayBar } from './live-candle-bridge';
 import type { LiveCandle } from '@/src/lib/stock-detail/market-source';
 
 const T0 = Math.floor(Date.UTC(2026, 6, 21, 13, 30) / 1_000);
 const STEP = 300;
 
-function isoBar(time: number, close: number, volume = 100) {
+function isoBar(time: number, close: number, volume: number | null = 100): ChartDisplayBar {
   return { date: new Date(time * 1_000).toISOString(), open: close, high: close, low: close, close, volume };
 }
 
@@ -80,13 +80,44 @@ describe('mergeLiveCandleIntoBars', () => {
   });
 
   it('returns the same reference when nothing changed (idle tick)', () => {
-    expect(mergeLiveCandleIntoBars(bars, candle(T0 + 2 * STEP, 12, 100))).toBe(bars);
+    // The first tick still has to mark the bucket as forming, so it copies once.
+    const marked = mergeLiveCandleIntoBars(bars, candle(T0 + 2 * STEP, 12, 100));
+    expect(marked).not.toBe(bars);
+    expect(marked.at(-1)?.partial).toBe(true);
+    // With the bucket already marked, an identical tick is a true no-op.
+    expect(mergeLiveCandleIntoBars(marked, candle(T0 + 2 * STEP, 12, 100))).toBe(marked);
     expect(mergeLiveCandleIntoBars(bars, null)).toBe(bars);
     expect(mergeLiveCandleIntoBars([], candle(T0, 10))).toEqual([]);
   });
 
-  it('merges a live delta into todays Polygon daily bar without replacing history or adding provider volumes', () => {
-    const daily = [
+  it('marks the live bucket partial so analytics never read an unfinished bar', () => {
+    // Same bucket, newer bucket and the daily branch must all agree: the bucket
+    // the accepted live candle belongs to is still forming.
+    expect(mergeLiveCandleIntoBars(bars, candle(T0 + 2 * STEP, 12.5)).at(-1)?.partial).toBe(true);
+    expect(mergeLiveCandleIntoBars(bars, candle(T0 + 3 * STEP, 13)).at(-1)?.partial).toBe(true);
+    const daily: ChartDisplayBar[] = [{ date: '2026-07-24T04:00:00.000Z', open: 100, high: 103, low: 99, close: 102, volume: 500 }];
+    const live = candle(Math.floor(Date.UTC(2026, 6, 24, 18, 0) / 1_000), 104, 25);
+    expect(mergeLiveCandleIntoBars(daily, live, '1D').at(-1)?.partial).toBe(true);
+    // Completed history buckets keep their own flag.
+    expect(mergeLiveCandleIntoBars(bars, candle(T0 + 2 * STEP, 12.5))[0].partial).toBeUndefined();
+  });
+
+  it('never fabricates a volume the provider did not report', () => {
+    const withoutVolume: ChartDisplayBar[] = [
+      { date: new Date(T0 * 1_000).toISOString(), open: 10, high: 10, low: 10, close: 10, volume: null },
+      { date: new Date((T0 + STEP) * 1_000).toISOString(), open: 11, high: 11, low: 11, close: 11, volume: null },
+    ];
+    // A live candle with no size leaves the slot unavailable rather than 0.
+    const noSize = { time: T0 + 2 * STEP, open: 11, high: 11, low: 11, close: 11, volume: null } as unknown as LiveCandle;
+    expect(mergeLiveCandleIntoBars(withoutVolume, noSize).at(-1)?.volume).toBeNull();
+    // A real live size fills a previously unavailable slot with the real value.
+    const daily: ChartDisplayBar[] = [{ date: '2026-07-24T04:00:00.000Z', open: 100, high: 103, low: 99, close: 102, volume: null }];
+    const live = candle(Math.floor(Date.UTC(2026, 6, 24, 18, 0) / 1_000), 104, 25);
+    expect(mergeLiveCandleIntoBars(daily, live, '1D').at(-1)?.volume).toBe(25);
+  });
+
+  it('merges a live delta into todays daily bar without replacing history or adding provider volumes', () => {
+    const daily: ChartDisplayBar[] = [
       { date: '2026-07-23T04:00:00.000Z', open: 95, high: 101, low: 94, close: 100, volume: 1_000 },
       { date: '2026-07-24T04:00:00.000Z', open: 100, high: 103, low: 99, close: 102, volume: 500 },
     ];

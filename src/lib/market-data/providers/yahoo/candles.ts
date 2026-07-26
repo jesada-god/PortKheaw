@@ -96,8 +96,9 @@ export interface YahooQuoteResult extends ProviderResult<Quote> {
   };
 }
 
-function exchangePeriodKey(timestamp: number, timeZone: string, interval: 'Week' | 'Month'): string {
+function exchangePeriodKey(timestamp: number, timeZone: string, interval: '1D' | 'Week' | 'Month'): string {
   const date = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(timestamp * 1_000));
+  if (interval === '1D') return date;
   if (interval === 'Month') return date.slice(0, 7);
   const parsed = new Date(`${date}T12:00:00.000Z`);
   const day = parsed.getUTCDay() || 7;
@@ -301,6 +302,20 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         const timeZone = result.meta.exchangeTimezoneName ?? 'UTC';
         last.partial = exchangePeriodKey(last.timestamp, timeZone, input.sourceInterval)
           === exchangePeriodKey(Math.floor(this.now().valueOf() / 1_000), timeZone, input.sourceInterval);
+      }
+      if (input.sourceInterval === '1D') {
+        // Yahoo returns today's row while the session is still running, with the
+        // live price as its close. That bucket is NOT a completed daily bar, and
+        // marking it truthfully is what keeps the classic-pivot basis, the
+        // "previous completed regular daily candle" comparison close and the S/R
+        // touch/hold/break statistics off an unfinished day. PRE has no traded
+        // regular session yet; POST/CLOSED means the regular session is done, so
+        // the daily bar is complete.
+        const timeZone = result.meta.exchangeTimezoneName ?? 'UTC';
+        const stillForming = ['PRE', 'PREPRE', 'REGULAR'].includes(marketState ?? '')
+          && exchangePeriodKey(last.timestamp, timeZone, '1D')
+            === exchangePeriodKey(Math.floor(this.now().valueOf() / 1_000), timeZone, '1D');
+        last.partial = stillForming;
       }
       const warnings = [
         ...(normalized.invalidCount ? [`Discarded ${normalized.invalidCount} invalid provider candles`] : []),

@@ -1,5 +1,5 @@
 import { sourceIntervalFor, YAHOO_CANDLE_CAPABILITIES } from '@/src/lib/market-data/candles/capabilities';
-import { supportedRangesForInterval } from '@/src/lib/market-data/gateway/capabilities';
+import { chartSupportedRanges } from '@/src/lib/analytics/timeframe/compatibility';
 import type { CandleInterval, HistoricalRange, MarketSessionMode } from '@/src/lib/market-data/gateway/contracts';
 
 /**
@@ -110,7 +110,9 @@ export function resolveMarketSourceConfig(selection: MarketSelection): MarketSou
     return {
       ...base,
       mode: 'intraday-live',
-      aggregateRange: supportedRangesForInterval(interval)[0] ?? null,
+      // Smallest range the Yahoo candles route can actually serve for this
+      // interval — the live poll only ever reads the newest bucket from it.
+      aggregateRange: chartSupportedRanges(interval)[0] ?? null,
       provenance: sourceInterval === interval ? 'provider-native' : 'aggregated',
       pollsAggregate: true,
       reason: null,
