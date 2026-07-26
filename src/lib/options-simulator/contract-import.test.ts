@@ -9,15 +9,15 @@ const contract = (overrides: Partial<OptionContract> = {}): OptionContract => ({
   volume: 42, openInterest: 900, impliedVolatility: 0.65,
   delta: 0.6, gamma: 0.03, theta: -0.04, vega: 0.08, rho: 0.01,
   inTheMoney: false, multiplier: 100, currency: 'USD', provider: 'alpha-vantage',
-  asOf: '2026-07-20T15:30:00.000Z', status: 'delayed',
+  asOf: '2026-07-20T15:30:00.000Z', status: 'live',
   ...overrides,
 });
 
 const chain = (item = contract()): OptionsChain => ({
   underlyingSymbol: 'RKLB', spot: 23.5, expiration: '2027-01-15', expirations: ['2027-01-15'],
   calls: item.type === 'call' ? [item] : [], puts: item.type === 'put' ? [item] : [],
-  provider: 'alpha-vantage', asOf: '2026-07-20T15:30:00.000Z', status: 'delayed',
-  delayedMinutes: 15, completeness: 1, warnings: [],
+  provider: 'alpha-vantage', asOf: '2026-07-20T15:30:00.000Z', status: item.status,
+  delayedMinutes: item.status === 'live' ? 0 : 15, completeness: 1, warnings: [],
 });
 
 const workspace = (): SimulationWorkspace => ({
@@ -36,13 +36,13 @@ describe('simulator provider contract import', () => {
     expect(result).not.toBeNull();
     expect(result?.underlyingPrice).toBe(23.5);
     expect(result?.dataSource).toBe('alpha-vantage');
-    expect(result?.dataStatus).toBe('delayed');
+    expect(result?.dataStatus).toBe('live');
     expect(result?.legs).toHaveLength(1);
     expect(result?.legs[0]).toEqual(expect.objectContaining({
       contractSymbol: 'RKLB270115C00025000', kind: 'call', strike: 25,
-      expiration: '2027-01-15', entryPremium: 5, premiumSource: 'mark',
+      expiration: '2027-01-15', entryPremium: 5.2, premiumSource: 'ask', midpoint: 5,
       impliedVolatility: 0.65, multiplier: 100, quantity: 2,
-      inputMode: 'provider', contractProvider: 'alpha-vantage', contractStatus: 'delayed',
+      inputMode: 'provider', contractProvider: 'alpha-vantage', contractStatus: 'live',
     }));
   });
 
@@ -63,8 +63,14 @@ describe('simulator provider contract import', () => {
     expect(result?.legs[0].thetaSource).toBeUndefined();
   });
 
-  it('uses deterministic premium precedence and rejects an unknown identity', () => {
-    expect(selectProviderPremium(contract({ mark: null }))).toEqual({ value: 5.2, source: 'ask' });
+  it('uses only the executable side and never falls back to Last or mark', () => {
+    expect(selectProviderPremium(contract(), 'buy')).toEqual({ value: 5.2, source: 'ask' });
+    expect(selectProviderPremium(contract(), 'sell')).toEqual({ value: 4.8, source: 'bid' });
+    expect(selectProviderPremium(contract({ ask: null, last: 5.1, mark: 5 }), 'buy')).toBeNull();
+    expect(selectProviderPremium(contract({ status: 'stale' }), 'buy')).toBeNull();
+  });
+
+  it('rejects an unknown contract identity', () => {
     expect(importOptionContract(workspace(), chain(), 'unknown')).toBeNull();
   });
 });

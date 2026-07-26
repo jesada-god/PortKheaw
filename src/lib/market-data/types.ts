@@ -35,6 +35,8 @@ export const quoteSchema = z.object({
   high: nullableNumber,
   low: nullableNumber,
   previousClose: nullableNumber,
+  /** Latest completed/current regular-session close, kept separate from extended price. */
+  regularClose: nullableNumber.optional(),
   change: nullableNumber,
   changePercent: nullableNumber,
   volume: z.number().int().nonnegative().nullable(),

@@ -29,6 +29,7 @@ export interface ChartDisplayBar {
  * for an interval is identical whichever history range the chart displays.
  */
 export function matchesLiveSelection(interval: CandleInterval, session: MarketSessionMode): boolean {
+  if ((interval === '1D' || interval === 'Week') && session === 'regular') return true;
   return isIntradayLiveSelection(interval, session);
 }
 
@@ -82,17 +83,43 @@ function sameOhlcv(bar: ChartDisplayBar, candle: LiveCandle): boolean {
 export function mergeLiveCandleIntoBars<T extends ChartDisplayBar>(
   bars: readonly T[],
   candle: LiveCandle | null,
+  interval?: CandleInterval,
 ): T[] {
   if (!candle || bars.length === 0) return bars as T[];
   const last = bars[bars.length - 1];
   const lastTime = barTimeSeconds(last);
   if (lastTime === null) return bars as T[];
 
+  if (interval === '1D' || interval === 'Week') {
+    const lastDateKey = /^\d{4}-\d{2}-\d{2}/.exec(last.date)?.[0] ?? exchangeDateKey(lastTime);
+    const sameBucket = interval === '1D'
+      ? lastDateKey === exchangeDateKey(candle.time)
+      : weekKeyFromDate(lastDateKey) === exchangeWeekKey(candle.time);
+    if (sameBucket) {
+      const next = bars.slice();
+      next[next.length - 1] = {
+        ...last,
+        high: Math.max(last.high, candle.high),
+        low: Math.min(last.low, candle.low),
+        close: candle.close,
+        // Polygon is the historical baseline and Finnhub is the live delta. We
+        // never add the two provider totals (which could double an overlapping
+        // minute); keep the greatest observed real cumulative value.
+        volume: Math.max(last.volume, candle.volume),
+      } as T;
+      return next;
+    }
+  }
+
   // Out-of-order / stale bucket: never overwrite a newer bar already shown.
   if (candle.time < lastTime) return bars as T[];
 
   const liveBar: ChartDisplayBar = {
-    date: new Date(candle.time * 1_000).toISOString(),
+    date: interval === '1D'
+      ? `${exchangeDateKey(candle.time)}T00:00:00.000Z`
+      : interval === 'Week'
+        ? `${exchangeWeekKey(candle.time)}T00:00:00.000Z`
+        : new Date(candle.time * 1_000).toISOString(),
     open: candle.open,
     high: candle.high,
     low: candle.low,
@@ -110,4 +137,25 @@ export function mergeLiveCandleIntoBars<T extends ChartDisplayBar>(
 
   // Strictly newer bucket → append exactly one bar.
   return [...bars, liveBar as T];
+}
+
+const EXCHANGE_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+function exchangeDateKey(seconds: number): string {
+  const parts = EXCHANGE_DATE.formatToParts(new Date(seconds * 1_000));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function exchangeWeekKey(seconds: number): string {
+  return weekKeyFromDate(exchangeDateKey(seconds));
+}
+
+function weekKeyFromDate(dateKey: string): string {
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
 }

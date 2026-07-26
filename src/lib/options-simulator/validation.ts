@@ -27,6 +27,7 @@ export const optionLegSchema = z.object({
   contractSymbol: z.string().min(1).max(120).nullable().optional(),
   bid: finite.nonnegative().nullable().optional(),
   ask: finite.nonnegative().nullable().optional(),
+  midpoint: finite.nonnegative().nullable().optional(),
   mark: finite.nonnegative().nullable().optional(),
   last: finite.nonnegative().nullable().optional(),
   volume: z.number().int().nonnegative().nullable().optional(),

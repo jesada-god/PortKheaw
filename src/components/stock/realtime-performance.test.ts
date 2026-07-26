@@ -38,7 +38,7 @@ describe('realtimeUpdatePolicy', () => {
 
   it('commits an official bar so Lightweight Charts can call update()', () => {
     expect(realtimeUpdatePolicy(
-      { eventKind: 'bar', label: LIVE_LABEL, price: 173.30 },
+      { eventKind: 'bar', label: LIVE_LABEL, price: 173.30, barFinalized: true },
       true,
     )).toEqual({ transientPrice: false, commitMarketState: true });
   });

@@ -20,7 +20,7 @@ export const WS_PATH = '/ws';
 /**
  * The HTTP LIVENESS path (never carries secrets). Answers 200 whenever the
  * server is listening on PORT — even while the upstream is (re)connecting — so a
- * transient Alpaca 406 during a rolling deploy never fails the new instance's
+ * transient provider connection-limit response during a rolling deploy never fails the new instance's
  * healthcheck and hands the single connection slot back to the old one. This is
  * the path Railway's healthcheck uses.
  */

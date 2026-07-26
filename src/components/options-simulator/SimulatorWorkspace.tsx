@@ -19,7 +19,7 @@ import { importOptionContract } from '@/src/lib/options-simulator/contract-impor
 import { detectStrategy, portfolioProfitLossBasis, valuePortfolio } from '@/src/lib/options-simulator/portfolio';
 import { priceOption } from '@/src/lib/options-simulator/pricing';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
-import type { MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace } from '@/src/lib/options-simulator/types';
+import type { DataStatus, MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace } from '@/src/lib/options-simulator/types';
 import { calculationValidationMessages } from '@/src/lib/options-simulator/validation';
 import { runExclusiveSave, type SaveFeedbackStatus } from './save-feedback';
 import { addCalendarDays, aggregatePortfolioSensitivity, auditResultReconciliation, BASIC_PATH_OPTIONS, buildProfitLossSummary, calendarDaysBetween, clampTargetDate, convertUsdForDisplay, displayValidationMessage, engineVolatilityToPercent, formatPremiumDigits, formatResultMoney, formatResultNumber, formatSignedPercent, isBasicPathOption, normalizePercentDraft, parseFiniteDraft, parsePercentDraft, parsePremiumPaste, percentVolatilityToEngine, premiumDigitsFromValue, premiumFromDigitString, profitLossState, profitLossStateLabel, profitLossToneClass, safeProfitLossPercent, targetDateError, validationMessageParts, validationPathUnit, type ResultCurrency } from './simulator-ux';
@@ -66,6 +66,10 @@ function newLeg(): OptionLeg {
 }
 function newScenario(): ScenarioInput {
   return { id: uid(), name: 'Base', targetPrice: 0, valuationDate: day(1), volatilityShift: 0, rate: 0, dividendYield: 0 };
+}
+
+function optionQuoteValue(value: number | null | undefined): string {
+  return value === null || value === undefined ? 'N/A' : `$${value.toFixed(2)}`;
 }
 function fresh(type: SimulationType): SimulationWorkspace {
   return { name: 'Options Simulation ใหม่', description: '', symbol: '', companyName: '', exchange: null, currency: 'USD',
@@ -235,6 +239,15 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
     const symbol = params.get('symbol');
     const expiration = params.get('expiration');
     const contractSymbol = params.get('contract');
+    const acceptedPrice = Number(params.get('underlyingPrice'));
+    const acceptedProvider = params.get('underlyingProvider');
+    const acceptedAsOf = params.get('underlyingAsOf');
+    const acceptedMode = params.get('underlyingMode');
+    const hasAcceptedPrice = Number.isFinite(acceptedPrice) && acceptedPrice > 0;
+    const acceptedStatus: DataStatus | null = acceptedMode === 'REAL-TIME' ? 'live'
+      : acceptedMode === 'STALE' || acceptedMode === 'CACHED' ? 'stale'
+        : acceptedMode === 'DELAYED' || acceptedMode === 'END-OF-DAY' ? 'delayed'
+          : null;
     if (!symbol || !expiration || !contractSymbol) return;
     contractImportHandled.current = true;
     const controller = new AbortController();
@@ -250,7 +263,18 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         setWorkspace((current) => {
           const next = importOptionContract(current, parsed.data, contractSymbol);
           imported = Boolean(next);
-          return next ? normalizeUiWorkspace(next) : current;
+          if (!next) return current;
+          const canonicalUnderlying = hasAcceptedPrice && acceptedStatus ? {
+            ...next,
+            underlyingPrice: acceptedPrice,
+            dataSource: acceptedProvider?.slice(0, 80) || next.dataSource,
+            dataTimestamp: acceptedAsOf && Number.isFinite(Date.parse(acceptedAsOf)) ? acceptedAsOf : next.dataTimestamp,
+            dataStatus: acceptedStatus,
+            scenarios: next.scenarios.map((scenario, index) => index === 0
+              ? { ...scenario, targetPrice: acceptedPrice }
+              : scenario),
+          } : next;
+          return normalizeUiWorkspace(canonicalUnderlying);
         });
         if (!imported) throw new Error('ไม่พบ contract identity ที่เลือกใน chain snapshot นี้');
         setSelectedLegId('portfolio');
@@ -505,7 +529,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><Choice title="Option Type" value={leg.kind} options={['call', 'put']} optionLabels={{ call: 'Call', put: 'Put' }} validationPath={`legs.${index}.kind`} onChange={(value) => legChange(index, { kind: value as OptionLeg['kind'] })} /><Choice title="Side" value={leg.side} options={['buy', 'sell']} optionLabels={{ buy: 'Buy', sell: 'Sell' }} validationPath={`legs.${index}.side`} onChange={(value) => legChange(index, { side: value as OptionLeg['side'] })} /><Numeric title="Quantity" placeholder="เช่น 1" min={1} integer helper="จำนวนสัญญาที่ต้องการวิเคราะห์" externalError={fieldError(`legs.${index}.quantity`)} validationPath={`legs.${index}.quantity`} value={leg.quantity} onChange={(value) => legChange(index, { quantity: value })} /><Numeric title="Strike Price" placeholder="เช่น 120" min={0.0000001} helper="ราคาใช้สิทธิตามสัญญา" externalError={fieldError(`legs.${index}.strike`)} validationPath={`legs.${index}.strike`} value={leg.strike} onChange={(value) => legChange(index, { strike: value })} /></div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><div><FieldLabel title="Expiration" helper="วันหมดอายุของสัญญา" /><Input type="date" aria-label={`Leg ${index + 1} Expiration`} min={addCalendarDays(workspace.valuationDate, 1)} value={leg.expiration} data-validation-path={`legs.${index}.expiration`} onChange={(event) => legChange(index, { expiration: event.target.value })} />{fieldError(`legs.${index}.expiration`) && <p role="alert" className="mt-1 text-xs text-red-300">{fieldError(`legs.${index}.expiration`)}</p>}</div><PremiumInput value={leg.entryPremium} helper="ต้นทุนต่อหุ้น เช่น $1.40" externalError={fieldError(`legs.${index}.entryPremium`)} validationPath={`legs.${index}.entryPremium`} onChange={(value) => legChange(index, { entryPremium: value })} /><PercentInput title="IV (%)" value={engineVolatilityToPercent(leg.impliedVolatility)} placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" externalError={fieldError(`legs.${index}.impliedVolatility`)} validationPath={`legs.${index}.impliedVolatility`} onChange={(value) => legChange(index, { impliedVolatility: percentVolatilityToEngine(value) })} /><Numeric title="Contract Multiplier" placeholder="เช่น 100" min={0.0000001} helper="หุ้นสหรัฐฯ ส่วนใหญ่ 1 สัญญา = 100 หุ้น" externalError={fieldError(`legs.${index}.multiplier`)} validationPath={`legs.${index}.multiplier`} value={leg.multiplier} onChange={(value) => legChange(index, { multiplier: value })} /></div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-[50%]"><GreekInput title="Delta" placeholder="เช่น 0.35" helper="Premium เปลี่ยนโดยประมาณเมื่อหุ้นขยับ $1" value={leg.delta ?? null} fallbackValue={resolved.delta} source={leg.deltaSource ?? (leg.delta == null ? 'model' : 'manual')} timestamp={leg.deltaTimestamp} min={-1} max={1} externalError={fieldError(`legs.${index}.delta`)} validationPath={`legs.${index}.delta`} onChange={(value) => legChange(index, { delta: value, deltaSource: value === null ? 'model' : 'manual', deltaTimestamp: null })} /><GreekInput title="Theta/day" placeholder="เช่น -0.04" helper="มูลค่าที่ลดลงโดยประมาณต่อวันจาก Time Decay" value={leg.theta ?? null} fallbackValue={resolved.theta} source={leg.thetaSource ?? (leg.theta == null ? 'model' : 'manual')} timestamp={leg.thetaTimestamp} externalError={fieldError(`legs.${index}.theta`)} validationPath={`legs.${index}.theta`} onChange={(value) => legChange(index, { theta: value, thetaSource: value === null ? 'model' : 'manual', thetaTimestamp: null })} /></div>
-          {leg.contractSymbol && <p className={`mt-3 rounded-lg p-2 text-xs ${leg.contractStatus === 'stale' ? 'bg-amber-500/10 text-amber-200' : 'bg-sky-500/5 text-slate-400'}`}>{leg.contractSymbol} · premium source {leg.premiumSource ?? 'manual'} · {leg.contractProvider ?? 'provider unavailable'} · {leg.contractAsOf ? new Date(leg.contractAsOf).toLocaleString() : 'asOf unavailable'} · {leg.contractStatus ?? 'status unavailable'}{leg.contractStatus === 'stale' ? ' · ระบบจะแจ้งเตือนอีกครั้งก่อนคำนวณ' : ''}</p>}
+          {leg.contractSymbol && <div className={`mt-3 rounded-lg p-2 text-xs ${leg.contractStatus === 'stale' ? 'bg-amber-500/10 text-amber-200' : 'bg-sky-500/5 text-slate-400'}`}><p>{leg.contractSymbol} · {leg.contractProvider ?? 'provider unavailable'} · {leg.contractAsOf ? new Date(leg.contractAsOf).toLocaleString() : 'asOf unavailable'} · {leg.contractStatus ?? 'status unavailable'}</p><p className="mt-1 font-mono">Market Last {optionQuoteValue(leg.last)} · Bid {optionQuoteValue(leg.bid)} · Ask {optionQuoteValue(leg.ask)} · Mid {optionQuoteValue(leg.midpoint)}</p><p className="mt-1">Entry basis: {leg.premiumSource === 'ask' ? 'live Ask (buy)' : leg.premiumSource === 'bid' ? 'live Bid (sell)' : 'manual / unavailable'}{leg.premiumSource === 'manual' ? ' · Last is reference only and was not used as an executable fill.' : ''}</p>{leg.contractStatus === 'stale' && <p className="mt-1">ระบบจะแจ้งเตือนอีกครั้งก่อนคำนวณ</p>}</div>}
         </article>; })}</div><Button className="mt-4 min-h-11 w-full border-dashed" variant="outline" onClick={() => change({ legs: [...workspace.legs, newLeg()] })}><Plus size={16} className="mr-2" />เพิ่ม Option Leg</Button></section>}
       {validationErrors.length > 0 && <section role="alert" data-testid="validation-warning" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4"><strong>กรุณาตรวจสอบข้อมูลก่อนคำนวณ:</strong><ul className="list-disc pl-5 text-sm">{[...new Set(validationErrors.map(displayValidationMessage))].map((error) => <li key={error}>{error}</li>)}</ul></section>}
       {operationError && <section role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm">{operationError}</section>}

@@ -107,6 +107,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   private lastPrice: number | null = null;
   private lastPriceMs = 0;
   private lastTradeIso: string | null = null;
+  private lastObservation: MarketUpdate['observation'] = null;
   private bid: number | null | undefined;
   private ask: number | null | undefined;
   private bidSize: number | null | undefined;
@@ -115,6 +116,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   private quoteIso: string | null | undefined;
   private halted = false;
   private haltReason: string | null | undefined;
+  private marketSession: string | null = null;
 
   constructor(options: WebSocketMarketSourceOptions) {
     this.symbol = options.symbol.toUpperCase();
@@ -226,6 +228,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.lastPrice = null;
     this.lastPriceMs = 0;
     this.lastTradeIso = null;
+    this.lastObservation = null;
     this.bid = undefined;
     this.ask = undefined;
     this.bidSize = undefined;
@@ -234,6 +237,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.quoteIso = undefined;
     this.halted = false;
     this.haltReason = undefined;
+    this.marketSession = null;
     if (this.state === 'open') this.sendSubscribe();
     this.emit(false, 'lifecycle');
   }
@@ -319,14 +323,30 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
    */
   private applySnapshot(snapshot: MarketSnapshot): void {
     if (snapshot.symbol !== this.symbol) return;
-    this.tracer.trace({ stage: 'browser_market_event_received', type: 'snapshot', symbol: snapshot.symbol });
+    const browserReceivedAtMs = this.now();
+    this.tracer.trace({ stage: 'browser_market_event_received', type: 'snapshot', symbol: snapshot.symbol, browserReceivedAtMs });
     for (const bar of snapshot.bars) this.store.applyBar(bar);
     if (snapshot.trade && snapshot.trade.timestampMs >= this.lastPriceMs) {
-      this.store.applyTrade(snapshot.trade);
+      // Legacy Alpaca snapshots carried trade + official bars but no gateway
+      // partial candle. Finnhub snapshots/cycles receive the canonical candle as
+      // a separate gateway bar, so folding its trade here would double volume.
+      if (snapshot.trade.provider !== 'finnhub') this.store.applyTrade(snapshot.trade);
       this.lastPrice = snapshot.trade.price;
       this.lastPriceMs = snapshot.trade.timestampMs;
       this.lastTradeIso = new Date(snapshot.trade.timestampMs).toISOString();
-      this.tracer.trace({ stage: 'price_header_updated', symbol: snapshot.symbol, price: snapshot.trade.price });
+      const acceptedAtMs = this.now();
+      this.lastObservation = {
+        exchangeTimestampMs: snapshot.trade.timestampMs,
+        gatewayReceivedAtMs: snapshot.trade.gatewayReceivedAtMs ?? null,
+        browserReceivedAtMs,
+        acceptedAtMs,
+      };
+      this.marketSession = snapshot.trade.session ?? this.marketSession;
+      this.tracer.trace({
+        stage: 'price_header_updated', symbol: snapshot.symbol, price: snapshot.trade.price,
+        ...this.lastObservation,
+        latencyMs: acceptedAtMs - snapshot.trade.timestampMs,
+      });
     }
     if (snapshot.quote && snapshot.quote.timestampMs >= this.lastQuoteMs) {
       this.lastQuoteMs = snapshot.quote.timestampMs;
@@ -343,20 +363,36 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
 
   private applyEvent(event: NormalizedMarketEvent): void {
     if (event.symbol !== this.symbol) return;
-    this.tracer.trace({ stage: 'browser_market_event_received', type: event.kind, symbol: event.symbol });
+    const browserReceivedAtMs = this.now();
+    this.tracer.trace({
+      stage: 'browser_market_event_received', type: event.kind, symbol: event.symbol,
+      exchangeTimestampMs: event.timestampMs, gatewayReceivedAtMs: event.gatewayReceivedAtMs,
+      browserReceivedAtMs,
+    });
     let barFinalized = false;
     switch (event.kind) {
       case 'trade': {
-        const result = this.store.applyTrade(event);
-        if (result.applied && event.timestampMs >= this.lastPriceMs) {
+        if (event.provider !== 'finnhub') this.store.applyTrade(event);
+        if (event.timestampMs >= this.lastPriceMs) {
           this.lastPrice = event.price;
           this.lastPriceMs = event.timestampMs;
           this.lastTradeIso = new Date(event.timestampMs).toISOString();
+          const acceptedAtMs = this.now();
+          this.lastObservation = {
+            exchangeTimestampMs: event.timestampMs,
+            gatewayReceivedAtMs: event.gatewayReceivedAtMs ?? null,
+            browserReceivedAtMs,
+            acceptedAtMs,
+          };
+          this.marketSession = event.session ?? this.marketSession;
           // The header's Last Price is driven by trades; trace only the accepted
           // (newer-than-last) update so an out-of-order tick can't fake a change.
-          this.tracer.trace({ stage: 'price_header_updated', symbol: event.symbol, price: event.price });
+          this.tracer.trace({
+            stage: 'price_header_updated', symbol: event.symbol, price: event.price,
+            ...this.lastObservation,
+            latencyMs: acceptedAtMs - event.timestampMs,
+          });
         }
-        barFinalized = result.finalizedPrevious;
         break;
       }
       case 'quote': {
@@ -374,7 +410,8 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         // An official/updated 1m bar is only emitted after the minute closes, so
         // it always finalizes that bucket — the chart may recompute heavy S/R.
         this.store.applyBar(event);
-        barFinalized = true;
+        this.marketSession = event.session ?? this.marketSession;
+        barFinalized = event.finalized !== false;
         break;
       }
       case 'status': {
@@ -454,6 +491,10 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
 
   private activeCandle(): LiveCandle | null {
     const interval = this.selection.interval;
+    // Daily/weekly history remains Polygon-owned. The live source exposes its
+    // canonical current 1m delta so the chart bridge can merge it into only the
+    // current historical bucket without replacing the historical series.
+    if (interval === '1D' || interval === 'Week') return this.store.activeCandle('1m');
     if (!isRealtimeInterval(interval)) return null;
     return this.store.activeCandle(interval as RealtimeInterval);
   }
@@ -476,6 +517,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       candle: this.activeCandle(),
       label,
       error: null,
+      observation: this.lastObservation,
       bid: this.bid,
       ask: this.ask,
       bidSize: this.bidSize,
@@ -483,7 +525,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       quoteTimestamp: this.quoteIso,
       halted: this.halted,
       haltReason: this.haltReason,
-      session: this.selection.session,
+      session: this.marketSession ?? this.selection.session,
       barFinalized,
       eventKind,
       // The socket lifecycle at emit time. The coordinator uses this to keep a

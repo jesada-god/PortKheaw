@@ -22,7 +22,9 @@ export type TraceStage =
   | 'gateway_market_event_normalized'
   | 'gateway_market_event_broadcast'
   | 'browser_market_event_received'
-  | 'price_header_updated';
+  | 'price_header_updated'
+  | 'chart_updated'
+  | 'options_underlying_updated';
 
 export interface TraceRecord {
   stage: TraceStage;
@@ -33,6 +35,12 @@ export interface TraceRecord {
   clients?: number;
   /** Compact channel summary, e.g. `trades,quotes,bars`. */
   channels?: string;
+  exchangeTimestampMs?: number;
+  gatewayReceivedAtMs?: number | null;
+  browserReceivedAtMs?: number;
+  acceptedAtMs?: number;
+  chartUpdatedAtMs?: number;
+  latencyMs?: number;
 }
 
 export type TraceSink = (line: string) => void;
@@ -44,6 +52,8 @@ const HIGH_VOLUME_STAGES: ReadonlySet<TraceStage> = new Set<TraceStage>([
   'gateway_market_event_broadcast',
   'browser_market_event_received',
   'price_header_updated',
+  'chart_updated',
+  'options_underlying_updated',
 ]);
 
 /** Min gap between two sampled lines sharing a (stage, symbol, type) key. */
@@ -57,6 +67,12 @@ export function formatTrace(record: TraceRecord): string {
   if (record.price !== undefined) parts.push(`price=${record.price}`);
   if (record.clients !== undefined) parts.push(`clients=${record.clients}`);
   if (record.channels !== undefined) parts.push(`channels=${record.channels}`);
+  if (record.exchangeTimestampMs !== undefined) parts.push(`exchangeTimestampMs=${record.exchangeTimestampMs}`);
+  if (record.gatewayReceivedAtMs !== undefined) parts.push(`gatewayReceivedAtMs=${record.gatewayReceivedAtMs}`);
+  if (record.browserReceivedAtMs !== undefined) parts.push(`browserReceivedAtMs=${record.browserReceivedAtMs}`);
+  if (record.acceptedAtMs !== undefined) parts.push(`acceptedAtMs=${record.acceptedAtMs}`);
+  if (record.chartUpdatedAtMs !== undefined) parts.push(`chartUpdatedAtMs=${record.chartUpdatedAtMs}`);
+  if (record.latencyMs !== undefined) parts.push(`latencyMs=${record.latencyMs}`);
   return `[market-trace] ${parts.join(' ')}`;
 }
 

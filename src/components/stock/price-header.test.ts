@@ -135,7 +135,7 @@ describe('stock price header accepted quote partition', () => {
       evaluatedAt: '2026-07-20T12:30:10.000Z',
     });
     expect(result.quote?.price).toBe(100);
-    expect(result.quote?.change).toBeNull();
+    expect(result.quote?.change).toBe(0);
     expect(result.extendedQuote).toMatchObject({ session: 'premarket', price: 101 });
   });
 
@@ -155,7 +155,7 @@ describe('stock price header accepted quote partition', () => {
     expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
   });
 
-  it('keeps a genuine Alpaca real-time snapshot primary after hours', () => {
+  it('keeps a real-time extended trade separate from the regular close after hours', () => {
     const initial = quoteResource(HEADER_QUOTE, '2026-07-23T20:00:00.000Z');
     const current = {
       ...quoteResource(
@@ -170,10 +170,10 @@ describe('stock price header accepted quote partition', () => {
       marketStatus: 'after-hours',
       evaluatedAt: '2026-07-24T20:26:15.000Z',
     });
-    expect(result.quote?.price).toBe(206.87);
+    expect(result.quote?.price).toBe(208.76);
     expect(result.provider).toBe('alpaca:iex');
     expect(result.fallbackLabel).toBeNull();
-    expect(result.extendedQuote).toBeNull();
+    expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 206.87 });
   });
 
   it('shows a closed regular quote without an extended row when no extended quote was accepted', () => {

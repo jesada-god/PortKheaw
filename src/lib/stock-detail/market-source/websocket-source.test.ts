@@ -75,6 +75,28 @@ describe('WebSocketMarketSource lifecycle', () => {
     expect(last.candle?.close).toBe(190.5);
   });
 
+  it('carries exchange/gateway/browser/accepted timing without replacing exchange time', () => {
+    const { source, sockets, updates, connect } = setup();
+    source.start();
+    connect(sockets[0]);
+    sockets[0].emit({
+      type: 'event',
+      event: {
+        kind: 'trade', symbol: 'AAPL', price: 190.5, size: 10,
+        timestampMs: 800, gatewayReceivedAtMs: 900,
+      },
+    });
+    const last = updates.at(-1)!;
+    expect(last.label.exchangeTimestamp).toBe(new Date(800).toISOString());
+    expect(last.observation).toEqual({
+      exchangeTimestampMs: 800,
+      gatewayReceivedAtMs: 900,
+      browserReceivedAtMs: 1_000,
+      acceptedAtMs: 1_000,
+    });
+    expect(last.price).toBe(last.candle?.close);
+  });
+
   it('seeds header price + current 1m candle from the initial snapshot without waiting for a trade', () => {
     const { source, sockets, updates, connect } = setup();
     source.start();

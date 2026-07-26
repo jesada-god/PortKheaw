@@ -50,6 +50,10 @@ export const optionsChainSchema = z.object({
   delayedMinutes: z.number().int().nonnegative().nullable(),
   completeness: z.number().min(0).max(1),
   warnings: z.array(z.string()),
+  /** Underlying provenance is independent from the options snapshot provenance. */
+  underlyingProvider: z.string().min(1).nullable().optional(),
+  underlyingAsOf: z.iso.datetime().nullable().optional(),
+  underlyingStatus: z.enum(['live', 'delayed', 'cached', 'stale', 'unavailable']).optional(),
 });
 
 export const optionsExpirationsSchema = z.object({

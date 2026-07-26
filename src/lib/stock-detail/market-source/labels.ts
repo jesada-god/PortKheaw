@@ -87,11 +87,14 @@ export function buildRealtimeLabel(input: RealtimeLabelInput): MarketDataLabel {
   const delayAgeSeconds = Number.isFinite(exchangeMs) && Number.isFinite(receivedMs)
     ? Math.max(0, Math.round((receivedMs - exchangeMs) / 1_000))
     : null;
-  const live = input.realtime && !input.degraded && input.hasPrice;
-  const mode: MarketDataMode = !input.hasPrice ? 'UNAVAILABLE' : input.degraded ? 'STALE' : live ? 'REAL-TIME' : 'DELAYED';
+  const timestampStale = delayAgeSeconds !== null && delayAgeSeconds > 30;
+  const degraded = Boolean(input.degraded) || timestampStale;
+  const live = input.realtime && !degraded && input.hasPrice;
+  const mode: MarketDataMode = !input.hasPrice ? 'UNAVAILABLE' : degraded ? 'STALE' : live ? 'REAL-TIME' : 'DELAYED';
+  const finnhub = input.feed?.toLowerCase() === 'finnhub';
   return {
     mode,
-    provider: input.feed ? `alpaca:${input.feed}` : 'alpaca',
+    provider: finnhub ? 'finnhub' : input.feed ? `alpaca:${input.feed}` : 'alpaca',
     // The live price occupies the aggregate-fallback slot in the accepted-price
     // pipeline (so it needs no synthesized snapshot quote) while carrying the
     // truthful REAL-TIME mode + realtime flag that gate the header badge.

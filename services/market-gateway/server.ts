@@ -1,13 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isTracingEnabled, MarketTracer, resolveAlpacaConfig } from '@/src/lib/market-data/realtime';
+import { isTracingEnabled, MarketTracer, resolveFinnhubConfig } from '@/src/lib/market-data/realtime';
 import { GatewayHub } from './hub';
 import { UpstreamConnection } from './upstream';
 import { fromWs } from './socket';
 import { GatewayLifecycle } from './lifecycle';
 import { MarketCache } from './cache';
-import { fetchRestSnapshot } from './rest-snapshot';
+import { fetchFinnhubRestSnapshot } from './rest-snapshot';
+import { MarketCandleEngine } from './candle-engine';
 import type { MarketSnapshot } from '@/src/lib/market-data/realtime';
 import {
   buildHealthReport,
@@ -41,22 +42,22 @@ import {
  * Node service (Railway / Render / Fly / a container) and point
  * `NEXT_PUBLIC_MARKET_WS_URL` at it.
  *
- *   npm run gateway   # reads .env.local for ALPACA_* + MARKET_REALTIME_ENABLED
+ *   npm run gateway   # reads .env.local for FINNHUB_API_KEY + MARKET_REALTIME_ENABLED
  *
- * Exactly ONE upstream Alpaca connection exists per instance. Scale horizontally
+ * Exactly ONE upstream Finnhub connection exists per instance. Scale horizontally
  * by running more instances behind the load balancer, never by opening a second
- * upstream socket here. Secrets are read only via resolveAlpacaConfig and never
+ * upstream socket here. Secrets are read only via resolveFinnhubConfig and never
  * reach a client, a health response, or a log line.
  */
 function main(): void {
-  const config = resolveAlpacaConfig();
+  const config = resolveFinnhubConfig();
   if (!config.enabled) {
-    console.error(`[gateway] disabled: ${config.reason}. Set MARKET_REALTIME_ENABLED and ALPACA_* to enable.`);
+    console.error(`[gateway] disabled: ${config.reason}. Set MARKET_REALTIME_ENABLED and FINNHUB_API_KEY to enable.`);
     process.exit(1);
     return;
   }
 
-  const secrets = [config.keyId, config.secretKey] as const;
+  const secrets = [config.apiKey] as const;
   const log = (level: 'info' | 'error', message: string, detail?: unknown): void => {
     const line = `[gateway] ${message}`;
     if (detail === undefined) console[level === 'info' ? 'log' : 'error'](line);
@@ -77,18 +78,17 @@ function main(): void {
   // --- Per-symbol latest-state cache, warmed from the live stream + a REST
   // bootstrap for cold symbols, so a new subscriber gets a price immediately. ---
   const cache = new MarketCache();
+  const candleEngine = new MarketCandleEngine();
   // Dedupe concurrent REST bootstraps for the same cold symbol: many browsers
-  // subscribing at once must not each hit Alpaca REST. Credentials stay in this
+  // subscribing at once must not each hit Finnhub REST. Credentials stay in this
   // closure (Gateway host) and never reach the hub or a client frame.
   const inflightBootstraps = new Map<string, Promise<MarketSnapshot | null>>();
   const bootstrapSnapshot = (symbol: string): Promise<MarketSnapshot | null> => {
     const key = symbol.toUpperCase();
     const existing = inflightBootstraps.get(key);
     if (existing) return existing;
-    const promise = fetchRestSnapshot(key, {
-      keyId: config.keyId,
-      secretKey: config.secretKey,
-      feed: config.feed,
+    const promise = fetchFinnhubRestSnapshot(key, {
+      apiKey: config.apiKey,
     })
       .then((snapshot) => {
         if (snapshot) cache.seed(snapshot);
@@ -116,11 +116,31 @@ function main(): void {
   });
 
   const upstream = new UpstreamConnection({
-    config: { url: config.url, keyId: config.keyId, secretKey: config.secretKey },
+    config: { url: config.url, protocol: 'finnhub' },
     createSocket: (url) => fromWs(new WebSocket(url)),
     // Warm the cache from every normalized event BEFORE fan-out so the next
     // subscriber's snapshot reflects the latest tick.
-    onEvent: (event) => { cache.record(event); hub.handleUpstreamEvent(event); },
+    onEvent: (event) => {
+      if (event.kind !== 'trade') {
+        cache.record(event);
+        hub.handleUpstreamEvent(event);
+        return;
+      }
+      const result = candleEngine.ingest(event);
+      if (!result.accepted) {
+        const reason = result.droppedDuplicate ? 'droppedDuplicate' : 'droppedOutOfOrder';
+        const stats = candleEngine.statsFor(event.symbol);
+        log('info', `${reason} symbol=${event.symbol} count=${stats[reason]}`);
+        return;
+      }
+      cache.record(event);
+      hub.handleUpstreamEvent(event);
+      for (const bar of result.bars) {
+        cache.record(bar);
+        hub.handleUpstreamEvent(bar);
+        if (bar.finalized) log('info', `candleFinalized symbol=${bar.symbol} timeframe=1m start=${bar.timestampMs}`);
+      }
+    },
     getSubscriptions: () => hub.subscriptionSnapshot(),
     onStateChange: (state) => log('info', `upstream ${state}`),
     // Liveness is a real protocol ping/pong, NOT market ticks: probe after 15s of

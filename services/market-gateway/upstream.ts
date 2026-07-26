@@ -1,11 +1,13 @@
 import {
   buildAuthFrame,
+  buildFinnhubSubscriptionFrame,
   buildSubscriptionFrame,
   channelOfEvent,
   classifyAlpacaControl,
   computeBackoffDelayMs,
   MarketTracer,
   normalizeAlpacaMessage,
+  normalizeFinnhubMessage,
   type BackoffOptions,
   type ChannelRef,
   type MarketChannel,
@@ -14,7 +16,7 @@ import {
 import { defaultScheduler, type Scheduler, type SocketLike } from './socket';
 
 /**
- * The single upstream connection to Alpaca owned by one Gateway instance.
+ * The single provider upstream connection owned by one Gateway instance.
  *
  * Drives the handshake state machine (connect → authenticate → subscribe),
  * normalizes every market message before emitting it, and owns reconnection:
@@ -50,7 +52,12 @@ export type UpstreamState =
   | 'stopped';
 
 export interface UpstreamOptions {
-  config: { url: string; keyId: string; secretKey: string };
+  config: {
+    url: string;
+    protocol?: 'alpaca' | 'finnhub';
+    keyId?: string;
+    secretKey?: string;
+  };
   /** Opens a new transport to `config.url`. Injected so tests use fake sockets. */
   createSocket: (url: string) => SocketLike;
   /** Receives every normalized market event. */
@@ -119,6 +126,8 @@ export class UpstreamConnection {
   private lastMarketEventAt = 0;
   /** Bounded queue of control frames awaiting an OPEN socket of this generation. */
   private outbox: string[] = [];
+  /** Finnhub subscribes once per symbol (not once per downstream channel). */
+  private readonly upstreamSymbols = new Set<string>();
   private readonly scheduler: Scheduler;
   private readonly random: () => number;
   private readonly now: () => number;
@@ -166,6 +175,15 @@ export class UpstreamConnection {
   /** Subscribe the given pairs upstream (no-op unless authenticated). */
   subscribe(refs: ChannelRef[]): void {
     if (this.state !== 'ready' || refs.length === 0) return;
+    if (this.options.config.protocol === 'finnhub') {
+      for (const symbol of new Set(refs.map((ref) => ref.symbol.toUpperCase()))) {
+        if (this.upstreamSymbols.has(symbol)) continue;
+        this.upstreamSymbols.add(symbol);
+        this.enqueueControl(buildFinnhubSubscriptionFrame('subscribe', symbol));
+        this.tracer.trace({ stage: 'upstream_subscribe_sent', symbol, channels: 'trades' });
+      }
+      return;
+    }
     const grouped = groupByChannel(refs);
     this.enqueueControl(buildSubscriptionFrame('subscribe', grouped));
     for (const symbol of new Set(refs.map((ref) => ref.symbol))) {
@@ -177,6 +195,14 @@ export class UpstreamConnection {
   /** Unsubscribe the given pairs upstream (no-op unless authenticated). */
   unsubscribe(refs: ChannelRef[]): void {
     if (this.state !== 'ready' || refs.length === 0) return;
+    if (this.options.config.protocol === 'finnhub') {
+      const desired = new Set(this.options.getSubscriptions().map((ref) => ref.symbol.toUpperCase()));
+      for (const symbol of new Set(refs.map((ref) => ref.symbol.toUpperCase()))) {
+        if (desired.has(symbol) || !this.upstreamSymbols.delete(symbol)) continue;
+        this.enqueueControl(buildFinnhubSubscriptionFrame('unsubscribe', symbol));
+      }
+      return;
+    }
     this.enqueueControl(buildSubscriptionFrame('unsubscribe', groupByChannel(refs)));
   }
 
@@ -217,6 +243,13 @@ export class UpstreamConnection {
     if (!this.isCurrent(generation)) return; // superseded socket opened late
     this.markWire();
     this.armHeartbeat(generation);
+    if (this.options.config.protocol === 'finnhub') {
+      this.attempt = 0;
+      this.setState('ready');
+      this.subscribe(this.options.getSubscriptions());
+      this.flushOutbox(socket);
+      return;
+    }
     // Alpaca sends {"T":"success","msg":"connected"} first; auth follows that.
     // Anything queued while CONNECTING can flush now that the socket is OPEN.
     this.flushOutbox(socket);
@@ -238,9 +271,38 @@ export class UpstreamConnection {
     } catch {
       return;
     }
+    if (this.options.config.protocol === 'finnhub') {
+      this.handleFinnhubMessage(generation, parsed);
+      return;
+    }
     // Alpaca frames arrive as arrays of messages.
     const messages = Array.isArray(parsed) ? parsed : [parsed];
     for (const message of messages) this.handleOne(generation, message);
+  }
+
+  private handleFinnhubMessage(generation: number, message: unknown): void {
+    if (!this.isCurrent(generation) || typeof message !== 'object' || message === null) return;
+    const envelope = message as { type?: unknown; msg?: unknown };
+    if (envelope.type === 'ping') return;
+    if (envelope.type === 'error') {
+      this.log('error', generation, 'protocol-error', {
+        message: typeof envelope.msg === 'string' ? envelope.msg : 'Finnhub upstream error',
+      });
+      this.recycle(generation);
+      return;
+    }
+    const events = normalizeFinnhubMessage(message);
+    if (events.length === 0) return;
+    this.markMarketEvent();
+    for (const event of events) {
+      const observed = { ...event, gatewayReceivedAtMs: this.now() } as NormalizedMarketEvent;
+      this.tracer.trace({ stage: 'upstream_market_event_received', type: 'trade', symbol: event.symbol });
+      this.tracer.trace({
+        stage: 'gateway_market_event_normalized', type: observed.kind, symbol: observed.symbol,
+        exchangeTimestampMs: observed.timestampMs, gatewayReceivedAtMs: observed.gatewayReceivedAtMs,
+      });
+      this.options.onEvent(observed);
+    }
   }
 
   private handleOne(generation: number, message: unknown): void {
@@ -250,7 +312,7 @@ export class UpstreamConnection {
       if (control.kind === 'success' && control.message === 'connected') {
         this.setState('authenticating');
         // authenticate is sent only after OPEN — enqueueControl guarantees it.
-        this.enqueueControl(buildAuthFrame(this.options.config.keyId, this.options.config.secretKey));
+        this.enqueueControl(buildAuthFrame(this.options.config.keyId ?? '', this.options.config.secretKey ?? ''));
       } else if (control.kind === 'success' && control.message === 'authenticated') {
         this.attempt = 0;
         this.setState('ready');
@@ -295,10 +357,14 @@ export class UpstreamConnection {
     this.tracer.trace({ stage: 'upstream_market_event_received', type: wireType, symbol: wireSymbol });
     const event = normalizeAlpacaMessage(message);
     if (event) {
+      const observed = { ...event, gatewayReceivedAtMs: this.now() } as NormalizedMarketEvent;
       // channelOfEvent keeps updatedBars distinct from bars for downstream fan-out.
-      void channelOfEvent(event);
-      this.tracer.trace({ stage: 'gateway_market_event_normalized', type: event.kind, symbol: event.symbol });
-      this.options.onEvent(event);
+      void channelOfEvent(observed);
+      this.tracer.trace({
+        stage: 'gateway_market_event_normalized', type: observed.kind, symbol: observed.symbol,
+        exchangeTimestampMs: observed.timestampMs, gatewayReceivedAtMs: observed.gatewayReceivedAtMs,
+      });
+      this.options.onEvent(observed);
     }
   }
 
@@ -454,6 +520,7 @@ export class UpstreamConnection {
     this.clearHeartbeat();
     this.clearPongTimer();
     this.outbox = [];
+    this.upstreamSymbols.clear();
     const socket = this.socket;
     this.socket = null;
     socket?.detach();
@@ -486,6 +553,17 @@ export class UpstreamConnection {
     const base = `[gateway] upstream ${reason} gen=${generation} state=${this.state}`;
     const extra = detail instanceof Error ? detail.message : detail;
     if (extra === undefined) console[level](base);
-    else console[level](base, extra);
+    else if (this.options.config.protocol === 'finnhub') {
+      let serialized: string;
+      try { serialized = typeof extra === 'string' ? extra : JSON.stringify(extra); }
+      catch { serialized = 'unserializable upstream detail'; }
+      try {
+        const token = new URL(this.options.config.url).searchParams.get('token');
+        if (token) serialized = serialized.split(token).join('[REDACTED]');
+      } catch {
+        // A malformed URL is handled by createSocket; do not widen logging here.
+      }
+      console[level](base, serialized);
+    } else console[level](base, extra);
   }
 }

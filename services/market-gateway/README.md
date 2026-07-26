@@ -1,8 +1,8 @@
 # Nexora Market WebSocket Gateway
 
-A standalone, long-lived Node service that owns **one** upstream Alpaca
+A standalone, long-lived Node service that owns **one** upstream Finnhub
 real-time connection per instance and fans normalized market events out to many
-browser clients over a single `/ws` endpoint. The browser never sees Alpaca
+browser clients over a single `/ws` endpoint. The browser never sees Finnhub
 credentials — it speaks only the Gateway's control protocol to
 `NEXT_PUBLIC_MARKET_WS_URL`.
 
@@ -24,7 +24,7 @@ credentials — it speaks only the Gateway's control protocol to
 {
   "status": "ready",          // "ready" only when the upstream is authenticated & streaming; else "degraded"
   "upstreamState": "ready",   // idle | connecting | authenticating | ready | reconnecting | stopped
-  "feed": "iex",              // iex | sip | test
+  "feed": "finnhub",
   "uptime": 123,              // whole seconds
   "timestamp": "2026-07-22T00:00:00.000Z"
 }
@@ -44,9 +44,9 @@ exponential backoff. It never returns a credential, URL, or key.
 - **Abuse limits** — inbound WS messages are capped at 16 KB (`maxPayload`),
   connections are rate-limited per IP, subscribe/unsubscribe frames are
   rate-limited per client, and the symbol cap is 30 per client.
-- **One upstream per Alpaca key** — the free IEX plan permits only one active
-  stream for the same credentials. Keep this service at one replica and do not
-  deploy the same `ALPACA_*` keys to a second Railway service. `railway.json`
+- **One upstream per Finnhub key** — keep this service at one replica so every
+  browser shares the same reference-counted provider connection. Do not deploy
+  the same `FINNHUB_API_KEY` to a second Gateway service. `railway.json`
   disables deployment overlap so a replacement does not compete with the
   retiring instance.
 - **Graceful shutdown** — `SIGTERM`/`SIGINT` drain in order (timers → upstream →
@@ -62,9 +62,7 @@ Set these on the **Gateway host** (Railway), not on Vercel:
 | Variable                  | Required | Example                          | Notes                                                                 |
 | ------------------------- | -------- | -------------------------------- | --------------------------------------------------------------------- |
 | `MARKET_REALTIME_ENABLED` | yes      | `true`                           | Master switch. When false/unset the Gateway exits `1` (stay on REST). |
-| `ALPACA_API_KEY_ID`       | yes      | `AK...`                          | **Secret.** Server-only; never `NEXT_PUBLIC_`.                        |
-| `ALPACA_API_SECRET_KEY`   | yes      | `...`                            | **Secret.** Server-only; never `NEXT_PUBLIC_`.                        |
-| `ALPACA_DATA_FEED`        | no       | `iex`                            | `iex` (default) · `sip` (paid) · `test` (FAKEPACA sandbox).           |
+| `FINNHUB_API_KEY`         | yes      | `...`                            | **Secret.** Railway/server-only; never `NEXT_PUBLIC_`.                |
 | `NEXORA_ALLOWED_ORIGINS`  | prod     | `https://app.example.com`        | Comma-separated browser origins allowed to open `/ws`.                |
 | `PORT`                    | auto     | `8080`                           | Injected by Railway. Falls back to `MARKET_WS_PORT`, then `8081`.     |
 | `MARKET_WS_PORT`          | no       | `8081`                           | Local/dev port when `PORT` is absent.                                 |
@@ -75,7 +73,7 @@ Set these on the **Gateway host** (Railway), not on Vercel:
 ## Run locally
 
 ```bash
-# .env.local holds ALPACA_* + MARKET_REALTIME_ENABLED=true
+# .env.local holds FINNHUB_API_KEY + MARKET_REALTIME_ENABLED=true
 npm run gateway            # ws://localhost:8081/ws · http://localhost:8081/healthz
 ```
 
@@ -108,3 +106,25 @@ The middleware CSP derives its `connect-src` WebSocket origin from this value
 (origin only, no path, no hardcoded domain). Production adds **no** localhost
 fallback: if this is unset in production, the browser simply stays on REST
 polling.
+
+## Market-hours accuracy gate
+
+Run this gate during an actual US session for both `NVDA` and `SPY`; a weekend
+connection/ping check is not a substitute. Keep `MARKET_TRACE` enabled and
+correlate the sampled records for one accepted trade. The records expose the
+provider exchange timestamp, Gateway receipt, browser receipt, accepted time,
+chart update time, and end-to-end latency. `timestampMs` remains the provider's
+exchange time; receipt clocks are observation metadata only.
+
+For each symbol, verify the same accepted price and exchange timestamp at
+`gateway_market_event_normalized`, `browser_market_event_received`,
+`price_header_updated`, `chart_updated`, and `options_underlying_updated`.
+Gateway logs also emit cumulative `droppedDuplicate` / `droppedOutOfOrder`
+counts. At each completed minute, compare canonical 1m OHLCV with the provider's
+finalized candle, then spot-check 5m, 10m, 15m, 1h, and 4h aggregation. Daily
+history must merge into the existing market-day bucket and must not append a
+minute timestamp.
+
+Do not approve production cutover unless the live observation, a regular-to-
+extended session transition, reconnect recovery, and the provider candle
+comparison all pass. Never paste credentials into logs or the report.

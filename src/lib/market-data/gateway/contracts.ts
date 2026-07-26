@@ -33,6 +33,7 @@ export const normalizedQuoteSchema = z.object({
   symbol: z.string().min(1),
   price: z.number().finite(),
   previousClose: z.number().finite().nullable(),
+  regularClose: z.number().finite().positive().nullable().optional(),
   change: z.number().finite().nullable(),
   changePercent: z.number().finite().nullable(),
   timestamp: z.number().int().positive(),
@@ -125,4 +126,3 @@ export const chartGatewayResponseSchema = z.object({
   instrument: resolvedInstrumentSchema,
   bars: normalizedBarsResultSchema,
 });
-

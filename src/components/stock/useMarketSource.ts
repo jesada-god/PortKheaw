@@ -21,10 +21,13 @@ import {
 import { resolvePublicMarketWsUrl } from '@/src/lib/market-data/realtime';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
+import type { MarketUpdate } from '@/src/lib/stock-detail/market-source';
 import { realtimeUpdatePolicy } from './realtime-performance';
 
 /** Regular-session cadence is 12s (inside the mandated 10–15s window); closed is slower. */
 const CADENCE = { regularMs: 12_000, closedMs: 60_000 };
+
+export type CanonicalLiveUpdateSink = (update: MarketUpdate) => void;
 
 export interface UseMarketSourceOptions {
   symbol: string;
@@ -53,7 +56,7 @@ export interface UseMarketSourceOptions {
   /** Disable the live stream for a view that explicitly requires REST-only data. */
   allowWebSocket?: boolean;
   /**
-   * Imperative price sink owned by the header. Alpaca trade ticks call this ref
+   * Imperative price sink owned by the header. Finnhub trade ticks call this ref
    * directly instead of scheduling a React render for every trade.
    */
   transientPriceSinkRef?: {
@@ -62,6 +65,8 @@ export interface UseMarketSourceOptions {
       feed: string | null;
     }) => void) | null;
   };
+  /** Imperative chart hot path. Receives the same accepted gateway update. */
+  liveUpdateSinkRef?: { current: CanonicalLiveUpdateSink | null };
 }
 
 export interface UseMarketSourceResult {
@@ -105,6 +110,7 @@ export interface UseMarketSourceResult {
    * shows a "reconnecting" pill. Changing it NEVER triggers a refetch.
    */
   connectionState: ConnectionStatus | null;
+  liveSession: string | null;
   refresh: () => void;
 }
 
@@ -118,11 +124,13 @@ interface LiveMeta {
   halted: boolean;
   haltReason: string | null;
   barFinalized: boolean;
+  session: string | null;
 }
 
 const EMPTY_META: LiveMeta = {
   symbol: '', bid: null, ask: null, bidSize: null, askSize: null,
   quoteTimestamp: null, halted: false, haltReason: null, barFinalized: false,
+  session: null,
 };
 
 /**
@@ -209,6 +217,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   // Once live provenance has rendered, repeated trade ticks stay on the
   // transient DOM path until a snapshot/bar needs a real React commit.
   const hasCommittedLivePriceRef = useRef(false);
+  const hasCommittedLiveCandleRef = useRef(false);
 
   useEffect(() => {
     if (!enabled) return;
@@ -232,6 +241,14 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     });
     const source = handle.source;
     sourceRef.current = source;
+    let pendingCandidate: { symbol: string; selectionKey: string; candidate: AcceptedPriceCandidate } | null = null;
+    let candidateTimer: ReturnType<typeof setTimeout> | null = null;
+    const commitPendingCandidate = () => {
+      candidateTimer = null;
+      if (!pendingCandidate) return;
+      setAggState(pendingCandidate);
+      pendingCandidate = null;
+    };
     const unsubscribe = source.subscribe((update) => {
       const tag = selectionKeyRef.current;
       // Tag by the event's own symbol so a stray emit from a just-superseded
@@ -240,6 +257,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       setLastError(update.error);
       const candidate = candidateFromUpdate(update);
       const policy = realtimeUpdatePolicy(update, hasCommittedLivePriceRef.current);
+      if (update.candle && update.label.realtime) options.liveUpdateSinkRef?.current?.(update);
       if (policy.transientPrice && update.price !== null) {
         // Direct DOM update via StockPriceHeader's ref-backed sink. This is the
         // hot path: no useState, no parent render, no chart reconciliation.
@@ -249,7 +267,9 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
           feed: update.label.feed ?? null,
         });
       }
-      if (policy.commitMarketState) {
+      const commitMarketState = policy.commitMarketState
+        || Boolean(update.candle && !hasCommittedLiveCandleRef.current);
+      if (commitMarketState) {
         if (candidate?.source === 'snapshot' && update.quote) {
           setSnapState({
             symbol: updateSymbol,
@@ -270,8 +290,16 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
         // update() for the latest bar and never replays setData() per tick.
         if (update.candle) {
           setCandleState({ symbol: updateSymbol, selectionKey: tag, candle: update.candle });
+          if (update.label.realtime) hasCommittedLiveCandleRef.current = true;
         }
         if (update.label.realtime && candidate) hasCommittedLivePriceRef.current = true;
+      }
+      if (!commitMarketState && candidate?.realtime) {
+        // Keep canonical consumers (change %, S/R distance, options underlying)
+        // fresh without rendering the React tree for every wire tick. The header
+        // and chart have already updated imperatively from this exact update.
+        pendingCandidate = { symbol: updateSymbol, selectionKey: tag, candidate };
+        if (candidateTimer === null) candidateTimer = setTimeout(commitPendingCandidate, 100);
       }
       // Capture top-of-book / halt state; only rerender when something the header
       // or chart actually reads has changed (or a bar just finalized).
@@ -285,8 +313,9 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
         halted: update.halted ?? false,
         haltReason: update.haltReason ?? null,
         barFinalized: update.barFinalized ?? false,
+        session: update.session ?? null,
       };
-      const metaKey = `${nextMeta.bid}|${nextMeta.ask}|${nextMeta.bidSize}|${nextMeta.askSize}|${nextMeta.halted}|${nextMeta.haltReason}`;
+      const metaKey = `${nextMeta.bid}|${nextMeta.ask}|${nextMeta.bidSize}|${nextMeta.askSize}|${nextMeta.halted}|${nextMeta.haltReason}|${nextMeta.session}`;
       if (nextMeta.barFinalized || metaKey !== metaKeyRef.current) {
         metaKeyRef.current = metaKey;
         setLiveMeta(nextMeta);
@@ -300,6 +329,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     });
     return () => {
       unsubscribe();
+      if (candidateTimer !== null) clearTimeout(candidateTimer);
       // Release the subscriber; the manager tears the socket down only if no other
       // subscriber remains after the grace period (Strict-Mode/re-render safe).
       handle.release('effect-cleanup');
@@ -323,6 +353,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   // subscribe the new one in place (no socket close/reopen).
   useEffect(() => {
     hasCommittedLivePriceRef.current = false;
+    hasCommittedLiveCandleRef.current = false;
     sourceRef.current?.setSymbol?.(symUpper);
   }, [symUpper]);
 
@@ -392,6 +423,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     // REST-only (no Gateway URL) never surfaces a connection lifecycle, so the
     // header can never show a "reconnecting" pill without a real socket.
     connectionState: wsUrl ? connectionState : null,
+    liveSession: meta.session,
     refresh,
   };
 }

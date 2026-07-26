@@ -61,4 +61,30 @@ describe('options analytics', () => {
     expect(Number.isFinite(result.calls[0].score)).toBe(true);
     expect(result.puts[0].type).toBe('put');
   });
+
+  it('reselects ATM provider IV and recalculates expected move when canonical spot moves', () => {
+    const contracts = [45, 50, 55, 60].map((strike, index) => contract({
+      contractSymbol: `c${strike}`, strike, impliedVolatility: 0.2 + index * 0.1,
+    }));
+    const puts = [45, 50, 55, 60].map((strike, index) => contract({
+      contractSymbol: `p${strike}`, type: 'put', strike, impliedVolatility: 0.25 + index * 0.1,
+    }));
+    const at50 = chain({ spot: 50, calls: contracts, puts });
+    const at60 = chain({ spot: 60, calls: contracts, puts });
+    const iv50 = calculateAtmIv(at50, '2026-07-20');
+    const iv60 = calculateAtmIv(at60, '2026-07-20');
+    expect(iv50.sampledContracts.map((item) => item.contractSymbol))
+      .not.toEqual(iv60.sampledContracts.map((item) => item.contractSymbol));
+    expect(calculateExpectedMove(at50, '2026-07-20').move)
+      .not.toBe(calculateExpectedMove(at60, '2026-07-20').move);
+  });
+
+  it('never derives or mutates provider open interest when spot changes', () => {
+    const first = calculateOiConcentration(chain({ spot: 45 }));
+    const second = calculateOiConcentration(chain({ spot: 60 }));
+    const providerOi = (result: ReturnType<typeof calculateOiConcentration>) => new Map(
+      [...result.calls, ...result.puts].map((item) => [item.contractSymbol, item.openInterest]),
+    );
+    expect(providerOi(first)).toEqual(providerOi(second));
+  });
 });

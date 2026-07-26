@@ -180,25 +180,6 @@ export function resolvePriceHeaderData(input: {
     && acceptedAsOf
     && acceptedSession === expectedExtendedSession;
 
-  // A quote accepted from the entitled Alpaca stream is the newest market
-  // observation available to this app. Keep it in the primary price row in
-  // every session; otherwise an after-hours snapshot is hidden behind the
-  // previous regular close and the screen appears stale until another trade.
-  const genuineAlpacaRealtime = currentQuote
-    && tradeablePrice(currentQuote.price)
-    && current.freshness.status === 'realtime'
-    && current.provider?.toLowerCase().startsWith('alpaca');
-
-  if (genuineAlpacaRealtime) {
-    return {
-      quote: currentQuote,
-      freshness: current.freshness,
-      provider: current.provider,
-      fallbackLabel: null,
-      extendedQuote: null,
-    };
-  }
-
   if (!acceptedExtended || !expectedExtendedSession || !currentQuote || !acceptedAsOf) {
     return {
       quote: currentQuote,
@@ -216,14 +197,24 @@ export function resolvePriceHeaderData(input: {
     && classifyUsEquitySession(initialAsOf) === 'regular'
     ? initial.data
     : null;
+  const providerRegularClose = tradeablePrice(currentQuote.regularClose)
+    ? currentQuote.regularClose
+    : tradeablePrice(initial.data?.regularClose)
+      ? initial.data!.regularClose
+      : null;
   const regularQuote = acceptedRegularQuote ?? (
-    tradeablePrice(currentQuote.previousClose)
+    tradeablePrice(providerRegularClose ?? currentQuote.previousClose)
       ? {
           ...currentQuote,
-          price: currentQuote.previousClose,
-          previousClose: null,
-          change: null,
-          changePercent: null,
+          price: providerRegularClose ?? currentQuote.previousClose!,
+          previousClose: currentQuote.previousRegularClose ?? currentQuote.previousClose,
+          change: currentQuote.previousRegularClose || currentQuote.previousClose
+            ? (providerRegularClose ?? currentQuote.previousClose!) - (currentQuote.previousRegularClose ?? currentQuote.previousClose!)
+            : null,
+          changePercent: currentQuote.previousRegularClose || currentQuote.previousClose
+            ? ((providerRegularClose ?? currentQuote.previousClose!) - (currentQuote.previousRegularClose ?? currentQuote.previousClose!))
+              / (currentQuote.previousRegularClose ?? currentQuote.previousClose!) * 100
+            : null,
         }
       : null
   );

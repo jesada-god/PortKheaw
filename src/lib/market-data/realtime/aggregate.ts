@@ -91,7 +91,9 @@ export class LiveBucketStore {
       if (existing.official) return IGNORED; // official bar is authoritative for this minute
       existing.high = Math.max(existing.high, trade.price);
       existing.low = Math.min(existing.low, trade.price);
-      existing.close = trade.price;
+      // A late trade inside the still-active minute contributes to H/L/volume,
+      // but only a provider-newer trade may become the canonical close.
+      if (trade.timestampMs >= existing.lastTradeMs) existing.close = trade.price;
       existing.volume += trade.size;
       existing.lastTradeMs = Math.max(existing.lastTradeMs, trade.timestampMs);
       return { applied: true, bucketStartSec: startSec, finalizedPrevious: false };
@@ -130,7 +132,7 @@ export class LiveBucketStore {
       low: bar.low,
       close: bar.close,
       volume: bar.volume,
-      official: true,
+      official: bar.finalized !== false,
       lastTradeMs: existing?.lastTradeMs ?? bar.timestampMs,
     });
     this.newestStartSec = Math.max(this.newestStartSec ?? startSec, startSec);

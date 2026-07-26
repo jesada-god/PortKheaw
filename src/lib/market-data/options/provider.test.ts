@@ -46,4 +46,25 @@ describe('real options provider boundary', () => {
     await expect(service.getChain('RKLB', '2026-08-21')).rejects.toMatchObject({ code: 'not-found' });
     expect(quote.getQuote).not.toHaveBeenCalled();
   });
+
+  it('keeps options freshness independent when the underlying quote is stale', async () => {
+    const normalized = await new AlphaVantageOptionsProvider('secret', {
+      json: async () => ({ endpoint: 'REALTIME_OPTIONS', data: [{
+        contractID: 'RKLB260821C00050000', symbol: 'RKLB', expiration: '2026-08-21', strike: '50', type: 'call',
+        last: '1.1', mark: '1.15', bid: '1.1', ask: '1.2', volume: '7', open_interest: '42',
+        implied_volatility: '0.35', delta: '0.4', gamma: '0.02', theta: '-0.03', vega: '0.05', rho: '0.01',
+      }] }),
+    } as never, () => new Date('2026-07-20T15:00:00.000Z')).getOptionsContracts('RKLB', '2026-08-21');
+    const provider = { id: 'test-options', getOptionsContracts: vi.fn(async () => normalized) };
+    const quote = { getQuote: vi.fn(async () => ({
+      data: { symbol: 'RKLB', price: 50 },
+      provider: 'polygon',
+      freshness: { status: 'stale' as const, asOf: '2026-07-20T14:00:00.000Z', maxAgeSeconds: 60 },
+    })) };
+    const result = await new OptionsMarketDataService(provider, quote as never).getChain('RKLB', '2026-08-21');
+    expect(result.data.status).toBe('live');
+    expect(result.data.underlyingStatus).toBe('stale');
+    expect(result.data.underlyingProvider).toBe('polygon');
+    expect(result.data.calls[0].status).toBe('live');
+  });
 });

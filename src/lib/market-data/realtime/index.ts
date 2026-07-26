@@ -64,12 +64,20 @@ export {
 } from './trace';
 export {
   resolveAlpacaConfig,
+  resolveFinnhubConfig,
   resolvePublicMarketWsUrl,
   computeBackoffDelayMs,
   buildAuthFrame,
   buildSubscriptionFrame,
   FAKEPACA_SYMBOL,
   type AlpacaConfig,
+  type FinnhubConfig,
   type AlpacaFeed,
   type BackoffOptions,
 } from './config';
+export { normalizeFinnhubMessage, buildFinnhubSubscriptionFrame } from './finnhub-normalize';
+export {
+  US_EQUITY_SESSIONS,
+  classifyUsEquityTimestamp,
+  type UsEquitySession,
+} from './session';

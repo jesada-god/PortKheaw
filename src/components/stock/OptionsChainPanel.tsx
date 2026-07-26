@@ -9,13 +9,18 @@ import { Select } from '@/src/components/ui/Select';
 import { useAppActive } from '@/src/hooks/useAppActive';
 import { calculateAtmIv, calculateExpectedMove, calculateOiConcentration } from '@/src/lib/market-data/options/analytics';
 import { optionsChainSchema, optionsExpirationsSchema, type OptionContract, type OptionsChain, type OptionsExpirations } from '@/src/lib/market-data/options/contracts';
+import { optionIntrinsicValue, optionMarketQuote } from '@/src/lib/market-data/quote-model';
+import { MarketTracer } from '@/src/lib/market-data/realtime';
 import { parseStrikeLines, type StrikeLine } from '@/src/lib/analytics/chart-layers/strike-lines';
+import type { MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 
 interface ApiEnvelope<T> {
   data: T | null;
   error?: { code: string; message: string; retryAfterSeconds?: number };
   meta?: { provider?: string | null; freshness?: { asOf?: string | null } };
 }
+
+const optionsTracer = new MarketTracer();
 
 interface StrikeRow {
   strike: number;
@@ -35,7 +40,8 @@ function moneyness(contract: OptionContract | null, spot: number): string {
   if (!contract) return '—';
   const distance = Math.abs(contract.strike - spot) / spot;
   if (distance <= 0.0025) return 'ATM';
-  return contract.inTheMoney ? 'ITM' : 'OTM';
+  const inTheMoney = contract.type === 'call' ? spot > contract.strike : spot < contract.strike;
+  return inTheMoney ? 'ITM' : 'OTM';
 }
 
 function OptionCell({ contract, spot, onOpen, onStrike }: {
@@ -45,10 +51,12 @@ function OptionCell({ contract, spot, onOpen, onStrike }: {
   onStrike: (contract: OptionContract) => void;
 }) {
   if (!contract) return <div className="min-w-[290px] px-3 py-2 text-center text-slate-600">—</div>;
+  const quote = optionMarketQuote(contract);
+  const intrinsic = optionIntrinsicValue(contract, spot);
   const greekValues = [contract.delta, contract.gamma, contract.theta, contract.vega, contract.rho];
   return <div className="min-w-[290px] px-3 py-2 text-xs">
     <div className="flex items-center justify-between gap-2"><span className={moneyness(contract, spot) === 'ITM' ? 'font-semibold text-emerald-300' : moneyness(contract, spot) === 'ATM' ? 'font-semibold text-[#D4FF00]' : 'text-slate-400'}>{contract.type.toUpperCase()} · {moneyness(contract, spot)}</span><span className="truncate font-mono text-[10px] text-slate-500">{contract.contractSymbol}</span></div>
-    <div className="mt-1 grid grid-cols-6 gap-2 font-mono"><span title="Bid">B {finite(contract.bid)}</span><span title="Ask">A {finite(contract.ask)}</span><span title="Mark">M {finite(contract.mark)}</span><span title="Volume">Vol {finite(contract.volume, 0)}</span><span title="Open interest">OI {finite(contract.openInterest, 0)}</span><span title="Implied volatility">IV {contract.impliedVolatility === null ? '—' : `${finite(contract.impliedVolatility * 100)}%`}</span></div>
+    <div className="mt-1 grid grid-cols-4 gap-2 font-mono"><span title="Bid">Bid {finite(quote.bid)}</span><span title="Ask">Ask {finite(quote.ask)}</span><span title="Midpoint">Mid {finite(quote.midpoint)}</span><span title="Market Last">Last {finite(quote.last)}</span><span title="Volume">Vol {finite(quote.volume, 0)}</span><span title="Open interest">OI {finite(quote.openInterest, 0)}</span><span title="Implied volatility">IV {quote.impliedVolatility === null ? '—' : `${finite(quote.impliedVolatility * 100)}%`}</span><span title="Intrinsic value">Int {finite(intrinsic)}</span></div>
     <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-500">{greekValues.some((value) => value !== null) ? `Δ ${finite(contract.delta, 4)} · Γ ${finite(contract.gamma, 4)} · Θ ${finite(contract.theta, 4)}` : 'Greeks unavailable'}</span><span className="flex gap-1"><button type="button" onClick={() => onStrike(contract)} className="min-h-8 rounded border border-slate-700 px-2 text-sky-300">Strike line</button><button type="button" onClick={() => onOpen(contract)} className="min-h-8 rounded border border-[#D4FF00]/40 px-2 text-[#D4FF00]">Simulator</button></span></div>
   </div>;
 }
@@ -89,7 +97,11 @@ function errorLabel(code: string | undefined): string {
   return 'Options Chain ไม่พร้อมใช้งาน';
 }
 
-export function OptionsChainPanel({ symbol }: { symbol: string }) {
+export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
+  symbol: string;
+  acceptedPrice: number | null;
+  underlyingLabel: MarketDataLabel | null;
+}) {
   const router = useRouter();
   const appActive = useAppActive();
   const [expirations, setExpirations] = useState<OptionsExpirations | null>(null);
@@ -179,24 +191,52 @@ export function OptionsChainPanel({ symbol }: { symbol: string }) {
   }, [appActive, chain?.expiration, error, expiration, now, requestChain]);
   useEffect(() => () => { expirationAbort.current?.abort(); chainAbort.current?.abort(); }, []);
 
+  const spot = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0
+    ? acceptedPrice
+    : null;
+  const canonicalChain = useMemo(() => {
+    if (!chain || spot === null) return null;
+    const underlyingStatus: NonNullable<OptionsChain['underlyingStatus']> = underlyingLabel?.mode === 'REAL-TIME' ? 'live'
+      : underlyingLabel?.mode === 'CACHED' ? 'cached'
+        : underlyingLabel?.mode === 'STALE' ? 'stale'
+          : underlyingLabel?.mode === 'UNAVAILABLE' ? 'unavailable'
+            : 'delayed';
+    return {
+      ...chain,
+      spot,
+      underlyingProvider: underlyingLabel?.provider ?? chain.underlyingProvider ?? null,
+      underlyingAsOf: underlyingLabel?.exchangeTimestamp ?? chain.underlyingAsOf ?? null,
+      underlyingStatus,
+    };
+  }, [chain, spot, underlyingLabel]);
+  useEffect(() => {
+    if (spot === null || !underlyingLabel) return;
+    const exchangeTimestampMs = underlyingLabel.exchangeTimestamp
+      ? Date.parse(underlyingLabel.exchangeTimestamp)
+      : Number.NaN;
+    optionsTracer.trace({
+      stage: 'options_underlying_updated', symbol, price: spot,
+      exchangeTimestampMs: Number.isFinite(exchangeTimestampMs) ? exchangeTimestampMs : undefined,
+    });
+  }, [spot, symbol, underlyingLabel]);
   const rows = useMemo(() => {
-    if (!chain) return [];
-    const lower = chain.spot * (1 - strikeRange / 100);
-    const upper = chain.spot * (1 + strikeRange / 100);
+    if (!canonicalChain) return [];
+    const lower = canonicalChain.spot * (1 - strikeRange / 100);
+    const upper = canonicalChain.spot * (1 + strikeRange / 100);
     const byStrike = new Map<number, StrikeRow>();
-    for (const contract of [...chain.calls, ...chain.puts]) {
+    for (const contract of [...canonicalChain.calls, ...canonicalChain.puts]) {
       if (contract.strike < lower || contract.strike > upper) continue;
       const row = byStrike.get(contract.strike) ?? { strike: contract.strike, call: null, put: null };
       row[contract.type] = contract;
       byStrike.set(contract.strike, row);
     }
     return [...byStrike.values()].sort((left, right) => left.strike - right.strike);
-  }, [chain, strikeRange]);
-  const analytics = useMemo(() => chain ? {
-    atm: calculateAtmIv(chain),
-    expectedMove: calculateExpectedMove(chain),
-    oi: calculateOiConcentration(chain),
-  } : null, [chain]);
+  }, [canonicalChain, strikeRange]);
+  const analytics = useMemo(() => canonicalChain ? {
+    atm: calculateAtmIv(canonicalChain),
+    expectedMove: calculateExpectedMove(canonicalChain),
+    oi: calculateOiConcentration(canonicalChain),
+  } : null, [canonicalChain]);
   const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1_000));
 
   const addChartLine = (line: StrikeLine) => {
@@ -214,6 +254,12 @@ export function OptionsChainPanel({ symbol }: { symbol: string }) {
   };
   const openSimulator = (contract: OptionContract) => {
     const query = new URLSearchParams({ symbol, expiration: contract.expiration, contract: contract.contractSymbol });
+    if (spot !== null && underlyingLabel) {
+      query.set('underlyingPrice', String(spot));
+      query.set('underlyingMode', underlyingLabel.mode);
+      if (underlyingLabel.provider) query.set('underlyingProvider', underlyingLabel.provider);
+      if (underlyingLabel.exchangeTimestamp) query.set('underlyingAsOf', underlyingLabel.exchangeTimestamp);
+    }
     router.push(`/tools/monte-carlo?${query.toString()}`);
   };
 
@@ -222,15 +268,19 @@ export function OptionsChainPanel({ symbol }: { symbol: string }) {
   return <section className="space-y-4 rounded-2xl border border-slate-800 bg-[#151B28] p-4 md:p-6" data-testid="options-chain-panel">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-white">Options Chain · {symbol}</h2><p className="mt-1 text-xs text-slate-400">ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว พร้อม ATM IV, Expected Move และ OI concentration</p></div><Button variant="outline" disabled={loading || cooldown > 0 || !appActive} onClick={() => chain ? void requestChain(expiration, true) : void requestExpirations()}><RefreshCw size={14}/>{cooldown ? ` ${cooldown}s` : ' Refresh'}</Button></div>
     <DataProvenance status={chain?.status ?? expirations?.status ?? (error ? 'unavailable' : 'delayed')} provider={chain?.provider ?? expirations?.provider} asOf={chain?.asOf ?? expirations?.asOf} delayedMinutes={chain?.delayedMinutes ?? expirations?.delayedMinutes} reason={error?.message ?? null}/>
+    <p className="text-xs text-slate-400" data-testid="options-underlying-provenance">
+      Underlying: {spot === null ? 'Unavailable' : `$${finite(spot)}`}
+      {spot !== null ? ` · ${underlyingLabel?.provider ?? 'unknown source'} · ${underlyingLabel?.mode ?? 'UNAVAILABLE'} · ${underlyingLabel?.exchangeTimestamp ?? 'unknown time'}` : ''}
+    </p>
     {error && <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-400">ไม่มีการสร้างหรือเติม Options data ทดแทน</p><Button className="mt-3" variant="outline" disabled={loading || cooldown > 0} onClick={() => { setUserStarted(true); setError(null); }}>ลองใหม่</Button></div>}
     {loading && !chain && <div className="h-64 animate-pulse rounded-xl bg-slate-800/60" aria-label="Loading options chain"/>}
     {expirations && expirations.expirations.length > 0 && <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">Expiration<Select className="mt-1" value={expiration} onChange={(event) => { setError(null); setExpiration(event.target.value); }}>{expirations.expirations.map((value) => <option key={value} value={value}>{value}</option>)}</Select></label><label className="text-xs text-slate-400">Strike range<Select className="mt-1" value={strikeRange} onChange={(event) => setStrikeRange(Number(event.target.value))}>{[5, 10, 20, 50].map((value) => <option key={value} value={value}>±{value}% around spot</option>)}</Select></label></div>}
     {chain && analytics && <>
       <div className="grid gap-3 md:grid-cols-3"><article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">ATM IV</p><p className="mt-1 text-xl font-bold text-white">{analytics.atm.iv === null ? 'Unavailable' : `${finite(analytics.atm.iv * 100)}%`}</p><p className="mt-1 text-[10px] text-slate-400">robust median · {analytics.atm.sampledContracts.length} contracts · DTE {analytics.atm.dte} · confidence {finite(analytics.atm.confidence)}%</p></article>
         <article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">Expected Move</p><p className="mt-1 text-xl font-bold text-white">{analytics.expectedMove.move === null ? 'Unavailable' : `±$${finite(analytics.expectedMove.move)} (${finite((analytics.expectedMove.movePercent ?? 0) * 100)}%)`}</p><p className="mt-1 text-[10px] text-slate-400">{analytics.expectedMove.lower === null ? 'No valid provider IV' : `$${finite(analytics.expectedMove.lower)} – $${finite(analytics.expectedMove.upper)}`}</p>{analytics.expectedMove.move !== null && <button type="button" onClick={addExpectedMove} className="mt-2 min-h-9 rounded border border-sky-500/30 px-2 text-xs text-sky-300">เพิ่มกรอบลงกราฟ</button>}</article>
-        <article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">Spot / Expiration</p><p className="mt-1 text-xl font-bold text-white">${finite(chain.spot)}</p><p className="mt-1 text-[10px] text-slate-400">{chain.expiration} · completeness {finite(chain.completeness * 100)}%</p></article></div>
+        <article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">Spot / Expiration</p><p className="mt-1 text-xl font-bold text-white">${finite(spot)}</p><p className="mt-1 text-[10px] text-slate-400">{chain.expiration} · completeness {finite(chain.completeness * 100)}%</p></article></div>
       <p className="rounded-lg bg-sky-500/5 p-3 text-xs text-sky-200">Expected Move เป็นกรอบความผันผวนเชิงสถิติ ราคาอาจอยู่นอกกรอบได้ และกรอบนี้ไม่ใช่การรับประกัน</p>
-      <VirtualOptionsTable rows={rows} spot={chain.spot} expectedMove={analytics.expectedMove} onOpen={openSimulator} onStrike={addStrike}/>
+      <VirtualOptionsTable rows={rows} spot={spot!} expectedMove={analytics.expectedMove} onOpen={openSimulator} onStrike={addStrike}/>
       {rows.length === 0 && <p className="rounded-lg border border-amber-500/20 p-3 text-sm text-amber-200">ไม่มีสัญญาจริงในช่วง strike ที่เลือก</p>}
       <div className="grid gap-3 lg:grid-cols-2">{([['Call OI Concentration', analytics.oi.calls], ['Put OI Concentration', analytics.oi.puts]] as const).map(([title, levels]) => <article key={title} className="rounded-xl border border-slate-700 p-3"><h3 className="text-sm font-semibold text-white">{title}</h3><div className="mt-2 space-y-2">{levels.length ? levels.map((level) => <div key={level.contractSymbol} className="grid grid-cols-[repeat(5,minmax(0,1fr))_auto] items-center gap-2 rounded-lg bg-slate-950/50 p-2 text-xs"><span className="font-mono text-white">${finite(level.strike)}</span><span>OI {finite(level.openInterest, 0)}</span><span>Vol {finite(level.volume, 0)}</span><span>Dist ${finite(level.distance)}</span><span>Score {finite(level.score)}</span><button type="button" onClick={() => addChartLine({ id: `oi:${level.contractSymbol}`, price: level.strike, label: `${level.type === 'call' ? 'Call' : 'Put'} OI ${chain.expiration}`, optionType: level.type, expiration: chain.expiration, visible: true })} className="min-h-8 rounded border border-slate-700 px-2 text-sky-300">กราฟ</button></div>) : <p className="text-xs text-slate-500">Unavailable</p>}</div><p className="mt-2 text-[10px] text-slate-500">ระดับความกระจุกตัวเชิงสถิติ ไม่ใช่กำแพงราคาและไม่รับประกันการตอบสนองของราคา</p></article>)}</div>
       <details className="rounded-xl border border-slate-700 p-3 text-xs text-slate-400"><summary className="cursor-pointer text-slate-200">Methodology / warnings</summary><p className="mt-2">{analytics.oi.methodology}</p><p className="mt-1">ATM samples: {analytics.atm.sampledContracts.map((item) => `${item.type} ${item.strike}`).join(', ') || 'none'}</p><ul className="mt-2 list-disc pl-5">{[...new Set([...chain.warnings, ...analytics.atm.warnings, ...analytics.oi.warnings])].map((warning) => <li key={warning}>{warning}</li>)}</ul></details>

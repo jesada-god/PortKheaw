@@ -12,6 +12,11 @@ describe('formatTrace', () => {
     expect(formatTrace({ stage: 'upstream_subscribe_sent', symbol: 'AAPL', channels: 'trades,quotes' })).toBe(
       '[market-trace] upstream_subscribe_sent symbol=AAPL channels=trades,quotes',
     );
+    expect(formatTrace({
+      stage: 'chart_updated', symbol: 'AAPL', price: 100,
+      exchangeTimestampMs: 100, gatewayReceivedAtMs: 120, browserReceivedAtMs: 140,
+      acceptedAtMs: 141, chartUpdatedAtMs: 145, latencyMs: 45,
+    })).toContain('exchangeTimestampMs=100 gatewayReceivedAtMs=120 browserReceivedAtMs=140 acceptedAtMs=141 chartUpdatedAtMs=145 latencyMs=45');
   });
 });
 

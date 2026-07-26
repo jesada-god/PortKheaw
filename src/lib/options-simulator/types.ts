@@ -31,6 +31,7 @@ export interface OptionLeg {
   contractSymbol?: string | null;
   bid?: number | null;
   ask?: number | null;
+  midpoint?: number | null;
   mark?: number | null;
   last?: number | null;
   volume?: number | null;

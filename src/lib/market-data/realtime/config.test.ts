@@ -4,6 +4,7 @@ import {
   buildSubscriptionFrame,
   computeBackoffDelayMs,
   resolveAlpacaConfig,
+  resolveFinnhubConfig,
   resolvePublicMarketWsUrl,
 } from './config';
 
@@ -41,6 +42,27 @@ describe('resolveAlpacaConfig', () => {
       MARKET_REALTIME_ENABLED: 'true', ALPACA_API_KEY_ID: 'k', ALPACA_API_SECRET_KEY: 's', ALPACA_DATA_FEED: 'bogus',
     }));
     expect(config).toMatchObject({ enabled: true, feed: 'iex' });
+  });
+});
+
+describe('resolveFinnhubConfig', () => {
+  it('is disabled when the feature flag is off or the server key is missing', () => {
+    expect(resolveFinnhubConfig(env({ FINNHUB_API_KEY: 'server-key' })).enabled).toBe(false);
+    expect(resolveFinnhubConfig(env({ MARKET_REALTIME_ENABLED: 'true' })).enabled).toBe(false);
+  });
+
+  it('builds the server-only production stream configuration', () => {
+    expect(resolveFinnhubConfig(env({
+      MARKET_REALTIME_ENABLED: 'true',
+      FINNHUB_API_KEY: 'server-key',
+    }))).toEqual({
+      enabled: true,
+      apiKey: 'server-key',
+      feed: 'finnhub',
+      provider: 'finnhub',
+      url: 'wss://ws.finnhub.io/?token=server-key',
+      realtime: true,
+    });
   });
 });
 

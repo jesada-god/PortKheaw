@@ -110,6 +110,13 @@ export interface MarketUpdate {
   candle: LiveCandle | null;
   label: MarketDataLabel;
   error: MarketDataApiError | null;
+  /** Timing of the accepted last trade through the pipeline. Exchange time stays provider-owned. */
+  observation?: {
+    exchangeTimestampMs: number;
+    gatewayReceivedAtMs: number | null;
+    browserReceivedAtMs: number;
+    acceptedAtMs: number;
+  } | null;
   /**
    * Provider event that caused this emission. WebSocket consumers use this to
    * keep high-frequency trade ticks on an imperative/ref path while committing

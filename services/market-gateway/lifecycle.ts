@@ -10,7 +10,7 @@
  */
 
 export interface LifecycleDeps {
-  /** Stop the single upstream Alpaca connection (cancels its own timers). */
+  /** Stop the single provider upstream connection (cancels its own timers). */
   stopUpstream: () => void;
   /** Close every accepted browser peer. */
   closePeers: () => void;

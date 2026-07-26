@@ -39,6 +39,7 @@ function legacyQuote(quote: NormalizedQuote): Quote {
     high: quote.high ?? null,
     low: quote.low ?? null,
     previousClose: quote.previousClose,
+    regularClose: quote.regularClose ?? null,
     previousRegularClose: quote.previousClose,
     change: quote.change,
     changePercent: quote.changePercent,

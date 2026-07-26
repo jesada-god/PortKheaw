@@ -69,7 +69,7 @@ interface StockPriceHeaderProps {
   extendedQuote?: ExtendedHoursQuote | null;
   /** True only for a genuine live entitled stream; gates the Real-time badge. */
   realtime?: boolean;
-  /** Upstream feed id, e.g. `iex`. The badge names the feed (IEX ≠ consolidated SIP). */
+  /** Upstream provider/feed id, e.g. `finnhub`. */
   feed?: string | null;
   /** Per-symbol trading halt, independent of the market-wide session. */
   symbolHalted?: boolean;
@@ -81,7 +81,7 @@ interface StockPriceHeaderProps {
    */
   connectionState?: ConnectionStatus | null;
   /**
-   * Shared imperative sink used by the live source for Alpaca trade ticks.
+   * Shared imperative sink used by the live source for Finnhub trade ticks.
    * The sink mutates only the price text node, avoiding a component-tree render.
    */
   transientPriceSinkRef?: MutableRefObject<TransientPriceSink | null>;
@@ -362,7 +362,7 @@ export function StockPriceHeader({
             {showRealtime && <>
               <span aria-hidden="true">·</span>
               <span
-                title={`ข้อมูลเรียลไทม์จากฟีด ${feedLabel} — IEX เป็นตลาดเดียว ไม่ใช่ราคารวมทุกตลาด (consolidated SIP)`}
+                title={`ข้อมูลสดจาก ${feedLabel} ผ่าน Railway WebSocket Gateway`}
                 className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-300"
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true"/>
@@ -452,6 +452,7 @@ export function StockPriceHeader({
         <span key={extendedFlash.nonce} className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
         <span className={`shrink-0 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>{formatSigned(displayExtendedChange)} {formatPercent(extendedChange.percent)}</span>
         <span className="shrink-0 whitespace-nowrap text-xs text-text-muted">{formatProviderTimestamp(extendedQuote.asOf)}</span>
+        <span className="shrink-0 whitespace-nowrap text-xs text-text-muted">{extendedQuote.provider ?? 'provider unavailable'}</span>
         {extendedDataStatusView && <span className="hidden items-center gap-1.5 text-xs text-text-muted sm:inline-flex">{extendedDataStatusView.emoji && <StatusEmoji value={extendedDataStatusView.emoji}/>} {extendedDataStatusView.label}</span>}
       </div>}
 

@@ -1,5 +1,7 @@
 import {
   normalizeAlpacaMessage,
+  normalizedTradeSchema,
+  classifyUsEquityTimestamp,
   type MarketSnapshot,
   type NormalizedBar,
   type NormalizedQuote,
@@ -38,6 +40,72 @@ export interface AlpacaRestConfig {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   now?: () => number;
+}
+
+export interface FinnhubRestConfig {
+  apiKey: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+}
+
+interface FinnhubQuoteResponse {
+  c?: number;
+  t?: number;
+  error?: string;
+}
+
+/**
+ * Bootstrap a cold Finnhub symbol from the provider's real `/quote` response.
+ * Finnhub does not expose recent 1m bars on this endpoint, so bars/book remain
+ * absent instead of being invented; Polygon history is loaded independently by
+ * Next.js. Size is zero because the endpoint supplies no executed-trade size.
+ */
+export async function fetchFinnhubRestSnapshot(
+  symbol: string,
+  config: FinnhubRestConfig,
+): Promise<MarketSnapshot | null> {
+  const upper = symbol.trim().toUpperCase();
+  const base = config.baseUrl ?? 'https://finnhub.io/api/v1';
+  const url = new URL(`${base}/quote`);
+  url.searchParams.set('symbol', upper);
+  url.searchParams.set('token', config.apiKey);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  try {
+    const response = await (config.fetchImpl ?? fetch)(url, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as FinnhubQuoteResponse;
+    if (typeof body.error === 'string') return null;
+    const timestampMs = typeof body.t === 'number' ? body.t * 1_000 : Number.NaN;
+    const parsed = normalizedTradeSchema.safeParse({
+      kind: 'trade',
+      symbol: upper,
+      price: body.c,
+      size: 0,
+      timestampMs,
+      provider: 'finnhub',
+      tradeId: `${upper}:rest:${timestampMs}:${body.c}`,
+      session: classifyUsEquityTimestamp(timestampMs),
+    });
+    if (!parsed.success) return null;
+    return {
+      symbol: upper,
+      trade: parsed.data,
+      quote: null,
+      bars: [],
+      origin: 'rest',
+      asOfMs: (config.now ?? Date.now)(),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 interface LatestTradeResponse {

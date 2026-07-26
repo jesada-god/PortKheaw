@@ -18,9 +18,9 @@ import type { MarketDataMode, MarketPriceSource } from './types';
  *
  * This preserves source trust without allowing stale-but-higher-ranked data to
  * override a newer accepted market event. An older history bar can never replace
- * a newer aggregate/snapshot, while a newer verified Yahoo bar can correctly
+ * a newer aggregate/snapshot, while a newer verified history bar can correctly
  * advance both the header and chart price line. Nothing here is fabricated,
- * interpolated or forward-filled, and no candidate may carry a REAL-TIME mode.
+ * interpolated or forward-filled; REAL-TIME is reserved for an entitled stream.
  */
 
 /** Descending trust rank used when timestamps are equal or unavailable. */

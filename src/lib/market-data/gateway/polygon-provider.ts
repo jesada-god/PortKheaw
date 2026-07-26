@@ -191,6 +191,9 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
       const timestamp = epochSeconds(ticker.lastTrade?.t ?? ticker.min?.t ?? ticker.updated);
       if (!Number.isFinite(price) || !timestamp) throw new MarketDataError('insufficient-data', 'Polygon quote did not include a valid price and timestamp');
       const previousClose = Number.isFinite(ticker.prevDay?.c) ? ticker.prevDay?.c ?? null : null;
+      const regularClose = Number.isFinite(ticker.day?.c) && (ticker.day?.c ?? 0) > 0
+        ? ticker.day?.c ?? null
+        : null;
       const change = Number.isFinite(ticker.todaysChange)
         ? ticker.todaysChange ?? null
         : previousClose == null ? null : price! - previousClose;
@@ -202,6 +205,7 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
         symbol: instrument.canonicalSymbol,
         price,
         previousClose,
+        regularClose,
         change,
         changePercent,
         timestamp,
@@ -259,6 +263,7 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
         symbol: instrument.canonicalSymbol,
         price: close,
         previousClose,
+        regularClose: close,
         change,
         changePercent,
         timestamp,
@@ -420,4 +425,3 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
     }
   }
 }
-

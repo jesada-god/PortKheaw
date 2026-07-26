@@ -1,7 +1,7 @@
 import type { MarketUpdate } from '@/src/lib/stock-detail/market-source';
 
 /**
- * Keeps high-frequency Alpaca trade ticks outside React's render loop.
+ * Keeps high-frequency Finnhub trade ticks outside React's render loop.
  *
  * The first priced live event is committed so provenance/badges become visible.
  * After that, only snapshots and official bars update React state; individual
@@ -9,7 +9,7 @@ import type { MarketUpdate } from '@/src/lib/stock-detail/market-source';
  * dedicated metadata path.
  */
 export function realtimeUpdatePolicy(
-  update: Pick<MarketUpdate, 'eventKind' | 'label' | 'price'>,
+  update: Pick<MarketUpdate, 'eventKind' | 'label' | 'price' | 'barFinalized'>,
   hasCommittedLivePrice: boolean,
 ): { transientPrice: boolean; commitMarketState: boolean } {
   if (update.label.realtime !== true) {
@@ -24,7 +24,7 @@ export function realtimeUpdatePolicy(
     && Number.isFinite(update.price);
   const commitMarketState = firstPricedLiveEvent
     || update.eventKind === 'snapshot'
-    || update.eventKind === 'bar'
+    || (update.eventKind === 'bar' && update.barFinalized === true)
     // Older/injected sources may not yet provide an event kind.
     || update.eventKind === undefined;
 

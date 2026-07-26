@@ -1,7 +1,7 @@
 import type { WebSocket as WsWebSocket } from 'ws';
 
 /**
- * Minimal transport abstraction shared by the upstream (Alpaca) and downstream
+ * Minimal transport abstraction shared by the provider upstream and downstream
  * (browser) sockets. Keeping the Gateway logic behind this interface lets the
  * unit/integration tests drive fully deterministic fake sockets while the real
  * server binds it to the `ws` library — no test ever opens a real connection.

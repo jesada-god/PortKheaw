@@ -1,9 +1,9 @@
 /**
- * Server-only configuration for the Alpaca real-time Gateway plus the pure
+ * Server-only configuration for the real-time Gateway plus the pure
  * reconnect-backoff policy shared by the Gateway (upstream) and the browser
  * client (downstream).
  *
- * Secrets (`ALPACA_API_KEY_ID`, `ALPACA_API_SECRET_KEY`) are resolved here and
+ * Provider secrets are resolved here and
  * MUST NOT be prefixed `NEXT_PUBLIC_`. {@link resolveAlpacaConfig} refuses to run
  * in a browser so a bundling mistake fails loudly instead of leaking a key. The
  * browser only ever learns the public Gateway URL via {@link resolvePublicMarketWsUrl}.
@@ -35,6 +35,19 @@ export type AlpacaConfig =
        */
       realtime: boolean;
     };
+
+export type FinnhubConfig =
+  | { enabled: false; reason: string }
+  | {
+      enabled: true;
+      provider: 'finnhub';
+      feed: 'finnhub';
+      url: string;
+      apiKey: string;
+      realtime: true;
+    };
+
+const FINNHUB_WS_URL = 'wss://ws.finnhub.io';
 
 function parseFeed(value: string | undefined): AlpacaFeed {
   const feed = (value ?? 'iex').trim().toLowerCase();
@@ -74,6 +87,30 @@ export function resolveAlpacaConfig(
     keyId,
     secretKey,
     realtime: feed !== 'test',
+  };
+}
+
+/** Resolve the server-only Finnhub Gateway configuration. */
+export function resolveFinnhubConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): FinnhubConfig {
+  if (typeof window !== 'undefined') {
+    throw new Error('resolveFinnhubConfig must never run in the browser: FINNHUB_API_KEY is server-only.');
+  }
+  if (!isTruthy(env.MARKET_REALTIME_ENABLED)) {
+    return { enabled: false, reason: 'MARKET_REALTIME_ENABLED is not set' };
+  }
+  const apiKey = env.FINNHUB_API_KEY?.trim();
+  if (!apiKey) return { enabled: false, reason: 'FINNHUB_API_KEY is not configured' };
+  const url = new URL(FINNHUB_WS_URL);
+  url.searchParams.set('token', apiKey);
+  return {
+    enabled: true,
+    provider: 'finnhub',
+    feed: 'finnhub',
+    url: url.toString(),
+    apiKey,
+    realtime: true,
   };
 }
 

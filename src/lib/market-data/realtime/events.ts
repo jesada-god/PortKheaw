@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Transport-agnostic, normalized real-time market events.
  *
- * Every provider-specific wire shape (Alpaca IEX today, another feed tomorrow)
+ * Every provider-specific wire shape (Finnhub in production, legacy adapters in tests)
  * is mapped to one of these before it crosses a module boundary. Timestamps are
  * always integer **unix milliseconds** and symbols are always upper-cased so the
  * aggregator, the subscription registry and the browser client never have to
@@ -19,20 +19,27 @@ const intNonNegative = z.number().int().nonnegative();
 /** Unix epoch milliseconds. Guards against absurd values from a bad feed line. */
 const epochMillis = z.number().int().nonnegative();
 
-/** A single executed trade (Alpaca `t`). Drives the "last price". */
+/** A single executed trade. Drives the accepted last price. */
 export const normalizedTradeSchema = z.object({
   kind: z.literal('trade'),
   symbol: z.string().min(1),
   price: finitePositive,
   size: finiteNonNegative,
   timestampMs: epochMillis,
+  /** Gateway wall-clock receipt time; never used as the exchange timestamp. */
+  gatewayReceivedAtMs: epochMillis.optional(),
+  /** Provider identity is populated by every production adapter. */
+  provider: z.string().min(1).optional(),
+  /** Stable provider id when available, otherwise a deterministic wire fingerprint. */
+  tradeId: z.string().min(1).optional(),
+  session: z.enum(['pre-market', 'regular', 'after-hours', 'closed']).optional(),
   /** Tape/exchange condition flags, when the feed supplies them. */
   conditions: z.array(z.string()).optional(),
   tape: z.string().optional(),
 });
 export type NormalizedTrade = z.infer<typeof normalizedTradeSchema>;
 
-/** A top-of-book quote (Alpaca `q`). Bid/Ask are displayed separately. */
+/** A top-of-book quote when supplied. Bid/Ask are displayed separately. */
 export const normalizedQuoteSchema = z.object({
   kind: z.literal('quote'),
   symbol: z.string().min(1),
@@ -41,6 +48,7 @@ export const normalizedQuoteSchema = z.object({
   askPrice: finiteNonNegative,
   askSize: finiteNonNegative,
   timestampMs: epochMillis,
+  gatewayReceivedAtMs: epochMillis.optional(),
 });
 export type NormalizedQuote = z.infer<typeof normalizedQuoteSchema>;
 
@@ -60,6 +68,14 @@ export const normalizedBarSchema = z.object({
   volume: finiteNonNegative,
   timestampMs: epochMillis,
   updated: z.boolean(),
+  /** False for the still-forming gateway candle; true once immutable. */
+  finalized: z.boolean().optional(),
+  provider: z.string().min(1).optional(),
+  source: z.string().min(1).optional(),
+  timeframe: z.string().min(1).optional(),
+  session: z.enum(['pre-market', 'regular', 'after-hours', 'closed']).optional(),
+  updatedAtMs: epochMillis.optional(),
+  gatewayReceivedAtMs: epochMillis.optional(),
 });
 export type NormalizedBar = z.infer<typeof normalizedBarSchema>;
 
@@ -75,6 +91,7 @@ export const normalizedTradingStatusSchema = z.object({
   reasonCode: z.string().optional(),
   reasonMessage: z.string().optional(),
   timestampMs: epochMillis,
+  gatewayReceivedAtMs: epochMillis.optional(),
   /** Derived from the status code so the UI does not re-implement the mapping. */
   halted: z.boolean(),
 });

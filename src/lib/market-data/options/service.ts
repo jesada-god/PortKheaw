@@ -42,6 +42,14 @@ function freshness(status: OptionsChain['status'], asOf: string) {
   };
 }
 
+function underlyingStatus(status: string): NonNullable<OptionsChain['underlyingStatus']> {
+  if (status === 'realtime') return 'live';
+  if (status === 'cached') return 'cached';
+  if (status === 'stale') return 'stale';
+  if (status === 'unavailable' || status === 'unknown') return 'unavailable';
+  return 'delayed';
+}
+
 export class OptionsMarketDataService {
   constructor(
     private readonly provider: OptionsContractsProvider,
@@ -84,17 +92,13 @@ export class OptionsMarketDataService {
       throw new MarketDataError('insufficient-data', 'A validated underlying spot price is required for the options chain');
     }
     const warnings = [...snapshot.warnings];
-    let status = snapshot.status;
-    let delayedMinutes = snapshot.delayedMinutes;
     if (quote.freshness.status !== 'realtime') {
-      status = 'delayed';
-      delayedMinutes = null;
-      warnings.push('Underlying spot is not realtime; chain analytics are marked delayed');
+      warnings.push('Underlying spot is not realtime; underlying and options freshness are reported separately');
     }
     const withMoneyness = contracts.map((contract) => ({
       ...contract,
       inTheMoney: contract.type === 'call' ? spot > contract.strike : spot < contract.strike,
-      status,
+      status: contract.status,
     }));
     const data = cacheStatus(optionsChainSchema.parse({
       underlyingSymbol: symbol,
@@ -105,10 +109,13 @@ export class OptionsMarketDataService {
       puts: withMoneyness.filter((contract) => contract.type === 'put'),
       provider: snapshot.provider,
       asOf: snapshot.asOf,
-      status,
-      delayedMinutes,
+      status: snapshot.status,
+      delayedMinutes: snapshot.delayedMinutes,
       completeness: snapshot.completeness,
       warnings,
+      underlyingProvider: quote.provider,
+      underlyingAsOf: quote.freshness.asOf,
+      underlyingStatus: underlyingStatus(quote.freshness.status),
     }), resolution.state);
     return { data, provider: data.provider, freshness: freshness(data.status, data.asOf) };
   }

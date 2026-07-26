@@ -1,4 +1,5 @@
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
+import { optionMarketQuote } from '@/src/lib/market-data/quote-model';
 import { detectStrategy } from './portfolio';
 import type { OptionLeg, PremiumSource, SimulationWorkspace } from './types';
 
@@ -12,12 +13,16 @@ function daysBetween(from: string, to: string): number {
   return Math.max(1, Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000));
 }
 
-export function selectProviderPremium(contract: OptionContract): { value: number; source: PremiumSource } | null {
-  for (const source of ['mark', 'ask', 'last', 'bid'] as const) {
-    const value = contract[source];
-    if (value !== null && Number.isFinite(value) && value >= 0) return { value, source };
-  }
-  return null;
+export function selectProviderPremium(
+  contract: OptionContract,
+  side: OptionLeg['side'] = 'buy',
+): { value: number; source: PremiumSource } | null {
+  // Only a current executable side is safe to prefill. Last and provider mark
+  // remain reference observations and are never silently treated as a fill.
+  if (contract.status !== 'live') return null;
+  const source = side === 'buy' ? 'ask' : 'bid';
+  const value = contract[source];
+  return value !== null && Number.isFinite(value) && value >= 0 ? { value, source } : null;
 }
 
 export function importOptionContract(
@@ -27,14 +32,16 @@ export function importOptionContract(
 ): SimulationWorkspace | null {
   const contract = [...chain.calls, ...chain.puts].find((item) => item.contractSymbol === contractSymbol);
   if (!contract) return null;
-  const premium = selectProviderPremium(contract);
+  const existing = current.legs[0];
+  const side = existing?.side ?? 'buy';
+  const premium = selectProviderPremium(contract, side);
+  const marketQuote = optionMarketQuote(contract);
   const valuationDate = current.valuationDate < contract.expiration ? current.valuationDate : chain.asOf.slice(0, 10);
   if (valuationDate >= contract.expiration) return null;
-  const existing = current.legs[0];
   const leg: OptionLeg = {
     id: existing?.id ?? globalThis.crypto.randomUUID(),
     kind: contract.type,
-    side: existing?.side ?? 'buy',
+    side,
     quantity: existing?.quantity && existing.quantity > 0 ? existing.quantity : 1,
     strike: contract.strike,
     expiration: contract.expiration,
@@ -53,6 +60,7 @@ export function importOptionContract(
     contractSymbol: contract.contractSymbol,
     bid: contract.bid,
     ask: contract.ask,
+    midpoint: marketQuote.midpoint,
     mark: contract.mark,
     last: contract.last,
     volume: contract.volume,

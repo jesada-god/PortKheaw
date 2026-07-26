@@ -33,6 +33,7 @@ type QuoteGateway = {
     high?: number | null;
     low?: number | null;
     previousClose: number | null;
+    regularClose?: number | null;
     change: number | null;
     changePercent: number | null;
     volume?: number | null;
@@ -113,6 +114,7 @@ export async function loadResilientQuote(
         high: quote.high ?? null,
         low: quote.low ?? null,
         previousClose: quote.previousClose,
+        regularClose: quote.regularClose ?? null,
         previousRegularClose: quote.previousClose,
         change: quote.change,
         changePercent: quote.changePercent,

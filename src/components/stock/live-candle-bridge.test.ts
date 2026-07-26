@@ -24,8 +24,8 @@ describe('matchesLiveSelection', () => {
   });
 
   it('never matches history-only or unsupported selections', () => {
-    expect(matchesLiveSelection('1D', 'regular')).toBe(false);
-    expect(matchesLiveSelection('Week', 'regular')).toBe(false);
+    expect(matchesLiveSelection('1D', 'regular')).toBe(true);
+    expect(matchesLiveSelection('Week', 'regular')).toBe(true);
     expect(matchesLiveSelection('1D', 'extended')).toBe(false);
   });
 });
@@ -83,5 +83,17 @@ describe('mergeLiveCandleIntoBars', () => {
     expect(mergeLiveCandleIntoBars(bars, candle(T0 + 2 * STEP, 12, 100))).toBe(bars);
     expect(mergeLiveCandleIntoBars(bars, null)).toBe(bars);
     expect(mergeLiveCandleIntoBars([], candle(T0, 10))).toEqual([]);
+  });
+
+  it('merges a live delta into todays Polygon daily bar without replacing history or adding provider volumes', () => {
+    const daily = [
+      { date: '2026-07-23T04:00:00.000Z', open: 95, high: 101, low: 94, close: 100, volume: 1_000 },
+      { date: '2026-07-24T04:00:00.000Z', open: 100, high: 103, low: 99, close: 102, volume: 500 },
+    ];
+    const live = candle(Math.floor(Date.UTC(2026, 6, 24, 18, 0) / 1_000), 104, 25);
+    const merged = mergeLiveCandleIntoBars(daily, live, '1D');
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toBe(daily[0]);
+    expect(merged[1]).toMatchObject({ open: 100, high: 104, low: 99, close: 104, volume: 500 });
   });
 });
