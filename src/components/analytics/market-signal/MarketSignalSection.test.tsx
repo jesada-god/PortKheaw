@@ -2,50 +2,78 @@
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types';
-import { MarketSignalSection } from './MarketSignalSection';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/market-signal/types';
+import { MARKET_SIGNAL_PRESENTATION, MarketSignalSection } from './MarketSignalSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const result: MarketSignalResult = {
   status: 'available',
-  signal: 'bullish',
-  score: 47,
-  confidence: 'Medium',
-  confidencePct: 78,
+  symbol: 'AAPL',
+  state: 'SQUEEZE',
+  bias: 'bullish',
+  score: 31,
+  confidence: 67,
+  confidenceLabel: 'Medium',
   timeframe: '1D',
   calculatedAt: '2026-07-25T00:00:00.000Z',
   latestCandleAt: '2026-07-24',
   source: 'yahoo-finance-chart',
   freshness: { status: 'end-of-day', asOf: '2026-07-24T20:00:00.000Z', maxAgeSeconds: 21_600 },
   dataPoints: { received: 260, finalized: 259 },
-  components: {
-    trend: { score: 0.8, weight: 30, coverage: 1, factorsUsed: 6 },
-    momentum: { score: 0.5, weight: 25, coverage: 1, factorsUsed: 3 },
-    volume: { score: 0.4, weight: 20, coverage: 0.67, factorsUsed: 2 },
-    structure: { score: 0.2, weight: 25, coverage: 0.67, factorsUsed: 2 },
+  scoreBreakdown: {
+    emaTrend: { points: 12, maxPoints: 30, normalizedScore: 0.4, coverage: 1, factorsUsed: 4, available: true },
+    momentum: { points: 8, maxPoints: 25, normalizedScore: 0.32, coverage: 1, factorsUsed: 3, available: true },
+    trendStrength: { points: 4, maxPoints: 15, normalizedScore: 0.2667, coverage: 1, factorsUsed: 1, available: true },
+    volume: { points: 3, maxPoints: 15, normalizedScore: 0.2, coverage: 1, factorsUsed: 2, available: true },
+    priceStructure: { points: 4, maxPoints: 15, normalizedScore: 0.2667, coverage: 1, factorsUsed: 2, available: true },
   },
   reasons: [
-    { id: 'price-ema20', polarity: 'positive', text: 'ราคาอยู่เหนือ EMA20', impact: 1 },
-    { id: 'rsi-hot', polarity: 'caution', text: 'RSI 72 — Momentum ค่อนข้างร้อน', impact: 0 },
+    { id: 'ema-structure', polarity: 'positive', text: 'ราคาและ EMA เรียงตัวเอนขึ้น', impact: 8 },
+    { id: 'squeeze-on', polarity: 'caution', text: 'Bollinger Bands อยู่ภายใน Keltner Channels', impact: 6 },
   ],
-  indicators: {
+  warnings: ['ยังไม่ยืนยัน RSI/MACD divergence จาก historical pivots'],
+  flags: ['squeeze', 'weak_confirmation'],
+  metrics: {
     close: 206.84,
     ema20: 200,
     ema50: 190,
-    ema200: 170,
-    rsi14: 72,
+    ema200: null,
+    ema20SlopePct: 1.2,
+    ema50SlopePct: 0.8,
+    ema200SlopePct: null,
+    emaCompressionRatio: null,
+    rsi14: 62,
     macd: 2.1,
     macdSignal: 1.8,
     macdHistogram: 0.3,
-    relativeVolume20: 1.4,
-    obvTrend: 'rising',
-    adx14: 28,
+    adx14: 24,
     plusDi14: 31,
     minusDi14: 18,
+    relativeVolume20: 1.4,
+    obvTrend: 'rising',
+    bollingerUpper: 208,
+    bollingerMiddle: 202,
+    bollingerLower: 196,
+    keltnerUpper: 210,
+    keltnerMiddle: 202,
+    keltnerLower: 194,
+    squeezeOn: true,
+    atr14: 4,
+    ema20DeviationPct: 3.42,
+    atrNormalizedDistance: 1.71,
     nearestSupport: 195,
     nearestResistance: 215,
+    divergence: null,
+  },
+  confidenceBreakdown: {
+    completeness: 85,
+    agreement: 74,
+    evidenceStrength: 31,
+    volumeConfirmation: 20,
+    regimeClarity: 100,
+    conflictPenalty: 5,
   },
 };
 
@@ -53,6 +81,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('React', React);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -61,41 +90,101 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
-describe('MarketSignalSection', () => {
-  it('shows icon/text/timeframe and opens the rule-grounded explanation dialog', async () => {
-    await act(async () => root.render(<MarketSignalSection result={result} />));
-    expect(container.textContent).toContain('Technical Signal · 1D');
-    expect(container.textContent).toContain('↗ BULLISH');
-    expect(container.textContent).toContain('แนวโน้มขาขึ้น');
-    expect(container.textContent).toContain('ไม่ใช่คำแนะนำซื้อขาย');
+async function render(value: MarketSignalResult = result) {
+  await act(async () => root.render(<MarketSignalSection result={value} />));
+}
 
-    const why = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('ทำไม'));
-    await act(async () => why?.click());
-    const dialog = document.body.querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain('ราคาอยู่เหนือ EMA20');
-    expect(dialog?.textContent).toContain('RSI 72 — Momentum ค่อนข้างร้อน');
-    expect(dialog?.textContent).toContain('EMA200');
-    expect(dialog?.textContent).toContain('Relative Volume 20');
-    expect(dialog?.textContent).toContain('Score: +47');
-    expect(dialog?.textContent).toContain('Source: yahoo-finance-chart');
+function buttonContaining(text: string): HTMLButtonElement {
+  return [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(text))!;
+}
+
+describe('MarketSignalSection', () => {
+  it('shows state, independent bias, beginner copy, score/confidence, flags, and the exact disclaimer', async () => {
+    await render();
+    expect(container.textContent).toContain('SQUEEZE • Bullish Bias');
+    expect(container.textContent).toContain('สะสมพลัง / เตรียมเลือกทาง');
+    expect(container.textContent).toContain('ยังไม่ยืนยันการเบรก แต่โครงสร้างปัจจุบันเอนเอียงไปทางขาขึ้น');
+    expect(container.textContent).toContain('Score +31 / 100');
+    expect(container.textContent).toContain('Confidence 67%');
+    expect(container.textContent).toContain('squeeze');
+    expect(container.textContent).toContain('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
   });
 
-  it('does not invent a direction for insufficient data', async () => {
+  it('uses accessible score and confidence hints with the required non-probability copy', async () => {
+    await render();
+    const scoreHint = container.querySelector<HTMLButtonElement>('[aria-label="คำอธิบาย: Directional Score"]')!;
+    expect(scoreHint.className).toContain("after:-inset-[13px]");
+    await act(async () => scoreHint.click());
+    expect(container.textContent).toContain('Score วัดว่าหลักฐานทางเทคนิคเอนเอียงขึ้นหรือลงแค่ไหน อยู่ระหว่าง -100 ถึง +100 และไม่ใช่เปอร์เซ็นต์ความแม่นยำ');
+    await act(async () => scoreHint.click());
+
+    const confidenceHint = container.querySelector<HTMLButtonElement>('[aria-label="คำอธิบาย: Signal Confidence"]')!;
+    await act(async () => confidenceHint.click());
+    expect(container.textContent).toContain('Confidence วัดว่าหลักฐานที่ระบบมีครบและสอดคล้องกันแค่ไหน ไม่ใช่โอกาสที่ราคาจะขึ้นหรือลง');
+  });
+
+  it('opens the responsive why dialog with six sections, exact breakdown, real metrics, and missing values as dash', async () => {
+    await render();
+    const why = buttonContaining('ทำไม?');
+    expect(why.className).toContain('min-h-11');
+    await act(async () => why.click());
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog).toBeTruthy();
+    expect(dialog.className).toContain('max-h-[min(calc(100dvh-24px),100%)]');
+    expect(dialog.textContent).toContain('1. สถานะนี้แปลว่าอะไร');
+    expect(dialog.textContent).toContain('2. ระบบดูจากอะไร');
+    expect(dialog.textContent).toContain('3. คะแนนมาจากอะไร');
+    expect(dialog.textContent).toContain('4. ปัจจัยสนับสนุน');
+    expect(dialog.textContent).toContain('5. ปัจจัยที่ต้องระวัง');
+    expect(dialog.textContent).toContain('6. สิ่งที่ยังไม่ยืนยัน');
+    expect(dialog.textContent).toContain('EMA / Trend');
+    expect(dialog.textContent).toContain('+12 / 30');
+    expect(dialog.textContent).toContain('รวม+31 / 100');
+    expect(dialog.textContent).toContain('Bollinger U / M / L');
+    expect(dialog.textContent).toContain('Keltner U / M / L');
+    expect(dialog.textContent).toContain('200 / 190 / —');
+    expect(dialog.textContent).toContain('Source: yahoo-finance-chart');
+  }, 15_000);
+
+  it('maps all seven states to distinct text-labelled state styling', async () => {
+    const states = Object.keys(MARKET_SIGNAL_PRESENTATION) as MarketSignalState[];
+    for (const state of states) {
+      await render({ ...result, state, bias: state.includes('BEARISH') ? 'bearish' : state === 'SIDEWAYS' ? 'neutral' : 'bullish' });
+      const section = container.querySelector<HTMLElement>('[data-state]')!;
+      expect(section.dataset.state).toBe(state);
+      expect(section.className).toContain(MARKET_SIGNAL_PRESENTATION[state].tone.split(' ')[0]);
+      expect(container.textContent).toContain(state);
+      expect(container.textContent).toContain(MARKET_SIGNAL_PRESENTATION[state].thai);
+    }
+  }, 15_000);
+
+  it('resets open dialog state when the symbol changes', async () => {
+    await render();
+    await act(async () => buttonContaining('ทำไม?').click());
+    expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
+    await render({ ...result, symbol: 'MSFT' });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).toContain('SQUEEZE • Bullish Bias');
+  });
+
+  it('does not invent a state, bias, score, or confidence for insufficient data', async () => {
     const insufficient: MarketSignalResult = {
       ...result,
       status: 'insufficient-data',
-      signal: null,
+      state: null,
+      bias: null,
       score: null,
-      confidence: 'Insufficient',
-      confidencePct: 0,
+      confidence: 0,
+      confidenceLabel: 'Insufficient',
       reason: 'ต้องมี finalized candles เพิ่ม',
     };
-    await act(async () => root.render(<MarketSignalSection result={insufficient} />));
+    await render(insufficient);
     expect(container.textContent).toContain('ข้อมูลไม่เพียงพอ');
     expect(container.textContent).toContain('ต้องมี finalized candles เพิ่ม');
-    expect(container.textContent).not.toContain('BULLISH');
+    expect(container.textContent).not.toContain('SQUEEZE • Bullish Bias');
+    expect(container.textContent).not.toContain('Score +31');
   });
 });

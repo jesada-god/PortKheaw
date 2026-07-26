@@ -117,40 +117,61 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   analystConsensusEnabled: true,
   marketSignal: {
     status: 'available',
-    signal: 'bullish',
+    symbol: 'RKLB',
+    state: 'BULLISH',
+    bias: 'bullish',
     score: 37,
-    confidence: 'High',
-    confidencePct: 85,
+    confidence: 72,
+    confidenceLabel: 'Medium',
     timeframe: '1D',
     calculatedAt: '2026-07-19T00:00:00.000Z',
     latestCandleAt: '2026-07-18',
     source: 'yahoo-finance-chart',
     freshness: { status: 'end-of-day', asOf: '2026-07-18T20:00:00.000Z', maxAgeSeconds: 21_600 },
     dataPoints: { received: 260, finalized: 259 },
-    components: {
-      trend: { score: 0.8, weight: 30, coverage: 1, factorsUsed: 6 },
-      momentum: { score: 0.5, weight: 25, coverage: 1, factorsUsed: 3 },
-      volume: { score: 0.4, weight: 20, coverage: 0.67, factorsUsed: 2 },
-      structure: { score: 0.2, weight: 25, coverage: 0.67, factorsUsed: 2 },
+    scoreBreakdown: {
+      emaTrend: { points: 15, maxPoints: 30, normalizedScore: 0.5, coverage: 1, factorsUsed: 4, available: true },
+      momentum: { points: 10, maxPoints: 25, normalizedScore: 0.4, coverage: 1, factorsUsed: 3, available: true },
+      trendStrength: { points: 5, maxPoints: 15, normalizedScore: 0.3333, coverage: 1, factorsUsed: 1, available: true },
+      volume: { points: 4, maxPoints: 15, normalizedScore: 0.2667, coverage: 1, factorsUsed: 2, available: true },
+      priceStructure: { points: 3, maxPoints: 15, normalizedScore: 0.2, coverage: 1, factorsUsed: 2, available: true },
     },
     reasons: [{ id: 'price-ema20', polarity: 'positive', text: 'ราคาอยู่เหนือ EMA20', impact: 1 }],
-    indicators: {
+    warnings: [],
+    flags: [],
+    metrics: {
       close: 51.23,
       ema20: 50,
       ema50: 48,
       ema200: 35,
+      ema20SlopePct: 0.8,
+      ema50SlopePct: 0.5,
+      ema200SlopePct: 0.2,
+      emaCompressionRatio: 0.3,
       rsi14: 62,
       macd: 1.2,
       macdSignal: 1,
       macdHistogram: 0.2,
-      relativeVolume20: 1.4,
-      obvTrend: 'rising',
       adx14: 28,
       plusDi14: 31,
       minusDi14: 18,
+      relativeVolume20: 1.4,
+      obvTrend: 'rising',
+      bollingerUpper: 54,
+      bollingerMiddle: 50,
+      bollingerLower: 46,
+      keltnerUpper: 53,
+      keltnerMiddle: 50,
+      keltnerLower: 47,
+      squeezeOn: false,
+      atr14: 2,
+      ema20DeviationPct: 2.46,
+      atrNormalizedDistance: 0.615,
       nearestSupport: 48,
       nearestResistance: 55,
+      divergence: null,
     },
+    confidenceBreakdown: { completeness: 100, agreement: 80, evidenceStrength: 37, volumeConfirmation: 27, regimeClarity: 62, conflictPenalty: 0 },
   },
 };
 
@@ -354,7 +375,7 @@ describe('Stock Detail hydration regression', () => {
     expect(targetCard?.compareDocumentPosition(signalCard!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(targetCard?.textContent).toContain('$55.00');
     expect(targetCard?.textContent).not.toContain('Score: +37');
-    expect(signalCard?.textContent).toContain('Score: +37');
+    expect(signalCard?.textContent).toContain('Score +37 / 100');
     expect(signalCard?.textContent).not.toContain('$55.00');
 
     const detailsButton = container.querySelector<HTMLButtonElement>(

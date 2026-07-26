@@ -1,6 +1,7 @@
 import type { HistoricalPrice } from '@/src/lib/market-data/types';
 import type {
   BollingerPoint,
+  KeltnerPoint,
   AdxPoint,
   IndicatorPoint,
   IndicatorResult,
@@ -118,6 +119,31 @@ export function atrWilder(candles: TechnicalCandles, period: number): Array<numb
   result[period - 1] = trueRanges.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
   for (let index = period; index < candles.length; index += 1) result[index] = (((result[index - 1] as number) * (period - 1)) + trueRanges[index]) / period;
   return result;
+}
+
+export function keltnerChannels(
+  candles: TechnicalCandles,
+  period: number,
+  atrPeriod: number,
+  atrMultiplier: number,
+) {
+  assertPeriod(period);
+  assertPeriod(atrPeriod);
+  if (!Number.isFinite(atrMultiplier) || atrMultiplier <= 0) {
+    throw new RangeError('ATR multiplier must be a positive finite number');
+  }
+  const typicalPrices = candles.map((candle) => (candle.high + candle.low + candle.close) / 3);
+  const middle = ema(typicalPrices, period);
+  const atr = atrWilder(candles, atrPeriod);
+  return candles.map((_, index) => {
+    if (middle[index] === null || atr[index] === null) return null;
+    const offset = (atr[index] as number) * atrMultiplier;
+    return {
+      upper: (middle[index] as number) + offset,
+      middle: middle[index] as number,
+      lower: (middle[index] as number) - offset,
+    };
+  });
 }
 
 function rollingMidpoint(candles: TechnicalCandles, period: number): Array<number | null> {
@@ -243,6 +269,7 @@ export function calculateTechnicalAnalysis(
   const values = candles.map((candle) => candle[parameters.priceField]);
   const macdValues = macd(values, parameters.macdFastPeriod, parameters.macdSlowPeriod, parameters.macdSignalPeriod);
   const bandValues = bollingerBands(values, parameters.bollingerPeriod, parameters.bollingerStdDev);
+  const keltnerValues = keltnerChannels(candles, parameters.keltnerPeriod, parameters.keltnerAtrPeriod, parameters.keltnerAtrMultiplier);
   const stochasticValues = stochastic(candles, parameters.stochasticPeriod, parameters.stochasticSmoothK, parameters.stochasticSmoothD);
   const adxValues = adxWilder(candles, parameters.adxPeriod);
   const ichimokuValues = ichimoku(candles, parameters.ichimokuConversionPeriod, parameters.ichimokuBasePeriod, parameters.ichimokuSpanPeriod, parameters.ichimokuDisplacement);
@@ -266,6 +293,7 @@ export function calculateTechnicalAnalysis(
       rsi: calculate(candles, parameters.rsiPeriod + 1, () => points(candles, rsiWilder(values, parameters.rsiPeriod))),
       macd: calculate(candles, macdMinimum, () => macdValues.macd.flatMap((value, index): MacdPoint[] => value == null ? [] : [{ date: candles[index].date, value, signal: macdValues.signal[index], histogram: macdValues.histogram[index] }])),
       bollinger: calculate(candles, parameters.bollingerPeriod, () => bandValues.flatMap((value, index): BollingerPoint[] => value == null ? [] : [{ date: candles[index].date, value: value.middle, ...value }])),
+      keltner: calculate(candles, Math.max(parameters.keltnerPeriod, parameters.keltnerAtrPeriod), () => keltnerValues.flatMap((value, index): KeltnerPoint[] => value == null ? [] : [{ date: candles[index].date, value: value.middle, ...value }])),
       atr: calculate(candles, parameters.atrPeriod, () => points(candles, atrWilder(candles, parameters.atrPeriod))),
       volume: volumeComplete ? available(candles.map((candle) => ({ date: candle.date, value: candle.volume as number }))) : volumeUnavailable(1),
       averageVolume: volumeComplete ? calculate(candles, parameters.averageVolumePeriod, () => points(candles, sma(volumes, parameters.averageVolumePeriod))) : volumeUnavailable(parameters.averageVolumePeriod),

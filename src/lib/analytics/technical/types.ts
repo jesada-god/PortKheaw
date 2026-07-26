@@ -24,6 +24,12 @@ export interface BollingerPoint extends IndicatorPoint {
   lower: number;
 }
 
+export interface KeltnerPoint extends IndicatorPoint {
+  upper: number;
+  middle: number;
+  lower: number;
+}
+
 export interface StochasticPoint extends IndicatorPoint { k: number; d: number | null; }
 export interface AdxPoint extends IndicatorPoint { plusDi: number; minusDi: number; }
 export interface IchimokuPoint extends IndicatorPoint {
@@ -43,6 +49,9 @@ export interface TechnicalParameters {
   macdSignalPeriod: number;
   bollingerPeriod: number;
   bollingerStdDev: number;
+  keltnerPeriod: number;
+  keltnerAtrPeriod: number;
+  keltnerAtrMultiplier: number;
   atrPeriod: number;
   averageVolumePeriod: number;
   stochasticPeriod: number;
@@ -105,6 +114,7 @@ export interface TechnicalAnalysisResult {
     rsi: IndicatorResult<IndicatorPoint>;
     macd: IndicatorResult<MacdPoint>;
     bollinger: IndicatorResult<BollingerPoint>;
+    keltner: IndicatorResult<KeltnerPoint>;
     atr: IndicatorResult<IndicatorPoint>;
     volume: IndicatorResult<IndicatorPoint>;
     averageVolume: IndicatorResult<IndicatorPoint>;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HistoricalPrice } from '@/src/lib/market-data/types';
-import { adxWilder, atrWilder, calculateTechnicalAnalysis, ema, ichimoku, macd, onBalanceVolume, rateOfChange, rsiWilder, sma, stochastic } from './calculations';
+import { adxWilder, atrWilder, calculateTechnicalAnalysis, ema, ichimoku, keltnerChannels, macd, onBalanceVolume, rateOfChange, rsiWilder, sma, stochastic } from './calculations';
 
 const freshness = { status: 'end-of-day' as const, asOf: '2026-07-18T20:00:00.000Z', maxAgeSeconds: 86_400 };
 const context = { symbol: 'TEST', source: 'fixture', freshness, calculatedAt: '2026-07-19T00:00:00.000Z' };
@@ -35,6 +35,16 @@ describe('technical indicator formulas', () => {
     expect(atrWilder(candles(5), 3)).toEqual([null, null, 2, 2, 2]);
   });
 
+  it('calculates Keltner Channels from typical-price EMA and Wilder ATR without future values', () => {
+    const input = candles(8);
+    const before = keltnerChannels(input, 3, 3, 1.5);
+    expect(before.slice(0, 2)).toEqual([null, null]);
+    expect(before[2]).toEqual({ upper: 14, middle: 11, lower: 8 });
+    const withFuture = keltnerChannels([...input, { ...input.at(-1)!, date: '2026-01-09', close: 1_000, high: 1_001, low: 999 }], 3, 3, 1.5);
+    expect(withFuture.slice(0, input.length)).toEqual(before);
+    expect(() => keltnerChannels(input, 3, 3, 0)).toThrow(/multiplier/i);
+  });
+
   it('calculates Stochastic, OBV and ROC from aligned raw candles', () => {
     const input = candles(8);
     const stochasticResult = stochastic(input, 3, 1, 2);
@@ -65,6 +75,7 @@ describe('technical analysis contract', () => {
       expect(result.indicators.sma).toMatchObject({ status: 'unavailable', minimumDataPoints: 20, actualDataPoints: 10 });
       expect(result.indicators.rsi).toMatchObject({ status: 'unavailable', minimumDataPoints: 15 });
       expect(result.indicators.macd).toMatchObject({ status: 'unavailable', minimumDataPoints: 34 });
+      expect(result.indicators.keltner).toMatchObject({ status: 'unavailable', minimumDataPoints: 20 });
     }
   });
 
