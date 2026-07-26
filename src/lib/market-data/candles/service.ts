@@ -4,7 +4,7 @@ import type { ProviderResult } from '../types';
 import { aggregateCandles } from './aggregate';
 import { sourceIntervalFor, supportsCandleRequest } from './capabilities';
 import { normalizedCandleResultSchema, type CandleRequest, type NormalizedCandleResult, type NormalizedMarketDataProvider } from './contracts';
-import { candleRangeBounds } from './range';
+import { candleRangeBounds, latestTradingDayCandles } from './range';
 
 const INTRADAY_INTERVALS = new Set(['1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m', '1h', '2h', '3h', '4h']);
 const INTRADAY_POLICY = { freshMs: 60_000, staleMs: 15 * 60_000, errorMs: 30_000 } as const;
@@ -73,12 +73,20 @@ export class CandleMarketDataService {
           () => provider.getCandles({ ...input, ...bounds, sourceInterval }),
           INTRADAY_INTERVALS.has(input.interval) ? INTRADAY_POLICY : HISTORICAL_POLICY,
         );
-        const aggregated = aggregateCandles(
+        const bucketed = aggregateCandles(
           resolution.value.candles,
           input.interval,
           sourceInterval,
           resolution.value.exchangeTimezone,
         );
+        // `1d` is "the most recent trading session", so the rolling window is
+        // fetched wide enough to always contain one and then trimmed to its newest
+        // exchange-local date. Explicit period bounds are the caller's own window
+        // and are never trimmed.
+        const latestSessionOnly = !explicitBounds && input.range === '1d';
+        const aggregated = latestSessionOnly
+          ? latestTradingDayCandles(bucketed, resolution.value.exchangeTimezone)
+          : bucketed;
         if (!aggregated.length) throw new MarketDataError('insufficient-data', 'No candles remain after validated aggregation');
         const cacheStatus = resolution.state === 'fresh' ? 'miss' as const : resolution.state === 'cache' ? 'hit' as const : 'stale' as const;
         const dataStatus = resolution.state === 'stale' ? 'stale' as const
@@ -89,7 +97,10 @@ export class CandleMarketDataService {
         ];
         const requestedStart = bounds.period1;
         const toleranceSeconds = INTRADAY_INTERVALS.has(input.interval) ? 2 * 86_400 : 10 * 86_400;
-        if ((aggregated[0]?.timestamp ?? Number.POSITIVE_INFINITY) > requestedStart + toleranceSeconds) {
+        // The `1d` window is deliberately wider than the session it returns, so a
+        // trimmed result is complete by definition, not partially loaded.
+        if (!latestSessionOnly
+          && (aggregated[0]?.timestamp ?? Number.POSITIVE_INFINITY) > requestedStart + toleranceSeconds) {
           warnings.push('Historical data loaded only partially; inspect actualStart and actualEnd');
         }
         const data = normalizedCandleResultSchema.parse({

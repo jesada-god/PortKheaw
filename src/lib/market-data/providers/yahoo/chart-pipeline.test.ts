@@ -282,3 +282,74 @@ describe('Stock Detail chart historical service', () => {
     expect(new Set(times).size).toBe(times.length);
   });
 });
+
+describe('Yahoo empty-window handling (production 502 regression)', () => {
+  /**
+   * A window with no trading — a weekend, a market holiday, or before the open —
+   * comes back from Yahoo as HTTP 200 with `chart.error: null`, a fully populated
+   * `meta`, an EMPTY `indicators.quote[0]` and **no `timestamp` key at all**.
+   * Requiring that key classified this truthful "nothing traded here" as
+   * `invalid-provider-response`, which the route surfaced as HTTP 502 and the
+   * chart rendered as a validation failure. It must be a no-data state instead.
+   */
+  const emptyWindow = {
+    chart: {
+      result: [{
+        meta: {
+          symbol: 'AAPL', currency: 'USD', exchangeTimezoneName: 'America/New_York',
+          exchangeDataDelayedBy: 0, regularMarketPrice: 210,
+          regularMarketTime: Date.parse('2026-07-24T20:00:00.000Z') / 1_000,
+          previousClose: 208,
+        },
+        // No `timestamp` key, and an empty quote object — exactly the real payload.
+        indicators: { quote: [{}] },
+      }],
+      error: null,
+    },
+  };
+
+  it('reports an empty window as insufficient data, never as a malformed response', async () => {
+    const { provider } = providerFor(emptyWindow, '2026-07-26T06:30:00.000Z');
+    await expect(provider.getCandles({
+      symbol: 'AAPL', interval: '1m', sourceInterval: '1m', range: '1d', adjusted: false, session: 'regular',
+    })).rejects.toMatchObject({ code: 'insufficient-data' });
+  });
+
+  it('tolerates a missing indicators.quote entry as well', async () => {
+    const { provider } = providerFor({
+      chart: { result: [{ ...emptyWindow.chart.result[0], indicators: {} }], error: null },
+    }, '2026-07-26T06:30:00.000Z');
+    await expect(provider.getCandles({
+      symbol: 'AAPL', interval: '1m', sourceInterval: '1m', range: '1d', adjusted: false, session: 'regular',
+    })).rejects.toMatchObject({ code: 'insufficient-data' });
+  });
+
+  it('still rejects a genuinely malformed payload', async () => {
+    const { provider } = providerFor({ chart: { result: [{ meta: {} }], error: null } }, '2026-07-26T06:30:00.000Z');
+    await expect(provider.getCandles({
+      symbol: 'AAPL', interval: '1m', sourceInterval: '1m', range: '1d', adjusted: false, session: 'regular',
+    })).rejects.toMatchObject({ code: 'invalid-provider-response' });
+  });
+
+  it('marks todays daily bar unfinished from the verified session when marketState is absent', async () => {
+    // Yahoo does not always send `marketState`. The fallback is the app's
+    // exchange-session classifier, never the reader's local clock.
+    const rows: ChartRow = {
+      timestamp: [Date.parse('2026-07-23T13:30:00.000Z') / 1_000, Date.parse('2026-07-24T13:30:00.000Z') / 1_000],
+      open: [100, 102], high: [103, 105], low: [99, 101], close: [102, 104], volume: [500, 250],
+    };
+    // 2026-07-24 16:00Z = 12:00 America/New_York → inside the regular session.
+    const during = providerFor(chartPayload({}, rows), '2026-07-24T16:00:00.000Z');
+    const mid = await during.provider.getCandles({
+      symbol: 'AAPL', interval: '1D', sourceInterval: '1D', range: '1m', adjusted: false, session: 'regular',
+    });
+    expect(mid.candles.at(-1)?.partial).toBe(true);
+
+    // The following Sunday: no session is running, so the bar is complete.
+    const closed = providerFor(chartPayload({}, rows), '2026-07-26T06:30:00.000Z');
+    const weekend = await closed.provider.getCandles({
+      symbol: 'AAPL', interval: '1D', sourceInterval: '1D', range: '1m', adjusted: false, session: 'regular',
+    });
+    expect(weekend.candles.at(-1)?.partial).toBe(false);
+  });
+});

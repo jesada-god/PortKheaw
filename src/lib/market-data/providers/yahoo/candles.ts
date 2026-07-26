@@ -5,6 +5,7 @@ import { ProviderHttpClient } from '../../provider-http';
 import { YAHOO_CANDLE_CAPABILITIES } from '../../candles/capabilities';
 import { applyAdjustment, normalizeCandles, validatedCandle } from '../../candles/normalize';
 import { candleRangeBounds } from '../../candles/range';
+import { classifyUsEquitySession } from '../../session';
 import type { ProviderResult, Quote } from '../../types';
 import type { CandleInterval, CandleRequest, NormalizedCandleResult, NormalizedMarketDataProvider } from '../../candles/contracts';
 
@@ -33,7 +34,14 @@ const chartSchema = z.object({
         previousClose: z.number().finite().positive().optional(),
         chartPreviousClose: z.number().finite().positive().optional(),
       }).passthrough(),
-      timestamp: z.array(z.number().int()),
+      // A window that contains no trading (a weekend, a holiday, or before the
+      // open) comes back as HTTP 200 with `chart.error: null`, a full `meta`, an
+      // EMPTY `indicators.quote[0]` and **no `timestamp` key at all**. That is a
+      // truthful "nothing traded here", not a malformed payload: requiring the
+      // key turned every such window into `invalid-provider-response` (HTTP 502)
+      // instead of the honest no-data state. Default them so the empty case
+      // parses and falls through to the `insufficient-data` check below.
+      timestamp: z.array(z.number().int()).default([]),
       indicators: z.object({
         quote: z.array(z.object({
           open: z.array(z.unknown()).optional(),
@@ -41,7 +49,7 @@ const chartSchema = z.object({
           low: z.array(z.unknown()).optional(),
           close: z.array(z.unknown()).optional(),
           volume: z.array(z.unknown()).optional(),
-        }).passthrough()).min(1),
+        }).passthrough()).default([{}]),
         adjclose: z.array(z.object({ adjclose: z.array(z.unknown()).optional() }).passthrough()).optional(),
       }).passthrough(),
     }).passthrough()).nullable(),
@@ -311,11 +319,19 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         // touch/hold/break statistics off an unfinished day. PRE has no traded
         // regular session yet; POST/CLOSED means the regular session is done, so
         // the daily bar is complete.
+        //
+        // `marketState` is not always present on a Chart response, so when it is
+        // missing the decision falls back to the app's verified exchange-session
+        // classifier rather than to the reader's local clock.
         const timeZone = result.meta.exchangeTimezoneName ?? 'UTC';
-        const stillForming = ['PRE', 'PREPRE', 'REGULAR'].includes(marketState ?? '')
-          && exchangePeriodKey(last.timestamp, timeZone, '1D')
-            === exchangePeriodKey(Math.floor(this.now().valueOf() / 1_000), timeZone, '1D');
-        last.partial = stillForming;
+        const nowSeconds = Math.floor(this.now().valueOf() / 1_000);
+        const isToday = exchangePeriodKey(last.timestamp, timeZone, '1D')
+          === exchangePeriodKey(nowSeconds, timeZone, '1D');
+        const sessionNow = classifyUsEquitySession(new Date(nowSeconds * 1_000).toISOString(), timeZone);
+        const sessionSaysForming = marketState
+          ? ['PRE', 'PREPRE', 'REGULAR'].includes(marketState)
+          : sessionNow === 'premarket' || sessionNow === 'regular';
+        last.partial = isToday && sessionSaysForming;
       }
       const warnings = [
         ...(normalized.invalidCount ? [`Discarded ${normalized.invalidCount} invalid provider candles`] : []),

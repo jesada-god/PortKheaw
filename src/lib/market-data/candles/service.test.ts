@@ -97,3 +97,44 @@ describe('candle provider service', () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('1d = most recent trading session', () => {
+  const friday = Date.parse('2026-07-24T14:00:00.000Z') / 1_000;
+  function twoSessions(id: string): NormalizedMarketDataProvider {
+    return provider(id, YAHOO_CANDLE_CAPABILITIES, async (input) => ({
+      ...result(id, input),
+      candles: [
+        // Thursday and Friday minute bars, as a widened 1d window returns them.
+        { timestamp: friday - 86_400, open: 10, high: 11, low: 9, close: 10, volume: 100 },
+        { timestamp: friday - 86_400 + 60, open: 10, high: 11, low: 9, close: 10, volume: 100 },
+        { timestamp: friday, open: 11, high: 12, low: 10, close: 11, volume: 200 },
+        { timestamp: friday + 60, open: 11, high: 12, low: 10, close: 12, volume: 300 },
+      ],
+    }));
+  }
+
+  it('trims a rolling 1d request to the newest exchange-local session', async () => {
+    const service = new CandleMarketDataService([twoSessions('yahoo')]);
+    const { data } = await service.getCandles({ symbol: 'AAPL', interval: '1m', range: '1d' });
+    expect(data.candles.map((candle) => candle.timestamp)).toEqual([friday, friday + 60]);
+    expect(data.actualStart).toBe(friday);
+    // The window is wider than the session it returns by design, so the result is
+    // complete rather than "partially loaded".
+    expect(data.warnings).not.toContain('Historical data loaded only partially; inspect actualStart and actualEnd');
+  });
+
+  it('never trims a caller-supplied period window', async () => {
+    const service = new CandleMarketDataService([twoSessions('yahoo')]);
+    const { data } = await service.getCandles({
+      symbol: 'AAPL', interval: '1m', range: '1d',
+      period1: friday - 5 * 86_400, period2: friday + 3_600,
+    });
+    expect(data.candles).toHaveLength(4);
+  });
+
+  it('never trims any other range', async () => {
+    const service = new CandleMarketDataService([twoSessions('yahoo')]);
+    const { data } = await service.getCandles({ symbol: 'AAPL', interval: '5m', range: '5d' });
+    expect(data.candles).toHaveLength(4);
+  });
+});

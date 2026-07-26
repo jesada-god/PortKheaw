@@ -14,6 +14,7 @@
     "probe:polygon-ws": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/probe-polygon-ws.ts",
     "probe:analyst-consensus": "node --env-file-if-exists=.env.local scripts/probe-analyst-consensus.mjs AAPL RKLB NVDA",
     "probe:options-chain": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/probe-options-chain.ts",
+    "probe:chart-history": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-chart-history.ts",
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
     "clean": "next clean"
