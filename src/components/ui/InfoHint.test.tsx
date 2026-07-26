@@ -126,6 +126,9 @@ describe('InfoHint — accessible glossary popover', () => {
     const sheet = container.querySelector<HTMLElement>('[data-testid="info-sheet-callWall"]');
     expect(sheet).toBeTruthy();
     expect(sheet!.className).toContain('max-h-[70vh]');
+    // The app's fixed bottom navigation is z-50. The explanation must remain
+    // fully readable and scrollable above it rather than sharing its layer.
+    expect(sheet!.className).toContain('z-[101]');
     expect(container.querySelector('[data-testid="info-popover-callWall"]')).toBeNull();
     expect(sheet!.textContent).toContain(GLOSSARY.callWall.what);
   });

@@ -149,7 +149,7 @@ export function InfoHint({
           <span
             aria-hidden="true"
             onClick={() => close()}
-            className="fixed inset-0 z-50 block bg-black/60 motion-safe:transition-opacity"
+            className="fixed inset-0 z-[100] block bg-black/60 motion-safe:transition-opacity"
           />
           <span
             id={popId}
@@ -159,7 +159,7 @@ export function InfoHint({
             data-testid={`info-sheet-${term}`}
             // Height follows the content and only scrolls once it would take
             // over the screen — never a full-height sheet for two short lines.
-            className="fixed inset-x-0 bottom-0 z-50 block max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-slate-700 bg-[#0F1420] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-left shadow-2xl motion-safe:transition-transform"
+            className="fixed inset-x-0 bottom-0 z-[101] block max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-slate-700 bg-[#0F1420] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-left shadow-2xl motion-safe:transition-transform"
           >
             <span aria-hidden="true" className="mx-auto mb-3 block h-1 w-10 rounded-full bg-slate-700" />
             {heading}
