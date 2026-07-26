@@ -102,7 +102,11 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
           setChain(null);
           return;
         }
-        setSelectedExpiration((current) => (current && outcome.expirations.includes(current) ? current : null));
+        // Default to the nearest non-expired expiration so opening the section
+        // resolves to a real chain in exactly one further request, instead of
+        // parking on a "pick an expiration" prompt. A user's own choice is kept
+        // whenever it is still in the returned list.
+        setSelectedExpiration((current) => (current && outcome.expirations.includes(current) ? current : outcome.expirations[0] ?? null));
       } finally {
         if (!cancelled && expirationsGeneration.current === requestGeneration) setExpirationsLoading(false);
       }

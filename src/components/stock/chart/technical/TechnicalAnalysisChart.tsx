@@ -404,7 +404,13 @@ export function TechnicalAnalysisChart({
         </p>
       )}
 
-      {preferences.options && <OptionsLevelsPanel
+      {/*
+        Fixed page order below the toolbar: chart → Options → แนวรับ–แนวต้าน.
+        The Options section always occupies this slot (so the order is identical
+        on mobile and desktop); only its body is gated, and while it is collapsed
+        the hook is disabled, so a closed section issues zero provider requests.
+      */}
+      <OptionsLevelsPanel
         chain={optionsSr.chain}
         result={optionsResult}
         loading={optionsSr.loading}
@@ -412,9 +418,11 @@ export function TechnicalAnalysisChart({
         selectedExpiration={optionsSr.selectedExpiration}
         retryAt={optionsSr.retryAt}
         currency={currency}
+        expanded={preferences.options && optionsTicker}
+        onToggleExpanded={() => onToggle('options')}
         onExpirationChange={optionsSr.setExpiration}
         onRetry={optionsSr.refresh}
-      />}
+      />
 
       <SupportResistancePanel
         rows={srRows}

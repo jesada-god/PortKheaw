@@ -64,7 +64,7 @@ afterEach(() => {
 });
 
 describe('useOptionsSupportResistance request policy', () => {
-  it('does zero work while closed, requests expirations once on open, then one chain on selection and reuses both on reopen', async () => {
+  it('does zero work while closed, then spends exactly one expirations and one chain request on open and reuses both on reopen', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => String(input).includes('/chain?') ? json(chainEnvelope(EXP_1)) : json(expirationEnvelope()));
     vi.stubGlobal('fetch', fetchMock);
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
@@ -72,13 +72,13 @@ describe('useOptionsSupportResistance request policy', () => {
     await act(async () => root.render(<StrictMode><Harness enabled={false} /></StrictMode>));
     expect(fetchMock).not.toHaveBeenCalled();
 
+    // Opening the section resolves straight to the nearest expiration's chain:
+    // one expirations request, one chain request, and nothing further.
     await act(async () => root.render(<StrictMode><Harness enabled /></StrictMode>));
-    await vi.waitFor(() => expect(latest?.expirations).toEqual([EXP_1, EXP_2]));
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/expirations?'))).toHaveLength(1);
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/chain?'))).toHaveLength(0);
-
-    await act(async () => latest?.setExpiration(EXP_1));
     await vi.waitFor(() => expect(latest?.chain?.expiration).toBe(EXP_1));
+    expect(latest?.expirations).toEqual([EXP_1, EXP_2]);
+    expect(latest?.selectedExpiration).toBe(EXP_1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/expirations?'))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/chain?'))).toHaveLength(1);
 
     await act(async () => root.render(<StrictMode><Harness enabled={false} /></StrictMode>));

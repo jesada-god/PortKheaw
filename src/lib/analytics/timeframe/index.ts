@@ -25,7 +25,9 @@ export {
 export {
   CHART_PREFERENCES_STORAGE_KEY,
   DEFAULT_CHART_PREFERENCES,
+  LEGACY_CHART_PREFERENCES_STORAGE_KEY,
   mergeChartPreferences,
+  migrateLegacyChartPreferences,
   readChartPreferences,
   safeStorage,
   toggleFavoriteInterval,

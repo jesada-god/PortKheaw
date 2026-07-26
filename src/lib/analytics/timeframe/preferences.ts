@@ -16,7 +16,9 @@ import { z } from 'zod';
 import { candleIntervalSchema, candleRangeSchema, type CandleInterval, type CandleRange } from '@/src/lib/market-data/candles/contracts';
 import { canonicalRange } from './catalog';
 
-export const CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v1';
+export const CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v2';
+/** v1 stored the Options section closed by default; v2 opens it as part of the page order. */
+export const LEGACY_CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v1';
 
 export type ChartDisplayType = 'candlestick' | 'heikin-ashi';
 
@@ -50,7 +52,10 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
   macd: false,
   vpvr: false,
   supportResistance: true,
-  options: false,
+  // The Options section below the chart opens by default: it is part of the
+  // standard Chart → Options → S/R page order, and opening it costs one
+  // expirations request plus one chain request, both coordinator-cached.
+  options: true,
   selectedInterval: '1D',
   selectedRange: '1y',
   favoriteIntervals: ['1m', '5m', '15m', '1h', '1D'],
@@ -115,11 +120,23 @@ export function mergeChartPreferences(stored: unknown): ChartPreferences {
   } as ChartPreferences;
 }
 
+/**
+ * Carries a v1 record forward. Everything the user genuinely chose — interval,
+ * range, favourites, chart type, indicators — is kept; only the Options section
+ * flag is re-taken from the v2 defaults, because a stored `false` there was the
+ * old default rather than a decision.
+ */
+export function migrateLegacyChartPreferences(stored: unknown): ChartPreferences {
+  return { ...mergeChartPreferences(stored), options: DEFAULT_CHART_PREFERENCES.options };
+}
+
 export function readChartPreferences(storage: Storage | undefined = safeStorage()): ChartPreferences {
   if (!storage) return { ...DEFAULT_CHART_PREFERENCES };
   try {
     const raw = storage.getItem(CHART_PREFERENCES_STORAGE_KEY);
-    return raw ? mergeChartPreferences(JSON.parse(raw)) : { ...DEFAULT_CHART_PREFERENCES };
+    if (raw) return mergeChartPreferences(JSON.parse(raw));
+    const legacy = storage.getItem(LEGACY_CHART_PREFERENCES_STORAGE_KEY);
+    return legacy ? migrateLegacyChartPreferences(JSON.parse(legacy)) : { ...DEFAULT_CHART_PREFERENCES };
   } catch {
     return { ...DEFAULT_CHART_PREFERENCES };
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import type { LevelStatistics } from '@/src/lib/analytics/level-statistics';
 import type { VisibleRangeVolumeProfile } from '@/src/lib/analytics/institutional-sr/visible-range-profile';
@@ -94,7 +94,18 @@ export function SupportResistancePanel({
           🎯 แนวรับ–แนวต้าน
           <InfoHint term="support" align="start" />
         </h3>
-        <span className="text-[11px] text-slate-500">อ้างอิง {basisLabel}</span>
+        <span className="flex items-center gap-1 text-[11px] text-slate-500">
+          อ้างอิง {basisLabel}
+          <DetailPopover triggerLabel="ดูที่มาของแนวรับ–แนวต้าน" title="ที่มาของแนวรับ–แนวต้าน" testId="sr-provenance-trigger">
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+              <dt className="text-slate-500">อ้างอิงแท่ง</dt><dd className="text-right font-mono text-slate-200">{basisLabel}</dd>
+              <dt className="text-slate-500">ที่มาราคาปัจจุบัน</dt><dd className="text-right text-slate-200">{priceLabel ?? '—'}</dd>
+            </dl>
+            <p className="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-400">
+              ระดับมาจากแท่ง {basisLabel} ที่ปิดสมบูรณ์แล้ว ส่วนสถิติ ชน/รับอยู่/หลุด วัดจากแท่งเทียนจริงที่กำลังแสดงอยู่บนกราฟ
+            </p>
+          </DetailPopover>
+        </span>
       </div>
 
       {levelsError && (
@@ -129,14 +140,9 @@ export function SupportResistancePanel({
       </ol>
 
       {statisticsReason && (
-        <p className="mt-2 text-[11px] text-slate-500" data-testid="sr-statistics-reason">{statisticsReason}</p>
+        <p className="mt-1.5 text-[11px] text-slate-500" data-testid="sr-statistics-reason">{statisticsReason}</p>
       )}
-      {priceLabel && (
-        <p className="mt-2 text-[11px] text-slate-500">
-          ราคาปัจจุบันใช้แหล่งเดียวกับด้านบนของหน้า: {priceLabel}
-        </p>
-      )}
-      <p className="mt-1 text-[11px] text-slate-600">
+      <p className="mt-1.5 text-[10px] leading-relaxed text-slate-600">
         ตัวเลขทั้งหมดวัดจากแท่งเทียนจริงในช่วงที่แสดงอยู่ ไม่ใช่การทำนายราคา และไม่มีการประเมินเวลาที่ราคาจะไปถึงระดับ
       </p>
     </section>
@@ -147,8 +153,8 @@ function LevelRow({ row, currency, basisLabel }: { row: SupportResistanceRow; cu
   const tone = row.side === 'resistance' ? 'text-rose-300' : 'text-emerald-300';
   const lastTouch = lastTouchLabel(row.statistics);
   return (
-    <li className={`relative rounded-md border-l-2 bg-slate-950/35 px-2 py-1.5 ${row.side === 'resistance' ? 'border-l-rose-400/70' : 'border-l-emerald-400/70'}`} data-testid={`sr-level-${row.id}`}>
-      <div className="grid grid-cols-[minmax(2rem,1fr)_auto_minmax(3.5rem,1fr)_1.25rem] items-center gap-2">
+    <li className={`relative rounded-md border-l-2 bg-slate-950/35 px-2 py-1 ${row.side === 'resistance' ? 'border-l-rose-400/70' : 'border-l-emerald-400/70'}`} data-testid={`sr-level-${row.id}`}>
+      <div className="grid grid-cols-[minmax(1.75rem,auto)_1fr_auto_1.25rem] items-center gap-x-2">
         <b className={`text-xs ${tone}`}>{row.label}</b>
         <span className="whitespace-nowrap font-mono text-sm tabular-nums text-slate-100">{money(row.price, currency)}</span>
         <span className={`whitespace-nowrap text-right font-mono text-[11px] tabular-nums ${row.distancePercent != null && row.distancePercent > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
@@ -173,70 +179,32 @@ function LevelDetails({ row, currency, basisLabel, lastTouch }: {
   basisLabel: string;
   lastTouch: string | null;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
   const title = row.side === 'support' ? 'แนวรับ' : 'แนวต้าน';
   const hold = row.side === 'support' ? 'รับอยู่' : 'ต้านอยู่';
   const failure = row.side === 'support' ? 'หลุด' : 'ทะลุ';
   const statistics = row.statistics;
 
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open]);
-
-  const close = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
   return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label={`ดูรายละเอียด${title} ${row.label}`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="relative inline-flex h-5 w-5 items-center justify-center rounded-full text-[16px] leading-none text-slate-500 outline-none after:absolute after:-inset-3 after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
-      >
-        <span aria-hidden="true">ⓘ</span>
-      </button>
-      {open && (
-        <>
-          <button type="button" aria-label="ปิดรายละเอียด" onClick={close} className="fixed inset-0 z-40 bg-black/50 sm:hidden" />
-          <div role="dialog" aria-modal="true" aria-label={`รายละเอียด${title} ${row.label}`} className="fixed inset-x-3 bottom-3 z-50 max-h-[70vh] overflow-y-auto rounded-xl border border-slate-700 bg-[#0F1420] p-3 shadow-2xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-7 sm:w-80 sm:max-w-[calc(100vw-2rem)]">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-2">
-              <b className={`text-sm ${row.side === 'support' ? 'text-emerald-300' : 'text-rose-300'}`}>{title} {row.label} <span className="font-mono tabular-nums">{money(row.price, currency)}</span></b>
-              <button ref={closeRef} type="button" aria-label="ปิดรายละเอียด" onClick={close} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-white focus-visible:ring-2 focus-visible:ring-[#D4FF00]">✕</button>
-            </div>
-            <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
-              <dt className="text-slate-500">ชนทั้งหมด</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.touches ?? '—'}</dd>
-              <dt className="text-slate-500">{hold}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.successfulHolds ?? '—'}</dd>
-              <dt className="text-slate-500">{failure}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.breaks ?? '—'}</dd>
-              <dt className="text-slate-500">อัตรา{hold}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.holdRate == null ? '—' : `${Math.round(statistics.holdRate)}%`}</dd>
-              <dt className="text-slate-500">ทดสอบล่าสุด</dt><dd className="text-right text-slate-200">{lastTouch ?? '—'}</dd>
-              <dt className="text-slate-500">Tolerance</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.tolerance == null ? '—' : money(statistics.tolerance, currency)}</dd>
-              <dt className="text-slate-500">Timeframe</dt><dd className="text-right font-mono text-slate-200">{basisLabel}</dd>
-            </dl>
-            <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-400">
-              <p><b className="text-slate-300">ชน</b> = ราคาเข้ามาทดสอบบริเวณนี้</p>
-              <p><b className="text-slate-300">{hold}</b> = แตะแล้วไม่{failure}ตาม confirmation rule</p>
-              <p><b className="text-slate-300">{failure}</b> = ปิด{row.side === 'support' ? 'ต่ำ' : 'สูง'}กว่าระดับตาม confirmation rule</p>
-            </div>
-          </div>
-        </>
-      )}
-    </>
+    <DetailPopover
+      triggerLabel={`ดูรายละเอียด${title} ${row.label}`}
+      dialogLabel={`รายละเอียด${title} ${row.label}`}
+      title={<span className={row.side === 'support' ? 'text-emerald-300' : 'text-rose-300'}>{title} {row.label} <span className="font-mono tabular-nums">{money(row.price, currency)}</span></span>}
+    >
+      <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
+        <dt className="text-slate-500">ชนทั้งหมด</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.touches ?? '—'}</dd>
+        <dt className="text-slate-500">{hold}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.successfulHolds ?? '—'}</dd>
+        <dt className="text-slate-500">{failure}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.breaks ?? '—'}</dd>
+        <dt className="text-slate-500">อัตรา{hold}</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.holdRate == null ? '—' : `${Math.round(statistics.holdRate)}%`}</dd>
+        <dt className="text-slate-500">ทดสอบล่าสุด</dt><dd className="text-right text-slate-200">{lastTouch ?? '—'}</dd>
+        <dt className="text-slate-500">Tolerance</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.tolerance == null ? '—' : money(statistics.tolerance, currency)}</dd>
+        <dt className="text-slate-500">Timeframe</dt><dd className="text-right font-mono text-slate-200">{basisLabel}</dd>
+      </dl>
+      <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-400">
+        <p><b className="text-slate-300">ชน</b> = ราคาเข้ามาทดสอบบริเวณนี้</p>
+        <p><b className="text-slate-300">{hold}</b> = แตะแล้วไม่{failure}ตาม confirmation rule</p>
+        <p><b className="text-slate-300">{failure}</b> = ปิด{row.side === 'support' ? 'ต่ำ' : 'สูง'}กว่าระดับตาม confirmation rule</p>
+      </div>
+    </DetailPopover>
   );
 }
 

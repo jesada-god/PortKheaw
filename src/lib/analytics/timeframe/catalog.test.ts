@@ -18,6 +18,7 @@ import {
   toggleFavoriteRange,
   writeChartPreferences,
   CHART_PREFERENCES_STORAGE_KEY,
+  LEGACY_CHART_PREFERENCES_STORAGE_KEY,
 } from './preferences';
 import { candleIntervalSchema, candleRangeSchema } from '@/src/lib/market-data/candles/contracts';
 
@@ -120,6 +121,31 @@ describe('chart preferences', () => {
     const restored = mergeChartPreferences({ selectedRange: '12M', favoriteRanges: ['12M', '3m'] });
     expect(restored.selectedRange).toBe('1y');
     expect(restored.favoriteRanges).toEqual(['1y', '3m']);
+  });
+
+  it('opens the Options section by default so the page order is Chart → Options → S/R', () => {
+    expect(DEFAULT_CHART_PREFERENCES.options).toBe(true);
+  });
+
+  it('carries a v1 record forward, keeping real choices but re-taking the Options default', () => {
+    const storage = memoryStorage();
+    storage.setItem(LEGACY_CHART_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      ...DEFAULT_CHART_PREFERENCES, options: false, selectedInterval: '4h', selectedRange: '3m', macd: true,
+    }));
+    const restored = readChartPreferences(storage);
+    expect(restored.selectedInterval).toBe('4h');
+    expect(restored.selectedRange).toBe('3m');
+    expect(restored.macd).toBe(true);
+    expect(restored.options).toBe(true);
+  });
+
+  it('prefers an existing v2 record over the legacy one', () => {
+    const storage = memoryStorage();
+    storage.setItem(LEGACY_CHART_PREFERENCES_STORAGE_KEY, JSON.stringify({ selectedInterval: '4h' }));
+    writeChartPreferences({ ...DEFAULT_CHART_PREFERENCES, options: false, selectedInterval: '1h' }, storage);
+    const restored = readChartPreferences(storage);
+    expect(restored.selectedInterval).toBe('1h');
+    expect(restored.options).toBe(false); // a genuine later choice is never overridden
   });
 
   it('ignores a corrupt record and falls back to the defaults', () => {

@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DataProvenance } from '@/src/components/market-data/DataProvenance';
+import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { chartRequestKey, planChartRequest, shouldApplyResponse } from './chart-request';
 import { matchesLiveSelection, mergeLiveCandleIntoBars, shouldPollChart } from './live-candle-bridge';
 import { Skeleton } from '@/src/components/ui/Skeleton';
@@ -247,17 +248,30 @@ export function MarketCandleChartPanel(props: Props) {
   const refreshDisabled = coveredByLiveSource
     ? Boolean(liveRefreshDisabled) || !appActive
     : loading || cooldown > 0 || !appActive || error?.retryable === false;
-  const refreshLabel = !coveredByLiveSource && cooldown ? `Refresh in ${cooldown}s` : 'Refresh';
+  const refreshLabel = !coveredByLiveSource && cooldown ? `รีเฟรชได้ใน ${cooldown}s` : 'รีเฟรช';
   const warningNotices = presentChartWarnings(result?.warnings ?? []);
   return <div className="space-y-3" data-testid="market-candle-chart-panel">
-    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}{result && <span className="text-xs text-slate-500">{displayPrices.length.toLocaleString()} bars · {result.exchangeTimezone} · {result.actualStart ? new Date(result.actualStart * 1_000).toLocaleDateString() : '—'}–{result.actualEnd ? new Date(result.actualEnd * 1_000).toLocaleDateString() : '—'}</span>}</div>
+    {/*
+      The bar count, exchange timezone and first/last covered session are
+      provenance, not headline copy: they live in the ⓘ detail so the primary
+      row stays readable and free of raw provider diagnostics.
+    */}
+    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}
+    {result && <DetailPopover triggerLabel="ดูรายละเอียดข้อมูลย้อนหลัง" title="ข้อมูลย้อนหลังที่กำลังแสดง" testId="chart-history-detail" align="start">
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+        <dt className="text-slate-500">จำนวนแท่ง</dt><dd className="text-right font-mono text-slate-200">{displayPrices.length.toLocaleString()}</dd>
+        <dt className="text-slate-500">เขตเวลาตลาด</dt><dd className="text-right text-slate-200">{result.exchangeTimezone}</dd>
+        <dt className="text-slate-500">ช่วงข้อมูลจริง</dt><dd className="text-right text-slate-200">{result.actualStart ? new Date(result.actualStart * 1_000).toLocaleDateString('th-TH') : '—'} – {result.actualEnd ? new Date(result.actualEnd * 1_000).toLocaleDateString('th-TH') : '—'}</dd>
+        <dt className="text-slate-500">แหล่งข้อมูลย้อนหลัง</dt><dd className="text-right text-slate-200">{result.provider}</dd>
+        {provenance?.realtime && <><dt className="text-slate-500">แหล่งข้อมูลเรียลไทม์</dt><dd className="text-right text-slate-200">{provenance.provider ?? '—'} WebSocket</dd></>}
+      </dl>
+    </DetailPopover>}</div>
     <DataProvenance status={provenance?.status ?? (error ? 'unavailable' : 'delayed')} provider={provenance?.provider} asOf={provenance?.asOf} delayedMinutes={provenance?.realtime ? 0 : result?.delayedByMinutes ?? undefined} reason={error?.message}/>
-    {result && provenance?.realtime && <p className="text-xs text-slate-500" data-testid="historical-source">History: {result.provider} · Live: {provenance.provider ?? 'provider unavailable'} WebSocket</p>}
     {warningNotices.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="สถานะข้อมูลย้อนหลัง">
       {warningNotices.map((notice) => <span key={notice.kind} title={notice.message} className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1 text-[11px] text-slate-400">ⓘ {notice.message}</span>)}
     </div>}
     {loading && !result && <Skeleton className="h-[420px] w-full rounded-xl" />}
-    {error && !loading && <div role="alert" className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-amber-500/20 p-4 text-center text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-500">No candle is mocked, interpolated, forward-filled, or replaced by another provider.</p>{process.env.NODE_ENV === 'development' && error.diagnostics && <details className="mt-2 max-w-xl text-left text-xs text-slate-500"><summary>Development diagnostics</summary><p className="mt-1 break-words">{error.diagnostics}</p></details>}{error.retryable !== false && <button type="button" disabled={cooldown > 0} onClick={() => void request(true)} className="mt-3 min-h-11 rounded-lg border border-slate-700 px-3 disabled:opacity-40">{cooldown ? `Try again in ${cooldown}s` : 'Try again'}</button>}</div>}
+    {error && !loading && <div role="alert" className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-amber-500/20 p-4 text-center text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-500">No candle is mocked, interpolated, forward-filled, or replaced by another provider.</p>{process.env.NODE_ENV === 'development' && error.diagnostics && <details className="mt-2 max-w-xl text-left text-xs text-slate-500"><summary>Development diagnostics</summary><p className="mt-1 break-words">{error.diagnostics}</p></details>}{error.retryable !== false && <button type="button" disabled={cooldown > 0} onClick={() => void request(true)} className="mt-3 min-h-11 rounded-lg border border-slate-700 px-3 disabled:opacity-40">{cooldown ? `ลองใหม่ใน ${cooldown}s` : 'ลองใหม่'}</button>}</div>}
     {result && displayPrices.length === 1 && <div role="status" className="rounded-xl border border-amber-500/20 p-5 text-sm text-amber-200">ช่วงนี้มีข้อมูลจริงเพียง 1 แท่ง อาจเป็นหลักทรัพย์เพิ่งเข้าตลาดหรือช่วงที่เลือกสั้นเกินไป กรุณาเลือก range ที่ยาวขึ้น</div>}
     {result && displayPrices.length >= 2 && <TechnicalAnalysisChart
       symbol={result.symbol}
