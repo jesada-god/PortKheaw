@@ -1,11 +1,28 @@
 import { normalizedCandleSchema, type CandleInterval, type NormalizedCandle } from './contracts';
 
 const INTRADAY_SECONDS: Partial<Record<CandleInterval, number>> = {
+  '2m': 2 * 60,
+  '3m': 3 * 60,
   '10m': 10 * 60,
   '30m': 30 * 60,
+  '45m': 45 * 60,
   '1h': 60 * 60,
   '2h': 2 * 60 * 60,
+  '3h': 3 * 60 * 60,
   '4h': 4 * 60 * 60,
+};
+
+/** Bucket width of each interval a provider can be asked to aggregate *from*. */
+const SOURCE_SECONDS: Partial<Record<CandleInterval, number>> = {
+  '1m': 60,
+  '2m': 120,
+  '3m': 180,
+  '5m': 300,
+  '10m': 600,
+  '15m': 900,
+  '30m': 1_800,
+  '45m': 2_700,
+  '1h': 3_600,
 };
 
 function localDate(timestamp: number, timeZone: string): string {
@@ -79,11 +96,7 @@ export function aggregateCandles(
     const isLast = index === groups.length - 1;
     let partial = false;
     if (isLast && intradaySeconds) {
-      const sourceSeconds = sourceInterval === '1m' ? 60
-        : sourceInterval === '5m' ? 300
-          : sourceInterval === '15m' ? 900
-            : sourceInterval === '30m' ? 1_800
-              : sourceInterval === '1h' ? 3_600 : intradaySeconds;
+      const sourceSeconds = SOURCE_SECONDS[sourceInterval] ?? intradaySeconds;
       partial = group.length < Math.max(1, intradaySeconds / sourceSeconds);
     }
     if (isLast && targetInterval === 'Week') {

@@ -4,7 +4,11 @@ import { normalizeCandles, providerNumber, validatedCandle } from './normalize';
 
 describe('candle contracts and compatibility', () => {
   it('covers every required timeframe/range and restricts 5Y to daily or higher', () => {
-    expect(CANDLE_INTERVALS).toEqual(['1m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1D', 'Week', 'Month']);
+    expect(CANDLE_INTERVALS).toEqual([
+      '1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m',
+      '1h', '2h', '3h', '4h',
+      '1D', 'Week', 'Month',
+    ]);
     expect(CANDLE_RANGES).toEqual(['1d', '5d', '1m', '3m', '6m', 'ytd', '1y', '3y', '5y']);
     expect(supportedRangesFor('1m')).not.toContain('5y');
     expect(supportedRangesFor('1D')).toContain('5y');
@@ -17,6 +21,12 @@ describe('candle contracts and compatibility', () => {
     expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '2h')).toBe('1h');
     expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '4h')).toBe('1h');
     expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, 'Week')).toBe('Week');
+    // The intervals Yahoo has no native resolution for aggregate from a real
+    // lower one — never from a fabricated candle.
+    expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '2m')).toBe('1m');
+    expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '3m')).toBe('1m');
+    expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '45m')).toBe('15m');
+    expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '3h')).toBe('1h');
   });
 
   it('parses provider numbers but drops malformed OHLCV without repairing it', () => {

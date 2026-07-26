@@ -25,9 +25,26 @@ export interface LineSpec {
   dashed: boolean;
 }
 
+/** One horizontal VPVR bar: a price bin drawn as a right-anchored volume column. */
+export interface HistogramBarSpec {
+  priceLow: number;
+  priceHigh: number;
+  /** Bin volume relative to the peak bin, in [0, 1]. */
+  ratio: number;
+  kind: 'poc' | 'value-area' | 'outside';
+}
+
+export interface HistogramSpec {
+  bars: HistogramBarSpec[];
+  /** Share of the pane width the peak bar may occupy, in (0, 1]. */
+  widthRatio: number;
+}
+
 export interface InstitutionalOverlaySpec {
   bands: BandSpec[];
   lines: LineSpec[];
+  /** Right-anchored volume-by-price histogram (VPVR); absent when hidden. */
+  histogram?: HistogramSpec;
 }
 
 const DEMAND_FILL = 'rgba(52, 211, 153, 0.14)';
@@ -62,6 +79,32 @@ export function volumeProfileLines(profile: VisibleRangeVolumeProfile | undefine
   ];
 }
 
+/**
+ * Turns the visible-range profile into drawable histogram bars. Bins are already
+ * deterministic and normalized upstream; this only classifies each bin against
+ * the value area so the POC and the 70% band read differently on screen.
+ */
+export function volumeProfileHistogram(
+  profile: VisibleRangeVolumeProfile | undefined,
+  widthRatio = 0.22,
+): HistogramSpec | undefined {
+  if (!profile || profile.status !== 'available' || !profile.profile.length) return undefined;
+  const pocBin = profile.profile.reduce((best, bin) => (bin.volume > best.volume ? bin : best));
+  return {
+    widthRatio,
+    bars: profile.profile.map((bin) => ({
+      priceLow: bin.priceLow,
+      priceHigh: bin.priceHigh,
+      ratio: Math.max(0, Math.min(1, bin.normalizedVolume)),
+      kind: bin.index === pocBin.index
+        ? 'poc'
+        : bin.priceHigh > profile.val && bin.priceLow < profile.vah
+          ? 'value-area'
+          : 'outside',
+    })),
+  };
+}
+
 export function anchoredVwapLine(result: AnchoredVwapResult | undefined): LineSpec[] {
   if (!result || result.status !== 'available') return [];
   return [{ id: 'avwap', price: result.value, color: '#38bdf8', label: 'AVWAP', dashed: false }];
@@ -74,12 +117,16 @@ export function buildInstitutionalOverlaySpec(input: {
   showVolumeProfile: boolean;
   avwap?: AnchoredVwapResult;
   showAnchoredVwap: boolean;
+  /** Draw the VPVR histogram, not only its POC/VAH/VAL reference lines. */
+  showVolumeProfileHistogram?: boolean;
 }): InstitutionalOverlaySpec {
+  const histogram = input.showVolumeProfileHistogram ? volumeProfileHistogram(input.profile) : undefined;
   return {
     bands: input.showZones && input.zones ? zoneBands(input.zones) : [],
     lines: [
       ...(input.showVolumeProfile ? volumeProfileLines(input.profile) : []),
       ...(input.showAnchoredVwap ? anchoredVwapLine(input.avwap) : []),
     ],
+    ...(histogram ? { histogram } : {}),
   };
 }

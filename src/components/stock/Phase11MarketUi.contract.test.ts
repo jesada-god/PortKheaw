@@ -20,17 +20,27 @@ describe('Phase 11 market UI production contract', () => {
     expect(candleChart).not.toMatch(/onPan|onZoom|wheel.*fetch|pointer.*fetch/i);
   });
 
-  it('uses one server-normalized gateway route with legacy trader presets and an optional history range', () => {
+  it('uses one server-normalized gateway route and drives the chart from the persisted interval/range selection', () => {
     expect(candleChart).toContain('/api/market/chart?');
     expect(candleChart).not.toContain('aggregateSessionAwareIntraday');
     expect(candleChart).toContain('No candle is mocked, interpolated, forward-filled, or replaced by another provider');
-    expect(candleChart).toContain('OptionToolRealtimeChart');
+    expect(candleChart).toContain('TechnicalAnalysisChart');
     expect(candleChart).not.toContain('TechnicalIndicatorControls');
-    expect(chart).toContain('aria-label="Historical range"');
-    expect(chart).toContain('aria-label="Candle interval"');
     expect(chart).toContain('compatibleSelection');
-    expect(chart).toContain('TRADER_TIMEFRAME_PRESETS');
-    expect(chart).toContain('data-testid="legacy-trader-chart-controls"');
+    expect(chart).toContain('useChartPreferences');
+    // Interval and range stay separate axes: the range is a canonical key from
+    // the persisted preferences, never a candle interval.
+    expect(chart).toContain('preferences.selectedInterval');
+    expect(chart).toContain('preferences.selectedRange');
+  });
+
+  it('renders the technical suite from a single chart instance so candles and volume share one time scale', () => {
+    const host = read('src/components/stock/chart/technical/TechnicalChartHost.tsx');
+    expect(host.match(/createChart\(/g) ?? []).toHaveLength(1);
+    // Candles and volume are panes of that one chart, not two synchronized charts.
+    expect(host).toContain('CandlestickSeries');
+    expect(host).toContain('HistogramSeries');
+    expect(host).not.toContain('subscribeVisibleLogicalRangeChange(syncVolume)');
   });
 
   it('lazy-loads the options UI with generation guards, cooldown and virtualization', () => {

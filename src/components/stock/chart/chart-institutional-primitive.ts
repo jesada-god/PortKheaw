@@ -34,12 +34,18 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
   private series: ISeriesApi<SeriesType> | null = null;
   private requestUpdate: (() => void) | null = null;
   private readonly view: IPrimitivePaneView;
+  /** The VPVR histogram paints *behind* the price action so candles stay readable. */
+  private readonly histogramView: IPrimitivePaneView;
 
   constructor() {
     const renderer: IPrimitivePaneRenderer = {
       draw: (target: unknown) => this.draw(target as BitmapTarget),
     };
     this.view = { renderer: () => renderer, zOrder: () => 'top' };
+    const histogramRenderer: IPrimitivePaneRenderer = {
+      draw: (target: unknown) => this.drawHistogramPane(target as BitmapTarget),
+    };
+    this.histogramView = { renderer: () => histogramRenderer, zOrder: () => 'bottom' };
   }
 
   attached(param: { chart: IChartApi; series: ISeriesApi<SeriesType>; requestUpdate: () => void }): void {
@@ -53,7 +59,7 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
   }
 
   paneViews(): readonly IPrimitivePaneView[] {
-    return [this.view];
+    return [this.histogramView, this.view];
   }
 
   setSpec(spec: InstitutionalOverlaySpec): void {
@@ -71,6 +77,39 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
       return null; // series may be mid-teardown
     }
     return coordinate == null ? null : coordinate * ratio;
+  }
+
+  /**
+   * Right-anchored volume-by-price histogram. Bars are drawn behind the price
+   * action from the already-computed visible-range bins, so panning and zooming
+   * only re-slice loaded candles — nothing is fetched to repaint this.
+   */
+  private drawHistogram(ctx: CanvasRenderingContext2D, width: number, vr: number): void {
+    const histogram = this.spec.histogram;
+    if (!histogram?.bars.length) return;
+    const maximumWidth = width * Math.max(0.05, Math.min(1, histogram.widthRatio));
+    for (const bar of histogram.bars) {
+      if (bar.ratio <= 0) continue;
+      const yHigh = this.priceY(bar.priceHigh, vr);
+      const yLow = this.priceY(bar.priceLow, vr);
+      if (yHigh == null || yLow == null) continue;
+      const top = Math.min(yHigh, yLow);
+      const height = Math.max(1, Math.abs(yLow - yHigh) - Math.max(1, vr * 0.5));
+      const barWidth = Math.max(1, maximumWidth * bar.ratio);
+      ctx.fillStyle = bar.kind === 'poc'
+        ? 'rgba(212, 255, 0, 0.55)'
+        : bar.kind === 'value-area'
+          ? 'rgba(148, 163, 184, 0.38)'
+          : 'rgba(148, 163, 184, 0.18)';
+      ctx.fillRect(width - barWidth, top, barWidth, height);
+    }
+  }
+
+  private drawHistogramPane(target: BitmapTarget): void {
+    if (!this.series || !this.spec.histogram?.bars.length) return;
+    target.useBitmapCoordinateSpace((scope) => {
+      this.drawHistogram(scope.context, scope.bitmapSize.width, scope.verticalPixelRatio);
+    });
   }
 
   private draw(target: BitmapTarget): void {

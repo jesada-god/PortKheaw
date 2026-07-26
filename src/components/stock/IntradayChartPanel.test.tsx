@@ -4,6 +4,7 @@ import React, { StrictMode, act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CandleInterval } from '@/src/lib/market-data/candles/contracts';
+import { DEFAULT_CHART_PREFERENCES } from '@/src/lib/analytics/timeframe';
 
 vi.mock('next/dynamic', () => ({
   default: () => function DynamicChart(props: { symbol: string; interval: string; datasetKey: string }) {
@@ -98,6 +99,13 @@ function props(symbol = 'AAPL', interval: CandleInterval = '5m') {
     session: 'extended' as const,
     adjusted: false,
     liveActive: true,
+    preferences: DEFAULT_CHART_PREFERENCES,
+    onSelectInterval: () => undefined,
+    onSelectRange: () => undefined,
+    onToggleFavoriteInterval: () => undefined,
+    onToggleFavoriteRange: () => undefined,
+    onChartType: () => undefined,
+    onToggle: () => undefined,
   };
 }
 

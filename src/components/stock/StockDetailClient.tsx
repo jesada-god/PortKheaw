@@ -9,7 +9,7 @@ import { Tabs } from '@/src/components/ui/Tabs';
 import { useToast } from '@/src/components/ui/Toast';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { useAppVisible } from '@/src/hooks/useAppVisible';
-import { useMarketSource } from './useMarketSource';
+import { useMarketSource, type CanonicalLiveUpdateSink } from './useMarketSource';
 import { selectionKeyOf, type AcceptedPriceCandidate, type MarketSelection, type MarketSessionKind } from '@/src/lib/stock-detail/market-source';
 import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/KeyStatisticsSection';
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
@@ -176,6 +176,7 @@ export function StockDetailClient({
   // Shared ref between the market source and StockPriceHeader. Trade ticks write
   // directly to the price text node; snapshots/bars still flow through React.
   const transientPriceSinkRef = useRef<TransientPriceSink | null>(null);
+  const liveUpdateSinkRef = useRef<CanonicalLiveUpdateSink | null>(null);
 
   useEffect(() => {
     if (profileRetryAt <= 0) return;
@@ -206,7 +207,9 @@ export function StockDetailClient({
     quoteLoading,
     quoteRetryAt,
     liveCandle,
+    acceptedPrice,
     dataLabel,
+    liveSession,
     halted,
     haltReason,
     connectionState,
@@ -220,11 +223,13 @@ export function StockDetailClient({
     initialReceivedAt: evaluatedAt,
     active: tabVisible,
     online: isOnline,
-    // Polygon REST bootstraps history; Alpaca IEX owns the live trade/bar stream.
+    // Polygon REST bootstraps history; Finnhub owns the live trade stream and
+    // the Railway Gateway owns canonical candle construction.
     // When the Gateway URL is absent, the coordinator safely falls back to REST.
     enabled: true,
     allowWebSocket: true,
     transientPriceSinkRef,
+    liveUpdateSinkRef,
   });
 
   const quote = quoteResource.data;
@@ -246,10 +251,20 @@ export function StockDetailClient({
     instrumentCurrency,
     exchange,
   }).currency;
+  const liveMarketStatus = liveSession === 'pre-market'
+    ? 'pre-market' as const
+    : liveSession === 'regular'
+      ? 'open' as const
+      : liveSession === 'after-hours'
+        ? 'after-hours' as const
+        : null;
+  const effectiveMarket = market && liveMarketStatus
+    ? { ...market, currentStatus: liveMarketStatus }
+    : market;
   const priceHeaderData = resolvePriceHeaderData({
     current: quoteResource,
     initial: initialQuoteResource,
-    marketStatus: market?.currentStatus ?? null,
+    marketStatus: effectiveMarket?.currentStatus ?? null,
     evaluatedAt,
   });
 
@@ -377,7 +392,7 @@ export function StockDetailClient({
           sourceCurrency={sourceCurrency}
           quote={priceHeaderData.quote}
           freshness={priceHeaderData.freshness}
-          market={market}
+          market={effectiveMarket}
           provider={priceHeaderData.provider}
           providerConfigured={providerConfigured}
           quoteError={quoteResource.error}
@@ -422,9 +437,10 @@ export function StockDetailClient({
               // Header price, chart current candle and S/R distance all derive
               // from the same accepted market event: `currentPrice` and
               // `liveCandle` come from one `useMarketSource` subscription.
-              currentPrice={quote?.price ?? null}
+              currentPrice={acceptedPrice}
               marketLabel={dataLabel}
               liveCandle={liveCandle}
+              liveUpdateSinkRef={liveUpdateSinkRef}
               liveActive
               onLiveRefresh={refreshQuote}
               liveRefreshDisabled={quoteLoading}
@@ -446,7 +462,11 @@ export function StockDetailClient({
           )}
           {tab === 'Analysis' && (
             <div className="space-y-4">
-              <OptionsChainPanel symbol={symbol} />
+              <OptionsChainPanel
+                symbol={symbol}
+                acceptedPrice={acceptedPrice}
+                underlyingLabel={dataLabel}
+              />
               <div className="rounded-2xl border border-amber-500/20 bg-[#151B28] p-5 text-center">
                 <Activity className="mx-auto mb-3 text-amber-300" />
                 <h2 className="font-bold text-white">AI analysis · Coming Soon</h2>

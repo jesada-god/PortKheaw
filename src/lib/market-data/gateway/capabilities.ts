@@ -1,7 +1,9 @@
 import type { CandleInterval, HistoricalRange } from './contracts';
 
 export const GATEWAY_INTERVALS: readonly CandleInterval[] = [
-  '1m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1D', 'Week', 'Month',
+  '1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m',
+  '1h', '2h', '3h', '4h',
+  '1D', 'Week', 'Month',
 ];
 export const GATEWAY_RANGES: readonly HistoricalRange[] = [
   '1d', '5d', '1m', '3m', '6m', 'ytd', '1y', '3y', '5y',
@@ -9,12 +11,16 @@ export const GATEWAY_RANGES: readonly HistoricalRange[] = [
 
 const COMPATIBILITY: Record<CandleInterval, readonly HistoricalRange[]> = {
   '1m': ['1d', '5d'],
+  '2m': ['1d', '5d'],
+  '3m': ['1d', '5d'],
   '5m': ['1d', '5d', '1m'],
   '10m': ['1d', '5d', '1m'],
   '15m': ['1d', '5d', '1m'],
   '30m': ['5d', '1m', '3m'],
+  '45m': ['5d', '1m', '3m'],
   '1h': ['5d', '1m', '3m', '6m'],
   '2h': ['1m', '3m', '6m'],
+  '3h': ['1m', '3m', '6m'],
   '4h': ['1m', '3m', '6m', 'ytd', '1y'],
   '1D': ['1m', '3m', '6m', 'ytd', '1y', '3y', '5y'],
   Week: ['3m', '6m', 'ytd', '1y', '3y', '5y'],

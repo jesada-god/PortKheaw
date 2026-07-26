@@ -1,14 +1,23 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import { useToast } from '@/src/components/ui/Toast';
-import { compatibleSelection, supportedRangesForInterval } from '@/src/lib/market-data/gateway/capabilities';
+import { compatibleSelection } from '@/src/lib/market-data/gateway/capabilities';
 import type { CandleInterval, HistoricalRange, MarketSessionMode } from '@/src/lib/market-data/gateway/contracts';
 import type { AcceptedPriceCandidate, LiveCandle, MarketDataLabel, MarketSelection } from '@/src/lib/stock-detail/market-source';
+import {
+  rangeOption,
+  toggleFavoriteInterval,
+  toggleFavoriteRange,
+  type ChartPreferences,
+} from '@/src/lib/analytics/timeframe';
+import { isAdjustableInterval } from '@/src/lib/analytics/price-adjustment';
+import type { CanonicalLiveUpdateSink } from './useMarketSource';
 import type { HistoryResponse } from './history-request';
-import { TRADER_TIMEFRAME_PRESETS, traderPresetForInterval } from './trader-chart-presets';
+import { useChartPreferences } from './chart/technical/useChartPreferences';
+import type { ToolbarToggleKey } from './chart/technical/ChartToolbar';
 
 const MarketCandleChartPanel = dynamic(
   () => import('./IntradayChartPanel').then((module) => module.MarketCandleChartPanel),
@@ -29,6 +38,7 @@ interface Props {
   marketLabel?: MarketDataLabel | null;
   /** Latest accepted candle from the shared market source (single source of truth). */
   liveCandle?: LiveCandle | null;
+  liveUpdateSinkRef?: { current: CanonicalLiveUpdateSink | null };
   /** Whether the shared market source is running (provider configured). */
   liveActive?: boolean;
   /** Trigger one shared-source refresh (header + candle) instead of a history reload. */
@@ -52,6 +62,7 @@ export function ChartPanel({
   currentPrice,
   marketLabel,
   liveCandle,
+  liveUpdateSinkRef,
   liveActive,
   onLiveRefresh,
   liveRefreshDisabled,
@@ -59,39 +70,50 @@ export function ChartPanel({
   onHistoryFallbackChange,
 }: Props) {
   const { addToast } = useToast();
-  const [interval, setInterval] = useState<CandleInterval>('1D');
-  const [range, setRange] = useState<HistoricalRange>('1y');
+  // Interval and range are two independent axes and both live in the persisted
+  // preferences: "12 เดือน" is stored as the canonical `1y` range key and never as
+  // a candle interval.
+  const { preferences, hydrated, update } = useChartPreferences();
+  const interval = preferences.selectedInterval;
+  const range = preferences.selectedRange;
   const [session, setSession] = useState<MarketSessionMode>('regular');
-  // Daily history starts with Polygon-adjusted prices (splits/dividends). The
-  // live Alpaca stream remains raw intraday data and never rewrites history.
-  const [adjusted, setAdjusted] = useState(true);
-  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
-  const intraday = !['1D', 'Week', 'Month'].includes(interval);
+  const intraday = !isAdjustableInterval(interval);
+  // Daily/weekly/monthly history uses Polygon-adjusted prices (splits/dividends);
+  // intraday candles are the raw market prints and are never claimed adjusted.
+  const adjusted = !intraday;
 
-  // Report only the live-relevant dimensions (range is a history scope, not part
-  // of the live bucket). The single shared source reconfigures to follow this.
   useEffect(() => {
     onSelectionChange?.({ interval, session, adjusted });
   }, [interval, session, adjusted, onSelectionChange]);
 
-  const applySelection = (nextInterval: CandleInterval, nextRange: HistoricalRange, changedControl: 'interval' | 'range') => {
+  const applySelection = useCallback((
+    nextInterval: CandleInterval,
+    nextRange: HistoricalRange,
+    changedControl: 'interval' | 'range',
+  ) => {
     const next = compatibleSelection(nextInterval, nextRange, changedControl);
-    setInterval(next.interval);
-    setRange(next.range);
-    setSelectionNotice(next.notice);
+    update((previous) => ({ ...previous, selectedInterval: next.interval, selectedRange: next.range }));
     if (next.notice) addToast({ title: 'ปรับช่วงกราฟอัตโนมัติ', message: next.notice, type: 'info' });
-    if (!['1D', 'Week', 'Month'].includes(next.interval)) setAdjusted(false);
-  };
+  }, [addToast, update]);
 
-  const applyTraderTimeframe = (nextInterval: CandleInterval) => {
-    const preset = traderPresetForInterval(nextInterval);
-    if (!preset) return;
-    setInterval(preset.interval);
-    setRange(preset.range);
-    setSession(preset.session);
-    setAdjusted(['1D', 'Week', 'Month'].includes(nextInterval));
-    setSelectionNotice(null);
-  };
+  const onSelectInterval = useCallback((next: CandleInterval) => {
+    applySelection(next, range, 'interval');
+  }, [applySelection, range]);
+  const onSelectRange = useCallback((next: HistoricalRange) => {
+    applySelection(interval, next, 'range');
+  }, [applySelection, interval]);
+  const onToggleFavoriteIntervalHandler = useCallback((next: CandleInterval) => {
+    update((previous) => toggleFavoriteInterval(previous, next));
+  }, [update]);
+  const onToggleFavoriteRangeHandler = useCallback((next: HistoricalRange) => {
+    update((previous) => toggleFavoriteRange(previous, next));
+  }, [update]);
+  const onChartType = useCallback((type: ChartPreferences['chartType']) => {
+    update((previous) => ({ ...previous, chartType: type }));
+  }, [update]);
+  const onToggle = useCallback((key: ToolbarToggleKey) => {
+    update((previous) => ({ ...previous, [key]: !previous[key] }));
+  }, [update]);
 
   const feedLabel = marketLabel?.realtime
     ? 'LIVE'
@@ -101,24 +123,39 @@ export function ChartPanel({
     : 'border-amber-400/30 bg-amber-400/10 text-amber-200';
 
   return <div className="space-y-3">
-    <section aria-label="Legacy trader chart controls" className="rounded-lg border border-[#242733] bg-[#1c2030] p-2.5" data-testid="legacy-trader-chart-controls">
-      <div className="flex min-w-0 gap-1 overflow-x-auto pb-2" role="tablist" aria-label="Candle interval">
-        {TRADER_TIMEFRAME_PRESETS.map((preset) => <button key={preset.interval} type="button" role="tab" aria-selected={interval === preset.interval} onClick={() => applyTraderTimeframe(preset.interval)} className={`min-h-11 min-w-12 shrink-0 rounded-md border px-3 font-mono text-xs font-semibold ${interval === preset.interval ? 'border-[#2962ff] bg-[#2962ff] text-white' : 'border-[#434651] bg-[#2a2e39] text-slate-200 hover:border-slate-500'}`}>{preset.label}</button>)}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
-        <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold tracking-wide ${feedTone}`} data-testid="chart-feed-status">{feedLabel}</span>
-        {intraday && <select aria-label="Market session" value={session} onChange={(event) => setSession(event.target.value as MarketSessionMode)} className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs text-slate-200"><option value="extended">Pre + Regular + Post</option><option value="regular">Regular only</option></select>}
-        {!intraday && <button type="button" aria-pressed={adjusted} onClick={() => setAdjusted((value) => !value)} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300">{adjusted ? 'Adjusted' : 'Unadjusted'}</button>}
-        <label className="flex min-h-11 items-center gap-2 text-xs text-slate-400">History
-          <select aria-label="Historical range" value={range} onChange={(event) => applySelection(interval, event.target.value as HistoricalRange, 'range')} className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs text-slate-200">
-            {supportedRangesForInterval(interval).map((value) => <option key={value} value={value}>{RANGE_LABELS[value]}</option>)}
-          </select>
-        </label>
-        <span className="ml-auto text-xs text-slate-500">{RANGE_LABELS[range]} · {interval} · {session === 'extended' ? 'EXT' : 'REG'}</span>
-      </div>
-    </section>
-    {selectionNotice && <p role="status" className="text-xs text-amber-300">{selectionNotice}</p>}
+    <div className="flex flex-wrap items-center gap-2" data-testid="chart-session-controls">
+      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold tracking-wide ${feedTone}`} data-testid="chart-feed-status">{feedLabel}</span>
+      {intraday && <select aria-label="Market session" value={session} onChange={(event) => setSession(event.target.value as MarketSessionMode)} className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs text-slate-200"><option value="extended">Pre + Regular + Post</option><option value="regular">Regular only</option></select>}
+      <span className="ml-auto text-xs text-slate-500">{rangeOption(range).label} · {interval} · {session === 'extended' ? 'EXT' : 'REG'}</span>
+    </div>
 
-    <MarketCandleChartPanel symbol={symbol} active={active} interval={interval} range={range} session={session} adjusted={adjusted} currentPrice={currentPrice} marketLabel={marketLabel} liveCandle={liveCandle} liveActive={liveActive} onLiveRefresh={onLiveRefresh} liveRefreshDisabled={liveRefreshDisabled} onHistoryFallbackChange={onHistoryFallbackChange} />
+    {/*
+      The chart only starts loading once the persisted selection has been read,
+      so a restored "12 เดือน" issues exactly one history request instead of
+      loading the default range first and replacing it.
+    */}
+    <MarketCandleChartPanel
+      symbol={symbol}
+      active={active && hydrated}
+      interval={interval}
+      range={range}
+      session={session}
+      adjusted={adjusted}
+      currentPrice={currentPrice}
+      marketLabel={marketLabel}
+      liveCandle={liveCandle}
+      liveUpdateSinkRef={liveUpdateSinkRef}
+      liveActive={liveActive}
+      onLiveRefresh={onLiveRefresh}
+      liveRefreshDisabled={liveRefreshDisabled}
+      onHistoryFallbackChange={onHistoryFallbackChange}
+      preferences={preferences}
+      onSelectInterval={onSelectInterval}
+      onSelectRange={onSelectRange}
+      onToggleFavoriteInterval={onToggleFavoriteIntervalHandler}
+      onToggleFavoriteRange={onToggleFavoriteRangeHandler}
+      onChartType={onChartType}
+      onToggle={onToggle}
+    />
   </div>;
 }

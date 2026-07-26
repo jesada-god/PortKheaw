@@ -6,7 +6,7 @@ import { sourceIntervalFor, supportsCandleRequest } from './capabilities';
 import { normalizedCandleResultSchema, type CandleRequest, type NormalizedCandleResult, type NormalizedMarketDataProvider } from './contracts';
 import { candleRangeBounds } from './range';
 
-const INTRADAY_INTERVALS = new Set(['1m', '5m', '10m', '15m', '30m', '1h', '2h', '4h']);
+const INTRADAY_INTERVALS = new Set(['1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m', '1h', '2h', '3h', '4h']);
 const INTRADAY_POLICY = { freshMs: 60_000, staleMs: 15 * 60_000, errorMs: 30_000 } as const;
 const HISTORICAL_POLICY = { freshMs: 6 * 60 * 60_000, staleMs: 7 * 24 * 60 * 60_000, errorMs: 30_000 } as const;
 
