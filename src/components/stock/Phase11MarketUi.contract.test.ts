@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
 const candleChart = read('src/components/stock/IntradayChartPanel.tsx');
 const options = read('src/components/stock/OptionsChainPanel.tsx');
+const optionsCoordinator = read('src/lib/stock-detail/options-source/chain-coordinator.ts');
+const optionsClient = read('src/lib/stock-detail/options-source/client.ts');
 const chart = read('src/components/stock/ChartPanel.tsx');
 const simulator = read('src/components/options-simulator/SimulatorWorkspace.tsx');
 const middleware = read('middleware.ts');
@@ -56,8 +58,10 @@ describe('Phase 11 market UI production contract', () => {
 
   it('lazy-loads the options UI with generation guards, cooldown and virtualization', () => {
     expect(options).toContain('generation.current');
-    expect(options).toContain('AbortController');
-    expect(options).toContain('Retry-After');
+    expect(options).toContain('optionsChainCoordinator');
+    expect(optionsCoordinator).toContain('AbortController');
+    expect(optionsCoordinator).toContain('state.inflight');
+    expect(optionsClient).toContain("headers.get('retry-after')");
     expect(options).toContain('Virtualized options chain');
     expect(options).toContain('VIEWPORT_HEIGHT');
     expect(options).toContain('connection?.saveData');

@@ -8,17 +8,12 @@ import { Button } from '@/src/components/ui/Button';
 import { Select } from '@/src/components/ui/Select';
 import { useAppActive } from '@/src/hooks/useAppActive';
 import { calculateAtmIv, calculateExpectedMove, calculateOiConcentration } from '@/src/lib/market-data/options/analytics';
-import { optionsChainSchema, optionsExpirationsSchema, type OptionContract, type OptionsChain, type OptionsExpirations } from '@/src/lib/market-data/options/contracts';
+import type { OptionContract, OptionsChain, OptionsExpirations } from '@/src/lib/market-data/options/contracts';
 import { optionIntrinsicValue, optionMarketQuote } from '@/src/lib/market-data/quote-model';
 import { MarketTracer } from '@/src/lib/market-data/realtime';
 import { parseStrikeLines, type StrikeLine } from '@/src/lib/analytics/chart-layers/strike-lines';
 import type { MarketDataLabel } from '@/src/lib/stock-detail/market-source';
-
-interface ApiEnvelope<T> {
-  data: T | null;
-  error?: { code: string; message: string; retryAfterSeconds?: number };
-  meta?: { provider?: string | null; freshness?: { asOf?: string | null } };
-}
+import { optionsChainCoordinator, optionsExpirationsCoordinator } from '@/src/lib/stock-detail/options-source';
 
 const optionsTracer = new MarketTracer();
 
@@ -90,11 +85,11 @@ function VirtualOptionsTable({ rows, spot, expectedMove, onOpen, onStrike }: {
 }
 
 function errorLabel(code: string | undefined): string {
-  if (code === 'forbidden') return 'แพ็กเกจข้อมูลปัจจุบันไม่มีสิทธิ์ Options แบบเรียลไทม์';
-  if (code === 'rate-limited') return 'ผู้ให้บริการจำกัดจำนวนคำขอชั่วคราว';
+  if (code === 'forbidden' || code === 'entitlement-required') return 'ข้อมูลออปชันยังไม่พร้อมใช้งาน';
+  if (code === 'rate-limited') return 'ข้อมูลออปชันถูกจำกัดชั่วคราว กรุณาลองใหม่ภายหลัง';
   if (code === 'provider-not-configured') return 'ยังไม่ได้ตั้งค่าผู้ให้บริการ Options';
   if (code === 'unsupported') return 'ผู้ให้บริการนี้ไม่รองรับ Options Chain';
-  return 'Options Chain ไม่พร้อมใช้งาน';
+  return 'ข้อมูลออปชันยังไม่พร้อมใช้งาน';
 }
 
 export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
@@ -115,8 +110,6 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   const [saveData] = useState(() => typeof navigator !== 'undefined' && Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData));
   const [userStarted, setUserStarted] = useState(false);
   const generation = useRef(0);
-  const expirationAbort = useRef<AbortController | null>(null);
-  const chainAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!cooldownUntil) return;
@@ -127,26 +120,21 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   const requestExpirations = useCallback(async () => {
     if (!navigator.onLine) { setError({ code: 'offline', message: 'ออฟไลน์อยู่ จึงไม่เรียกผู้ให้บริการ' }); return; }
     const requestGeneration = ++generation.current;
-    expirationAbort.current?.abort();
-    const controller = new AbortController();
-    expirationAbort.current = controller;
     setLoading(true); setError(null);
     try {
-      const response = await fetch(`/api/market/options/expirations?symbol=${encodeURIComponent(symbol)}`, { signal: controller.signal, headers: { Accept: 'application/json' } });
-      const payload = await response.json() as ApiEnvelope<unknown>;
-      if (!response.ok) {
-        const retry = Number(response.headers.get('Retry-After') ?? payload.error?.retryAfterSeconds ?? 0);
+      const outcome = await optionsExpirationsCoordinator.load(symbol);
+      if (!outcome.ok) {
+        const retry = outcome.retryAfterSeconds ?? 0;
         if (retry > 0) { const deadline = Date.now() + retry * 1_000; setNow(Date.now()); setCooldownUntil(deadline); }
-        throw Object.assign(new Error(errorLabel(payload.error?.code)), { code: payload.error?.code });
+        throw Object.assign(new Error(errorLabel(outcome.classification?.reason)), { code: outcome.classification?.reason });
       }
-      const parsed = optionsExpirationsSchema.safeParse(payload.data);
-      if (!parsed.success) throw Object.assign(new Error('Expiration response validation failed'), { code: 'invalid-response' });
       if (generation.current !== requestGeneration) return;
-      setExpirations(parsed.data);
-      setExpiration((current) => parsed.data.expirations.includes(current) ? current : parsed.data.expirations[0] ?? '');
-      if (!parsed.data.expirations.length) setError({ code: 'not-found', message: 'ไม่พบวันหมดอายุจริงจากผู้ให้บริการ' });
+      if (!outcome.data) throw Object.assign(new Error('Expiration response validation failed'), { code: 'invalid-response' });
+      setExpirations(outcome.data);
+      setExpiration((current) => outcome.expirations.includes(current) ? current : '');
+      if (!outcome.expirations.length) setError({ code: 'not-found', message: 'ไม่พบวันหมดอายุจริงจากผู้ให้บริการ' });
     } catch (cause) {
-      if (controller.signal.aborted || generation.current !== requestGeneration) return;
+      if (generation.current !== requestGeneration) return;
       setExpirations(null); setChain(null);
       setError({ code: (cause as { code?: string }).code, message: cause instanceof Error ? cause.message : 'Options expirations unavailable' });
     } finally { if (generation.current === requestGeneration) setLoading(false); }
@@ -155,41 +143,35 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   const requestChain = useCallback(async (targetExpiration: string, force = false) => {
     if (!targetExpiration || !navigator.onLine || (!force && Date.now() < cooldownUntil)) return;
     const requestGeneration = ++generation.current;
-    chainAbort.current?.abort();
-    const controller = new AbortController();
-    chainAbort.current = controller;
     setLoading(true); setError(null); setChain(null);
     try {
-      const response = await fetch(`/api/market/options/chain?symbol=${encodeURIComponent(symbol)}&expiration=${encodeURIComponent(targetExpiration)}`, { signal: controller.signal, headers: { Accept: 'application/json' } });
-      const payload = await response.json() as ApiEnvelope<unknown>;
-      if (!response.ok) {
-        const retry = Number(response.headers.get('Retry-After') ?? payload.error?.retryAfterSeconds ?? 0);
+      if (force && !optionsChainCoordinator.reset(symbol, targetExpiration)) return;
+      const outcome = await optionsChainCoordinator.load(symbol, targetExpiration, acceptedPrice);
+      if (!outcome.ok || !outcome.chain) {
+        const retry = outcome.retryAfterSeconds ?? 0;
         if (retry > 0) { const deadline = Date.now() + retry * 1_000; setNow(Date.now()); setCooldownUntil(deadline); }
-        throw Object.assign(new Error(errorLabel(payload.error?.code)), { code: payload.error?.code });
+        throw Object.assign(new Error(errorLabel(outcome.classification?.reason)), { code: outcome.classification?.reason });
       }
-      const parsed = optionsChainSchema.safeParse(payload.data);
-      if (!parsed.success) throw Object.assign(new Error('Options chain response validation failed'), { code: 'invalid-response' });
       if (generation.current !== requestGeneration) return;
-      setChain(parsed.data); setCooldownUntil(Date.now() + 30_000); setNow(Date.now());
+      setChain(outcome.chain); setCooldownUntil(0); setNow(Date.now());
     } catch (cause) {
-      if (controller.signal.aborted || generation.current !== requestGeneration) return;
+      if (generation.current !== requestGeneration) return;
       setError({ code: (cause as { code?: string }).code, message: cause instanceof Error ? cause.message : 'Options chain unavailable' });
     } finally { if (generation.current === requestGeneration) setLoading(false); }
-  }, [cooldownUntil, symbol]);
+  }, [acceptedPrice, cooldownUntil, symbol]);
 
   useEffect(() => {
     if (!appActive || (saveData && !userStarted) || expirations || error) return;
     let cancelled = false;
     queueMicrotask(() => { if (!cancelled) void requestExpirations(); });
-    return () => { cancelled = true; expirationAbort.current?.abort(); };
+    return () => { cancelled = true; };
   }, [appActive, error, expirations, requestExpirations, saveData, userStarted]);
   useEffect(() => {
     if (!appActive || !expiration || chain?.expiration === expiration || error) return;
     let cancelled = false;
     queueMicrotask(() => { if (!cancelled) void requestChain(expiration); });
-    return () => { cancelled = true; chainAbort.current?.abort(); };
+    return () => { cancelled = true; };
   }, [appActive, chain?.expiration, error, expiration, now, requestChain]);
-  useEffect(() => () => { expirationAbort.current?.abort(); chainAbort.current?.abort(); }, []);
 
   const spot = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0
     ? acceptedPrice
@@ -274,7 +256,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     </p>
     {error && <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-400">ไม่มีการสร้างหรือเติม Options data ทดแทน</p><Button className="mt-3" variant="outline" disabled={loading || cooldown > 0} onClick={() => { setUserStarted(true); setError(null); }}>ลองใหม่</Button></div>}
     {loading && !chain && <div className="h-64 animate-pulse rounded-xl bg-slate-800/60" aria-label="Loading options chain"/>}
-    {expirations && expirations.expirations.length > 0 && <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">Expiration<Select className="mt-1" value={expiration} onChange={(event) => { setError(null); setExpiration(event.target.value); }}>{expirations.expirations.map((value) => <option key={value} value={value}>{value}</option>)}</Select></label><label className="text-xs text-slate-400">Strike range<Select className="mt-1" value={strikeRange} onChange={(event) => setStrikeRange(Number(event.target.value))}>{[5, 10, 20, 50].map((value) => <option key={value} value={value}>±{value}% around spot</option>)}</Select></label></div>}
+    {expirations && expirations.expirations.length > 0 && <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">Expiration<Select className="mt-1" value={expiration} onChange={(event) => { setError(null); setExpiration(event.target.value); }}><option value="" disabled>เลือกวันหมดอายุ</option>{expirations.expirations.map((value) => <option key={value} value={value}>{value}</option>)}</Select></label><label className="text-xs text-slate-400">Strike range<Select className="mt-1" value={strikeRange} onChange={(event) => setStrikeRange(Number(event.target.value))}>{[5, 10, 20, 50].map((value) => <option key={value} value={value}>±{value}% around spot</option>)}</Select></label></div>}
     {chain && analytics && <>
       <div className="grid gap-3 md:grid-cols-3"><article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">ATM IV</p><p className="mt-1 text-xl font-bold text-white">{analytics.atm.iv === null ? 'Unavailable' : `${finite(analytics.atm.iv * 100)}%`}</p><p className="mt-1 text-[10px] text-slate-400">robust median · {analytics.atm.sampledContracts.length} contracts · DTE {analytics.atm.dte} · confidence {finite(analytics.atm.confidence)}%</p></article>
         <article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">Expected Move</p><p className="mt-1 text-xl font-bold text-white">{analytics.expectedMove.move === null ? 'Unavailable' : `±$${finite(analytics.expectedMove.move)} (${finite((analytics.expectedMove.movePercent ?? 0) * 100)}%)`}</p><p className="mt-1 text-[10px] text-slate-400">{analytics.expectedMove.lower === null ? 'No valid provider IV' : `$${finite(analytics.expectedMove.lower)} – $${finite(analytics.expectedMove.upper)}`}</p>{analytics.expectedMove.move !== null && <button type="button" onClick={addExpectedMove} className="mt-2 min-h-9 rounded border border-sky-500/30 px-2 text-xs text-sky-300">เพิ่มกรอบลงกราฟ</button>}</article>

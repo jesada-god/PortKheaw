@@ -93,8 +93,11 @@ export class AlphaVantageOptionsProvider implements OptionsContractsProvider {
           // REALTIME_OPTIONS does not supply a trustworthy exchange/provider
           // quote timestamp, so `asOf` is precisely our receipt clock.
           timestampKind: 'receipt',
-          status: 'live',
-          delayedMinutes: 0,
+          // The response does not carry an exchange timestamp that proves a
+          // realtime snapshot. Treat receipt-time data conservatively as
+          // delayed instead of presenting an unverifiable realtime claim.
+          status: 'delayed',
+          delayedMinutes: null,
           ivUnit: 'decimal',
           defaultMultiplier: 100,
           defaultCurrency: 'USD',

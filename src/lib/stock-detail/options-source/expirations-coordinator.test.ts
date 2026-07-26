@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { OptionsExpirationsCoordinator, DEFAULT_EXPIRATIONS_COOLDOWN_MS } from './expirations-coordinator';
+import { OptionsExpirationsCoordinator, DEFAULT_EXPIRATIONS_COOLDOWN_MS, EXPIRATIONS_FRESH_MS } from './expirations-coordinator';
 import type { ExpirationsOutcome } from './client';
 
 function ok(expirations: string[] = ['2026-08-21']): ExpirationsOutcome {
@@ -13,13 +13,26 @@ function entitlement(): ExpirationsOutcome {
 }
 
 describe('OptionsExpirationsCoordinator', () => {
-  it('runs exactly one request per symbol once it succeeds, regardless of repeat calls', async () => {
+  it('runs exactly one request per symbol while a success is fresh', async () => {
     const fetcher = vi.fn(async () => ok());
     const coordinator = new OptionsExpirationsCoordinator(fetcher);
     await coordinator.load('RKLB');
     await coordinator.load('RKLB');
     await coordinator.load('rklb');
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes an expiration list only after its success TTL expires', async () => {
+    let now = 0;
+    const fetcher = vi.fn(async () => ok());
+    const coordinator = new OptionsExpirationsCoordinator(fetcher, () => now);
+    await coordinator.load('RKLB');
+    now += EXPIRATIONS_FRESH_MS - 1;
+    await coordinator.load('RKLB');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    now += 2;
+    await coordinator.load('RKLB');
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('collapses concurrent callers onto a single in-flight request', async () => {
@@ -70,18 +83,18 @@ describe('OptionsExpirationsCoordinator', () => {
     await coordinator.load('RKLB');
     now += 10 * 60_000;
     await coordinator.load('RKLB');
-    coordinator.reset('RKLB'); // reset must not defeat an entitlement block
+    expect(coordinator.reset('RKLB')).toBe(false); // reset must not defeat an entitlement block
     await coordinator.load('RKLB');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('reset() clears a rate-limit cooldown so a user-initiated retry can re-fetch', async () => {
+  it('reset() never bypasses a rate-limit cooldown', async () => {
     let now = 0;
     const fetcher = vi.fn(async () => rateLimited(300));
     const coordinator = new OptionsExpirationsCoordinator(fetcher, () => now);
     await coordinator.load('RKLB');
-    coordinator.reset('RKLB');
+    expect(coordinator.reset('RKLB')).toBe(false);
     await coordinator.load('RKLB');
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

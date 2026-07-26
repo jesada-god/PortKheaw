@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchOptionsExpirations, fetchOptionsSr } from './client';
+import { fetchOptionsChainOutcome, fetchOptionsExpirations, fetchOptionsSr } from './client';
 
 const NOW_MS = Date.UTC(2026, 6, 21);
 const EXPIRATION = '2026-08-21';
@@ -65,6 +65,17 @@ describe('fetchOptionsSr — reuses the real chain route and computes typed leve
     expect(result.status).toBe('unavailable');
     if (result.status !== 'unavailable') return;
     expect(result.reason).toBe('rate-limited');
+  });
+
+  it('preserves Retry-After and provider provenance for a handled chain 429', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: null,
+      error: { code: 'rate-limited', message: 'slow down' },
+      meta: { provider: 'alpha-vantage' },
+    }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '37' } })));
+    const outcome = await fetchOptionsChainOutcome('RKLB', EXPIRATION, 50, signal, { nowMs: NOW_MS });
+    expect(outcome).toMatchObject({ ok: false, provider: 'alpha-vantage', retryAfterSeconds: 37 });
+    expect(outcome.result).toMatchObject({ status: 'unavailable', reason: 'rate-limited', provider: 'alpha-vantage' });
   });
 });
 

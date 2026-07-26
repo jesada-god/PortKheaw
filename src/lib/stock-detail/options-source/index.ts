@@ -9,13 +9,24 @@ export {
 } from './planner';
 export {
   fetchOptionsExpirations,
+  fetchOptionsChainOutcome,
   fetchOptionsSr,
+  type OptionsChainOutcome,
   type ExpirationsOutcome,
   type FetchOptionsSrOptions,
 } from './client';
+export {
+  OptionsChainCoordinator,
+  optionsChainCoordinator,
+  clearOptionsChainCoordinatorForTests,
+  OPTIONS_CHAIN_FRESH_MS,
+  OPTIONS_CHAIN_ERROR_COOLDOWN_MS,
+  OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS,
+} from './chain-coordinator';
 export {
   OptionsExpirationsCoordinator,
   optionsExpirationsCoordinator,
   clearOptionsExpirationsCoordinatorForTests,
   DEFAULT_EXPIRATIONS_COOLDOWN_MS,
+  EXPIRATIONS_FRESH_MS,
 } from './expirations-coordinator';

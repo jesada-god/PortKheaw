@@ -2,154 +2,157 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { optionsUnavailable, type OptionsSrResult } from '@/src/lib/analytics/options-sr';
+import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
 import {
-  fetchOptionsSr,
+  optionsChainCoordinator,
   optionsExpirationsCoordinator,
-  optionsRequestKey,
-  planOptionsRequest,
-  shouldApplyOptionsResponse,
 } from '@/src/lib/stock-detail/options-source';
 
 export interface UseOptionsSupportResistanceOptions {
   symbol: string;
   /** The single accepted underlying price shared with the header/chart. */
   acceptedPrice: number | null;
-  /** The Options S/R overlay toggle — the lazy-load gate (item 15). */
+  /** The Options overlay toggle — the lazy-load gate. */
   enabled: boolean;
-  /** True only while the Chart tab is active/mounted, so nothing loads off-tab. */
+  /** True only while the Chart tab is active/mounted. */
   active: boolean;
 }
 
 export interface UseOptionsSupportResistanceResult {
   result: OptionsSrResult | null;
+  chain: OptionsChain | null;
   loading: boolean;
   expirations: string[];
   selectedExpiration: string | null;
+  retryAt: number | null;
   setExpiration: (expiration: string) => void;
   refresh: () => void;
 }
 
 /**
- * Lazily loads Options-Driven S/R for the active chart. It reuses the shared
- * Phase 11 options endpoints via {@link fetchOptionsSr}, caches by symbol +
- * expiration, runs exactly one request per key, aborts a superseded expiration's
- * response, and stops permanently on a non-retryable entitlement failure. It
- * deliberately does NOT depend on the viewport or the live price tick, so a
- * pan/zoom or a price update never refetches (item 15).
+ * Lazy Options loader backed by browser-wide coordinators. Closing/reopening the
+ * layer, React Strict Mode, and rapid clicks join the same request instead of
+ * creating new provider work. Each effect generation ignores stale responses;
+ * the coordinators own AbortControllers, fresh caches, and negative cooldowns.
  */
 export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, active }: UseOptionsSupportResistanceOptions): UseOptionsSupportResistanceResult {
   const [expirations, setExpirations] = useState<string[]>([]);
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const [result, setResult] = useState<OptionsSrResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [chain, setChain] = useState<OptionsChain | null>(null);
+  const [expirationsLoading, setExpirationsLoading] = useState(false);
+  const [chainLoading, setChainLoading] = useState(false);
+  const [retryAt, setRetryAt] = useState<number | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-
-  const cache = useRef(new Map<string, OptionsSrResult>());
-  const inflight = useRef(new Set<string>());
-  const generation = useRef(0);
-  const abort = useRef<AbortController | null>(null);
-  const entitlementBlocked = useRef(false);
-  const [expirationsToken, setExpirationsToken] = useState(0);
-
-  // The accepted price is kept in a ref so a live price tick never re-triggers a
-  // chain fetch; it is read only at fetch time to anchor level distances.
+  const expirationsGeneration = useRef(0);
+  const chainGeneration = useRef(0);
   const acceptedPriceRef = useRef(acceptedPrice);
+
   useEffect(() => { acceptedPriceRef.current = acceptedPrice; }, [acceptedPrice]);
 
-  // Reset all per-symbol scope when the symbol changes so another symbol's
-  // expirations, cache or entitlement-block can never leak across instruments.
-  // Placed before the load effects (effects run in definition order) so the
-  // reload guard is cleared before expirations are re-fetched.
   const previousSymbol = useRef(symbol);
   useEffect(() => {
-    if (previousSymbol.current === symbol) return; // skip the initial mount
+    if (previousSymbol.current === symbol) return;
     previousSymbol.current = symbol;
-    entitlementBlocked.current = false;
-    cache.current.clear();
-    inflight.current.clear();
-    generation.current += 1;
-    abort.current?.abort();
-    setExpirations([]);
-    setSelectedExpiration(null);
-    setResult(null);
+    expirationsGeneration.current += 1;
+    chainGeneration.current += 1;
+    const nextSymbol = symbol;
+    queueMicrotask(() => {
+      if (previousSymbol.current !== nextSymbol) return;
+      setExpirations([]);
+      setSelectedExpiration(null);
+      setResult(null);
+      setChain(null);
+      setRetryAt(null);
+      setExpirationsLoading(false);
+      setChainLoading(false);
+    });
   }, [symbol]);
 
-  // Load the available non-expired expirations, only when the overlay is enabled
-  // and the tab is active. The coordinator guarantees exactly one request per
-  // symbol and enforces the 429 cooldown, so re-renders / StrictMode re-mounts
-  // never produce repeated expirations requests (items 16–17).
   useEffect(() => {
-    if (!enabled || !active || entitlementBlocked.current) return;
+    if (enabled && active) return;
+    expirationsGeneration.current += 1;
+    chainGeneration.current += 1;
+  }, [enabled, active]);
+
+  useEffect(() => {
+    if (!enabled || !active) return;
+    const requestGeneration = ++expirationsGeneration.current;
     let cancelled = false;
-    (async () => {
-      const outcome = await optionsExpirationsCoordinator.load(symbol);
-      if (cancelled) return;
-      if (!outcome.ok) {
-        if (outcome.classification?.stopsPolling) entitlementBlocked.current = true;
-        const reason = outcome.classification?.reason ?? 'chain-unavailable';
-        setResult(optionsUnavailable(symbol, null, reason, outcome.message ?? 'Options expirations are unavailable.', outcome.provider));
-        return;
-      }
-      if (outcome.expirations.length === 0) {
-        setResult(optionsUnavailable(symbol, null, 'no-expirations', 'No non-expired option expirations were returned.', outcome.provider));
-        return;
-      }
-      setExpirations(outcome.expirations);
-      // Default to the nearest non-expired expiration; keep the user's choice if
-      // it is still valid.
-      setSelectedExpiration((current) => (current && outcome.expirations.includes(current) ? current : outcome.expirations[0]));
-    })();
-    return () => { cancelled = true; };
-  }, [symbol, enabled, active, expirationsToken]);
-
-  // Load one expiration's chain and compute the levels. Cached by symbol +
-  // expiration; a superseded expiration's response is aborted and generation-guarded.
-  useEffect(() => {
-    if (!enabled || !active || !selectedExpiration || entitlementBlocked.current) return;
-    const key = optionsRequestKey(symbol, selectedExpiration);
-    const plan = planOptionsRequest({
-      enabled,
-      entitlementBlocked: entitlementBlocked.current,
-      hasExpiration: true,
-      cacheHas: cache.current.has(key),
-      inflightHas: inflight.current.has(key),
-      force: false,
-    });
-    if (plan === 'serve-cache') { setResult(cache.current.get(key)!); return; }
-    if (plan === 'skip' || plan === 'join-inflight') return;
-
-    const requestGeneration = ++generation.current;
-    abort.current?.abort();
-    const controller = new AbortController();
-    abort.current = controller;
-    inflight.current.add(key);
-    setLoading(true);
-    void (async () => {
+    queueMicrotask(() => {
+      if (cancelled || expirationsGeneration.current !== requestGeneration) return;
+      setExpirationsLoading(true);
+      void (async () => {
       try {
-        const res = await fetchOptionsSr(symbol, selectedExpiration, acceptedPriceRef.current, controller.signal);
-        if (!shouldApplyOptionsResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
-        if (res.status === 'unavailable' && res.reason === 'entitlement-required') entitlementBlocked.current = true;
-        cache.current.set(key, res);
-        setResult(res);
-      } catch (cause) {
-        if (controller.signal.aborted || !shouldApplyOptionsResponse(generation.current, requestGeneration, false)) return;
-        setResult(optionsUnavailable(symbol, selectedExpiration, 'chain-unavailable', cause instanceof Error ? cause.message : 'Options chain request failed.'));
+        const outcome = await optionsExpirationsCoordinator.load(symbol);
+        if (cancelled || expirationsGeneration.current !== requestGeneration) return;
+        if (!outcome.ok) {
+          const reason = outcome.classification?.reason ?? 'chain-unavailable';
+          setResult(optionsUnavailable(symbol, null, reason, outcome.message ?? 'Options expirations are unavailable.', outcome.provider));
+          setChain(null);
+          setRetryAt(outcome.classification?.reason === 'rate-limited'
+            ? Date.now() + (outcome.retryAfterSeconds ?? 60) * 1_000
+            : null);
+          return;
+        }
+        setRetryAt(null);
+        setExpirations(outcome.expirations);
+        if (outcome.expirations.length === 0) {
+          setResult(optionsUnavailable(symbol, null, 'no-expirations', 'No non-expired option expirations were returned.', outcome.provider));
+          setChain(null);
+          return;
+        }
+        setSelectedExpiration((current) => (current && outcome.expirations.includes(current) ? current : null));
       } finally {
-        inflight.current.delete(key);
-        if (generation.current === requestGeneration) setLoading(false);
+        if (!cancelled && expirationsGeneration.current === requestGeneration) setExpirationsLoading(false);
       }
-    })();
-    return () => { controller.abort(); };
+      })();
+    });
+    return () => { cancelled = true; };
+  }, [symbol, enabled, active, refreshToken]);
+
+  useEffect(() => {
+    if (!enabled || !active || !selectedExpiration) return;
+    const requestGeneration = ++chainGeneration.current;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || chainGeneration.current !== requestGeneration) return;
+      setChainLoading(true);
+      void (async () => {
+      try {
+        const outcome = await optionsChainCoordinator.load(symbol, selectedExpiration, acceptedPriceRef.current);
+        if (cancelled || chainGeneration.current !== requestGeneration) return;
+        setResult(outcome.result);
+        setChain(outcome.chain);
+        const cooldownMs = optionsChainCoordinator.cooldownRemainingMs(symbol, selectedExpiration);
+        setRetryAt(Number.isFinite(cooldownMs) && cooldownMs > 0 ? Date.now() + cooldownMs : null);
+      } catch (cause) {
+        if (cancelled || chainGeneration.current !== requestGeneration) return;
+        setChain(null);
+        setResult(optionsUnavailable(symbol, selectedExpiration, 'chain-unavailable', cause instanceof Error ? cause.message : 'Options chain request failed.'));
+        setRetryAt(Date.now() + 30_000);
+      } finally {
+        if (!cancelled && chainGeneration.current === requestGeneration) setChainLoading(false);
+      }
+      })();
+    });
+    return () => { cancelled = true; };
   }, [symbol, selectedExpiration, enabled, active, refreshToken]);
 
-  const setExpiration = useCallback((expiration: string) => setSelectedExpiration(expiration), []);
-  const refresh = useCallback(() => {
-    if (selectedExpiration) cache.current.delete(optionsRequestKey(symbol, selectedExpiration));
-    // A manual refresh is the sanctioned way past the expirations cooldown.
-    optionsExpirationsCoordinator.reset(symbol);
-    setExpirationsToken((token) => token + 1);
-    setRefreshToken((token) => token + 1);
-  }, [symbol, selectedExpiration]);
+  const setExpiration = useCallback((expiration: string) => {
+    if (!expiration) return;
+    setSelectedExpiration((current) => current === expiration ? current : expiration);
+  }, []);
 
-  return { result, loading, expirations, selectedExpiration, setExpiration, refresh };
+  const refresh = useCallback(() => {
+    if (retryAt && Date.now() < retryAt) return;
+    const ready = selectedExpiration
+      ? optionsChainCoordinator.reset(symbol, selectedExpiration)
+      : optionsExpirationsCoordinator.reset(symbol);
+    if (!ready) return;
+    setRetryAt(null);
+    setRefreshToken((token) => token + 1);
+  }, [retryAt, selectedExpiration, symbol]);
+
+  return { result, chain, loading: enabled && active && (expirationsLoading || chainLoading), expirations, selectedExpiration, retryAt, setExpiration, refresh };
 }

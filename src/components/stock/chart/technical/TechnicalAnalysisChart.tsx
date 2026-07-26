@@ -37,6 +37,7 @@ import type { OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels
 import { useOptionsSupportResistance } from '../useOptionsSupportResistance';
 import { levelsRequestKey, requestChartLevels } from './levels-client';
 import { ChartToolbar, type ToolbarToggleKey } from './ChartToolbar';
+import { OptionsLevelsPanel } from './OptionsLevelsPanel';
 import { TechnicalChartHost, type ChartPriceLineSpec, type EmaLineSpec, type VisibleLogicalRange } from './TechnicalChartHost';
 import { SupportResistancePanel, volumeProfileConfirmation, type SupportResistanceRow } from './SupportResistancePanel';
 import { assembleLevelRows, nearestLevel, toLevelInputs } from './level-rows';
@@ -403,26 +404,17 @@ export function TechnicalAnalysisChart({
         </p>
       )}
 
-      {preferences.options && (
-        <div className="border-t border-[#242733] px-3 py-2 text-[11px]" data-testid="options-levels">
-          {optionsSr.loading && <p className="text-slate-500">กำลังโหลดข้อมูล Options…</p>}
-          {!optionsSr.loading && optionsResult?.status === 'available' && (
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-300">
-              <span>Call Wall: {optionsResult.callWall ? `${currency}${optionsResult.callWall.price.toFixed(2)}` : 'ไม่มีข้อมูล'}</span>
-              <span>Put Wall: {optionsResult.putWall ? `${currency}${optionsResult.putWall.price.toFixed(2)}` : 'ไม่มีข้อมูล'}</span>
-              <span>Max Pain: {optionsResult.maxPain ? `${currency}${optionsResult.maxPain.price.toFixed(2)}` : 'ไม่มีข้อมูล'}</span>
-              <span className="text-slate-500">
-                OI รวม C {optionsResult.totalCallOI.toLocaleString()} / P {optionsResult.totalPutOI.toLocaleString()}
-                {optionsResult.putCallOIRatio == null ? '' : ` · P/C ${optionsResult.putCallOIRatio.toFixed(2)}`}
-              </span>
-            </div>
-          )}
-          {!optionsSr.loading && optionsResult?.status === 'unavailable' && (
-            <p className="text-slate-500">Options ยังใช้ไม่ได้: {optionsResult.message}</p>
-          )}
-          {!optionsSr.loading && !optionsResult && <p className="text-slate-500">ยังไม่มีข้อมูล Options สำหรับสัญลักษณ์นี้</p>}
-        </div>
-      )}
+      {preferences.options && <OptionsLevelsPanel
+        chain={optionsSr.chain}
+        result={optionsResult}
+        loading={optionsSr.loading}
+        expirations={optionsSr.expirations}
+        selectedExpiration={optionsSr.selectedExpiration}
+        retryAt={optionsSr.retryAt}
+        currency={currency}
+        onExpirationChange={optionsSr.setExpiration}
+        onRetry={optionsSr.refresh}
+      />}
 
       <SupportResistancePanel
         rows={srRows}

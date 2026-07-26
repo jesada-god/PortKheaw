@@ -14,6 +14,8 @@ type Fetcher = (symbol: string, signal: AbortSignal) => Promise<ExpirationsOutco
 
 interface SymbolState {
   outcome: ExpirationsOutcome | null;
+  /** Successful expiration lists are fresh only for this bounded window. */
+  freshUntil: number;
   /** Epoch ms before which no automatic re-fetch is allowed (rate-limit / transient cooldown). */
   cooldownUntil: number;
   /** A non-retryable entitlement/config fault — never auto-retried. */
@@ -23,6 +25,7 @@ interface SymbolState {
 
 /** Fallback cooldown when a 429 arrives without a usable Retry-After. */
 export const DEFAULT_EXPIRATIONS_COOLDOWN_MS = 60_000;
+export const EXPIRATIONS_FRESH_MS = 5 * 60_000;
 
 export class OptionsExpirationsCoordinator {
   private readonly state = new Map<string, SymbolState>();
@@ -35,7 +38,7 @@ export class OptionsExpirationsCoordinator {
   private ensure(symbol: string): SymbolState {
     let entry = this.state.get(symbol);
     if (!entry) {
-      entry = { outcome: null, cooldownUntil: 0, blocked: false, inflight: null };
+      entry = { outcome: null, freshUntil: 0, cooldownUntil: 0, blocked: false, inflight: null };
       this.state.set(symbol, entry);
     }
     return entry;
@@ -58,7 +61,7 @@ export class OptionsExpirationsCoordinator {
 
     // A permanent block or an earlier success is authoritative — never re-fetch.
     if (entry.blocked && entry.outcome) return entry.outcome;
-    if (entry.outcome?.ok) return entry.outcome;
+    if (entry.outcome?.ok && this.now() < entry.freshUntil) return entry.outcome;
     // Within an active cooldown, replay the last failure so the UI stays truthful
     // without generating repeated 429s.
     if (entry.outcome && this.now() < entry.cooldownUntil) return entry.outcome;
@@ -71,6 +74,7 @@ export class OptionsExpirationsCoordinator {
     const promise = (async () => {
       const outcome = await this.fetcher(key, controller.signal);
       if (outcome.ok) {
+        entry.freshUntil = this.now() + EXPIRATIONS_FRESH_MS;
         entry.cooldownUntil = 0;
         entry.blocked = false;
       } else if (outcome.classification?.stopsPolling) {
@@ -101,12 +105,14 @@ export class OptionsExpirationsCoordinator {
    * {@link load} runs a fresh request. An entitlement block is preserved — those
    * are never auto- or manually re-polled here.
    */
-  reset(symbol: string): void {
+  reset(symbol: string): boolean {
     const entry = this.state.get(symbol.toUpperCase());
-    if (!entry || entry.blocked) return;
+    if (!entry) return true;
+    if (entry.blocked || entry.inflight || this.now() < entry.cooldownUntil) return false;
     entry.outcome = null;
+    entry.freshUntil = 0;
     entry.cooldownUntil = 0;
-    entry.inflight = null;
+    return true;
   }
 
   /** Test/teardown hook. */

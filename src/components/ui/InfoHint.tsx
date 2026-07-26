@@ -67,10 +67,10 @@ export function InfoHint({
         onClick={() => setOpen((value) => !value)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        style={{ inlineSize: 24, blockSize: 24, aspectRatio: '1' }}
-        className="relative box-border inline-flex flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full border border-slate-500 text-[11px] font-bold leading-none text-slate-400 outline-none after:absolute after:-inset-[11px] after:content-[''] hover:border-[#D4FF00] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
+        style={{ inlineSize: 18, blockSize: 18, aspectRatio: '1' }}
+        className="relative box-border inline-flex flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full text-[15px] leading-none text-slate-500 outline-none after:absolute after:-inset-[13px] after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
       >
-        <span aria-hidden="true">?</span>
+        <span aria-hidden="true">ⓘ</span>
       </button>
       {open && (
         <span

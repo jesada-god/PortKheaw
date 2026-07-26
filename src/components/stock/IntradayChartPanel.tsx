@@ -17,6 +17,7 @@ import { historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCa
 import { resolveChartProvenance } from './chart-live-provenance';
 import type { CanonicalLiveUpdateSink } from './useMarketSource';
 import { resolvePriceAdjustment } from '@/src/lib/analytics/price-adjustment';
+import { presentChartWarnings } from './chart-data-warnings';
 import type { ChartPreferences } from '@/src/lib/analytics/timeframe';
 import type { ToolbarToggleKey } from './chart/technical/ChartToolbar';
 
@@ -247,13 +248,16 @@ export function MarketCandleChartPanel(props: Props) {
     ? Boolean(liveRefreshDisabled) || !appActive
     : loading || cooldown > 0 || !appActive || error?.retryable === false;
   const refreshLabel = !coveredByLiveSource && cooldown ? `Refresh in ${cooldown}s` : 'Refresh';
+  const warningNotices = presentChartWarnings(result?.warnings ?? []);
   return <div className="space-y-3" data-testid="market-candle-chart-panel">
     <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}{result && <span className="text-xs text-slate-500">{displayPrices.length.toLocaleString()} bars · {result.exchangeTimezone} · {result.actualStart ? new Date(result.actualStart * 1_000).toLocaleDateString() : '—'}–{result.actualEnd ? new Date(result.actualEnd * 1_000).toLocaleDateString() : '—'}</span>}</div>
     <DataProvenance status={provenance?.status ?? (error ? 'unavailable' : 'delayed')} provider={provenance?.provider} asOf={provenance?.asOf} delayedMinutes={provenance?.realtime ? 0 : result?.delayedByMinutes ?? undefined} reason={error?.message}/>
     {result && provenance?.realtime && <p className="text-xs text-slate-500" data-testid="historical-source">History: {result.provider} · Live: {provenance.provider ?? 'provider unavailable'} WebSocket</p>}
-    {result?.warnings.map((warning) => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
+    {warningNotices.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="สถานะข้อมูลย้อนหลัง">
+      {warningNotices.map((notice) => <span key={notice.kind} title={notice.message} className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1 text-[11px] text-slate-400">ⓘ {notice.message}</span>)}
+    </div>}
     {loading && !result && <Skeleton className="h-[420px] w-full rounded-xl" />}
-    {error && !loading && <div role="alert" className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-amber-500/20 p-4 text-center text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-500">No candle is mocked, interpolated, forward-filled, or replaced by another provider.</p>{error.diagnostics && <details className="mt-2 max-w-xl text-left text-xs text-slate-500"><summary>Development diagnostics</summary><p className="mt-1 break-words">{error.diagnostics}</p></details>}{error.retryable !== false && <button type="button" disabled={cooldown > 0} onClick={() => void request(true)} className="mt-3 min-h-11 rounded-lg border border-slate-700 px-3 disabled:opacity-40">{cooldown ? `Try again in ${cooldown}s` : 'Try again'}</button>}</div>}
+    {error && !loading && <div role="alert" className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-amber-500/20 p-4 text-center text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-500">No candle is mocked, interpolated, forward-filled, or replaced by another provider.</p>{process.env.NODE_ENV === 'development' && error.diagnostics && <details className="mt-2 max-w-xl text-left text-xs text-slate-500"><summary>Development diagnostics</summary><p className="mt-1 break-words">{error.diagnostics}</p></details>}{error.retryable !== false && <button type="button" disabled={cooldown > 0} onClick={() => void request(true)} className="mt-3 min-h-11 rounded-lg border border-slate-700 px-3 disabled:opacity-40">{cooldown ? `Try again in ${cooldown}s` : 'Try again'}</button>}</div>}
     {result && displayPrices.length === 1 && <div role="status" className="rounded-xl border border-amber-500/20 p-5 text-sm text-amber-200">ช่วงนี้มีข้อมูลจริงเพียง 1 แท่ง อาจเป็นหลักทรัพย์เพิ่งเข้าตลาดหรือช่วงที่เลือกสั้นเกินไป กรุณาเลือก range ที่ยาวขึ้น</div>}
     {result && displayPrices.length >= 2 && <TechnicalAnalysisChart
       symbol={result.symbol}
@@ -275,7 +279,7 @@ export function MarketCandleChartPanel(props: Props) {
       liveUpdateSinkRef={liveUpdateSinkRef}
     />}
     {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">ไม่มีแท่งเทียนที่ผ่านการตรวจสอบสำหรับช่วงที่เลือก</p>}
-    {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div></dl></details>}
+    {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div><div className="sm:col-span-2">Warnings: {result.warnings.join(' | ') || '—'}</div></dl></details>}
   </div>;
 }
 

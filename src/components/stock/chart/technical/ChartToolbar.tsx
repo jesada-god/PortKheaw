@@ -14,6 +14,7 @@ export type ToolbarToggleKey = Extract<
 
 const TOGGLE_BASE = 'min-h-11 rounded-md border px-3 text-xs font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]';
 const ON = 'border-[#D4FF00] bg-[#D4FF00]/15 text-[#D4FF00]';
+const OPTIONS_ON = 'border-[#D4FF00]/50 bg-[#D4FF00]/[.06] text-slate-100';
 const OFF = 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500';
 
 /** A compact anchored menu that closes on outside click, Escape and selection. */
@@ -204,34 +205,36 @@ export function ChartToolbar({
         </div>
       </Menu>
 
-      <button
-        type="button"
-        aria-pressed={preferences.supportResistance}
-        onClick={() => onToggle('supportResistance')}
-        className={`${TOGGLE_BASE} ${preferences.supportResistance ? ON : OFF}`}
-        data-testid="toggle-sr"
-      >
-        S/R
-      </button>
-      <button
-        type="button"
-        aria-pressed={preferences.vpvr}
-        onClick={() => onToggle('vpvr')}
-        className={`${TOGGLE_BASE} ${preferences.vpvr ? ON : OFF}`}
-        data-testid="toggle-vpvr"
-      >
-        VPVR
-      </button>
-      <button
-        type="button"
-        aria-pressed={preferences.options}
-        disabled={!optionsAvailable}
-        onClick={() => onToggle('options')}
-        className={`${TOGGLE_BASE} ${preferences.options ? ON : OFF} disabled:cursor-not-allowed disabled:opacity-40`}
-        data-testid="toggle-options"
-      >
-        Options
-      </button>
+      <div className="flex shrink-0 items-center gap-1" data-testid="overlay-toggles">
+        <button
+          type="button"
+          aria-pressed={preferences.supportResistance}
+          onClick={() => onToggle('supportResistance')}
+          className={`${TOGGLE_BASE} px-2.5 ${preferences.supportResistance ? ON : OFF}`}
+          data-testid="toggle-sr"
+        >
+          S/R
+        </button>
+        <button
+          type="button"
+          aria-pressed={preferences.vpvr}
+          onClick={() => onToggle('vpvr')}
+          className={`${TOGGLE_BASE} px-2.5 ${preferences.vpvr ? ON : OFF}`}
+          data-testid="toggle-vpvr"
+        >
+          VPVR
+        </button>
+        <button
+          type="button"
+          aria-pressed={preferences.options}
+          disabled={!optionsAvailable}
+          onClick={() => onToggle('options')}
+          className={`${TOGGLE_BASE} px-2.5 ${preferences.options ? OPTIONS_ON : OFF} disabled:cursor-not-allowed disabled:opacity-40`}
+          data-testid="toggle-options"
+        >
+          Options
+        </button>
+      </div>
       <button
         type="button"
         onClick={onResetView}

@@ -4,7 +4,7 @@ import {
   type OptionsSrConfig,
   type OptionsSrResult,
 } from '@/src/lib/analytics/options-sr';
-import { optionsChainSchema, optionsExpirationsSchema } from '@/src/lib/market-data/options/contracts';
+import { optionsChainSchema, optionsExpirationsSchema, type OptionsChain, type OptionsExpirations } from '@/src/lib/market-data/options/contracts';
 import { classifyOptionsFailure, type OptionsFailureClassification } from './planner';
 
 /**
@@ -23,6 +23,7 @@ interface Envelope<T> {
 
 export interface ExpirationsOutcome {
   ok: boolean;
+  data?: OptionsExpirations | null;
   expirations: string[];
   provider: string | null;
   classification: OptionsFailureClassification | null;
@@ -50,15 +51,15 @@ export async function fetchOptionsExpirations(symbol: string, signal: AbortSigna
   const retryAfterSeconds = payload.error?.retryAfterSeconds ?? (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader : null);
   if (!response.ok || !payload.data) {
     const classification = classifyOptionsFailure(response.status, payload.error?.code);
-    return { ok: false, expirations: [], provider: payload.meta?.provider ?? null, classification, message: payload.error?.message ?? 'Options expirations are unavailable.', retryAfterSeconds };
+    return { ok: false, data: null, expirations: [], provider: payload.meta?.provider ?? null, classification, message: payload.error?.message ?? 'Options expirations are unavailable.', retryAfterSeconds };
   }
   const parsed = optionsExpirationsSchema.safeParse(payload.data);
   if (!parsed.success) {
-    return { ok: false, expirations: [], provider: payload.meta?.provider ?? null, classification: classifyOptionsFailure(null, 'invalid-provider-response'), message: 'Options expirations failed validation.', retryAfterSeconds: null };
+    return { ok: false, data: null, expirations: [], provider: payload.meta?.provider ?? null, classification: classifyOptionsFailure(null, 'invalid-provider-response'), message: 'Options expirations failed validation.', retryAfterSeconds: null };
   }
   const today = new Date().toISOString().slice(0, 10);
   const expirations = [...new Set(parsed.data.expirations.filter((value) => value >= today))].sort();
-  return { ok: true, expirations, provider: parsed.data.provider, classification: null, message: null, retryAfterSeconds: null };
+  return { ok: true, data: parsed.data, expirations, provider: parsed.data.provider, classification: null, message: null, retryAfterSeconds: null };
 }
 
 export interface FetchOptionsSrOptions {
@@ -68,34 +69,62 @@ export interface FetchOptionsSrOptions {
   config?: Partial<OptionsSrConfig>;
 }
 
+export interface OptionsChainOutcome {
+  ok: boolean;
+  chain: OptionsChain | null;
+  result: OptionsSrResult;
+  provider: string | null;
+  classification: OptionsFailureClassification | null;
+  retryAfterSeconds: number | null;
+}
+
 /**
  * Load one expiration's chain and compute Options S/R. The single accepted
  * underlying price is passed in so options levels derive their distance from the
  * exact same price the header/chart use — never a second, divergent spot.
  */
-export async function fetchOptionsSr(
+export async function fetchOptionsChainOutcome(
   symbol: string,
   expiration: string,
   acceptedPrice: number | null,
   signal: AbortSignal,
   options: FetchOptionsSrOptions = {},
-): Promise<OptionsSrResult> {
+): Promise<OptionsChainOutcome> {
   const query = new URLSearchParams({ symbol, expiration });
   const response = await fetch(`/api/market/options/chain?${query.toString()}`, {
     signal, headers: { Accept: 'application/json' }, cache: 'no-store',
   });
   const payload = await readEnvelope<unknown>(response);
+  const retryAfterHeader = Number(response.headers.get('retry-after'));
+  const retryAfterSeconds = payload.error?.retryAfterSeconds ?? (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader : null);
   if (!response.ok || !payload.data) {
     const classification = classifyOptionsFailure(response.status, payload.error?.code);
-    return optionsUnavailable(symbol, expiration, classification.reason, payload.error?.message ?? 'Options chain is unavailable.', payload.meta?.provider ?? null);
+    const provider = payload.meta?.provider ?? null;
+    return {
+      ok: false,
+      chain: null,
+      result: optionsUnavailable(symbol, expiration, classification.reason, payload.error?.message ?? 'Options chain is unavailable.', provider),
+      provider,
+      classification,
+      retryAfterSeconds,
+    };
   }
   const parsed = optionsChainSchema.safeParse(payload.data);
   if (!parsed.success) {
-    return optionsUnavailable(symbol, expiration, 'chain-unavailable', 'Options chain failed validation.', payload.meta?.provider ?? null);
+    const provider = payload.meta?.provider ?? null;
+    const classification = classifyOptionsFailure(null, 'invalid-provider-response');
+    return {
+      ok: false,
+      chain: null,
+      result: optionsUnavailable(symbol, expiration, 'chain-unavailable', 'Options chain failed validation.', provider),
+      provider,
+      classification,
+      retryAfterSeconds: null,
+    };
   }
   const chain = parsed.data;
   const price = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0 ? acceptedPrice : chain.spot;
-  return computeOptionsSupportResistance({
+  const result = computeOptionsSupportResistance({
     symbol: chain.underlyingSymbol,
     expiration: chain.expiration,
     acceptedPrice: price,
@@ -105,4 +134,16 @@ export async function fetchOptionsSr(
     asOf: chain.asOf,
     status: chain.status,
   }, { ...(options.nowMs !== undefined ? { nowMs: options.nowMs } : {}), ...(options.config ?? {}) });
+  return { ok: true, chain, result, provider: chain.provider, classification: null, retryAfterSeconds: null };
+}
+
+/** Backwards-compatible result-only boundary used by analytics callers/tests. */
+export async function fetchOptionsSr(
+  symbol: string,
+  expiration: string,
+  acceptedPrice: number | null,
+  signal: AbortSignal,
+  options: FetchOptionsSrOptions = {},
+): Promise<OptionsSrResult> {
+  return (await fetchOptionsChainOutcome(symbol, expiration, acceptedPrice, signal, options)).result;
 }

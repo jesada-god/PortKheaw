@@ -39,7 +39,7 @@ function candle(timestamp: number, close: number) {
  * The exact body `/api/market/candles` serializes: the server-validated Yahoo
  * Finance Chart JSON result. Polygon is not on this path at all.
  */
-function yahooEnvelope(symbol: string, interval: CandleInterval, count = 2) {
+function yahooEnvelope(symbol: string, interval: CandleInterval, count = 2, warnings: string[] = []) {
   const candles = count === 0
     ? []
     : [candle(START, 100), candle(START + 300, 101)];
@@ -62,7 +62,7 @@ function yahooEnvelope(symbol: string, interval: CandleInterval, count = 2) {
       aggregated: false,
       cacheStatus: 'miss',
       candles,
-      warnings: [],
+      warnings,
       fallbackReason: null,
     },
     meta: {
@@ -244,6 +244,21 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     await act(async () => root.render(<MarketCandleChartPanel {...props()} range="3m" />));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(String(fetchMock.mock.calls[1][0])).toContain('range=3m');
+    await act(async () => root.unmount());
+  });
+
+  it('shows compact Thai data notices without raw production diagnostics', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response(yahooEnvelope('AAPL', '5m', 2, [
+      'Discarded 11 invalid provider candles',
+      'Historical data loaded only partially; inspect actualStart and actualEnd',
+    ])));
+    vi.stubGlobal('fetch', fetchMock);
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
+    await act(async () => root.render(<MarketCandleChartPanel {...props()} />));
+    await vi.waitFor(() => expect(host.textContent).toContain('ข้อมูลบางช่วงถูกกรองออก'));
+    expect(host.textContent).toContain('ข้อมูลย้อนหลังมีเฉพาะช่วงที่ผู้ให้บริการมี');
+    expect(host.textContent).not.toContain('Discarded 11');
+    expect(host.textContent).not.toContain('actualStart');
     await act(async () => root.unmount());
   });
 });
