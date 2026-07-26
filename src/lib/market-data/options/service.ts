@@ -4,6 +4,7 @@ import type { MarketDataProvider, OptionsChain, OptionsExpirations, ProviderResu
 import type { NormalizedOptionContracts } from './contracts';
 import { optionsChainSchema, optionsExpirationsSchema } from './contracts';
 import type { OptionsContractsProvider } from '../providers/alpha-vantage/options';
+import { OptionsCapabilityCache, isEntitlementFailure, type OptionsCapabilityReport } from './capability';
 
 const OPTIONS_CACHE_POLICY = {
   freshMs: 60_000,
@@ -50,9 +51,18 @@ function underlyingStatus(status: string): NonNullable<OptionsChain['underlyingS
   return 'delayed';
 }
 
+/**
+ * Choose which failure the caller sees when every provider failed. A temporary
+ * fault is preferred over an entitlement refusal: if the entitled provider is
+ * merely throttled, a permanently-refused fallback must not downgrade the UI to
+ * "your plan does not support options", which would stop polling for good.
+ */
+function surfacedFailure(failures: readonly MarketDataError[]): MarketDataError | undefined {
+  return failures.find((failure) => !isEntitlementFailure(failure)) ?? failures[0];
+}
+
 export class OptionsMarketDataService {
   private readonly providers: readonly OptionsContractsProvider[];
-  private readonly providerBlockedUntil = new Map<string, number>();
   private readonly fullSnapshots = new Map<string, { snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale'; freshUntil: number }>();
 
   constructor(
@@ -60,17 +70,27 @@ export class OptionsMarketDataService {
     private readonly quoteProvider: Pick<MarketDataProvider, 'getQuote'>,
     private readonly cache = new SharedRequestCache(),
     private readonly now: () => number = Date.now,
+    private readonly capability = new OptionsCapabilityCache(() => this.now()),
   ) {
     this.providers = Array.isArray(provider) ? provider : [provider];
+  }
+
+  /** Secret-free capability matrix for diagnostics and the probe script. */
+  capabilityReport(): OptionsCapabilityReport[] {
+    return this.providers.map((provider) => this.capability.report(provider.id));
   }
 
   private async getSnapshot(symbol: string, expiration?: string): Promise<{ snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale' }> {
     if (!this.providers.length) throw new MarketDataError('provider-not-configured', 'Options provider is not configured');
     const failures: MarketDataError[] = [];
     for (const provider of this.providers) {
-      const blockedUntil = this.providerBlockedUntil.get(provider.id) ?? 0;
-      if (this.now() < blockedUntil) {
-        failures.push(new MarketDataError('rate-limited', `${provider.id} is in Retry-After cooldown`, Math.max(1, Math.ceil((blockedUntil - this.now()) / 1_000))));
+      // A provider with a live negative verdict is skipped without any network
+      // call — this is what stops the retry storm at its source.
+      if (this.capability.isBlocked(provider.id)) {
+        const report = this.capability.report(provider.id);
+        failures.push(report.status === 'entitlement-unavailable'
+          ? new MarketDataError('forbidden', `${provider.id} is not entitled to options data on the configured plan`)
+          : new MarketDataError('rate-limited', `${provider.id} is in a rate-limit cooldown`, report.retryAfterSeconds ?? 60));
         continue;
       }
       try {
@@ -79,14 +99,17 @@ export class OptionsMarketDataService {
           () => provider.getOptionsContracts(symbol, expiration),
           OPTIONS_CACHE_POLICY,
         );
+        this.capability.markEntitled(provider.id);
         return { snapshot: resolution.value, state: resolution.state };
       } catch (cause) {
         let failure = cause instanceof MarketDataError
           ? cause
           : new MarketDataError('provider-unavailable', 'Options provider failed');
-        if (failure.code === 'rate-limited') {
+        if (isEntitlementFailure(failure)) {
+          this.capability.markEntitlementUnavailable(provider.id, failure.message);
+        } else if (failure.code === 'rate-limited') {
           const retryAfterSeconds = failure.retryAfterSeconds ?? 60;
-          this.providerBlockedUntil.set(provider.id, this.now() + retryAfterSeconds * 1_000);
+          this.capability.markCoolingDown(provider.id, retryAfterSeconds, failure.message);
           if (failure.retryAfterSeconds === undefined) {
             failure = new MarketDataError('rate-limited', failure.message, retryAfterSeconds);
           }
@@ -94,7 +117,7 @@ export class OptionsMarketDataService {
         failures.push(failure);
       }
     }
-    throw failures[0] ?? new MarketDataError('provider-unavailable', 'Options data is unavailable');
+    throw surfacedFailure(failures) ?? new MarketDataError('provider-unavailable', 'Options data is unavailable');
   }
 
   async getExpirations(symbol: string): Promise<ProviderResult<OptionsExpirations>> {
@@ -119,7 +142,10 @@ export class OptionsMarketDataService {
 
   async getChain(symbol: string, expiration: string): Promise<ProviderResult<OptionsChain>> {
     const full = this.fullSnapshots.get(symbol.toUpperCase());
-    const reusable = full && this.now() < full.freshUntil
+    // Only a snapshot that genuinely holds a whole chain may be reused. A provider
+    // whose expiration discovery is filtered (Alpaca queries calls only) reports
+    // `partial`, and reusing it here would serve a chain with an empty put side.
+    const reusable = full && this.now() < full.freshUntil && !full.snapshot.partial
       && full.snapshot.contracts.some((contract) => contract.expiration === expiration);
     // REALTIME_OPTIONS without an expiration already returned every validated
     // contract. Reusing that fresh snapshot avoids a second upstream provider

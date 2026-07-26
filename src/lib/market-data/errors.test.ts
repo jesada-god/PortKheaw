@@ -84,3 +84,52 @@ describe('market data provider error mapping', () => {
     expect(error.retryable).toBe(false);
   });
 });
+
+/**
+ * These payloads are the verbatim upstream responses captured while diagnosing the
+ * production Options 429 loop. The defect they lock down: an entitlement refusal
+ * that advertises paid tiers ("600 requests per minute") matched the quota regex
+ * first, so a permanent block was retried forever as a temporary rate limit.
+ */
+describe('provider entitlement vs quota classification (captured upstream payloads)', () => {
+  const ALPHA_VANTAGE_PREMIUM_REFUSAL = 'This is a premium endpoint. ***THE SAMPLE DATA SCHEMA BELOW IS ARTIFICIAL AND FOR ILLUSTRATION PURPOSES ONLY***. To access the actual data, please subscribe to either the 600 requests per minute or the 1200 requests per minute premium plan at https://www.alphavantage.co/premium/ if you would like to access realtime US options data for personal non-professional use. For professional/commercial use, please contact support at support@alphavantage.co.';
+  const ALPHA_VANTAGE_QUOTA_NOTICE = 'Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints';
+
+  it('classifies the Alpha Vantage REALTIME_OPTIONS refusal as a permanent entitlement, despite its "requests per minute" upsell', () => {
+    // Note: the provider answers HTTP 200 here — the refusal is body-only.
+    const error = mapProviderFailure({ status: 200, payload: { message: ALPHA_VANTAGE_PREMIUM_REFUSAL } });
+    expect(error.code).toBe('forbidden');
+    expect(error.retryable).toBe(false);
+    expect(error.status).toBe(403);
+  });
+
+  it('still classifies the free-tier quota notice as a retryable rate limit', () => {
+    const error = mapProviderFailure({ payload: { Information: ALPHA_VANTAGE_QUOTA_NOTICE } });
+    expect(error.code).toBe('rate-limited');
+    expect(error.retryable).toBe(true);
+  });
+
+  it('never leaks the provider message into the surfaced error text', () => {
+    for (const message of [ALPHA_VANTAGE_PREMIUM_REFUSAL, ALPHA_VANTAGE_QUOTA_NOTICE]) {
+      expect(mapProviderFailure({ payload: { message } }).message).not.toContain('alphavantage.co');
+    }
+  });
+
+  it.each([
+    ['Finnhub option-chain', 403, { error: "You don't have access to this resource." }],
+    ['FMP retired options endpoint', 403, { 'Error Message': 'Legacy Endpoint : Due to Legacy endpoints being no longer supported - This endpoint is only available for legacy users who have valid subscriptions prior August 31, 2025.' }],
+    ['Alpaca OPRA feed', 403, { message: 'OPRA agreement is not signed' }],
+    ['Polygon options snapshot', 403, { message: 'You are not entitled to this data. Please upgrade your plan at https://massive.com/pricing' }],
+  ])('classifies the %s refusal as a non-retryable entitlement', (_label, status, payload) => {
+    const error = mapProviderFailure({ status, payload });
+    expect(error.code).toBe('forbidden');
+    expect(error.retryable).toBe(false);
+  });
+
+  it('keeps a genuine 429 with Retry-After retryable', () => {
+    const error = mapProviderFailure({ status: 429, retryAfterSeconds: 30 });
+    expect(error.code).toBe('rate-limited');
+    expect(error.retryable).toBe(true);
+    expect(error.retryAfterSeconds).toBe(30);
+  });
+});

@@ -226,6 +226,100 @@ describe('stock price header accepted quote partition', () => {
   });
 });
 
+/**
+ * Weekend behaviour. Absent PRE/AFTER rows on a Sunday are correct, not a bug:
+ * there is no extended session to report. What must never happen is the inverse —
+ * Friday's after-hours print resurfacing on Sunday as if it were current.
+ */
+describe('stock price header weekend and session-date integrity', () => {
+  // 2026-07-24 is a Friday; 20:30Z is 16:30 ET, inside Friday's after-hours window.
+  const FRIDAY_AFTER_HOURS = '2026-07-24T20:30:00.000Z';
+  // 2026-07-26 is a Sunday.
+  const SUNDAY = '2026-07-26T17:00:00.000Z';
+
+  it('shows the latest regular close and no extended row on a weekend', () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: SUNDAY,
+    });
+    expect(result.quote).toBe(HEADER_QUOTE);
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it("does not resurface Friday's after-hours print as Sunday's extended quote", () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
+    const fridayExtended = quoteResource(
+      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
+      FRIDAY_AFTER_HOURS,
+      900,
+    );
+    const result = resolvePriceHeaderData({
+      current: fridayExtended,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: SUNDAY,
+    });
+    expect(result.extendedQuote).toBeNull();
+    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
+  });
+
+  it('rejects a weekend-stale extended quote even when the provider declares no max age', () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
+    // An end-of-day feed with maxAgeSeconds: null cannot be aged out by the
+    // freshness threshold, so the session gate is the only thing standing between
+    // a two-day-old print and the "current price" slot.
+    const noMaxAge: StockDetailQuoteResource = {
+      ...quoteResource({ ...HEADER_QUOTE, price: 101 }, FRIDAY_AFTER_HOURS),
+      freshness: { status: 'end-of-day', asOf: FRIDAY_AFTER_HOURS, maxAgeSeconds: null },
+    };
+    const result = resolvePriceHeaderData({
+      current: noMaxAge,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: SUNDAY,
+    });
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it('still accepts a genuine same-session after-hours print', () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
+    const live = quoteResource(
+      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
+      FRIDAY_AFTER_HOURS,
+      900,
+    );
+    const result = resolvePriceHeaderData({
+      current: live,
+      initial: regular,
+      marketStatus: 'after-hours',
+      evaluatedAt: '2026-07-24T20:31:00.000Z',
+    });
+    expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
+    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
+  });
+
+  it('accepts a genuine pre-market print and compares it to the prior regular close', () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-23T19:59:00.000Z');
+    // 2026-07-24T12:00Z is 08:00 ET on a Friday: inside the pre-market window.
+    const pre = quoteResource(
+      { ...HEADER_QUOTE, price: 99, previousClose: 100, change: -1, changePercent: -1 },
+      '2026-07-24T12:00:00.000Z',
+      900,
+    );
+    const result = resolvePriceHeaderData({
+      current: pre,
+      initial: regular,
+      marketStatus: 'pre-market',
+      evaluatedAt: '2026-07-24T12:01:00.000Z',
+    });
+    expect(result.extendedQuote).toMatchObject({ session: 'premarket', price: 99 });
+    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
+  });
+});
+
 describe('stock price header calculations', () => {
   it.each([
     ['up', '+', '▲', 'positive'],

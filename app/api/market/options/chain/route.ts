@@ -17,5 +17,5 @@ export async function GET(request: NextRequest) {
     });
     return getOptionsMarketDataService().getChain(query.symbol, query.expiration);
   });
-  return withOptionsRouteDiagnostics(response, { route: 'options-chain', symbol, providerHint: 'alpha-vantage' });
+  return withOptionsRouteDiagnostics(response, { route: 'options-chain', symbol });
 }

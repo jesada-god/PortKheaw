@@ -57,6 +57,12 @@ export function parseServerEnv(input: Record<string, unknown>) {
       FINNHUB_API_KEY: read('FINNHUB_API_KEY', optionalSecret, undefined),
       SEC_USER_AGENT: read('SEC_USER_AGENT', optionalSecret, undefined),
       POLYGON_API_KEY: read('POLYGON_API_KEY', optionalSecret, undefined),
+      ALPACA_API_KEY_ID: read('ALPACA_API_KEY_ID', optionalSecret, undefined),
+      ALPACA_API_SECRET_KEY: read('ALPACA_API_SECRET_KEY', optionalSecret, undefined),
+      // Alpaca serves the options contracts catalogue from the Trading API. Paper
+      // and live hosts expose the same catalogue, so this defaults to paper and is
+      // only overridden when the deployment holds live trading credentials.
+      ALPACA_TRADING_BASE_URL: read('ALPACA_TRADING_BASE_URL', optionalUrl, undefined),
       MARKET_DATA_PROVIDER: read('MARKET_DATA_PROVIDER', optionalSecret, undefined),
       NEWS_API_KEY: read('NEWS_API_KEY', optionalSecret, undefined),
       SUPABASE_SERVICE_ROLE_KEY: read('SUPABASE_SERVICE_ROLE_KEY', optionalSecret, undefined),

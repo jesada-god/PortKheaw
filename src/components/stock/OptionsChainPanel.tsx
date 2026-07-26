@@ -89,11 +89,19 @@ function VirtualOptionsTable({ rows, spot, expectedMove, onOpen, onStrike }: {
   </div>;
 }
 
+/**
+ * An entitlement refusal is a permanent, account-level fact and must never be
+ * phrased as a transient hiccup — the user would keep retrying something that
+ * cannot succeed. It stays free of plan/API detail: production copy states the
+ * limitation, not the vendor's pricing tier.
+ */
+const ENTITLEMENT_LABEL = 'ผู้ให้บริการปัจจุบันไม่รองรับข้อมูลออปชันสำหรับบัญชีนี้';
+
 function errorLabel(code: string | undefined): string {
-  if (code === 'forbidden' || code === 'entitlement-required') return 'ข้อมูลออปชันยังไม่พร้อมใช้งาน';
+  if (code === 'forbidden' || code === 'entitlement-required') return ENTITLEMENT_LABEL;
   if (code === 'rate-limited') return 'ข้อมูลออปชันถูกจำกัดชั่วคราว กรุณาลองใหม่ภายหลัง';
   if (code === 'provider-not-configured') return 'ยังไม่ได้ตั้งค่าผู้ให้บริการ Options';
-  if (code === 'unsupported') return 'ผู้ให้บริการนี้ไม่รองรับ Options Chain';
+  if (code === 'unsupported') return ENTITLEMENT_LABEL;
   return 'ข้อมูลออปชันยังไม่พร้อมใช้งาน';
 }
 
@@ -103,7 +111,7 @@ export function optionsPanelErrorLabel(code: string | undefined, cooldownSeconds
       ? `ข้อมูลออปชันถูกจำกัดชั่วคราว · ลองใหม่ใน ${cooldownSeconds} วินาที`
       : 'ข้อมูลออปชันถูกจำกัดชั่วคราว · ลองใหม่อีกครั้ง';
   }
-  if (code === 'not-found') return 'ไม่พบข้อมูลออปชันสำหรับช่วงนี้';
+  if (code === 'not-found') return 'ไม่พบสัญญาออปชัน';
   return errorLabel(code);
 }
 

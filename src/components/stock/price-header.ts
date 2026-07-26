@@ -1,4 +1,4 @@
-import { classifyUsEquitySession } from '@/src/lib/market-data/session';
+import { classifyUsEquitySession, exchangeSessionDate, US_EQUITY_TIMEZONE } from '@/src/lib/market-data/session';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
@@ -175,12 +175,30 @@ export function resolvePriceHeaderData(input: {
       : null;
   const evaluatedAtMs = Date.parse(evaluatedAt);
   const acceptedStatus = resolveDataStatus(current.freshness, evaluatedAtMs);
+  // An extended print is only "now" if it belongs to the SAME New York trading
+  // date we are evaluating. Both extended windows (04:00 and 20:00 ET) sit inside
+  // one calendar date, so this never rejects a genuine tick — but it is the only
+  // guard that stops Friday's after-hours print from being shown as the current
+  // extended quote on Saturday or Sunday, when an end-of-day feed reports
+  // maxAgeSeconds: null and the freshness threshold therefore cannot age it out.
+  const sameSessionDate = acceptedAsOf !== null
+    && exchangeSessionDate(acceptedAsOf, US_EQUITY_TIMEZONE) === exchangeSessionDate(evaluatedAt, US_EQUITY_TIMEZONE);
   const acceptedExtended = currentQuote
     && tradeablePrice(currentQuote.price)
     && acceptedAsOf
+    && sameSessionDate
     && acceptedSession === expectedExtendedSession;
 
-  if (!acceptedExtended || !expectedExtendedSession || !currentQuote || !acceptedAsOf) {
+  // A pre/post print carried over from an earlier trading date (typically Friday's
+  // after-hours seen over a weekend) is not a current price in EITHER row. It is
+  // rejected as the extended quote above; here it is also kept out of the primary
+  // row, which must fall back to the latest real regular close instead.
+  const carriedOverExtendedPrint = Boolean(
+    acceptedAsOf && !sameSessionDate
+    && (acceptedSession === 'premarket' || acceptedSession === 'afterhours'),
+  );
+
+  if ((!acceptedExtended && !carriedOverExtendedPrint) || !expectedExtendedSession || !currentQuote || !acceptedAsOf) {
     return {
       quote: currentQuote,
       freshness: current.freshness,
@@ -231,7 +249,8 @@ export function resolvePriceHeaderData(input: {
     };
   }
 
-  const eligibleExtended = acceptedStatus !== 'stale' && acceptedStatus !== 'unavailable';
+  const eligibleExtended = acceptedExtended
+    && acceptedStatus !== 'stale' && acceptedStatus !== 'unavailable';
 
   return {
     quote: regularQuote,

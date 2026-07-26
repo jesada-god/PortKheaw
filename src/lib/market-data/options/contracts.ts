@@ -87,4 +87,12 @@ export interface NormalizedOptionContracts {
   delayedMinutes: number | null;
   completeness: number;
   warnings: string[];
+  /**
+   * True when the provider was queried with a filter that cannot represent a whole
+   * chain — e.g. Alpaca's expiration discovery requests calls only, to keep the
+   * expiration ladder inside a single unpaginated response. A partial snapshot is
+   * valid for listing expirations but must never be served as an options chain,
+   * or one side of the book silently disappears.
+   */
+  partial?: boolean;
 }

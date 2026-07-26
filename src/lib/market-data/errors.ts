@@ -82,6 +82,32 @@ function providerMessage(payload: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * High-precision plan/entitlement signals. These must be matched BEFORE the quota
+ * matcher because several providers advertise their paid tiers *inside* an
+ * entitlement refusal — Alpha Vantage's REALTIME_OPTIONS denial is literally
+ * "This is a premium endpoint ... subscribe to the 600 requests per minute ...
+ * plan", whose "requests per minute" fragment otherwise matches the rate-limit
+ * regex and turns a permanent block into an endlessly retried 429.
+ *
+ * Every pattern here is anchored to wording only a refusal uses, so a genuine
+ * quota notice ("...unlock all premium endpoints") does NOT match: that notice
+ * says "premium endpoints" (plural, as an upsell), never "this is a premium
+ * endpoint" (singular, describing the endpoint just requested).
+ */
+const ENTITLEMENT_PATTERN = new RegExp([
+  'this is a premium endpoint',            // Alpha Vantage premium refusal
+  'sample data (schema )?(below )?is artificial', // Alpha Vantage illustrative-only payload
+  '(are|is) not entitled',                 // Polygon
+  'not authorized',                        // Polygon NOT_AUTHORIZED
+  'have access to this resource',          // Finnhub
+  'only available for legacy users',       // FMP retired endpoints
+  'agreement is not signed',               // Alpaca OPRA
+  'not entitled|entitlement',
+  'subscription required|requires a subscription',
+  'upgrade (your|to a|the) .{0,24}plan',
+].join('|'), 'i');
+
 export function mapProviderFailure(input: ProviderFailureInput): MarketDataError {
   const message = providerMessage(input.payload);
   const isAbort = input.cause instanceof Error && (
@@ -89,6 +115,12 @@ export function mapProviderFailure(input: ProviderFailureInput): MarketDataError
   );
 
   if (isAbort) return new MarketDataError('timeout', 'Market data provider timed out');
+  // Entitlement is checked first and deliberately: it is a permanent, operator-only
+  // fault. Misreading it as a quota makes it retryable, which produces exactly the
+  // upstream request storm this ordering exists to prevent.
+  if (input.status === 402 || ENTITLEMENT_PATTERN.test(message ?? '')) {
+    return new MarketDataError('forbidden', 'The configured provider plan does not authorize this market data operation');
+  }
   // Alpha Vantage quota messages often mention the API key. Quota signals must win
   // over the more general key matcher or exhausted free-tier keys become 502s.
   if (input.status === 429 || /frequency|rate limit|call volume|requests per|calls per|daily.*limit/i.test(message ?? '')) {

@@ -28,13 +28,20 @@ export function withOptionsRouteDiagnostics<T extends Response>(
     : input.routeRateLimited ? null : input.providerHint ?? null;
   const cacheStatus = response.headers.get('x-market-data-cache-status')
     ?? (response.ok ? 'provider-or-fresh-cache' : 'none');
+  // An entitlement refusal and a throttle are different faults with different
+  // remedies: one needs an external plan change, the other needs a wait. They are
+  // reported distinctly so production Network inspection can never conflate them.
   const failureKind = response.ok
     ? 'none'
     : rateLimitSource === 'nexora'
       ? 'nexora-rate-limit'
       : rateLimitSource === 'upstream'
         ? 'upstream-rate-limit'
-        : `route-http-${response.status}`;
+        : response.status === 403
+          ? 'provider-entitlement'
+          : response.status === 404
+            ? 'no-data'
+            : `route-http-${response.status}`;
 
   response.headers.set('X-Options-Route-Status', String(response.status));
   response.headers.set('X-Options-Rate-Limit-Source', rateLimitSource);
