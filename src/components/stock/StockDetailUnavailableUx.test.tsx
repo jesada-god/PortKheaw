@@ -220,7 +220,7 @@ describe('Stock Detail unavailable UX', () => {
     }
   });
 
-  it('shows fallback price, resolved currency, Thai fallback label, and timestamp once', () => {
+  it('shows the fallback price and session date, keeping fallback/debug wording out of the primary row', () => {
     const quote: Quote = {
       symbol: 'RKLB',
       price: 42,
@@ -264,12 +264,17 @@ describe('Stock Detail unavailable UX', () => {
 
     expect(html).toContain('42.00');
     expect(html).toContain('USD');
-    expect(occurrences(html, 'ข้อมูลจากวันซื้อขายก่อนหน้า')).toBe(1);
-    expect(html).toMatch(/17.*2569/);
+    // The trading date is exchange-local: 2026-07-17T00:00Z is still 16 July in
+    // New York, and the session label must name the session, not the reader's day.
+    expect(html).toContain('16/07');
     expect(html).not.toContain('rate-limited');
     expect(html).not.toContain('Quote quota exceeded');
     expect(html).not.toContain('Unavailable');
     expect(html).not.toContain('ไม่พบข้อมูล');
     expect(occurrences(html, 'ไม่สามารถตรวจสอบสถานะตลาดได้')).toBe(1);
+    // Provenance belongs behind the ⓘ control, never in the price hierarchy.
+    expect(html).not.toContain('ข้อมูลจากวันซื้อขายก่อนหน้า');
+    expect(html).not.toContain('ราคาปิด intraday ล่าสุด');
+    expect(html).not.toContain('nasdaq');
   });
 });

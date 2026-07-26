@@ -40,6 +40,8 @@ export interface PriceHeaderExtendedQuote {
   session: 'premarket' | 'after-hours';
   price: number;
   asOf: string;
+  /** Exchange-local trading date the print belongs to, always shown in the row. */
+  tradingDate: string | null;
   freshness: DataFreshness;
   provider: string | null;
 }
@@ -148,23 +150,52 @@ function tradeablePrice(value: number | null | undefined): value is number {
 }
 
 /**
- * Partitions the ONE already-accepted quote into the Investing-style header rows.
- * It never fetches or derives another market value:
+ * Partitions the ONE already-accepted quote into the header's two rows, and
+ * chooses which extended-hours print (if any) belongs in the secondary row.
  *
- * - regular session: the accepted quote remains the primary row;
- * - pre/post session: the accepted quote becomes the extended row, while a
- *   previously accepted regular quote (or the quote's real `previousClose`) stays
- *   in the primary row;
- * - a stale, date-only or session-mismatched accepted value is never promoted to
- *   an extended-hours quote.
+ * Row policy:
+ *
+ * - **regular session** — the accepted quote is the primary row and there is no
+ *   extended row;
+ * - **pre/post session** — the accepted quote becomes the extended row while a
+ *   previously accepted regular quote (or the quote's real `regularClose` /
+ *   `previousClose`) holds the primary row;
+ * - **closed / weekend / holiday** — the primary row is the latest completed
+ *   regular close, and the extended row may still show the latest completed
+ *   session's print (Friday's after-hours seen on a Sunday), always carrying its
+ *   own trading date.
+ *
+ * Extended-source precedence, highest first:
+ *   1. an accepted live/REST extended print already in the quote pipeline;
+ *   2. `serverExtendedQuote` — the verified pre/post print resolved server-side
+ *      from the existing Yahoo chart pipeline.
+ *
+ * Two things this function never does: promote an extended price into the
+ * primary row, and show an extended print from an older session than the
+ * regular price beside it.
  */
 export function resolvePriceHeaderData(input: {
   current: StockDetailQuoteResource;
   initial: StockDetailQuoteResource;
   marketStatus: 'pre-market' | 'open' | 'after-hours' | 'closed' | 'holiday' | 'early-close' | 'unknown' | null;
   evaluatedAt: string;
+  /** Server-resolved pre/post print; used only when the pipeline has no accepted one. */
+  serverExtendedQuote?: PriceHeaderExtendedQuote | null;
 }): PriceHeaderData {
   const { current, initial, marketStatus, evaluatedAt } = input;
+  const serverExtendedQuote = input.serverExtendedQuote ?? null;
+
+  /**
+   * The server print is only valid beside a primary row from the SAME exchange
+   * trading date. This is what allows Friday's after-hours row on a Sunday
+   * (primary row is also Friday) while rejecting any older leftover.
+   */
+  const serverExtendedFor = (regularAsOf: string | null): PriceHeaderExtendedQuote | null => {
+    if (!serverExtendedQuote || !regularAsOf || !serverExtendedQuote.tradingDate) return null;
+    return exchangeSessionDate(regularAsOf, US_EQUITY_TIMEZONE) === serverExtendedQuote.tradingDate
+      ? serverExtendedQuote
+      : null;
+  };
   const currentQuote = current.data;
   const acceptedAsOf = current.freshness.asOf;
   const acceptedSession = acceptedAsOf ? classifyUsEquitySession(acceptedAsOf) : null;
@@ -204,7 +235,11 @@ export function resolvePriceHeaderData(input: {
       freshness: current.freshness,
       provider: current.provider,
       fallbackLabel: current.fallbackLabel,
-      extendedQuote: null,
+      // The pipeline had no extended print of its own — during the regular
+      // session there is correctly none, and the server resolver also returns
+      // none. Outside it, this is what surfaces the latest session's pre/post
+      // row without ever touching the primary price above.
+      extendedQuote: serverExtendedFor(current.freshness.asOf),
     };
   }
 
@@ -251,28 +286,69 @@ export function resolvePriceHeaderData(input: {
 
   const eligibleExtended = acceptedExtended
     && acceptedStatus !== 'stale' && acceptedStatus !== 'unavailable';
+  const primaryFreshness = acceptedRegularQuote
+    ? initial.freshness
+    : { ...current.freshness, asOf: null };
 
   return {
     quote: regularQuote,
-    freshness: acceptedRegularQuote
-      ? initial.freshness
-      : { ...current.freshness, asOf: null },
+    freshness: primaryFreshness,
     provider: acceptedRegularQuote ? initial.provider : current.provider,
     fallbackLabel: acceptedRegularQuote ? initial.fallbackLabel : null,
+    // An accepted live/REST extended print wins; otherwise the server-resolved
+    // pre/post print fills the row, matched to the primary row's trading date.
     extendedQuote: eligibleExtended
       ? {
           session: expectedExtendedSession === 'premarket' ? 'premarket' : 'after-hours',
           price: currentQuote.price,
           asOf: acceptedAsOf,
+          tradingDate: exchangeSessionDate(acceptedAsOf, US_EQUITY_TIMEZONE),
           freshness: current.freshness,
           provider: current.provider,
         }
-      : null,
+      : serverExtendedFor(primaryFreshness.asOf ?? acceptedAsOf),
   };
 }
 
 export function dataStatusPresentation(status: PriceDataStatus) {
   return DATA_STATUS_PRESENTATION[status];
+}
+
+/**
+ * Short `DD/MM` label for the trading session a price belongs to.
+ *
+ * The date is resolved in EXCHANGE-local time, not the reader's: a US close at
+ * 16:00 ET is the 24th's session even though it is already the 25th in Bangkok.
+ * Labelling it by the reader's clock would show the wrong trading day for every
+ * Asian user, which is precisely the row this date exists to disambiguate.
+ * Accepts either an ISO instant or an already-resolved `YYYY-MM-DD`.
+ */
+export function formatSessionDateLabel(
+  value: string | null | undefined,
+  timeZone = US_EQUITY_TIMEZONE,
+): string | null {
+  if (!value) return null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : exchangeSessionDate(value, timeZone);
+  if (!date) return null;
+  const [, month, day] = date.split('-');
+  return month && day ? `${day}/${month}` : null;
+}
+
+/**
+ * Human label for which session a price was printed in, used in the provenance
+ * detail so "regular vs pre vs after" is always inspectable even though the
+ * primary row stays free of technical vocabulary.
+ */
+export function priceSessionLabel(asOf: string | null | undefined): string {
+  if (!asOf) return 'ไม่ทราบช่วงเวลาซื้อขาย';
+  switch (classifyUsEquitySession(asOf)) {
+    case 'premarket': return 'ก่อนตลาดเปิด (Pre-market)';
+    case 'regular': return 'เวลาทำการปกติ (Regular)';
+    case 'afterhours': return 'หลังเวลาทำการ (After-hours)';
+    default: return 'นอกเวลาซื้อขาย (Closed)';
+  }
 }
 
 export function priceDirectionPresentation(direction: PriceDirection) {

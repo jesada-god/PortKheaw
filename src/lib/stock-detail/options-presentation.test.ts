@@ -17,6 +17,7 @@ function contract(type: 'call' | 'put', overrides: Partial<OptionContract> = {})
     bid: null, ask: null, last: null, mark: null, volume: null, openInterest: 500,
     impliedVolatility: null, delta: null, gamma: null, theta: null, vega: null, rho: null,
     inTheMoney: null, multiplier: 100, currency: 'USD', provider: 'alpaca',
+    marketDataProvider: null, marketDataFeed: null, oiAsOf: null, delayedMinutes: null, valuationSource: null,
     asOf: '2026-07-27T00:00:00.000Z', timestampKind: 'receipt', status: 'delayed', ...overrides,
   };
 }
@@ -50,12 +51,16 @@ describe('options status presentation', () => {
     expect(presentOptionsStatus({ expanded: false, loading: false, chain: null, result: null }).state).toBe('idle');
   });
 
-  it('treats a delivered chain with no derivable levels as a success, not a failure', () => {
+  it('does not report success unless Calls, Puts and Open Interest are usable', () => {
+    const withoutOi = chain({
+      calls: [contract('call', { openInterest: null })],
+      puts: [contract('put', { openInterest: null })],
+    });
     const status = presentOptionsStatus({
-      expanded: true, loading: false, chain: chain(),
+      expanded: true, loading: false, chain: withoutOi,
       result: optionsUnavailable('AAPL', EXPIRATION, 'no-open-interest', 'missing', 'alpaca'),
     });
-    expect(status.state).toBe('success');
+    expect(status.state).toBe('error');
   });
 
   it('separates "this symbol has no options" from "the load failed"', () => {
@@ -88,8 +93,26 @@ describe('options provenance detail', () => {
   });
 
   it('reports Greeks as supplied when the provider actually sent them', () => {
-    const withGreeks = chain({ calls: [contract('call', { delta: 0.55 })] });
+    const withGreeks = chain({ calls: [contract('call', {
+      delta: 0.55,
+      valuationSource: 'provider',
+      marketDataProvider: 'alpaca-options-data',
+      marketDataFeed: 'indicative',
+    })] });
     expect(presentOptionsProvenance(withGreeks, null).greeks).toContain('ส่ง IV/Greeks มาบางส่วน');
+    expect(presentOptionsProvenance(withGreeks, null).source).toContain('Alpaca Options Data (indicative)');
+  });
+
+  it('labels deterministic IV/Greeks as calculated by Nexora, not provider-supplied', () => {
+    const derived = chain({ calls: [contract('call', {
+      delta: 0.55,
+      valuationSource: 'nexora-derived',
+      marketDataProvider: 'alpaca-options-data',
+      marketDataFeed: 'indicative',
+    })] });
+    const detail = presentOptionsProvenance(derived, null);
+    expect(detail.greeks).toContain('คำนวณโดย Nexora');
+    expect(detail.greeks).not.toContain('ผู้ให้บริการส่ง');
   });
 
   it('translates a failure into human copy and never leaks the raw provider message', () => {

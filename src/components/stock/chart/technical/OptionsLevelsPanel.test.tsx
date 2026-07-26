@@ -16,6 +16,7 @@ function contract(type: 'call' | 'put', strike: number, openInterest: number | n
     bid: null, ask: null, last: null, mark: null, volume: null, openInterest,
     impliedVolatility: null, delta: null, gamma: null, theta: null, vega: null, rho: null,
     inTheMoney: null, multiplier: 100, currency: 'USD', provider: 'alpaca',
+    marketDataProvider: null, marketDataFeed: null, oiAsOf: null, delayedMinutes: null, valuationSource: null,
     asOf: AS_OF, timestampKind: 'receipt', status: 'delayed',
   };
 }
@@ -94,13 +95,73 @@ describe('OptionsLevelsPanel success', () => {
     expect(call.textContent).toBe('900');
     await act(async () => call.click());
     const detail = host.querySelector('[aria-label="รายละเอียดสัญญาออปชัน"]')!;
-    expect(detail.textContent).toContain('IV—');
-    expect(detail.textContent).toContain('Delta—');
-    expect(detail.textContent).toContain('Gamma—');
-    expect(detail.textContent).toContain('Theta—');
-    expect(detail.textContent).toContain('Vega—');
-    expect(detail.textContent).toContain('OI900');
-    expect(detail.textContent).toContain('Volume—');
+    expect(detail.querySelector('[data-testid="option-metric-iv"] dd')?.textContent).toBe('—');
+    expect(detail.querySelector('[data-testid="option-metric-delta"] dd')?.textContent).toBe('—');
+    expect(detail.querySelector('[data-testid="option-metric-gamma"] dd')?.textContent).toBe('—');
+    expect(detail.querySelector('[data-testid="option-metric-theta"] dd')?.textContent).toBe('—');
+    expect(detail.querySelector('[data-testid="option-metric-vega"] dd')?.textContent).toBe('—');
+    expect(detail.querySelector('[data-testid="option-metric-oi"] dd')?.textContent).toBe('900');
+    expect(detail.querySelector('[data-testid="option-metric-volume"] dd')?.textContent).toBe('—');
+    await act(async () => root.unmount());
+  });
+
+  it('shows every enriched contract field with truthful provenance and changes selection without fetching', async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    const enrichedCall: OptionContract = {
+      ...contract('call', 210, 900),
+      bid: 4.2,
+      ask: 4.6,
+      last: 4.5,
+      mark: 4.4,
+      volume: 1_234,
+      impliedVolatility: 0.275,
+      delta: 0.6857,
+      gamma: 0.0426,
+      theta: -0.5146,
+      vega: 0.1074,
+      marketDataProvider: 'alpaca-options-data',
+      marketDataFeed: 'indicative',
+      oiAsOf: '2026-07-24',
+      asOf: '2026-07-27T14:59:59.000Z',
+      valuationSource: 'provider',
+    };
+    const enrichedChain: OptionsChain = {
+      ...chain,
+      calls: chain.calls.map((item) => item.strike === 210 ? enrichedCall : item),
+    };
+    const { host, root } = mount();
+    await act(async () => root.render(
+      <OptionsLevelsPanel {...baseProps()} chain={enrichedChain} result={levels} expirations={[EXPIRATION]} selectedExpiration={EXPIRATION} />,
+    ));
+
+    const strike = host.querySelector('button[aria-label="เลือก strike 210"]') as HTMLButtonElement;
+    await act(async () => strike.click());
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(strike.getAttribute('aria-pressed')).toBe('true');
+
+    const detail = host.querySelector('[aria-label="รายละเอียดสัญญาออปชัน"]')!;
+    const metric = (label: string) => detail.querySelector(`[data-testid="option-metric-${label}"] dd`)?.textContent;
+    expect(detail.textContent).toContain('CALL $210');
+    expect(detail.textContent).toContain('หมดอายุ 21 ส.ค. 2569 · DTE');
+    expect(metric('bid')).toBe('$4.2');
+    expect(metric('ask')).toBe('$4.6');
+    expect(metric('last')).toBe('$4.5');
+    expect(metric('mark')).toBe('$4.4');
+    expect(metric('spread')).toBe('$0.4');
+    expect(metric('volume')).toBe('1,234');
+    expect(metric('oi')).toBe('900');
+    expect(metric('iv')).toBe('27.5%');
+    expect(metric('delta')).toBe('0.6857');
+    expect(metric('gamma')).toBe('0.0426');
+    expect(metric('theta')).toBe('-0.5146');
+    expect(metric('vega')).toBe('0.1074');
+    expect(detail.textContent).toContain('Alpaca Options Data · indicative');
+    expect(detail.textContent).toContain('IV / GreeksAlpaca Options Data · indicative');
+
+    for (const term of ['optionsSection', 'callWall', 'putWall', 'maxPain', 'openInterest', 'impliedVolatility', 'delta', 'gamma', 'theta', 'vega']) {
+      expect(host.querySelector(`[data-testid="info-hint-${term}"]`)).toBeTruthy();
+    }
     await act(async () => root.unmount());
   });
 
@@ -121,13 +182,13 @@ describe('OptionsLevelsPanel success', () => {
     await act(async () => root.unmount());
   });
 
-  it('still reports success when the chain arrived but carries no open interest', async () => {
+  it('does not report success when the chain carries no usable open interest', async () => {
     const { host, root } = mount();
     const bare = { ...chain, calls: chain.calls.map((item) => ({ ...item, openInterest: null })), puts: chain.puts.map((item) => ({ ...item, openInterest: null })) };
     await act(async () => root.render(
       <OptionsLevelsPanel {...baseProps()} chain={bare} result={optionsUnavailable('AAPL', EXPIRATION, 'no-open-interest', 'missing', 'alpaca')} expirations={[EXPIRATION]} selectedExpiration={EXPIRATION} />,
     ));
-    expect(host.querySelector('[data-testid="options-status"]')?.textContent).toContain('โหลดข้อมูลสำเร็จ');
+    expect(host.querySelector('[data-testid="options-status"]')?.textContent).toContain('โหลดข้อมูลไม่สำเร็จ');
     expect(host.querySelector('[data-testid="options-card-call-wall"]')?.textContent).toContain('—');
     await act(async () => root.unmount());
   });

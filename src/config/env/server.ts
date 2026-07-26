@@ -63,6 +63,10 @@ export function parseServerEnv(input: Record<string, unknown>) {
       // and live hosts expose the same catalogue, so this defaults to paper and is
       // only overridden when the deployment holds live trading credentials.
       ALPACA_TRADING_BASE_URL: read('ALPACA_TRADING_BASE_URL', optionalUrl, undefined),
+      // Options market-data feed. Left unset the adapter uses `indicative`, the
+      // only feed this account is entitled to: a live probe returned HTTP 403
+      // "OPRA agreement is not signed" for `opra`. Override once OPRA is signed.
+      ALPACA_OPTIONS_FEED: read('ALPACA_OPTIONS_FEED', optionalSecret, undefined),
       MARKET_DATA_PROVIDER: read('MARKET_DATA_PROVIDER', optionalSecret, undefined),
       NEWS_API_KEY: read('NEWS_API_KEY', optionalSecret, undefined),
       SUPABASE_SERVICE_ROLE_KEY: read('SUPABASE_SERVICE_ROLE_KEY', optionalSecret, undefined),

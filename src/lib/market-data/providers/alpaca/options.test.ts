@@ -69,7 +69,10 @@ describe('AlpacaOptionsProvider', () => {
     expect(result.timestampKind).toBe('receipt');
     expect(result.asOf).toBe('2026-07-27T15:00:00.000Z');
     expect(result.warnings.join(' ')).toMatch(/settled on 2026-07-23/);
-    expect(result.warnings.join(' ')).toMatch(/implied volatility, or Greeks/i);
+    // Market fields are intentionally absent from the catalogue row and are
+    // added later by the bounded market-snapshot enrichment request.
+    expect(result.contracts[0].marketDataProvider).toBeNull();
+    expect(result.contracts[0].valuationSource).toBeNull();
   });
 
   it('sends credentials as headers and never as query parameters', async () => {

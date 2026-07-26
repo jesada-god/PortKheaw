@@ -15,6 +15,9 @@ import {
   resolveDataStatus,
   resolveMarketSession,
   resolvePriceHeaderData,
+  formatSessionDateLabel,
+  priceSessionLabel,
+  type PriceHeaderExtendedQuote,
 } from './price-header';
 
 describe('stock price header market session mapping', () => {
@@ -533,5 +536,158 @@ describe('connection status presentation mapping', () => {
   it('renders no indicator for a REST-only deployment (null/undefined)', () => {
     expect(connectionStatusPresentation(null)).toEqual({ kind: 'none' });
     expect(connectionStatusPresentation(undefined)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('stock price header session date labels', () => {
+  it('formats an exchange-local DD/MM from an ISO instant', () => {
+    // 20:00Z on 24 July is 16:00 ET the SAME day — the session it belongs to.
+    expect(formatSessionDateLabel('2026-07-24T20:00:00.000Z')).toBe('24/07');
+    // 23:59Z is still 19:59 ET on the 24th, inside Friday's after-hours window.
+    expect(formatSessionDateLabel('2026-07-24T23:59:00.000Z')).toBe('24/07');
+    // 01:00Z on the 25th is 21:00 ET on the 24th — still the 24th's session.
+    expect(formatSessionDateLabel('2026-07-25T01:00:00.000Z')).toBe('24/07');
+  });
+
+  it('passes an already-resolved trading date straight through', () => {
+    expect(formatSessionDateLabel('2026-07-17')).toBe('17/07');
+  });
+
+  it('returns null for a missing or unparseable value', () => {
+    expect(formatSessionDateLabel(null)).toBeNull();
+    expect(formatSessionDateLabel(undefined)).toBeNull();
+    expect(formatSessionDateLabel('not-a-date')).toBeNull();
+  });
+
+  it('names the session a price was printed in for the provenance detail', () => {
+    expect(priceSessionLabel('2026-07-24T14:00:00.000Z')).toContain('Regular');
+    expect(priceSessionLabel('2026-07-24T11:00:00.000Z')).toContain('Pre-market');
+    expect(priceSessionLabel('2026-07-24T21:00:00.000Z')).toContain('After-hours');
+    expect(priceSessionLabel('2026-07-26T17:00:00.000Z')).toContain('Closed');
+    expect(priceSessionLabel(null)).toContain('ไม่ทราบ');
+  });
+});
+
+describe('stock price header server-resolved extended quote', () => {
+  const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
+  const SUNDAY = '2026-07-26T17:00:00.000Z';
+
+  function serverExtended(overrides: Partial<PriceHeaderExtendedQuote> = {}): PriceHeaderExtendedQuote {
+    return {
+      session: 'after-hours',
+      price: 206.6,
+      asOf: '2026-07-24T23:55:00.000Z',
+      tradingDate: '2026-07-24',
+      freshness: { status: 'delayed', asOf: '2026-07-24T23:55:00.000Z', maxAgeSeconds: null },
+      provider: 'yahoo-finance-chart',
+      ...overrides,
+    };
+  }
+
+  // Production shape: Polygon stamps the close at exactly 20:00:00Z (16:00 ET),
+  // which the session classifier treats as an after-hours instant, and supplies
+  // `regularClose` separately. That pairing is what keeps the regular close in
+  // the primary row instead of falling back to the previous close.
+  const regularClose: Quote = {
+    ...HEADER_QUOTE, price: 206.87, regularClose: 206.87,
+    previousClose: 208.76, previousRegularClose: 208.76,
+  };
+
+  it("shows the latest session's after-hours row on a Sunday, with its own date", () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: SUNDAY,
+      serverExtendedQuote: serverExtended(),
+    });
+
+    // The primary row is untouched: the extended print never overwrites it.
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote).not.toBeNull();
+    expect(result.extendedQuote!.session).toBe('after-hours');
+    expect(result.extendedQuote!.price).toBe(206.6);
+    expect(result.extendedQuote!.tradingDate).toBe('2026-07-24');
+    // Never claimed as live.
+    expect(result.extendedQuote!.freshness.status).toBe('delayed');
+  });
+
+  it('rejects an extended print from an older session than the primary row', () => {
+    const regular = quoteResource(regularClose, '2026-07-27T20:00:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: '2026-07-27T22:00:00.000Z',
+      // Friday's print beside Monday's close: stale, must not render.
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it('shows a pre-market row beside the latest completed regular close', () => {
+    const regular = quoteResource(regularClose, '2026-07-27T20:00:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'pre-market',
+      evaluatedAt: '2026-07-28T11:00:00.000Z',
+      serverExtendedQuote: serverExtended({
+        session: 'premarket', price: 208.1,
+        asOf: '2026-07-27T12:45:00.000Z', tradingDate: '2026-07-27',
+      }),
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote!.session).toBe('premarket');
+    expect(result.extendedQuote!.price).toBe(208.1);
+  });
+
+  it('prefers an accepted pipeline extended print over the server one', () => {
+    // 2026-07-24 20:30Z is 16:30 ET — inside Friday's after-hours window.
+    const accepted = quoteResource({ ...HEADER_QUOTE, price: 207.4, regularClose: 206.87 }, '2026-07-24T20:30:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: accepted,
+      initial: accepted,
+      marketStatus: 'after-hours',
+      evaluatedAt: '2026-07-24T20:35:00.000Z',
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.extendedQuote!.price).toBe(207.4);
+    expect(result.extendedQuote!.provider).toBe('polygon');
+    // The regular close still holds the primary row.
+    expect(result.quote!.price).toBe(206.87);
+  });
+
+  it('hides the extended row during the regular session', () => {
+    const regular = quoteResource(regularClose, '2026-07-24T15:00:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'open',
+      evaluatedAt: '2026-07-24T15:01:00.000Z',
+      // Even if one were supplied, its trading date matches, but the caller
+      // resolves none mid-session; passing null must keep the row hidden.
+      serverExtendedQuote: null,
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it('stays backwards compatible when no server extended quote is supplied', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      marketStatus: 'closed',
+      evaluatedAt: SUNDAY,
+    });
+
+    expect(result.extendedQuote).toBeNull();
   });
 });

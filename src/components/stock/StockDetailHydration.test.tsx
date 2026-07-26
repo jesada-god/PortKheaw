@@ -106,6 +106,7 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   },
   fxQuote: null,
   evaluatedAt: '2026-07-20T06:00:00.000Z',
+  extendedQuote: null,
   providerConfigured: true,
   initialWatched: true,
   technicalIndicatorsEnabled: false,
@@ -241,7 +242,11 @@ describe('Stock Detail hydration regression', () => {
       const clientInitialMarkup = initialMarkup();
 
       expect(clientInitialMarkup).toBe(serverMarkup);
-      expect(serverMarkup).toContain('ข้อมูล ณ 17 ก.ค. 2569');
+      // The primary row carries the session's trading date only; the full
+      // provider timestamp now lives behind the ⓘ control. A date-only quote is
+      // rendered from `latestTradingDay` verbatim, so no host time zone can
+      // shift it and server/client markup stays identical.
+      expect(serverMarkup).toContain('17/07');
       expect(serverMarkup).not.toContain('17 ก.ค. 2569 00:00');
       expect(serverMarkup).not.toContain('Loading Analyst Consensus');
       expect(serverMarkup).not.toContain('Target Price');

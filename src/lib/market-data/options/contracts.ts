@@ -10,6 +10,15 @@ const nullableFinite = z.number().finite().nullable();
 const nullableNonnegative = z.number().finite().nonnegative().nullable();
 const nullableInteger = z.number().int().nonnegative().nullable();
 
+/**
+ * Where a contract's IV/Greeks came from. `provider` means the upstream supplied
+ * them; `nexora-derived` means they were solved from the contract's own observed
+ * market price and must be labelled as calculated in the UI. `null` means the
+ * fields are simply unavailable and render as "—".
+ */
+export const optionValuationSourceSchema = z.enum(['provider', 'nexora-derived']).nullable();
+export type OptionValuationSource = z.infer<typeof optionValuationSourceSchema>;
+
 export const optionContractSchema = z.object({
   contractSymbol: z.string().min(1),
   underlyingSymbol: z.string().min(1),
@@ -31,10 +40,22 @@ export const optionContractSchema = z.object({
   inTheMoney: z.boolean().nullable(),
   multiplier: z.number().finite().positive(),
   currency: z.string().min(3).max(8),
+  /** Catalogue provider: the authority for identity, strike, expiration and OI. */
   provider: z.string().min(1),
+  /**
+   * Quote/trade/Greeks provider, when a separate market-data source was merged
+   * onto the catalogue row. Null when only the catalogue answered.
+   */
+  marketDataProvider: z.string().min(1).nullable().default(null),
+  /** Upstream feed the market data came from, e.g. `indicative`. Disclosed, never assumed. */
+  marketDataFeed: z.string().min(1).nullable().default(null),
   asOf: z.iso.datetime(),
+  /** Settlement date of the end-of-day open interest, as dated by the provider. */
+  oiAsOf: z.iso.date().nullable().default(null),
   timestampKind: marketTimestampKindSchema,
   status: marketDataStatusSchema,
+  delayedMinutes: z.number().int().nonnegative().nullable().default(null),
+  valuationSource: optionValuationSourceSchema.default(null),
 }).superRefine((contract, context) => {
   if (contract.bid !== null && contract.ask !== null && contract.bid > contract.ask) {
     context.addIssue({ code: 'custom', path: ['bid'], message: 'bid must not exceed ask' });

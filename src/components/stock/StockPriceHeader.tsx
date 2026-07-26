@@ -17,9 +17,11 @@ import {
   convertUsdForDisplay,
   dataStatusPresentation,
   deriveMarketSession,
+  formatSessionDateLabel,
   marketSessionPresentation,
   priceDirectionPresentation,
   priceFlashDirection,
+  priceSessionLabel,
   resolveDataStatus,
   resolvePriceChange,
   type PriceDirection,
@@ -36,6 +38,8 @@ export interface ExtendedHoursQuote {
   session: 'premarket' | 'after-hours';
   price: number;
   asOf: string;
+  /** Exchange-local trading date of the print; always rendered beside the value. */
+  tradingDate: string | null;
   freshness: DataFreshness;
   provider: string | null;
 }
@@ -269,6 +273,9 @@ export function StockPriceHeader({
   const quoteDate = freshness.asOf ? null : quote?.latestTradingDay ?? null;
   const displayedQuoteAsOf = freshness.asOf ?? quoteDate;
   const combinedStatus = market ? sessionView.label : 'ไม่สามารถตรวจสอบสถานะตลาดได้';
+  // Exchange-local DD/MM for the session the primary price belongs to.
+  const sessionDateLabel = formatSessionDateLabel(displayedQuoteAsOf);
+  const extendedDateLabel = formatSessionDateLabel(extendedQuote?.tradingDate ?? extendedQuote?.asOf);
   // Real-time badge is gated on the truthful `realtime` flag (a genuine live
   // feed), never on the data-status heuristic alone.
   const feedLabel = feed ? feed.toUpperCase() : null;
@@ -346,24 +353,29 @@ export function StockPriceHeader({
               </span>
               <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-text-muted">{displayedCurrency}</span>
             </span>
-            {regularChange && <div className={`inline-flex shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
+            {/* The change always occupies its own line: `basis-full` makes it wrap
+                below the price group at every width, giving the fixed reading
+                order price → change → session that the header specifies, while
+                remaining a sibling so no numeric token can ever split. */}
+            {regularChange && <div data-testid="regular-change" className={`inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
               <span className="whitespace-nowrap">{formatSigned(displayChange)}</span>
               <span className="whitespace-nowrap">{formatPercent(regularChange.percent)}</span>
               {directionMark(changeDirection) && <span className="text-[0.7em]" aria-label={changeDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(changeDirection)}</span>}
             </div>}
           </div>
 
-          <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-muted">
+          {/* Session + trading date only. Provider, exact timestamp, delay class
+              and any fallback reason live behind the ⓘ control — they are
+              provenance, not headline. */}
+          <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-muted" data-testid="session-line">
             <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
               <SessionIcon session={session}/>
               <span>{combinedStatus}</span>
             </span>
-            <span className="text-text-muted/60" aria-hidden="true">·</span>
-            <span className="whitespace-nowrap tabular-nums">{formatProviderTimestamp(displayedQuoteAsOf, Boolean(quoteDate))}</span>
-            <span className="hidden text-text-muted/60 sm:inline" aria-hidden="true">·</span>
-            <span className="hidden sm:inline">{dataStatusView.label}</span>
-            {fallbackLabel && <span aria-hidden="true">·</span>}
-            {fallbackLabel && <span className="text-amber-300">{fallbackLabel === 'Intraday close fallback' ? 'ราคาปิด intraday ล่าสุด (fallback)' : 'ข้อมูลจากวันซื้อขายก่อนหน้า'}</span>}
+            {sessionDateLabel && <>
+              <span className="text-text-muted/60" aria-hidden="true">·</span>
+              <span className="whitespace-nowrap tabular-nums">{sessionDateLabel}</span>
+            </>}
             {showRealtime && <>
               <span aria-hidden="true">·</span>
               <span
@@ -448,17 +460,22 @@ export function StockPriceHeader({
 
       {currency === 'THB' && thbUnavailable && <p className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-300">ไม่มีอัตรา USD/THB จริงที่ตรวจสอบได้</p>}
 
-      {extendedQuote && extendedChange && displayExtendedPrice !== null && displayExtendedChange !== null && <div data-testid="extended-hours-row" className="mt-4 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-sm tabular-nums">
-        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans font-semibold text-text-main">
+      {/* Extended-hours row. It sits BELOW the regular price and never replaces
+          it, carries its own trading date so a Friday after-hours print read on
+          a Sunday is unambiguous, and is never labelled live. Provider and delay
+          class stay in the ⓘ detail. */}
+      {extendedQuote && extendedChange && displayExtendedPrice !== null && displayExtendedChange !== null && <div data-testid="extended-hours-row" className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-border/70 bg-bg-base/40 px-3 py-2 font-mono text-sm tabular-nums">
+        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans text-xs font-semibold text-text-muted">
           <SessionIcon session={extendedQuote.session} extended/>
           {marketSessionPresentation(extendedQuote.session).label}
-          <ChevronDown aria-hidden="true" className={directionClass(extendedDirection)} size={14}/>
         </span>
-        <span key={extendedFlash.nonce} className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
-        <span className={`shrink-0 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>{formatSigned(displayExtendedChange)} {formatPercent(extendedChange.percent)}</span>
-        <span className="shrink-0 whitespace-nowrap text-xs text-text-muted">{formatProviderTimestamp(extendedQuote.asOf)}</span>
-        <span className="shrink-0 whitespace-nowrap text-xs text-text-muted">{extendedQuote.provider ?? 'provider unavailable'}</span>
-        {extendedDataStatusView && <span className="hidden items-center gap-1.5 text-xs text-text-muted sm:inline-flex">{extendedDataStatusView.emoji && <StatusEmoji value={extendedDataStatusView.emoji}/>} {extendedDataStatusView.label}</span>}
+        <span key={extendedFlash.nonce} data-testid="extended-hours-price" className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
+        <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>
+          <span>{formatSigned(displayExtendedChange)}</span>
+          <span>{formatPercent(extendedChange.percent)}</span>
+          {directionMark(extendedDirection) && <span className="text-[0.7em]" aria-label={extendedDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(extendedDirection)}</span>}
+        </span>
+        {extendedDateLabel && <span data-testid="extended-hours-date" className="ml-auto shrink-0 whitespace-nowrap text-xs text-text-muted">{extendedDateLabel}</span>}
       </div>}
 
       {regularPrice === null && <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-bg-base/60 p-3 text-sm text-amber-300"><p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{stockDetailErrorMessage(quoteError, 'quote', providerConfigured)}</p><button type="button" disabled={quoteLoading || quoteCoolingDown} onClick={onRetryQuote} className="min-h-11 shrink-0 rounded-lg border border-amber-400/30 px-3 text-xs disabled:opacity-50">{quoteLoading ? 'กำลังโหลด…' : quoteCoolingDown ? 'รอตามระยะเวลาที่กำหนดแล้วลองอีกครั้ง' : 'ลองโหลดราคาอีกครั้ง'}</button></div>}
@@ -469,18 +486,32 @@ export function StockPriceHeader({
         <Detail label="Provider" value={provider ?? 'ไม่พบข้อมูล'}/>
         <Detail label="Symbol" value={symbol}/>
         <Detail label="Exchange" value={exchange ?? 'ไม่พบข้อมูล'}/>
-        <Detail label="Session" value={combinedStatus}/>
+        <Detail label="สถานะตลาด" value={combinedStatus}/>
+        <Detail label="ช่วงเวลาของราคา" value={priceSessionLabel(displayedQuoteAsOf)}/>
         <Detail label="Regular Price" value={`${formatNumber(regularPrice)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>
         {!fallbackLabel && <Detail label="Previous Close" value={`${formatNumber(quote?.previousClose ?? null)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>}
-        {extendedQuote && extendedChange && <Detail label="Extended Price" value={`${formatNumber(extendedQuote.price)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'} · ${extendedQuote.provider ?? 'ไม่พบข้อมูล'}`}/>}
+        {extendedQuote && extendedChange && <Detail
+          label="Extended Price"
+          value={`${formatNumber(extendedQuote.price)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'} · ${marketSessionPresentation(extendedQuote.session).label} · ${extendedQuote.tradingDate ?? 'ไม่ทราบวันซื้อขาย'}`}
+        />}
+        {extendedQuote && extendedChange && <Detail label="Extended Source" value={`${extendedQuote.provider ?? 'ไม่พบข้อมูล'} · ${formatProviderTimestamp(extendedQuote.asOf)}`}/>}
+        {extendedQuote && extendedDataStatusView && <Detail label="Extended Data Status" value={extendedDataStatusView.label}/>}
         {!fallbackLabel && <Detail label="Comparison Base" value={extendedQuote && extendedChange ? 'Official Regular Close' : 'Previous Close'}/>}
         <Detail label="Display Currency" value={displayedCurrency}/>
         <Detail
           label={quoteDate ? 'Trading date' : 'Timestamp'}
           value={`${displayedQuoteAsOf ?? 'ไม่พบข้อมูล'} (${formatProviderTimestamp(displayedQuoteAsOf, Boolean(quoteDate))})`}
         />
-        <Detail label="Display Timezone" value="Asia/Bangkok; ข้อมูลแบบ date-only แสดงเฉพาะวันที่"/>
+        <Detail label="Display Timezone" value="Asia/Bangkok; วันซื้อขายอ้างอิงเวลาตลาด (America/New_York)"/>
         <Detail label="Data Status" value={dataStatusView.label}/>
+        {/* Fallback provenance moved out of the primary row: it is a technical
+            explanation of WHERE the price came from, not part of the price. */}
+        {fallbackLabel && <Detail
+          label="Fallback"
+          value={fallbackLabel === 'Intraday close fallback'
+            ? 'ใช้ราคาปิดระหว่างวันล่าสุดแทน เนื่องจากผู้ให้บริการหลักไม่ตอบกลับราคาปัจจุบัน'
+            : 'ใช้ข้อมูลจากวันซื้อขายก่อนหน้า'}
+        />}
         <Detail label="Delay Duration" value="Provider ไม่ได้ระบุ"/>
         {selectedCurrency === 'THB' && <Detail label="FX" value={fxQuote ? `1 USD = ${fxQuote.rate} THB · ${fxQuote.source} · ณ ${fxQuote.asOf}${fxQuote.stale ? ' · ข้อมูลเก่า' : fxQuote.cached ? ' · ข้อมูลแคช' : ''}` : 'ไม่พบข้อมูล'}/>}
       </dl>

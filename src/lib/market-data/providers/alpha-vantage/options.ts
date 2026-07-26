@@ -35,6 +35,35 @@ const alphaVantageOptionsResponseSchema = z.object({
 export interface OptionsContractsProvider {
   readonly id: string;
   getOptionsContracts(symbol: string, expiration?: string): Promise<NormalizedOptionContracts>;
+  /**
+   * Optional market-data enrichment for ONE expiration, keyed by exact contract
+   * symbol. A provider whose catalogue already carries quotes and Greeks omits
+   * this; a catalogue-only provider implements it so bid/ask/volume/IV/Greeks
+   * can be merged on. Enrichment must never fail the chain — an implementation
+   * reports its problems through `warnings` and returns whatever it did get.
+   */
+  getMarketSnapshots?(symbol: string, expiration: string): Promise<OptionsMarketSnapshotBundle>;
+}
+
+/** Provider-agnostic view of an options market-data snapshot batch. */
+export interface OptionsMarketSnapshotBundle {
+  snapshots: ReadonlyMap<string, {
+    bid: number | null;
+    ask: number | null;
+    last: number | null;
+    volume: number | null;
+    impliedVolatility: number | null;
+    delta: number | null;
+    gamma: number | null;
+    theta: number | null;
+    vega: number | null;
+    rho: number | null;
+    observedAt: string | null;
+  }>;
+  provider: string;
+  feed: string;
+  asOf: string;
+  warnings: string[];
 }
 
 export class AlphaVantageOptionsProvider implements OptionsContractsProvider {

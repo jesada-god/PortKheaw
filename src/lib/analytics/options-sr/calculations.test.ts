@@ -37,6 +37,7 @@ function contract(overrides: Overrides): OptionContract {
     multiplier: overrides.multiplier ?? 100,
     currency: 'USD',
     provider: 'alpha-vantage',
+    marketDataProvider: null, marketDataFeed: null, oiAsOf: null, delayedMinutes: null, valuationSource: null,
     asOf: overrides.asOf ?? '2026-07-21T00:00:00.000Z',
     timestampKind: 'receipt',
     status: overrides.status ?? 'delayed',

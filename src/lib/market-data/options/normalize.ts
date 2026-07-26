@@ -27,6 +27,8 @@ export interface RawOptionContractInput {
   multiplier?: unknown;
   currency?: unknown;
   asOf?: unknown;
+  /** Settlement date of this row's open interest, when the provider dates it. */
+  oiAsOf?: unknown;
 }
 
 export interface NormalizeOptionContext {
@@ -130,6 +132,14 @@ export function normalizeOptionContracts(
     }
     const asOf = text(row.asOf) ?? context.asOf;
     snapshotAsOf.add(asOf);
+    const impliedVolatility = normalizeImpliedVolatility(row.impliedVolatility, context.ivUnit);
+    const delta = numberOrNull(row.delta);
+    const gamma = numberOrNull(row.gamma);
+    const theta = numberOrNull(row.theta);
+    const vega = numberOrNull(row.vega);
+    // A provider that supplied ANY volatility surface field owns those values;
+    // the derived-valuation pass must then leave this contract alone.
+    const providerValued = [impliedVolatility, delta, gamma, theta, vega].some((value) => value !== null);
     const parsed = optionContractSchema.safeParse({
       contractSymbol,
       underlyingSymbol,
@@ -142,19 +152,24 @@ export function normalizeOptionContracts(
       mark: nonnegative(row.mark),
       volume: nonnegativeInteger(row.volume),
       openInterest: nonnegativeInteger(row.openInterest),
-      impliedVolatility: normalizeImpliedVolatility(row.impliedVolatility, context.ivUnit),
-      delta: numberOrNull(row.delta),
-      gamma: numberOrNull(row.gamma),
-      theta: numberOrNull(row.theta),
-      vega: numberOrNull(row.vega),
+      impliedVolatility,
+      delta,
+      gamma,
+      theta,
+      vega,
       rho: numberOrNull(row.rho),
       inTheMoney: typeof row.inTheMoney === 'boolean' ? row.inTheMoney : null,
       multiplier,
       currency: text(row.currency) ?? context.defaultCurrency ?? 'USD',
       provider: context.provider,
+      marketDataProvider: null,
+      marketDataFeed: null,
       asOf,
+      oiAsOf: validDate(row.oiAsOf),
       timestampKind: context.timestampKind,
       status: context.status,
+      delayedMinutes: context.delayedMinutes,
+      valuationSource: providerValued ? 'provider' : null,
     });
     if (!parsed.success) {
       warnings.add('Excluded option rows that failed the normalized contract');

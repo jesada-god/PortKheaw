@@ -61,6 +61,7 @@ export default async function StockDetailPage({
       initialHistory={snapshot.history}
       fxQuote={fxResult.status === 'fulfilled' ? fxResult.value.quote : null}
       evaluatedAt={new Date().toISOString()}
+      extendedQuote={snapshot.extendedQuote}
       providerConfigured={marketDataGatewayConfigured()}
       initialWatched={watchResult.status === 'fulfilled' ? watchResult.value : false}
       technicalIndicatorsEnabled={technicalIndicatorsEnabled()}

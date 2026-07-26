@@ -1,9 +1,10 @@
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import { MarketDataError } from '../errors';
 import type { MarketDataProvider, OptionsChain, OptionsExpirations, ProviderResult } from '../types';
-import type { NormalizedOptionContracts } from './contracts';
+import type { NormalizedOptionContracts, OptionContract } from './contracts';
 import { optionsChainSchema, optionsExpirationsSchema } from './contracts';
 import type { OptionsContractsProvider } from '../providers/alpha-vantage/options';
+import { enrichOptionContracts } from './enrichment';
 import { OptionsCapabilityCache, isEntitlementFailure, type OptionsCapabilityReport } from './capability';
 
 const OPTIONS_CACHE_POLICY = {
@@ -63,7 +64,7 @@ function surfacedFailure(failures: readonly MarketDataError[]): MarketDataError 
 
 export class OptionsMarketDataService {
   private readonly providers: readonly OptionsContractsProvider[];
-  private readonly fullSnapshots = new Map<string, { snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale'; freshUntil: number }>();
+  private readonly fullSnapshots = new Map<string, { snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale'; freshUntil: number; source: OptionsContractsProvider }>();
 
   constructor(
     provider: OptionsContractsProvider | readonly OptionsContractsProvider[],
@@ -80,7 +81,7 @@ export class OptionsMarketDataService {
     return this.providers.map((provider) => this.capability.report(provider.id));
   }
 
-  private async getSnapshot(symbol: string, expiration?: string): Promise<{ snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale' }> {
+  private async getSnapshot(symbol: string, expiration?: string): Promise<{ snapshot: NormalizedOptionContracts; state: 'fresh' | 'cache' | 'stale'; source: OptionsContractsProvider }> {
     if (!this.providers.length) throw new MarketDataError('provider-not-configured', 'Options provider is not configured');
     const failures: MarketDataError[] = [];
     for (const provider of this.providers) {
@@ -100,7 +101,7 @@ export class OptionsMarketDataService {
           OPTIONS_CACHE_POLICY,
         );
         this.capability.markEntitled(provider.id);
-        return { snapshot: resolution.value, state: resolution.state };
+        return { snapshot: resolution.value, state: resolution.state, source: provider };
       } catch (cause) {
         let failure = cause instanceof MarketDataError
           ? cause
@@ -120,12 +121,56 @@ export class OptionsMarketDataService {
     throw surfacedFailure(failures) ?? new MarketDataError('provider-unavailable', 'Options data is unavailable');
   }
 
+  /**
+   * Bounded market-data enrichment for ONE expiration.
+   *
+   * Exactly one logical upstream request per expiration, single-flighted and
+   * cached under the same policy as the chain, so repeated opens/reopens of the
+   * section join the in-flight work instead of adding provider load. A provider
+   * without an enrichment capability, or an enrichment that fails, returns the
+   * contracts unchanged — prices simply render as "—".
+   */
+  private async enrich(
+    source: OptionsContractsProvider,
+    symbol: string,
+    expiration: string,
+    contracts: readonly OptionContract[],
+    spot: number,
+  ): Promise<{ contracts: OptionContract[]; warnings: string[] }> {
+    if (!source.getMarketSnapshots) return { contracts: [...contracts], warnings: [] };
+    try {
+      const bundle = await this.cache.resolve(
+        `options-market-data:${source.id}:${symbol.toUpperCase()}:${expiration}`,
+        () => source.getMarketSnapshots!(symbol, expiration),
+        OPTIONS_CACHE_POLICY,
+      );
+      const enriched = enrichOptionContracts(contracts, bundle.value.snapshots, {
+        spot,
+        nowMs: this.now(),
+        marketDataProvider: bundle.value.provider,
+        marketDataFeed: bundle.value.feed,
+      });
+      return {
+        contracts: enriched.contracts,
+        warnings: [...bundle.value.warnings, ...enriched.warnings],
+      };
+    } catch {
+      // Enrichment is additive. A chain with real strikes and open interest stays
+      // usable when market data is unavailable.
+      return {
+        contracts: [...contracts],
+        warnings: ['Options market data could not be loaded; bid, ask, volume, implied volatility and Greeks are unavailable'],
+      };
+    }
+  }
+
   async getExpirations(symbol: string): Promise<ProviderResult<OptionsExpirations>> {
     const resolution = await this.getSnapshot(symbol);
     this.fullSnapshots.set(symbol.toUpperCase(), {
       snapshot: resolution.snapshot,
       state: resolution.state,
       freshUntil: this.now() + OPTIONS_CACHE_POLICY.freshMs,
+      source: resolution.source,
     });
     const data = cacheStatus(optionsExpirationsSchema.parse({
       underlyingSymbol: resolution.snapshot.underlyingSymbol || symbol,
@@ -152,7 +197,7 @@ export class OptionsMarketDataService {
     // call while preserving the public flow (one expirations route, then one
     // selected-chain route) and truthfully marks the chain as cached.
     const resolution = reusable
-      ? { snapshot: full.snapshot, state: full.state === 'stale' ? 'stale' as const : 'cache' as const }
+      ? { snapshot: full.snapshot, state: full.state === 'stale' ? 'stale' as const : 'cache' as const, source: full.source }
       : await this.getSnapshot(symbol, expiration);
     const snapshot: NormalizedOptionContracts = resolution.snapshot;
     const contracts = snapshot.contracts.filter((contract) => contract.expiration === expiration);
@@ -168,7 +213,12 @@ export class OptionsMarketDataService {
     if (quote.freshness.status !== 'realtime') {
       warnings.push('Underlying spot is not realtime; underlying and options freshness are reported separately');
     }
-    const withMoneyness = contracts.map((contract) => ({
+    // Merge market data onto the catalogue by exact contract symbol. This is the
+    // step that turns a strike/OI-only chain into one carrying bid/ask, volume,
+    // implied volatility and Greeks.
+    const enriched = await this.enrich(resolution.source, symbol, expiration, contracts, spot);
+    warnings.push(...enriched.warnings);
+    const withMoneyness = enriched.contracts.map((contract) => ({
       ...contract,
       inTheMoney: contract.type === 'call' ? spot > contract.strike : spot < contract.strike,
       status: contract.status,

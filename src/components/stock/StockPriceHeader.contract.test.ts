@@ -21,7 +21,8 @@ describe('StockPriceHeader integration contract', () => {
 
   it('shows provider disclosure and the previous-close comparison base', () => {
     expect(header).toContain('<Detail label="Provider"');
-    expect(header).toContain('<Detail label="Session"');
+    expect(header).toContain('<Detail label="สถานะตลาด"');
+    expect(header).toContain('<Detail label="ช่วงเวลาของราคา"');
     expect(header).toContain("label={quoteDate ? 'Trading date' : 'Timestamp'}");
     expect(header).toContain("value={extendedQuote && extendedChange ? 'Official Regular Close' : 'Previous Close'}");
   });
@@ -41,8 +42,10 @@ describe('StockPriceHeader integration contract', () => {
   it('uses the compact Investing-style price hierarchy and session rows', () => {
     expect(header).toContain('<SessionIcon session={session}/>');
     expect(header).toContain('<SessionIcon session={extendedQuote.session} extended/>');
-    expect(header).toContain('<ChevronDown aria-hidden="true"');
     expect(header).toContain('data-testid="extended-hours-row"');
+    // The extended row always carries its own trading date, so a Friday
+    // after-hours print read on a Sunday cannot be mistaken for today.
+    expect(header).toContain('data-testid="extended-hours-date"');
     expect(header).not.toContain('shadow-xl');
   });
 

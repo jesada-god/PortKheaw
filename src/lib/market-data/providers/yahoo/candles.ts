@@ -5,7 +5,8 @@ import { ProviderHttpClient } from '../../provider-http';
 import { YAHOO_CANDLE_CAPABILITIES } from '../../candles/capabilities';
 import { applyAdjustment, normalizeCandles, validatedCandle } from '../../candles/normalize';
 import { candleRangeBounds } from '../../candles/range';
-import { classifyUsEquitySession } from '../../session';
+import { classifyUsEquitySession, US_EQUITY_TIMEZONE } from '../../session';
+import { selectExtendedHoursQuote, type ExtendedHoursQuoteData } from '../../extended-hours';
 import type { ProviderResult, Quote } from '../../types';
 import type { CandleInterval, CandleRequest, NormalizedCandleResult, NormalizedMarketDataProvider } from '../../candles/contracts';
 
@@ -33,6 +34,14 @@ const chartSchema = z.object({
         regularMarketVolume: z.number().finite().nonnegative().optional(),
         previousClose: z.number().finite().positive().optional(),
         chartPreviousClose: z.number().finite().positive().optional(),
+        // Provider-declared session boundaries. These are what make an
+        // extended-hours selection bounded rather than guessed — see
+        // `selectExtendedHoursQuote`.
+        currentTradingPeriod: z.object({
+          pre: z.object({ start: z.number().int(), end: z.number().int() }).passthrough().optional(),
+          regular: z.object({ start: z.number().int(), end: z.number().int() }).passthrough().optional(),
+          post: z.object({ start: z.number().int(), end: z.number().int() }).passthrough().optional(),
+        }).passthrough().optional(),
       }).passthrough(),
       // A window that contains no trading (a weekend, a holiday, or before the
       // open) comes back as HTTP 200 with `chart.error: null`, a full `meta`, an
@@ -255,6 +264,64 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         throw new MarketDataError('invalid-provider-response', 'Yahoo quote response did not match its validated schema');
       }
       throw cause;
+    }
+  }
+
+  /**
+   * The pre-market / after-hours print for the header's secondary row.
+   *
+   * Uses the SAME Yahoo chart endpoint as everything else, only with
+   * `includePrePost=true` and a 5-minute grid, so this adds no new provider and
+   * no browser polling — the caller renders it server-side alongside the quote.
+   * Selection is delegated to {@link selectExtendedHoursQuote}, which accepts a
+   * value only inside Yahoo's own declared pre/post windows.
+   *
+   * Returns null rather than throwing: a missing extended print is a normal
+   * state (mid-session, a symbol with no extended trading), and it must never
+   * take down the regular quote.
+   */
+  async getExtendedQuote(symbol: string): Promise<ExtendedHoursQuoteData | null> {
+    const nowSeconds = Math.floor(this.now().valueOf() / 1_000);
+    const url = new URL(`${BASE_URL}/${encodeURIComponent(symbol)}`);
+    url.searchParams.set('interval', '5m');
+    // Four days always spans a weekend back to the previous trading session,
+    // which is what allows Friday's after-hours print to be found on a Sunday.
+    url.searchParams.set('period1', String(nowSeconds - 4 * 86_400));
+    url.searchParams.set('period2', String(nowSeconds));
+    url.searchParams.set('includePrePost', 'true');
+    try {
+      const payload = await this.http.json({
+        provider: this.id,
+        operation: 'extended-hours-quote',
+        route: '/api/market/quote/[symbol]',
+        symbol,
+        url,
+        init: { cache: 'no-store' },
+        timeoutMs: 10_000,
+        maxAttempts: 1,
+      });
+      const parsed = chartSchema.parse(payload);
+      const result = parsed.chart.result?.[0];
+      if (!result || parsed.chart.error) return null;
+      const canonical = result.meta.symbol?.trim().toUpperCase();
+      if (canonical && canonical !== symbol.trim().toUpperCase()) return null;
+      const regularMarketTime = result.meta.regularMarketTime;
+      if (!regularMarketTime) return null;
+      const closes = result.indicators.quote[0]?.close ?? [];
+      return selectExtendedHoursQuote({
+        buckets: result.timestamp.map((time, index) => {
+          const close = closes[index];
+          return [time, typeof close === 'number' ? close : null] as const;
+        }),
+        preWindow: result.meta.currentTradingPeriod?.pre ?? null,
+        postWindow: result.meta.currentTradingPeriod?.post ?? null,
+        regularMarketTimeSeconds: regularMarketTime,
+        provider: this.id,
+        timeZone: result.meta.exchangeTimezoneName ?? US_EQUITY_TIMEZONE,
+      });
+    } catch {
+      // An unavailable extended print is not a quote failure.
+      return null;
     }
   }
 

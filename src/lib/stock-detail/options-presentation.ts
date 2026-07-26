@@ -52,21 +52,27 @@ export interface OptionsStatusPresentation {
   tone: OptionsStatusTone;
 }
 
+function hasUsableChain(chain: OptionsChain): boolean {
+  return chain.calls.length > 0
+    && chain.puts.length > 0
+    && chain.calls.some((contract) => contract.openInterest !== null)
+    && chain.puts.some((contract) => contract.openInterest !== null);
+}
+
 /** Reasons that mean "this symbol/expiration genuinely has no chain", not "the load failed". */
 const EMPTY_REASONS = new Set(['no-expirations', 'expired-expiration']);
 
 /**
  * Derives the user-facing load state.
  *
- * A chain that arrived is a success even when the derived levels are
- * unavailable (e.g. the provider returned no open interest): the request did
- * succeed, and the missing levels render as "—" rather than as a failure.
+ * Success means the chain contains both Calls and Puts plus usable Open
+ * Interest on both sides. IV/Greeks are enrichment and may remain unavailable.
  */
 export function presentOptionsStatus({ expanded, loading, chain, result }: OptionsStatusInput): OptionsStatusPresentation {
   const state = ((): OptionsLoadState => {
     if (!expanded) return 'idle';
     if (loading) return 'loading';
-    if (chain) return 'success';
+    if (chain) return hasUsableChain(chain) ? 'success' : 'error';
     if (result?.status === 'unavailable') return EMPTY_REASONS.has(result.reason) ? 'empty' : 'error';
     // Expanded, nothing resolved yet: the request is queued, not failed.
     return 'loading';
@@ -76,6 +82,7 @@ export function presentOptionsStatus({ expanded, loading, chain, result }: Optio
 
 const PROVIDER_LABEL: Record<string, string> = {
   alpaca: 'Alpaca',
+  'alpaca-options-data': 'Alpaca Options Data',
   'alpha-vantage': 'Alpha Vantage',
   polygon: 'Polygon',
   finnhub: 'Finnhub',
@@ -132,15 +139,40 @@ export function presentOptionsProvenance(
   result: OptionsSrResult | null,
 ): OptionsProvenanceDetail {
   const provider = chain?.provider ?? result?.provider ?? null;
-  const hasGreeks = Boolean(chain && [...chain.calls, ...chain.puts].some((contract) =>
+  const contracts = chain ? [...chain.calls, ...chain.puts] : [];
+  const hasValues = contracts.some((contract) =>
     contract.impliedVolatility != null || contract.delta != null || contract.gamma != null
-    || contract.theta != null || contract.vega != null));
+    || contract.theta != null || contract.vega != null);
+  const providerValued = contracts.some((contract) => contract.valuationSource === 'provider')
+    // Backward-compatible truth for a validated provider contract produced
+    // before valuationSource was introduced.
+    || (hasValues && !contracts.some((contract) => contract.valuationSource === 'nexora-derived'));
+  const nexoraValued = contracts.some((contract) => contract.valuationSource === 'nexora-derived');
+  const marketSources = [...new Set(contracts.flatMap((contract) => contract.marketDataProvider
+    ? [`${optionsProviderLabel(contract.marketDataProvider)}${contract.marketDataFeed ? ` (${contract.marketDataFeed})` : ''}`]
+    : []))];
+  const latestMarketAsOf = contracts
+    .map((contract) => contract.asOf)
+    .filter((asOf) => Number.isFinite(Date.parse(asOf)))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+  const latestOiAsOf = contracts
+    .map((contract) => contract.oiAsOf)
+    .filter((asOf): asOf is string => Boolean(asOf))
+    .sort()
+    .at(-1);
+  const greeks = providerValued && nexoraValued
+    ? 'ผู้ให้บริการส่งบางค่า · บางค่าคำนวณโดย Nexora'
+    : nexoraValued
+      ? 'คำนวณโดย Nexora จากราคาออปชันจริง'
+      : providerValued
+        ? 'ผู้ให้บริการส่ง IV/Greeks มาบางส่วน'
+        : 'ผู้ให้บริการไม่ได้ส่ง IV/Greeks — แสดงเป็น —';
   return {
-    source: optionsProviderLabel(provider),
+    source: [optionsProviderLabel(provider), ...marketSources].join(' · '),
     dataStatus: optionsDataStatusLabel(chain?.status ?? null),
-    asOf: chain?.asOf ?? (result?.asOf ?? null),
-    openInterest: 'สรุปสิ้นวันทำการ (EOD)',
-    greeks: hasGreeks ? 'ผู้ให้บริการส่ง IV/Greeks มาบางส่วน' : 'ผู้ให้บริการไม่ได้ส่ง IV/Greeks — แสดงเป็น —',
+    asOf: latestMarketAsOf ?? chain?.asOf ?? (result?.asOf ?? null),
+    openInterest: latestOiAsOf ? `สรุปสิ้นวันทำการ (EOD) · ${latestOiAsOf}` : 'สรุปสิ้นวันทำการ (EOD)',
+    greeks,
     failure: result?.status === 'unavailable' && !chain
       ? FAILURE_DETAIL[result.reason] ?? 'แหล่งข้อมูลออปชันใช้งานไม่ได้ชั่วคราว'
       : null,

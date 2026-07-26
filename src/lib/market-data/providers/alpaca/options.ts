@@ -4,10 +4,11 @@ import { MarketDataError } from '../../errors';
 import { ProviderHttpClient } from '../../provider-http';
 import type { NormalizedOptionContracts } from '../../options/contracts';
 import { normalizeOptionContracts } from '../../options/normalize';
-import type { OptionsContractsProvider } from '../alpha-vantage/options';
+import type { OptionsContractsProvider, OptionsMarketSnapshotBundle } from '../alpha-vantage/options';
+import { AlpacaOptionsSnapshotProvider, type AlpacaOptionsSnapshotCredentials } from './options-snapshots';
 
 /**
- * Alpaca options contracts adapter.
+ * Alpaca options CATALOGUE adapter (Trading API).
  *
  * Why this provider exists: a capability probe of every provider configured for
  * Nexora found that Alpaca is the only one whose current plan actually returns
@@ -16,16 +17,18 @@ import type { OptionsContractsProvider } from '../alpha-vantage/options';
  * snapshot is 403 "not entitled", Finnhub's option-chain is 403, and FMP's
  * options endpoints are 403 legacy / 404.
  *
- * What this endpoint does and does not carry, verified against live responses:
+ * What THIS endpoint carries, verified against live responses:
  *   - open interest  : REAL (`open_interest`, dated by `open_interest_date`)
  *   - strike / type / expiration / multiplier : REAL
  *   - last           : previous close (`close_price`, dated by `close_price_date`)
  *   - bid / ask / volume / IV / Greeks : NOT PROVIDED — normalized to null.
  *
- * Greeks and implied volatility are never synthesised here. The canonical
- * contract keeps them null so the UI renders "—" instead of a fabricated number.
- * Open interest is an end-of-day settlement figure, so the snapshot is reported
- * as `delayed` and the OI as-of date is surfaced as a warning.
+ * Those missing fields are exactly why {@link getMarketSnapshots} exists: the
+ * separate Alpaca Options Market Data host does carry them, and the service
+ * merges the two by exact contract symbol. Nothing is synthesised in this file —
+ * a field the catalogue does not carry stays null until real market data
+ * supplies it. Open interest is an end-of-day settlement figure, so the
+ * catalogue is reported as `delayed` and its settlement date is surfaced.
  */
 
 const DEFAULT_TRADING_BASE_URL = 'https://paper-api.alpaca.markets';
@@ -61,18 +64,40 @@ export interface AlpacaOptionsCredentials {
   secretKey: string;
   /** Alpaca serves options contracts from the Trading API; paper hosts the same catalogue. */
   baseUrl?: string;
+  /** Market-data host for the snapshot enrichment; defaults inside the snapshot provider. */
+  dataBaseUrl?: string;
+  /** Entitled market-data feed. Only `indicative` is available on this plan. */
+  dataFeed?: string;
 }
 
 export class AlpacaOptionsProvider implements OptionsContractsProvider {
   readonly id = 'alpaca';
   private readonly baseUrl: string;
+  private readonly marketData: AlpacaOptionsSnapshotProvider;
 
   constructor(
     private readonly credentials: AlpacaOptionsCredentials,
     private readonly http = new ProviderHttpClient(),
     private readonly now: () => Date = () => new Date(),
+    marketData?: AlpacaOptionsSnapshotProvider,
   ) {
     this.baseUrl = (credentials.baseUrl?.trim() || DEFAULT_TRADING_BASE_URL).replace(/\/+$/, '');
+    const snapshotCredentials: AlpacaOptionsSnapshotCredentials = {
+      keyId: credentials.keyId,
+      secretKey: credentials.secretKey,
+      ...(credentials.dataBaseUrl ? { dataBaseUrl: credentials.dataBaseUrl } : {}),
+      ...(credentials.dataFeed ? { feed: credentials.dataFeed } : {}),
+    };
+    this.marketData = marketData ?? new AlpacaOptionsSnapshotProvider(snapshotCredentials, http, now);
+  }
+
+  /**
+   * ONE bounded market-data request per expiration, merged by the service onto
+   * the catalogue rows. Kept separate from {@link getOptionsContracts} so a
+   * market-data outage degrades prices to "—" instead of failing the chain.
+   */
+  async getMarketSnapshots(symbol: string, expiration: string): Promise<OptionsMarketSnapshotBundle> {
+    return this.marketData.getSnapshots(symbol, expiration);
   }
 
   private buildUrl(symbol: string, expiration: string | undefined, today: string): URL {
@@ -143,6 +168,7 @@ export class AlpacaOptionsProvider implements OptionsContractsProvider {
             rho: null,
             multiplier: row.multiplier,
             asOf,
+            oiAsOf: row.open_interest_date,
           };
         }),
         {
@@ -168,7 +194,10 @@ export class AlpacaOptionsProvider implements OptionsContractsProvider {
       const warnings = [...normalized.warnings];
       const settledOn = [...openInterestDates].sort().at(-1);
       if (settledOn) warnings.push(`Open interest is end-of-day and settled on ${settledOn}`);
-      warnings.push('Alpaca options contracts do not provide bid/ask, volume, implied volatility, or Greeks; those fields are reported as unavailable');
+      // The catalogue itself carries no market data. Those fields are supplied by
+      // the separate options market-data snapshot and merged by the service, so
+      // this is a statement about THIS endpoint, not about the final chain.
+      warnings.push('The Alpaca options contract catalogue carries open interest only; bid/ask, volume, implied volatility and Greeks come from the options market-data snapshot');
       // Expiration discovery is calls-only, so this snapshot holds one side of the
       // book and may only be used to list expirations — never served as a chain.
       return { ...normalized, warnings, partial: !expiration };

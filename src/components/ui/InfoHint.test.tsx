@@ -15,6 +15,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('React', React);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -22,6 +23,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function render(ui: React.ReactElement) {
@@ -97,10 +100,33 @@ describe('InfoHint — accessible glossary popover', () => {
     expect(popover()).toBeTruthy();
     act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
     expect(popover()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
 
     click(trigger());
     expect(popover()).toBeTruthy();
     act(() => { document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })); });
     expect(popover()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it('uses a content-height bottom sheet on mobile instead of the desktop popover', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      media: '(max-width: 639px)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    render(<InfoHint term="callWall" />);
+    click(trigger());
+
+    const sheet = container.querySelector<HTMLElement>('[data-testid="info-sheet-callWall"]');
+    expect(sheet).toBeTruthy();
+    expect(sheet!.className).toContain('max-h-[70vh]');
+    expect(container.querySelector('[data-testid="info-popover-callWall"]')).toBeNull();
+    expect(sheet!.textContent).toContain(GLOSSARY.callWall.what);
   });
 });

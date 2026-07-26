@@ -212,6 +212,8 @@ async function probeAlpaca(): Promise<Capability> {
     return { provider: 'alpaca', ...EMPTY, status: 'not-configured', http: null, detail: 'ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY are not set' };
   }
   const base = (process.env.ALPACA_TRADING_BASE_URL?.trim() || 'https://paper-api.alpaca.markets').replace(/\/+$/, '');
+  const dataBase = (process.env.ALPACA_DATA_BASE_URL?.trim() || 'https://data.alpaca.markets').replace(/\/+$/, '');
+  const marketFeed = process.env.ALPACA_OPTIONS_FEED?.trim() || 'indicative';
   const headers = { 'APCA-API-KEY-ID': keyId, 'APCA-API-SECRET-KEY': secretKey };
   const today = new Date().toISOString().slice(0, 10);
 
@@ -234,18 +236,47 @@ async function probeAlpaca(): Promise<Capability> {
     ? ((scoped.payload as Record<string, unknown>).option_contracts as Record<string, unknown>[]) : [];
   const settled = [...new Set(scopedRows.map((row) => row.open_interest_date).filter(Boolean))].sort().at(-1);
 
+  // The catalogue cannot answer price/IV/Greeks entitlement. Probe the exact
+  // bulk endpoint the app uses, scoped to this expiration. This remains one
+  // logical request and never loops contract-by-contract.
+  const marketUrl = new URL(`${dataBase}/v1beta1/options/snapshots/${SYMBOL}`);
+  marketUrl.searchParams.set('feed', marketFeed);
+  marketUrl.searchParams.set('expiration_date', nearest);
+  marketUrl.searchParams.set('limit', '1000');
+  const market = await request(String(marketUrl), headers);
+  const marketRows = market.payload && typeof market.payload === 'object'
+    ? Object.values(((market.payload as Record<string, unknown>).snapshots as Record<string, unknown>) ?? {})
+        .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+    : [];
+  const hasIv = marketRows.some((row) => finite(row.impliedVolatility) !== null);
+  const hasGreeks = marketRows.some((row) => {
+    const greeks = row.greeks;
+    return Boolean(greeks && typeof greeks === 'object'
+      && Object.values(greeks as Record<string, unknown>).some((item) => finite(item) !== null));
+  });
+
+  // Measure OPRA separately when production is using indicative. This records
+  // the current entitlement fact without ever switching production to a feed
+  // that the account may not be licensed to read.
+  let opraDetail = '';
+  if (marketFeed !== 'opra') {
+    const opraUrl = new URL(marketUrl);
+    opraUrl.searchParams.set('feed', 'opra');
+    const opra = await request(String(opraUrl), headers);
+    opraDetail = `; opra HTTP ${opra.http ?? 'network'} ${classify(opra)}`;
+  }
+
   return {
     provider: 'alpaca',
     expirations: expirations.length,
     chain: scopedRows.some((row) => row.type === 'call') && scopedRows.some((row) => row.type === 'put'),
     openInterest: scopedRows.some((row) => finite(row.open_interest) !== null),
-    // Verified absent from this endpoint: never claimed, never synthesised.
-    impliedVolatility: false,
-    greeks: false,
-    freshness: 'delayed',
+    impliedVolatility: hasIv,
+    greeks: hasGreeks,
+    freshness: marketFeed === 'opra' && market.http === 200 ? 'realtime' : 'delayed',
     status: 'entitled',
-    http: result.http,
-    detail: `${scopedRows.length} contracts on ${nearest}; open interest settled ${sanitize(String(settled ?? 'unknown'))}`,
+    http: market.http ?? result.http,
+    detail: `${scopedRows.length} contracts on ${nearest}; open interest settled ${sanitize(String(settled ?? 'unknown'))}; ${marketFeed} market HTTP ${market.http ?? 'network'} with ${marketRows.length} snapshots${opraDetail}`,
   };
 }
 

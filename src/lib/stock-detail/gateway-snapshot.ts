@@ -4,6 +4,7 @@ import { MarketDataError } from '@/src/lib/market-data/errors';
 import { getYahooChartProvider } from '@/src/lib/market-data/candles';
 import { getMarketDataGateway } from '@/src/lib/market-data/gateway/service';
 import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
+import { extendedQuoteMatchesRegularSession, type ExtendedHoursQuoteData } from '@/src/lib/market-data/extended-hours';
 import type { NormalizedBarsResult, NormalizedMarketSession, NormalizedQuote, ResolvedInstrument } from '@/src/lib/market-data/gateway/contracts';
 import type { CompanyProfile, DataFreshness, MarketDataApiError, MarketOverview, ProviderResult, Quote } from '@/src/lib/market-data/types';
 import type { InitialHistoryResponse, StockDetailQuoteResource, StockDetailResource } from './types';
@@ -129,6 +130,14 @@ export interface StockDetailGatewaySnapshot {
   profile: StockDetailResource<CompanyProfile>;
   overview: StockDetailResource<MarketOverview>;
   history: InitialHistoryResponse;
+  /**
+   * Pre-market / after-hours print for the header's secondary row, resolved on
+   * the server from the Yahoo chart pipeline that is already part of this app.
+   * Rendering it here rather than fetching it in the browser is deliberate: the
+   * extended row costs the client zero additional requests and zero polling.
+   * Null whenever there is no valid extended print for the latest session.
+   */
+  extendedQuote: ExtendedHoursQuoteData | null;
 }
 
 export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<StockDetailGatewaySnapshot> {
@@ -151,6 +160,9 @@ export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<St
       } catch { return { ...unavailable<Quote>(quoteCause), fallbackLabel: null }; }
     }
   })();
+  const extendedPromise = getYahooChartProvider()
+    .getExtendedQuote(symbol)
+    .catch(() => null);
   const sessionPromise = gateway.getSession({ instrument }).then(overviewResource).catch(unavailable<MarketOverview>);
   const profilePromise = getCompanyProfileService().getCompanyProfile(symbol).then((result): StockDetailResource<CompanyProfile> => ({
     data: result.data,
@@ -162,12 +174,20 @@ export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<St
     retryAfterSeconds: result.retryAfterSeconds,
     reasonCode: result.reasonCode,
   })).catch(unavailable<CompanyProfile>);
-  const [quote, overview, profile] = await Promise.all([quotePromise, sessionPromise, profilePromise]);
+  const [quote, overview, profile, extended] = await Promise.all([
+    quotePromise, sessionPromise, profilePromise, extendedPromise,
+  ]);
+  // An extended print is only shown next to the regular price it actually
+  // belongs to; one left over from an older session is dropped here.
+  const extendedQuote = extendedQuoteMatchesRegularSession(extended, quote.freshness.asOf)
+    ? extended
+    : null;
   return {
     instrument,
     quote,
     overview,
     profile,
+    extendedQuote,
     history: {
       data: null,
       meta: { provider: null, timestamp: new Date().toISOString(), freshness: unavailableFreshness },

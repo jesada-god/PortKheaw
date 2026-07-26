@@ -39,6 +39,7 @@ function contract(type: 'call' | 'put', strike: number, openInterest: number): O
     bid: null, ask: null, last: null, mark: null, volume: null, openInterest,
     impliedVolatility: null, delta: null, gamma: null, theta: null, vega: null, rho: null,
     inTheMoney: null, multiplier: 100, currency: 'USD', provider: 'alpaca',
+    marketDataProvider: null, marketDataFeed: null, oiAsOf: null, delayedMinutes: null, valuationSource: null,
     asOf: AS_OF, timestampKind: 'receipt', status: 'delayed',
   };
 }

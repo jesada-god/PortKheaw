@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { DetailPopover } from '@/src/components/ui/DetailPopover';
+import { InfoHint } from '@/src/components/ui/InfoHint';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import type { OptionsLevel, OptionsSrResult } from '@/src/lib/analytics/options-sr';
+import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import {
   OPTIONS_EMPTY_MESSAGE,
   OPTIONS_FAILURE_MESSAGE,
+  optionsProviderLabel,
   presentOptionsProvenance,
   presentOptionsStatus,
   type OptionsStatusTone,
@@ -52,6 +55,31 @@ function expirationLabel(expiration: string): string {
   return Number.isNaN(date.getTime())
     ? expiration
     : date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+function daysToExpiration(expiration: string, nowMs = Date.now()): string {
+  const expiryMs = Date.parse(`${expiration}T23:59:59.999Z`);
+  if (!Number.isFinite(expiryMs)) return '—';
+  return String(Math.max(0, Math.ceil((expiryMs - nowMs) / 86_400_000)));
+}
+
+function contractMoneyness(contract: OptionContract, spot: number): 'ITM' | 'ATM' | 'OTM' {
+  if (Math.abs(contract.strike - spot) / spot <= 0.005) return 'ATM';
+  const inTheMoney = contract.inTheMoney
+    ?? (contract.type === 'call' ? spot > contract.strike : spot < contract.strike);
+  return inTheMoney ? 'ITM' : 'OTM';
+}
+
+function marketSource(contract: OptionContract): string {
+  if (!contract.marketDataProvider) return 'Unavailable';
+  const provider = optionsProviderLabel(contract.marketDataProvider);
+  return contract.marketDataFeed ? `${provider} · ${contract.marketDataFeed}` : provider;
+}
+
+function valuationSource(contract: OptionContract): string {
+  if (contract.valuationSource === 'nexora-derived') return 'คำนวณโดย Nexora';
+  if (contract.valuationSource === 'provider') return marketSource(contract);
+  return 'Unavailable';
 }
 
 /** The strikes closest to spot, re-sorted ascending — never the whole chain. */
@@ -115,6 +143,7 @@ export function OptionsLevelsPanel({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h3 className="flex items-center gap-1 text-sm font-semibold text-slate-100">
           Options
+          <InfoHint term="optionsSection" />
           <DetailPopover
             triggerLabel="ดูแหล่งที่มาของข้อมูลออปชัน"
             title="ที่มาของข้อมูลออปชัน"
@@ -193,44 +222,88 @@ export function OptionsLevelsPanel({
       {chain && (
         <>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="options-key-levels">
-            <KeyLevelCard title="Call Wall" level={levels?.callWall ?? null} currency={currency} tone="text-rose-300" />
-            <KeyLevelCard title="Put Wall" level={levels?.putWall ?? null} currency={currency} tone="text-emerald-300" />
-            <KeyLevelCard title="Max Pain" level={levels?.maxPain ?? null} currency={currency} tone="text-fuchsia-300" showOi={false} />
+            <KeyLevelCard title="Call Wall" term="callWall" helper="จุดที่ Call OI กระจุกตัวมาก" level={levels?.callWall ?? null} currency={currency} tone="text-rose-300" />
+            <KeyLevelCard title="Put Wall" term="putWall" helper="จุดที่ Put OI กระจุกตัวมาก" level={levels?.putWall ?? null} currency={currency} tone="text-emerald-300" />
+            <KeyLevelCard title="Max Pain" term="maxPain" helper="ค่าคำนวณจาก OI ของวันหมดอายุที่เลือก" level={levels?.maxPain ?? null} currency={currency} tone="text-fuchsia-300" showOi={false} />
           </div>
 
           <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(14rem,.6fr)]">
             <div className="min-w-0">
-              <p className="mb-1 text-[11px] text-slate-500">ใกล้ราคาปัจจุบัน {currency}{chain.spot.toFixed(2)}</p>
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
+                <span>ใกล้ราคาปัจจุบัน {currency}{chain.spot.toFixed(2)}</span>
+                <span className="flex items-center gap-1">Open Interest (OI)<InfoHint term="openInterest" align="end" /></span>
+              </div>
               <div className="overflow-x-auto rounded-lg border border-slate-800">
                 <table className="w-full min-w-[16rem] border-collapse text-right tabular-nums">
                   <thead className="bg-slate-950/60 text-[10px] uppercase tracking-wide text-slate-500">
                     <tr><th className="px-2 py-1 text-left">Strike</th><th className="px-2 py-1">Call OI</th><th className="px-2 py-1">Put OI</th></tr>
                   </thead>
                   <tbody>
-                    {rows.map((row) => <tr key={row.strike} className="border-t border-slate-800/80">
-                      <th className="whitespace-nowrap px-2 py-0.5 text-left font-mono font-medium text-slate-200">{currency}{value(row.strike, 2)}</th>
-                      <td className="px-1 py-0.5"><ContractButton contract={row.call} selected={selectedContractId} onSelect={setSelectedContractId} /></td>
-                      <td className="px-1 py-0.5"><ContractButton contract={row.put} selected={selectedContractId} onSelect={setSelectedContractId} /></td>
-                    </tr>)}
+                    {rows.map((row) => {
+                      const active = selectedContractId === row.call?.contractSymbol || selectedContractId === row.put?.contractSymbol;
+                      const preferred = selectedContract?.type === 'put' ? row.put ?? row.call : row.call ?? row.put;
+                      return <tr key={row.strike} className={`border-t border-slate-800/80 ${active ? 'bg-[#D4FF00]/5' : ''}`}>
+                        <th className="whitespace-nowrap px-1 py-0.5 text-left font-mono font-medium text-slate-200">
+                          <button
+                            type="button"
+                            aria-label={`เลือก strike ${row.strike}`}
+                            aria-pressed={active}
+                            disabled={!preferred}
+                            onClick={() => preferred && setSelectedContractId(preferred.contractSymbol)}
+                            className="min-h-9 rounded px-1 hover:bg-slate-800 hover:text-white focus-visible:ring-2 focus-visible:ring-[#D4FF00] disabled:cursor-default"
+                          >{currency}{value(row.strike, 2)}</button>
+                        </th>
+                        <td className="px-1 py-0.5"><ContractButton contract={row.call} selected={selectedContractId} onSelect={setSelectedContractId} /></td>
+                        <td className="px-1 py-0.5"><ContractButton contract={row.put} selected={selectedContractId} onSelect={setSelectedContractId} /></td>
+                      </tr>;
+                    })}
                   </tbody>
                 </table>
               </div>
               {rows.length === 0 && <p className="mt-2 text-slate-500">{OPTIONS_EMPTY_MESSAGE}</p>}
             </div>
 
-            <article className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/30 p-2" aria-label="รายละเอียดสัญญาออปชัน">
-              <h4 className="truncate text-[11px] font-semibold text-slate-300">
-                {selectedContract ? `${selectedContract.type.toUpperCase()} ${currency}${selectedContract.strike}` : 'เลือก Call/Put OI เพื่อดูสัญญา'}
+            <article className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/30 p-2.5" aria-label="รายละเอียดสัญญาออปชัน">
+              <h4 className="truncate text-sm font-semibold text-slate-200">
+                {selectedContract ? `${selectedContract.type.toUpperCase()} ${currency}${value(selectedContract.strike, 2)}` : 'เลือก Strike หรือ Call/Put OI เพื่อดูสัญญา'}
               </h4>
-              <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-                <Metric label="IV" value={selectedContract?.impliedVolatility == null ? '—' : `${value(selectedContract.impliedVolatility * 100, 2)}%`} />
-                <Metric label="Delta" value={value(selectedContract?.delta)} />
-                <Metric label="Gamma" value={value(selectedContract?.gamma)} />
-                <Metric label="Theta" value={value(selectedContract?.theta)} />
-                <Metric label="Vega" value={value(selectedContract?.vega)} />
-                <Metric label="OI" value={value(selectedContract?.openInterest, 0)} />
-                <Metric label="Volume" value={value(selectedContract?.volume, 0)} />
-              </dl>
+              {selectedContract && <>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  หมดอายุ {expirationLabel(selectedContract.expiration)} · DTE {daysToExpiration(selectedContract.expiration)}
+                </p>
+
+                <DetailGroup title="ราคา">
+                  <Metric label="Bid" value={selectedContract.bid == null ? '—' : `${currency}${value(selectedContract.bid, 2)}`} />
+                  <Metric label="Ask" value={selectedContract.ask == null ? '—' : `${currency}${value(selectedContract.ask, 2)}`} />
+                  <Metric label="Last" value={selectedContract.last == null ? '—' : `${currency}${value(selectedContract.last, 2)}`} />
+                  <Metric label="Mark" value={selectedContract.mark == null ? '—' : `${currency}${value(selectedContract.mark, 2)}`} />
+                  <Metric label="Spread" value={selectedContract.bid == null || selectedContract.ask == null ? '—' : `${currency}${value(selectedContract.ask - selectedContract.bid, 2)}`} />
+                </DetailGroup>
+
+                <DetailGroup title="ตลาด">
+                  <Metric label="Volume" value={value(selectedContract.volume, 0)} />
+                  <Metric label="OI" value={value(selectedContract.openInterest, 0)} term="openInterest" />
+                </DetailGroup>
+
+                <DetailGroup title="ความผันผวน">
+                  <Metric label="IV" value={selectedContract.impliedVolatility == null ? '—' : `${value(selectedContract.impliedVolatility * 100, 2)}%`} term="impliedVolatility" />
+                </DetailGroup>
+
+                <DetailGroup title="Greeks">
+                  <Metric label="Delta" value={value(selectedContract.delta)} term="delta" />
+                  <Metric label="Gamma" value={value(selectedContract.gamma)} term="gamma" />
+                  <Metric label="Theta" value={value(selectedContract.theta)} term="theta" />
+                  <Metric label="Vega" value={value(selectedContract.vega)} term="vega" />
+                </DetailGroup>
+
+                <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-slate-800 pt-2 text-[10px]">
+                  <dt className="text-slate-500">สถานะ</dt><dd className="text-right font-semibold text-slate-200">{contractMoneyness(selectedContract, chain.spot)}</dd>
+                  <dt className="text-slate-500">ราคา / Volume</dt><dd className="break-words text-right text-slate-300">{marketSource(selectedContract)}</dd>
+                  <dt className="text-slate-500">Open Interest</dt><dd className="break-words text-right text-slate-300">{optionsProviderLabel(selectedContract.provider)}{selectedContract.oiAsOf ? ` · ${selectedContract.oiAsOf}` : ''}</dd>
+                  <dt className="text-slate-500">IV / Greeks</dt><dd className="break-words text-right text-slate-300">{valuationSource(selectedContract)}</dd>
+                  <dt className="text-slate-500">ข้อมูล ณ</dt><dd className="break-words text-right text-slate-300">{formatMarketDataAsOf(selectedContract.asOf)}</dd>
+                </dl>
+              </>}
             </article>
           </div>
         </>
@@ -240,8 +313,10 @@ export function OptionsLevelsPanel({
 }
 
 /** One summary card. A level the real open interest does not support shows "—". */
-function KeyLevelCard({ title, level, currency, tone, showOi = true }: {
+function KeyLevelCard({ title, term, helper, level, currency, tone, showOi = true }: {
   title: string;
+  term: 'callWall' | 'putWall' | 'maxPain';
+  helper: string;
   level: OptionsLevel | null;
   currency: string;
   tone: string;
@@ -249,11 +324,12 @@ function KeyLevelCard({ title, level, currency, tone, showOi = true }: {
 }) {
   return (
     <article className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/30 px-2.5 py-1.5" data-testid={`options-card-${title.toLowerCase().replace(' ', '-')}`}>
-      <h4 className="text-[11px] text-slate-500">{title}</h4>
+      <h4 className="flex items-center justify-between gap-2 text-[11px] text-slate-500"><span>{title}</span><InfoHint term={term} align="end" /></h4>
       <p className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>
         {level ? `${currency}${level.price.toFixed(2)}` : '—'}
       </p>
       {showOi && <p className="text-[10px] text-slate-500">OI {value(level?.rawOI, 0)}</p>}
+      <p className="mt-0.5 text-[10px] leading-snug text-slate-600">{helper}</p>
     </article>
   );
 }
@@ -278,8 +354,12 @@ function ContractButton({ contract, selected, onSelect }: {
   );
 }
 
-function Metric({ label, value: display }: { label: string; value: string }) {
-  return <div className="flex justify-between gap-2"><dt className="text-slate-500">{label}</dt><dd className="font-mono tabular-nums text-slate-200">{display}</dd></div>;
+function DetailGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="mt-2 border-t border-slate-800 pt-1.5"><h5 className="mb-1 text-[10px] font-semibold text-slate-400">{title}</h5><dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">{children}</dl></section>;
+}
+
+function Metric({ label, value: display, term }: { label: string; value: string; term?: GlossaryTermId }) {
+  return <div data-testid={`option-metric-${label.toLowerCase()}`} className="flex min-w-0 items-center justify-between gap-2"><dt className="flex min-w-0 items-center gap-1 text-slate-500"><span>{label}</span>{term && <InfoHint term={term} />}</dt><dd className="whitespace-nowrap font-mono tabular-nums text-slate-200">{display}</dd></div>;
 }
 
 export default OptionsLevelsPanel;

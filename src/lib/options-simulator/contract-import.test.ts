@@ -9,6 +9,7 @@ const contract = (overrides: Partial<OptionContract> = {}): OptionContract => ({
   volume: 42, openInterest: 900, impliedVolatility: 0.65,
   delta: 0.6, gamma: 0.03, theta: -0.04, vega: 0.08, rho: 0.01,
   inTheMoney: false, multiplier: 100, currency: 'USD', provider: 'alpha-vantage',
+  marketDataProvider: null, marketDataFeed: null, oiAsOf: null, delayedMinutes: null, valuationSource: null,
   asOf: '2026-07-20T15:30:00.000Z', timestampKind: 'receipt', status: 'live',
   ...overrides,
 });

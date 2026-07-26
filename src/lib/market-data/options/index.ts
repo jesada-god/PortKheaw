@@ -24,6 +24,12 @@ export interface OptionsProviderCredentials {
   alpacaKeyId: string | undefined;
   alpacaSecretKey: string | undefined;
   alpacaBaseUrl: string | undefined;
+  /**
+   * Entitled options market-data feed. A live probe showed `opra` answers 403
+   * ("OPRA agreement is not signed") on this account while `indicative` answers
+   * 200, so the default is the feed that actually works.
+   */
+  alpacaDataFeed: string | undefined;
 }
 
 let credentials: OptionsProviderCredentials | undefined;
@@ -35,6 +41,7 @@ function currentCredentials(): OptionsProviderCredentials {
     alpacaKeyId: serverEnv.ALPACA_API_KEY_ID,
     alpacaSecretKey: serverEnv.ALPACA_API_SECRET_KEY,
     alpacaBaseUrl: serverEnv.ALPACA_TRADING_BASE_URL,
+    alpacaDataFeed: serverEnv.ALPACA_OPTIONS_FEED,
   };
 }
 
@@ -43,7 +50,8 @@ function sameCredentials(left: OptionsProviderCredentials | undefined, right: Op
     && left.alphaVantage === right.alphaVantage
     && left.alpacaKeyId === right.alpacaKeyId
     && left.alpacaSecretKey === right.alpacaSecretKey
-    && left.alpacaBaseUrl === right.alpacaBaseUrl;
+    && left.alpacaBaseUrl === right.alpacaBaseUrl
+    && left.alpacaDataFeed === right.alpacaDataFeed;
 }
 
 /** Ordered options providers for the given credentials. Exported for capability probes/tests. */
@@ -54,6 +62,7 @@ export function buildOptionsProviders(current: OptionsProviderCredentials): Opti
       keyId: current.alpacaKeyId,
       secretKey: current.alpacaSecretKey,
       ...(current.alpacaBaseUrl ? { baseUrl: current.alpacaBaseUrl } : {}),
+      ...(current.alpacaDataFeed ? { dataFeed: current.alpacaDataFeed } : {}),
     }));
   }
   if (current.alphaVantage) providers.push(new AlphaVantageOptionsProvider(current.alphaVantage));

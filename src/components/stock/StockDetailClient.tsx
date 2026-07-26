@@ -30,7 +30,7 @@ import type {
   MarketOverview,
 } from '@/src/lib/market-data/types';
 import { CompanyProfileCard } from './CompanyProfileCard';
-import { resolvePriceCurrency, resolvePriceHeaderData } from './price-header';
+import { resolvePriceCurrency, resolvePriceHeaderData, type PriceHeaderExtendedQuote } from './price-header';
 import { requestCompanyProfile } from './profile-retry';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
@@ -69,6 +69,13 @@ interface StockDetailClientProps {
   initialHistory: InitialHistoryResponse;
   fxQuote: FxQuote | null;
   evaluatedAt: string;
+  /**
+   * Pre/after-hours print resolved on the SERVER from the existing Yahoo chart
+   * pipeline, so the extended row costs the browser no request and no polling.
+   * Used only when the live/REST quote pipeline has no accepted extended print
+   * of its own, and never allowed to replace the regular price.
+   */
+  extendedQuote: PriceHeaderExtendedQuote | null;
   providerConfigured: boolean;
   initialWatched: boolean;
   technicalIndicatorsEnabled: boolean;
@@ -124,6 +131,7 @@ export function StockDetailClient({
   initialHistory,
   fxQuote,
   evaluatedAt,
+  extendedQuote: serverExtendedQuote,
   providerConfigured,
   initialWatched,
   technicalIndicatorsEnabled,
@@ -266,6 +274,7 @@ export function StockDetailClient({
     initial: initialQuoteResource,
     marketStatus: effectiveMarket?.currentStatus ?? null,
     evaluatedAt,
+    serverExtendedQuote,
   });
 
   const toggleWatch = () => {
