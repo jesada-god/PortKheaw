@@ -40,8 +40,8 @@ describe('StockPriceHeader integration contract', () => {
   });
 
   it('uses the compact Investing-style price hierarchy and session rows', () => {
-    expect(header).toContain('<SessionIcon session={session}/>');
-    expect(header).toContain('<SessionIcon session={extendedQuote.session} extended/>');
+    expect(header).toContain('<CurrentSessionIcon session={currentSession}/>');
+    expect(header).toContain('<ExtendedSessionIcon session={extendedQuote.session}/>');
     expect(header).toContain('data-testid="extended-hours-row"');
     // The extended row always carries its own trading date, so a Friday
     // after-hours print read on a Sunday cannot be mistaken for today.
@@ -51,8 +51,31 @@ describe('StockPriceHeader integration contract', () => {
 
   it('does not render fallback change placeholders or duplicate market errors', () => {
     expect(header).toContain('{regularChange && <div');
-    expect(header).toContain("'ไม่สามารถตรวจสอบสถานะตลาดได้'");
     expect(header).not.toContain("stockDetailErrorMessage(marketError");
+  });
+
+  /**
+   * The current-session bug guard, enforced on the source itself: the header is
+   * presentation only. It must take the resolved session from the model and must
+   * not re-derive one from a quote/candle/extended timestamp or a raw provider
+   * status field.
+   */
+  it('performs no market-session inference of its own', () => {
+    expect(header).toContain('currentSessionPresentation(currentSession)');
+    expect(header).toContain('const { currentSession, regular, extended: extendedQuote } = model;');
+    expect(header).not.toContain('deriveMarketSession');
+    expect(header).not.toContain('currentStatus');
+    expect(header).not.toContain('classifyUsEquityTimestamp');
+  });
+
+  it('resolves the current session once, from the dedicated resolver only', () => {
+    expect(detail).toContain('resolveCurrentMarketSession({');
+    expect(detail).toContain('useExchangeClock(evaluatedAt)');
+    expect(detail).toContain('applySymbolHalt(resolvedSession.session, halted)');
+    // The defect: a live PRICE session (derived from a trade timestamp) was
+    // promoted into the market-wide status and shown as "ตลาดเปิด".
+    expect(detail).not.toContain('liveMarketStatus');
+    expect(detail).not.toContain('effectiveMarket');
   });
 
   it('flashes the price on a live move without refetching, keyed on the source USD value', () => {

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, MarketDataApiError, Quote } from '@/src/lib/market-data/types';
 import { CompanyProfileCard } from './CompanyProfileCard';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
 vi.stubGlobal('React', React);
@@ -239,21 +240,29 @@ describe('Stock Detail unavailable UX', () => {
         symbol="RKLB"
         exchange="NASDAQ"
         sourceCurrency="USD"
-        quote={quote}
-        freshness={{
-          status: 'end-of-day',
-          asOf: '2026-07-17T00:00:00.000Z',
-          maxAgeSeconds: 86_400,
-        }}
-        market={null}
-        provider="nasdaq"
+        model={buildStockPriceHeaderModel({
+          data: {
+            quote,
+            freshness: {
+              status: 'end-of-day',
+              asOf: '2026-07-17T00:00:00.000Z',
+              maxAgeSeconds: 86_400,
+            },
+            provider: 'nasdaq',
+            fallbackLabel: 'Previous trading day',
+            extendedQuote: null,
+          },
+          // The market-status provider could not be verified at all.
+          currentSession: 'UNKNOWN',
+          currentSessionEvaluatedAt: '2026-07-18T00:00:00.000Z',
+          currentSessionSource: 'unresolved',
+        })}
         providerConfigured
         quoteError={{
           code: 'rate-limited',
           message: 'Quote quota exceeded',
           retryable: true,
         }}
-        fallbackLabel="Previous trading day"
         quoteLoading={false}
         quoteRetryAt={0}
         onRetryQuote={vi.fn()}
@@ -271,7 +280,7 @@ describe('Stock Detail unavailable UX', () => {
     expect(html).not.toContain('Quote quota exceeded');
     expect(html).not.toContain('Unavailable');
     expect(html).not.toContain('ไม่พบข้อมูล');
-    expect(occurrences(html, 'ไม่สามารถตรวจสอบสถานะตลาดได้')).toBe(1);
+    expect(occurrences(html, 'ไม่ทราบสถานะตลาด')).toBe(1);
     // Provenance belongs behind the ⓘ control, never in the price hierarchy.
     expect(html).not.toContain('ข้อมูลจากวันซื้อขายก่อนหน้า');
     expect(html).not.toContain('ราคาปิด intraday ล่าสุด');

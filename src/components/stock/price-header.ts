@@ -1,22 +1,18 @@
+import {
+  isRegularSession,
+  usesLatestRegularClose,
+  type CurrentMarketSession,
+} from '@/src/lib/market-data/current-session';
 import { classifyUsEquitySession, exchangeSessionDate, US_EQUITY_TIMEZONE } from '@/src/lib/market-data/session';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
 
-export type MarketSession = 'halted' | 'holiday' | 'early-close' | 'premarket' | 'open' | 'after-hours' | 'closed' | 'unknown';
+/** Which extended window a SECONDARY-row print belongs to. Never a current-session claim. */
+export type ExtendedRowSession = 'premarket' | 'after-hours';
 export type PriceDirection = 'up' | 'down' | 'neutral';
 export type PriceDisplayCurrency = 'USD' | 'THB';
 export type PriceDataStatus = 'live' | 'delayed' | 'cached' | 'stale' | 'unknown' | 'unavailable';
-
-export interface MarketSessionSignals {
-  halted?: boolean;
-  holiday?: boolean;
-  earlyClose?: boolean;
-  premarket?: boolean;
-  regularOpen?: boolean;
-  afterHours?: boolean;
-  closed?: boolean;
-}
 
 export interface PriceChange {
   amount: number;
@@ -37,7 +33,7 @@ export interface ResolvedPriceCurrency {
 }
 
 export interface PriceHeaderExtendedQuote {
-  session: 'premarket' | 'after-hours';
+  session: ExtendedRowSession;
   price: number;
   asOf: string;
   /** Exchange-local trading date the print belongs to, always shown in the row. */
@@ -68,15 +64,15 @@ const TRUSTED_EXCHANGE_CURRENCIES: Record<string, string> = {
   'STOCK EXCHANGE OF THAILAND': 'THB',
 };
 
-const MARKET_SESSION_PRESENTATION: Record<MarketSession, { emoji: string; label: string; fullName: string }> = {
-  'early-close': { emoji: '⏱️', label: 'ตลาดปิดเร็ว', fullName: 'Early Close Session' },
-  halted: { emoji: '⏸️', label: 'ระงับการซื้อขาย', fullName: 'Trading Halt / Symbol Halted' },
-  holiday: { emoji: '📅', label: 'วันหยุดตลาด', fullName: 'Market Holiday' },
+/**
+ * Labels for the SECONDARY row only. These describe which window a print was
+ * executed in — they are deliberately not part of the current-session vocabulary
+ * (see `currentSessionPresentation`), so an extended row can never be mistaken
+ * for a claim that the market is in that session now.
+ */
+const EXTENDED_ROW_PRESENTATION: Record<ExtendedRowSession, { emoji: string; label: string; fullName: string }> = {
   premarket: { emoji: '🌅', label: 'ก่อนตลาดเปิด', fullName: 'Pre-market Session' },
-  open: { emoji: '☀️', label: 'ตลาดเปิด', fullName: 'Regular Market Session' },
-  'after-hours': { emoji: '🌇', label: 'หลังเวลาทำการ', fullName: 'After-hours / Post-market Session' },
-  closed: { emoji: '🌙', label: 'ปิดตลาด', fullName: 'Market Closed' },
-  unknown: { emoji: '⚠️', label: 'ไม่ทราบสถานะตลาด', fullName: 'Unknown Market Session' },
+  'after-hours': { emoji: '🌙', label: 'หลังเวลาทำการ', fullName: 'After-hours / Post-market Session' },
 };
 
 const DATA_STATUS_PRESENTATION: Record<PriceDataStatus, { emoji: string | null; label: string }> = {
@@ -94,35 +90,8 @@ const PRICE_DIRECTION_PRESENTATION: Record<PriceDirection, { sign: '+' | '-' | '
   neutral: { sign: '', arrow: null, tone: 'neutral' },
 };
 
-export function resolveMarketSession(signals: MarketSessionSignals): MarketSession {
-  if (signals.halted) return 'halted';
-  if (signals.holiday) return 'holiday';
-  if (signals.earlyClose) return 'early-close';
-  if (signals.premarket) return 'premarket';
-  if (signals.regularOpen) return 'open';
-  if (signals.afterHours) return 'after-hours';
-  if (signals.closed) return 'closed';
-  return 'unknown';
-}
-
-export function deriveMarketSession(
-  market: { currentStatus: 'pre-market' | 'open' | 'after-hours' | 'closed' | 'holiday' | 'early-close' | 'unknown'; notes: string | null } | null | undefined,
-  extendedSession?: 'premarket' | 'after-hours' | null,
-): MarketSession {
-  const notes = market?.notes?.toLowerCase() ?? '';
-  return resolveMarketSession({
-    halted: /\b(halt(?:ed)?|suspend(?:ed)?)\b/.test(notes),
-    holiday: market?.currentStatus === 'holiday' || /\bholiday\b/.test(notes),
-    earlyClose: market?.currentStatus === 'early-close' || /\bearly[- ]?close\b/.test(notes),
-    premarket: market?.currentStatus === 'pre-market' || extendedSession === 'premarket' || /\bpre-?market\b/.test(notes),
-    regularOpen: market?.currentStatus === 'open',
-    afterHours: market?.currentStatus === 'after-hours' || extendedSession === 'after-hours' || /\b(after[- ]?hours|post[- ]?market)\b/.test(notes),
-    closed: market?.currentStatus === 'closed',
-  });
-}
-
-export function marketSessionPresentation(session: MarketSession) {
-  return MARKET_SESSION_PRESENTATION[session];
+export function extendedSessionPresentation(session: ExtendedRowSession) {
+  return EXTENDED_ROW_PRESENTATION[session];
 }
 
 export function resolveDataStatus(freshness: DataFreshness, evaluatedAtMs: number): PriceDataStatus {
@@ -170,20 +139,38 @@ function tradeablePrice(value: number | null | undefined): value is number {
  *   2. `serverExtendedQuote` — the verified pre/post print resolved server-side
  *      from the existing Yahoo chart pipeline.
  *
- * Two things this function never does: promote an extended price into the
- * primary row, and show an extended print from an older session than the
- * regular price beside it.
+ * Three things this function never does: promote an extended price into the
+ * primary row, show an extended print from an older session than the regular
+ * price beside it, and render an extended row while the market is REGULAR
+ * (invariant B — "ตลาดเปิด" and "หลังเวลาทำการ" can never coexist).
+ *
+ * `currentSession` is the ONLY session input, and it comes from
+ * `resolveCurrentMarketSession`. No timestamp reaching this function — quote,
+ * candle or extended — is ever allowed to decide it.
  */
 export function resolvePriceHeaderData(input: {
   current: StockDetailQuoteResource;
   initial: StockDetailQuoteResource;
-  marketStatus: 'pre-market' | 'open' | 'after-hours' | 'closed' | 'holiday' | 'early-close' | 'unknown' | null;
+  /** The resolved CURRENT market session; never derived from a price timestamp. */
+  currentSession: CurrentMarketSession;
   evaluatedAt: string;
   /** Server-resolved pre/post print; used only when the pipeline has no accepted one. */
   serverExtendedQuote?: PriceHeaderExtendedQuote | null;
 }): PriceHeaderData {
-  const { current, initial, marketStatus, evaluatedAt } = input;
-  const serverExtendedQuote = input.serverExtendedQuote ?? null;
+  const { current, initial, currentSession, evaluatedAt } = input;
+  // Which extended window MAY occupy the secondary row right now. REGULAR, HALTED
+  // and UNKNOWN yield null — invariant B, enforced at the single point that can
+  // produce the row, so "ตลาดเปิด" + "หลังเวลาทำการ" is unreachable whatever the
+  // server or the quote pipeline offers.
+  const expectedExtendedSession = currentSession === 'PREMARKET'
+    ? 'premarket' as const
+    : currentSession === 'AFTER_HOURS'
+      || currentSession === 'CLOSED'
+      || currentSession === 'HOLIDAY'
+      || currentSession === 'EARLY_CLOSE'
+      ? 'afterhours' as const
+      : null;
+  const serverExtendedQuote = expectedExtendedSession ? input.serverExtendedQuote ?? null : null;
 
   /**
    * The server print is only valid beside a primary row from the SAME exchange
@@ -199,11 +186,6 @@ export function resolvePriceHeaderData(input: {
   const currentQuote = current.data;
   const acceptedAsOf = current.freshness.asOf;
   const acceptedSession = acceptedAsOf ? classifyUsEquitySession(acceptedAsOf) : null;
-  const expectedExtendedSession = marketStatus === 'pre-market'
-    ? 'premarket' as const
-    : marketStatus === 'after-hours' || marketStatus === 'closed'
-      ? 'afterhours' as const
-      : null;
   const evaluatedAtMs = Date.parse(evaluatedAt);
   const acceptedStatus = resolveDataStatus(current.freshness, evaluatedAtMs);
   // An extended print is only "now" if it belongs to the SAME New York trading
@@ -307,6 +289,100 @@ export function resolvePriceHeaderData(input: {
           provider: current.provider,
         }
       : serverExtendedFor(primaryFreshness.asOf ?? acceptedAsOf),
+  };
+}
+
+export interface PriceHeaderRegularRow {
+  price: number | null;
+  previousClose: number | null;
+  change: PriceChange | null;
+  /** ISO instant of the regular price. NEVER used to decide the current session. */
+  asOf: string | null;
+  provider: string | null;
+  freshness: DataFreshness;
+  fallbackLabel: StockDetailQuoteResource['fallbackLabel'];
+}
+
+export interface PriceHeaderExtendedRow {
+  session: ExtendedRowSession;
+  price: number;
+  /** Change against the regular close in the primary row (§6 comparison base). */
+  change: PriceChange | null;
+  /** ISO instant of the extended print. NEVER used to decide the current session. */
+  asOf: string;
+  tradingDate: string | null;
+  provider: string | null;
+  freshness: DataFreshness;
+}
+
+/**
+ * The ONE model `StockPriceHeader` renders. Assembling it here keeps the
+ * component purely presentational: it holds no second opinion about which
+ * session the market is in, which price belongs in which row, or what the
+ * change is computed against.
+ *
+ * `currentSession` arrives already resolved from `resolveCurrentMarketSession`
+ * and is simply carried through — this function never re-derives it, least of
+ * all from `regular.asOf` or `extended.asOf`, which are DATA timestamps.
+ */
+export interface StockPriceHeaderModel {
+  currentSession: CurrentMarketSession;
+  /** The instant the session was resolved — not the instant the price printed. */
+  currentSessionEvaluatedAt: string;
+  currentSessionSource: string;
+  regular: PriceHeaderRegularRow;
+  extended: PriceHeaderExtendedRow | null;
+}
+
+export function buildStockPriceHeaderModel(input: {
+  data: PriceHeaderData;
+  currentSession: CurrentMarketSession;
+  currentSessionEvaluatedAt: string;
+  currentSessionSource: string;
+}): StockPriceHeaderModel {
+  const { data, currentSession } = input;
+  const quote = data.quote;
+  const price = tradeablePrice(quote?.price) ? quote!.price : null;
+  const regular: PriceHeaderRegularRow = {
+    price,
+    previousClose: quote?.previousClose ?? null,
+    // Provider-first daily change; falls back to `price - previousClose`.
+    change: resolvePriceChange({
+      price,
+      previousClose: quote?.previousClose,
+      providerChange: quote?.change,
+      providerChangePercent: quote?.changePercent,
+    }),
+    asOf: data.freshness.asOf ?? quote?.latestTradingDay ?? null,
+    provider: data.provider,
+    freshness: data.freshness,
+    fallbackLabel: data.fallbackLabel,
+  };
+
+  // Belt and braces for invariant B: `resolvePriceHeaderData` already refuses to
+  // emit a row during REGULAR/HALTED, and the final model refuses to carry one.
+  const extendedQuote = isRegularSession(currentSession) || !usesLatestRegularClose(currentSession)
+    ? null
+    : data.extendedQuote;
+
+  return {
+    currentSession,
+    currentSessionEvaluatedAt: input.currentSessionEvaluatedAt,
+    currentSessionSource: input.currentSessionSource,
+    regular,
+    extended: extendedQuote
+      ? {
+          session: extendedQuote.session,
+          price: extendedQuote.price,
+          // §6: an extended print is always compared against the regular close
+          // shown beside it — never against another extended print or a candle.
+          change: calculatePriceChange(extendedQuote.price, price),
+          asOf: extendedQuote.asOf,
+          tradingDate: extendedQuote.tradingDate,
+          provider: extendedQuote.provider,
+          freshness: extendedQuote.freshness,
+        }
+      : null,
   };
 }
 

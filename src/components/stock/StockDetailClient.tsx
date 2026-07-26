@@ -9,6 +9,8 @@ import { Tabs } from '@/src/components/ui/Tabs';
 import { useToast } from '@/src/components/ui/Toast';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { useAppVisible } from '@/src/hooks/useAppVisible';
+import { useExchangeClock } from '@/src/hooks/useExchangeClock';
+import { applySymbolHalt, resolveCurrentMarketSession } from '@/src/lib/market-data/current-session';
 import { useMarketSource, type CanonicalLiveUpdateSink } from './useMarketSource';
 import { selectionKeyOf, type AcceptedPriceCandidate, type MarketSelection, type MarketSessionKind } from '@/src/lib/stock-detail/market-source';
 import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/KeyStatisticsSection';
@@ -30,7 +32,12 @@ import type {
   MarketOverview,
 } from '@/src/lib/market-data/types';
 import { CompanyProfileCard } from './CompanyProfileCard';
-import { resolvePriceCurrency, resolvePriceHeaderData, type PriceHeaderExtendedQuote } from './price-header';
+import {
+  buildStockPriceHeaderModel,
+  resolvePriceCurrency,
+  resolvePriceHeaderData,
+  type PriceHeaderExtendedQuote,
+} from './price-header';
 import { requestCompanyProfile } from './profile-retry';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
@@ -203,11 +210,29 @@ export function StockDetailClient({
       || instrumentExchange?.toLowerCase().includes(exchange.toLowerCase())
     ))
   )) ?? overview?.markets[0] ?? null;
+  // SINGLE SOURCE OF TRUTH for the current session. It reads a server-anchored
+  // ticking instant plus the market-status report WITH its freshness, and never
+  // any quote/candle/extended timestamp. A cached provider "open" from a previous
+  // trading date is discarded inside the resolver, which then falls back to the
+  // exchange calendar in America/New_York.
+  const exchangeNow = useExchangeClock(evaluatedAt);
+  const resolvedSession = resolveCurrentMarketSession({
+    now: exchangeNow,
+    marketStatus: market
+      ? {
+          status: market.currentStatus,
+          asOf: overviewResource.freshness.asOf,
+          source: overviewResource.provider,
+          stale: overviewResource.freshness.status === 'stale',
+          maxAgeSeconds: overviewResource.freshness.maxAgeSeconds,
+        }
+      : null,
+  });
   // The transport-agnostic market source refreshes the header/price in place via
   // entitlement-aware REST polling (12s in a live session, slower when closed),
   // pausing when hidden/offline. It never claims real-time data.
-  const marketSession: MarketSessionKind = market
-    && ['pre-market', 'open', 'after-hours', 'early-close'].includes(market.currentStatus)
+  const marketSession: MarketSessionKind = ['PREMARKET', 'REGULAR', 'AFTER_HOURS', 'EARLY_CLOSE']
+    .includes(resolvedSession.session)
     ? 'regular'
     : 'closed';
   const {
@@ -259,22 +284,23 @@ export function StockDetailClient({
     instrumentCurrency,
     exchange,
   }).currency;
-  const liveMarketStatus = liveSession === 'pre-market'
-    ? 'pre-market' as const
-    : liveSession === 'regular'
-      ? 'open' as const
-      : liveSession === 'after-hours'
-        ? 'after-hours' as const
-        : null;
-  const effectiveMarket = market && liveMarketStatus
-    ? { ...market, currentStatus: liveMarketStatus }
-    : market;
+  // A symbol halt replaces the REGULAR label only; it never turns an open market
+  // into a closed one, and it never invents a session outside regular hours.
+  const currentSession = applySymbolHalt(resolvedSession.session, halted);
   const priceHeaderData = resolvePriceHeaderData({
     current: quoteResource,
     initial: initialQuoteResource,
-    marketStatus: effectiveMarket?.currentStatus ?? null,
+    currentSession,
     evaluatedAt,
     serverExtendedQuote,
+  });
+  const priceHeaderModel = buildStockPriceHeaderModel({
+    data: priceHeaderData,
+    currentSession,
+    currentSessionEvaluatedAt: resolvedSession.evaluatedAt,
+    currentSessionSource: resolvedSession.provider.accepted
+      ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
+      : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
   });
 
   const toggleWatch = () => {
@@ -399,19 +425,14 @@ export function StockDetailClient({
           symbol={symbol}
           exchange={exchange}
           sourceCurrency={sourceCurrency}
-          quote={priceHeaderData.quote}
-          freshness={priceHeaderData.freshness}
-          market={effectiveMarket}
-          provider={priceHeaderData.provider}
+          model={priceHeaderModel}
           providerConfigured={providerConfigured}
           quoteError={quoteResource.error}
-          fallbackLabel={priceHeaderData.fallbackLabel}
           quoteLoading={quoteLoading}
           quoteRetryAt={quoteRetryAt}
           onRetryQuote={refreshQuote}
           fxQuote={fxQuote}
           evaluatedAt={evaluatedAt}
-          extendedQuote={priceHeaderData.extendedQuote}
           realtime={dataLabel?.realtime ?? false}
           feed={dataLabel?.feed ?? null}
           symbolHalted={halted}

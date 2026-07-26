@@ -6,58 +6,25 @@ import {
   connectionStatusPresentation,
   convertUsdForDisplay,
   dataStatusPresentation,
-  deriveMarketSession,
-  marketSessionPresentation,
+  extendedSessionPresentation,
   priceDirectionPresentation,
   priceFlashDirection,
   resolvePriceChange,
   resolvePriceCurrency,
   resolveDataStatus,
-  resolveMarketSession,
   resolvePriceHeaderData,
+  buildStockPriceHeaderModel,
   formatSessionDateLabel,
   priceSessionLabel,
   type PriceHeaderExtendedQuote,
 } from './price-header';
 
-describe('stock price header market session mapping', () => {
-  it('preserves provider extended, holiday and early-close states', () => {
-    expect(deriveMarketSession({ currentStatus: 'pre-market', notes: null })).toBe('premarket');
-    expect(deriveMarketSession({ currentStatus: 'after-hours', notes: null })).toBe('after-hours');
-    expect(deriveMarketSession({ currentStatus: 'holiday', notes: null })).toBe('holiday');
-    expect(deriveMarketSession({ currentStatus: 'early-close', notes: null })).toBe('early-close');
-  });
-
+describe('stock price header extended-row session labels', () => {
   it.each([
     ['premarket', '🌅', 'ก่อนตลาดเปิด'],
-    ['open', '☀️', 'ตลาดเปิด'],
-    ['after-hours', '🌇', 'หลังเวลาทำการ'],
-    ['closed', '🌙', 'ปิดตลาด'],
-    ['holiday', '📅', 'วันหยุดตลาด'],
-    ['halted', '⏸️', 'ระงับการซื้อขาย'],
-    ['unknown', '⚠️', 'ไม่ทราบสถานะตลาด'],
+    ['after-hours', '🌙', 'หลังเวลาทำการ'],
   ] as const)('maps %s to a stable emoji and Thai label', (session, emoji, label) => {
-    expect(marketSessionPresentation(session)).toEqual(expect.objectContaining({ emoji, label }));
-  });
-
-  it('gives trading halts and holidays priority over an open market', () => {
-    expect(resolveMarketSession({ halted: true, regularOpen: true })).toBe('halted');
-    expect(resolveMarketSession({ holiday: true, regularOpen: true })).toBe('holiday');
-    expect(resolveMarketSession({ halted: true, holiday: true, regularOpen: true })).toBe('halted');
-  });
-
-  it('uses the required session priority order', () => {
-    expect(resolveMarketSession({ premarket: true, regularOpen: true, afterHours: true })).toBe('premarket');
-    expect(resolveMarketSession({ regularOpen: true, afterHours: true })).toBe('open');
-    expect(resolveMarketSession({ afterHours: true, closed: true })).toBe('after-hours');
-    expect(resolveMarketSession({ closed: true })).toBe('closed');
-    expect(resolveMarketSession({})).toBe('unknown');
-  });
-
-  it('derives halt and holiday only from explicit normalized provider notes', () => {
-    expect(deriveMarketSession({ currentStatus: 'open', notes: 'Trading halted pending news' })).toBe('halted');
-    expect(deriveMarketSession({ currentStatus: 'closed', notes: 'US market holiday' })).toBe('holiday');
-    expect(deriveMarketSession({ currentStatus: 'closed', notes: null })).toBe('closed');
+    expect(extendedSessionPresentation(session)).toEqual(expect.objectContaining({ emoji, label }));
   });
 });
 
@@ -119,7 +86,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial: current,
-      marketStatus: 'open',
+      currentSession: 'REGULAR',
       evaluatedAt: '2026-07-20T14:00:10.000Z',
     });
     expect(result.quote).toBe(HEADER_QUOTE);
@@ -134,7 +101,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial: current,
-      marketStatus: 'pre-market',
+      currentSession: 'PREMARKET',
       evaluatedAt: '2026-07-20T12:30:10.000Z',
     });
     expect(result.quote?.price).toBe(100);
@@ -151,7 +118,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial,
-      marketStatus: 'after-hours',
+      currentSession: 'AFTER_HOURS',
       evaluatedAt: '2026-07-20T21:00:10.000Z',
     });
     expect(result.quote).toBe(HEADER_QUOTE);
@@ -170,7 +137,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial,
-      marketStatus: 'after-hours',
+      currentSession: 'AFTER_HOURS',
       evaluatedAt: '2026-07-24T20:26:15.000Z',
     });
     expect(result.quote?.price).toBe(208.76);
@@ -191,7 +158,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial,
-      marketStatus: 'after-hours',
+      currentSession: 'AFTER_HOURS',
       evaluatedAt: '2026-07-24T23:58:32.000Z',
     });
     expect(result.quote?.price).toBe(206.87);
@@ -204,7 +171,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial: current,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: '2026-07-20T20:00:10.000Z',
     });
     expect(result.quote).toBe(HEADER_QUOTE);
@@ -221,7 +188,7 @@ describe('stock price header accepted quote partition', () => {
     const result = resolvePriceHeaderData({
       current,
       initial,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: '2026-07-20T21:02:00.000Z',
     });
     expect(result.quote).toBe(HEADER_QUOTE);
@@ -245,7 +212,7 @@ describe('stock price header weekend and session-date integrity', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: SUNDAY,
     });
     expect(result.quote).toBe(HEADER_QUOTE);
@@ -262,7 +229,7 @@ describe('stock price header weekend and session-date integrity', () => {
     const result = resolvePriceHeaderData({
       current: fridayExtended,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: SUNDAY,
     });
     expect(result.extendedQuote).toBeNull();
@@ -281,7 +248,7 @@ describe('stock price header weekend and session-date integrity', () => {
     const result = resolvePriceHeaderData({
       current: noMaxAge,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: SUNDAY,
     });
     expect(result.extendedQuote).toBeNull();
@@ -297,7 +264,7 @@ describe('stock price header weekend and session-date integrity', () => {
     const result = resolvePriceHeaderData({
       current: live,
       initial: regular,
-      marketStatus: 'after-hours',
+      currentSession: 'AFTER_HOURS',
       evaluatedAt: '2026-07-24T20:31:00.000Z',
     });
     expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
@@ -315,7 +282,7 @@ describe('stock price header weekend and session-date integrity', () => {
     const result = resolvePriceHeaderData({
       current: pre,
       initial: regular,
-      marketStatus: 'pre-market',
+      currentSession: 'PREMARKET',
       evaluatedAt: '2026-07-24T12:01:00.000Z',
     });
     expect(result.extendedQuote).toMatchObject({ session: 'premarket', price: 99 });
@@ -598,7 +565,7 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: SUNDAY,
       serverExtendedQuote: serverExtended(),
     });
@@ -618,7 +585,7 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: '2026-07-27T22:00:00.000Z',
       // Friday's print beside Monday's close: stale, must not render.
       serverExtendedQuote: serverExtended(),
@@ -633,7 +600,7 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'pre-market',
+      currentSession: 'PREMARKET',
       evaluatedAt: '2026-07-28T11:00:00.000Z',
       serverExtendedQuote: serverExtended({
         session: 'premarket', price: 208.1,
@@ -652,7 +619,7 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: accepted,
       initial: accepted,
-      marketStatus: 'after-hours',
+      currentSession: 'AFTER_HOURS',
       evaluatedAt: '2026-07-24T20:35:00.000Z',
       serverExtendedQuote: serverExtended(),
     });
@@ -668,7 +635,7 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'open',
+      currentSession: 'REGULAR',
       evaluatedAt: '2026-07-24T15:01:00.000Z',
       // Even if one were supplied, its trading date matches, but the caller
       // resolves none mid-session; passing null must keep the row hidden.
@@ -684,10 +651,146 @@ describe('stock price header server-resolved extended quote', () => {
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
-      marketStatus: 'closed',
+      currentSession: 'CLOSED',
       evaluatedAt: SUNDAY,
     });
 
     expect(result.extendedQuote).toBeNull();
+  });
+
+  /**
+   * The production defect, reproduced at the partition layer: a stale/derived
+   * "open" session with a valid same-date after-hours print produced the
+   * contradictory "☀️ ตลาดเปิด" + "🌙 หลังเวลาทำการ" pair. The row must be
+   * dropped by the session, not by the print's own validity.
+   */
+  it('B: drops a perfectly valid extended print while the session is REGULAR', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'REGULAR',
+      evaluatedAt: '2026-07-24T17:00:00.000Z',
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it('B: drops the extended row while a symbol is halted mid-session', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'HALTED',
+      evaluatedAt: '2026-07-24T17:00:00.000Z',
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.extendedQuote).toBeNull();
+  });
+
+  it('keeps the dated after-hours row on a market holiday', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'HOLIDAY',
+      evaluatedAt: '2026-07-27T17:00:00.000Z',
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote!.tradingDate).toBe('2026-07-24');
+  });
+
+  it('shows no extended row when the current session could not be resolved', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'UNKNOWN',
+      evaluatedAt: SUNDAY,
+      serverExtendedQuote: serverExtended(),
+    });
+
+    expect(result.quote!.price).toBe(206.87);
+    expect(result.extendedQuote).toBeNull();
+  });
+});
+
+/**
+ * The final model the header renders. Its job is to carry the resolved session
+ * through untouched and to fix the comparison base of each row (§5/§6/§11).
+ */
+describe('stock price header final model', () => {
+  const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
+  const regularClose: Quote = {
+    ...HEADER_QUOTE, price: 206.87, regularClose: 206.87,
+    previousClose: 208.76, previousRegularClose: 208.76,
+    change: -1.89, changePercent: -0.91,
+  };
+  const afterHoursRow: PriceHeaderExtendedQuote = {
+    session: 'after-hours',
+    price: 206.7995,
+    asOf: '2026-07-24T23:55:00.000Z',
+    tradingDate: '2026-07-24',
+    freshness: { status: 'delayed', asOf: '2026-07-24T23:55:00.000Z', maxAgeSeconds: null },
+    provider: 'yahoo-finance-chart',
+  };
+
+  function model(currentSession: Parameters<typeof buildStockPriceHeaderModel>[0]['currentSession'], extended: PriceHeaderExtendedQuote | null) {
+    return buildStockPriceHeaderModel({
+      data: {
+        quote: regularClose,
+        freshness: { status: 'end-of-day', asOf: FRIDAY_CLOSE, maxAgeSeconds: null },
+        provider: 'polygon',
+        fallbackLabel: null,
+        extendedQuote: extended,
+      },
+      currentSession,
+      currentSessionEvaluatedAt: '2026-07-26T17:00:00.000Z',
+      currentSessionSource: 'exchange-calendar',
+    });
+  }
+
+  it('carries the resolved session and its evaluation instant through untouched', () => {
+    const result = model('CLOSED', afterHoursRow);
+    expect(result.currentSession).toBe('CLOSED');
+    expect(result.currentSessionEvaluatedAt).toBe('2026-07-26T17:00:00.000Z');
+    // The DATA timestamp is a separate field and is two days older — proving the
+    // two are not the same value and neither is derived from the other.
+    expect(result.regular.asOf).toBe(FRIDAY_CLOSE);
+    expect(result.extended!.asOf).toBe('2026-07-24T23:55:00.000Z');
+  });
+
+  it('C: computes the after-hours change against the regular close beside it', () => {
+    const result = model('CLOSED', afterHoursRow);
+    // 206.7995 − 206.87 = −0.0705 (−0.03%), the exact production figures.
+    expect(result.extended!.change!.amount).toBeCloseTo(-0.0705, 4);
+    expect(result.extended!.change!.percent).toBeCloseTo(-0.0341, 3);
+    expect(result.extended!.change!.direction).toBe('down');
+  });
+
+  it('D: computes the pre-market change against the previous regular close in the main row', () => {
+    const result = model('PREMARKET', {
+      ...afterHoursRow, session: 'premarket', price: 208.1, asOf: '2026-07-27T12:45:00.000Z',
+    });
+    expect(result.extended!.change!.amount).toBeCloseTo(208.1 - 206.87, 4);
+    expect(result.extended!.change!.direction).toBe('up');
+  });
+
+  it('keeps the provider daily change on the primary row', () => {
+    const result = model('CLOSED', null);
+    expect(result.regular.price).toBe(206.87);
+    expect(result.regular.previousClose).toBe(208.76);
+    expect(result.regular.change!.amount).toBeCloseTo(-1.89, 2);
+    expect(result.regular.change!.percent).toBeCloseTo(-0.91, 2);
+  });
+
+  it('B: refuses to carry an extended row while the market is REGULAR', () => {
+    expect(model('REGULAR', afterHoursRow).extended).toBeNull();
+    expect(model('HALTED', afterHoursRow).extended).toBeNull();
   });
 });

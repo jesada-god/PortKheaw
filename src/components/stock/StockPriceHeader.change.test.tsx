@@ -15,6 +15,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
+import type { CurrentMarketSession } from '@/src/lib/market-data/current-session';
+import { buildStockPriceHeaderModel, type PriceHeaderExtendedQuote } from './price-header';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,18 +38,44 @@ const BASE_QUOTE: Quote = {
   latestTradingDay: null,
 };
 
-function baseProps(quote: Quote | null, extra: Record<string, unknown> = {}) {
+/**
+ * Builds the resolved model the header renders. The session is supplied
+ * explicitly — the component itself never infers one, which is the whole point
+ * of the model boundary.
+ */
+function headerModel(
+  quote: Quote | null,
+  options: {
+    currentSession?: CurrentMarketSession;
+    extendedQuote?: PriceHeaderExtendedQuote | null;
+  } = {},
+) {
+  return buildStockPriceHeaderModel({
+    data: {
+      quote,
+      freshness: FRESHNESS,
+      provider: 'polygon',
+      fallbackLabel: null,
+      extendedQuote: options.extendedQuote ?? null,
+    },
+    currentSession: options.currentSession ?? 'REGULAR',
+    currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
+    currentSessionSource: 'exchange-calendar',
+  });
+}
+
+function baseProps(
+  quote: Quote | null,
+  extra: Record<string, unknown> = {},
+  modelOptions: Parameters<typeof headerModel>[1] = {},
+) {
   return {
     symbol: 'RKLB',
     exchange: 'NASDAQ',
     sourceCurrency: 'USD',
-    quote,
-    freshness: FRESHNESS,
-    market: { currentStatus: 'open' as const, notes: null },
-    provider: 'polygon',
+    model: headerModel(quote, modelOptions),
     providerConfigured: true,
     quoteError: null,
-    fallbackLabel: null,
     quoteLoading: false,
     quoteRetryAt: 0,
     onRetryQuote: () => {},
@@ -190,50 +218,54 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('compares an extended-hours price against the regular close, not the previous close', () => {
-    const extendedQuote = {
-      session: 'after-hours' as const,
-      price: 70.75,
-      asOf: '2026-07-23T20:05:00.000Z',
-      freshness: FRESHNESS,
-      provider: 'polygon',
-    };
-    render(baseProps(BASE_QUOTE, { extendedQuote }));
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'AFTER_HOURS',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:00.000Z',
+        tradingDate: '2026-07-23',
+        freshness: FRESHNESS,
+        provider: 'polygon',
+      },
+    }));
     // Extended change = 70.75 − 69.75 (regular close) = +1.00, not vs 72.45.
     expect(container.textContent).toContain('+1.00');
   });
 
   it('renders a pre-market accepted quote in the labelled secondary row', () => {
-    render(baseProps(BASE_QUOTE, {
-      market: { currentStatus: 'pre-market' as const, notes: null },
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'PREMARKET',
       extendedQuote: {
-        session: 'premarket' as const,
+        session: 'premarket',
         price: 70.25,
         asOf: '2026-07-23T12:25:45.000Z',
+        tradingDate: '2026-07-23',
         freshness: FRESHNESS,
         provider: 'polygon',
       },
     }));
     const row = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(row?.textContent).toContain('ก่อนตลาดเปิด');
+    expect(container.textContent).toContain('ก่อนตลาดเปิด');
     expect(row?.textContent).toContain('70.25');
     expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
   });
 
   it('keeps the main status closed while showing the latest after-hours row', () => {
-    render(baseProps(BASE_QUOTE, {
-      market: { currentStatus: 'closed' as const, notes: null },
+    render(baseProps(BASE_QUOTE, { realtime: true, feed: 'iex' }, {
+      currentSession: 'CLOSED',
       extendedQuote: {
-        session: 'after-hours' as const,
+        session: 'after-hours',
         price: 70.75,
         asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
         freshness: FRESHNESS,
         provider: 'polygon',
       },
-      realtime: true,
-      feed: 'iex',
     }));
     const row = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(container.textContent).toContain('ปิดตลาด');
+    expect(container.textContent).toContain('ตลาดปิด');
+    expect(container.textContent).not.toContain('ตลาดเปิด');
     expect(row?.textContent).toContain('หลังเวลาทำการ');
     expect(row?.textContent).toContain('+1.00');
     expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
@@ -241,11 +273,45 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('cleanly hides the secondary row when closed without an extended quote', () => {
-    render(baseProps(BASE_QUOTE, {
-      market: { currentStatus: 'closed' as const, notes: null },
-      extendedQuote: null,
-    }));
-    expect(container.textContent).toContain('ปิดตลาด');
+    render(baseProps(BASE_QUOTE, {}, { currentSession: 'CLOSED' }));
+    expect(container.textContent).toContain('ตลาดปิด');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+  });
+
+  /**
+   * Invariant B at the UI boundary: the production screenshot showed "ตลาดเปิด"
+   * above a "หลังเวลาทำการ" row. Even when a caller hands the model an extended
+   * print during REGULAR, the row must not render.
+   */
+  it('B: never renders an extended row while the market is REGULAR', () => {
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'REGULAR',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: FRESHNESS,
+        provider: 'polygon',
+      },
+    }));
+    expect(container.textContent).toContain('ตลาดเปิด');
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.textContent).not.toContain('หลังเวลาทำการ');
+  });
+
+  it('F: a connected socket on a closed market still reads ตลาดปิด', () => {
+    render(baseProps(BASE_QUOTE, { connectionState: 'awaiting-data' }, { currentSession: 'CLOSED' }));
+    expect(container.textContent).toContain('เชื่อมต่อแล้ว · รอข้อมูลสด');
+    expect(container.textContent).toContain('ตลาดปิด');
+    expect(container.querySelector('[data-testid="current-session-label"]')?.textContent)
+      .not.toContain('ตลาดเปิด');
+  });
+
+  it('labels a non-regular price date as data provenance, never as a live session', () => {
+    render(baseProps(BASE_QUOTE, {}, { currentSession: 'CLOSED' }));
+    const line = container.querySelector('[data-testid="session-line"]');
+    // 2026-07-23 14:30Z = 10:30 ET on the 23rd.
+    expect(line?.textContent).toContain('ข้อมูลล่าสุด 23/07');
   });
 });

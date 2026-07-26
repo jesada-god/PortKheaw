@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { quoteEnvelopeSchema } from '@/src/lib/stock-detail/api-schemas';
 import type { DataFreshness } from '@/src/lib/market-data/types';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,13 +85,20 @@ describe('StockPriceHeader — RKLB previous-close fallback integration', () => 
         symbol: 'RKLB',
         exchange: 'NASDAQ',
         sourceCurrency: quote!.currency ?? 'USD',
-        quote: quote!,
-        freshness,
-        market: { currentStatus: 'closed' as const, notes: null },
-        provider: parsed.data.meta.provider,
+        model: buildStockPriceHeaderModel({
+          data: {
+            quote: quote!,
+            freshness,
+            provider: parsed.data.meta.provider,
+            fallbackLabel: null,
+            extendedQuote: null,
+          },
+          currentSession: 'CLOSED',
+          currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
+          currentSessionSource: 'exchange-calendar',
+        }),
         providerConfigured: true,
         quoteError: null,
-        fallbackLabel: null,
         quoteLoading: false,
         quoteRetryAt: 0,
         onRetryQuote: () => {},

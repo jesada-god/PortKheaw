@@ -21,6 +21,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,9 +36,15 @@ const BASE_QUOTE: Quote = {
 
 function baseProps(quote: Quote | null, extra: Record<string, unknown> = {}) {
   return {
-    symbol: 'RKLB', exchange: 'NASDAQ', sourceCurrency: 'USD', quote, freshness: FRESHNESS,
-    market: { currentStatus: 'open' as const, notes: null }, provider: 'polygon', providerConfigured: true,
-    quoteError: null, fallbackLabel: null, quoteLoading: false, quoteRetryAt: 0, onRetryQuote: () => {},
+    symbol: 'RKLB', exchange: 'NASDAQ', sourceCurrency: 'USD',
+    model: buildStockPriceHeaderModel({
+      data: { quote, freshness: FRESHNESS, provider: 'polygon', fallbackLabel: null, extendedQuote: null },
+      currentSession: 'REGULAR',
+      currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
+      currentSessionSource: 'exchange-calendar',
+    }),
+    providerConfigured: true,
+    quoteError: null, quoteLoading: false, quoteRetryAt: 0, onRetryQuote: () => {},
     fxQuote: null as FxQuote | null, evaluatedAt: '2026-07-23T14:31:00.000Z', connectionState: null, ...extra,
   };
 }

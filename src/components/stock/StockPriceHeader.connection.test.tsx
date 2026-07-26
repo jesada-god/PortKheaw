@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,13 +52,14 @@ function baseProps(connectionState: ConnectionStatus | null) {
     symbol: 'AAPL',
     exchange: 'NASDAQ',
     sourceCurrency: 'USD',
-    quote: QUOTE,
-    freshness: FRESHNESS,
-    market: { currentStatus: 'open' as const, notes: null },
-    provider: 'alpaca',
+    model: buildStockPriceHeaderModel({
+      data: { quote: QUOTE, freshness: FRESHNESS, provider: 'alpaca', fallbackLabel: null, extendedQuote: null },
+      currentSession: 'REGULAR',
+      currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
+      currentSessionSource: 'exchange-calendar',
+    }),
     providerConfigured: true,
     quoteError: null,
-    fallbackLabel: null,
     quoteLoading: false,
     quoteRetryAt: 0,
     onRetryQuote: () => {},
