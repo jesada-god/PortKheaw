@@ -38,6 +38,7 @@ function contract(overrides: Overrides): OptionContract {
     currency: 'USD',
     provider: 'alpha-vantage',
     asOf: overrides.asOf ?? '2026-07-21T00:00:00.000Z',
+    timestampKind: 'receipt',
     status: overrides.status ?? 'delayed',
   };
 }

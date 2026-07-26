@@ -20,10 +20,11 @@ describe('MarketCandleEngine', () => {
       open: 100, high: 102, low: 99, close: 99, volume: 9, finalized: false,
     });
     expect(engine.ingest(trade('c', T0 + 3_000, 99, 4))).toMatchObject({
-      accepted: false, droppedDuplicate: true, bars: [],
+      accepted: false, droppedDuplicate: true, rejectionReason: 'duplicate', bars: [],
     });
     expect(engine.statsFor('NVDA')).toEqual({
-      accepted: 3, droppedDuplicate: 1, droppedOutOfOrder: 0,
+      receivedTrades: 4, acceptedTrades: 3, duplicateDropped: 1, outOfOrderDropped: 0,
+      staleDropped: 0, invalidDropped: 0,
     });
   });
 
@@ -48,10 +49,22 @@ describe('MarketCandleEngine', () => {
     engine.ingest(trade('a', T0 + 10_000, 100, 2));
     engine.ingest(trade('b', T0 + 60_000, 101, 2));
     expect(engine.ingest(trade('late', T0 + 20_000, 98, 10))).toMatchObject({
-      accepted: false, droppedOutOfOrder: true,
+      accepted: false, droppedOutOfOrder: true, rejectionReason: 'out-of-order',
     });
     expect(engine.statsFor('nvda')).toEqual({
-      accepted: 2, droppedDuplicate: 0, droppedOutOfOrder: 1,
+      receivedTrades: 3, acceptedTrades: 2, duplicateDropped: 0, outOfOrderDropped: 1,
+      staleDropped: 0, invalidDropped: 0,
+    });
+  });
+
+  it('counts each pre-normalization rejection exactly once with a deterministic reason', () => {
+    const engine = new MarketCandleEngine();
+    engine.recordRejected('NVDA', 'invalid');
+    engine.recordRejected('NVDA', 'stale');
+    engine.ingest(trade('accepted', T0 + 1_000, 100, 1));
+    expect(engine.statsFor('NVDA')).toEqual({
+      receivedTrades: 3, acceptedTrades: 1, duplicateDropped: 0, outOfOrderDropped: 0,
+      staleDropped: 1, invalidDropped: 1,
     });
   });
 });

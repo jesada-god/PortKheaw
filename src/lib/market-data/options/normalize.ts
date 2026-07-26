@@ -1,4 +1,9 @@
-import { optionContractSchema, type NormalizedOptionContracts, type OptionContract } from './contracts';
+import {
+  optionContractSchema,
+  type MarketTimestampKind,
+  type NormalizedOptionContracts,
+  type OptionContract,
+} from './contracts';
 
 export interface RawOptionContractInput {
   contractSymbol: unknown;
@@ -27,6 +32,7 @@ export interface RawOptionContractInput {
 export interface NormalizeOptionContext {
   provider: string;
   asOf: string;
+  timestampKind: MarketTimestampKind;
   status: 'live' | 'delayed';
   delayedMinutes: number | null;
   ivUnit: 'decimal' | 'percent' | 'auto';
@@ -147,6 +153,7 @@ export function normalizeOptionContracts(
       currency: text(row.currency) ?? context.defaultCurrency ?? 'USD',
       provider: context.provider,
       asOf,
+      timestampKind: context.timestampKind,
       status: context.status,
     });
     if (!parsed.success) {
@@ -185,6 +192,7 @@ export function normalizeOptionContracts(
     expirations,
     provider: context.provider,
     asOf: context.asOf,
+    timestampKind: context.timestampKind,
     status: context.status,
     delayedMinutes: context.delayedMinutes,
     completeness: averageCompleteness,

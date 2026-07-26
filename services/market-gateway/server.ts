@@ -79,6 +79,7 @@ function main(): void {
   // bootstrap for cold symbols, so a new subscriber gets a price immediately. ---
   const cache = new MarketCache();
   const candleEngine = new MarketCandleEngine();
+  const shouldLogDrop = (count: number): boolean => count === 1 || count % 100 === 0;
   // Dedupe concurrent REST bootstraps for the same cold symbol: many browsers
   // subscribing at once must not each hit Finnhub REST. Credentials stay in this
   // closure (Gateway host) and never reach the hub or a client frame.
@@ -128,9 +129,10 @@ function main(): void {
       }
       const result = candleEngine.ingest(event);
       if (!result.accepted) {
-        const reason = result.droppedDuplicate ? 'droppedDuplicate' : 'droppedOutOfOrder';
+        const reason = result.rejectionReason ?? (result.droppedDuplicate ? 'duplicate' : 'out-of-order');
         const stats = candleEngine.statsFor(event.symbol);
-        log('info', `${reason} symbol=${event.symbol} count=${stats[reason]}`);
+        const count = reason === 'duplicate' ? stats.duplicateDropped : stats.outOfOrderDropped;
+        if (shouldLogDrop(count)) log('info', `tradeDropped reason=${reason} symbol=${event.symbol} count=${count}`);
         return;
       }
       cache.record(event);
@@ -138,8 +140,16 @@ function main(): void {
       for (const bar of result.bars) {
         cache.record(bar);
         hub.handleUpstreamEvent(bar);
-        if (bar.finalized) log('info', `candleFinalized symbol=${bar.symbol} timeframe=1m start=${bar.timestampMs}`);
+        if (bar.finalized) {
+          const stats = candleEngine.statsFor(bar.symbol);
+          log('info', `candleFinalized symbol=${bar.symbol} timeframe=1m start=${bar.timestampMs} receivedTrades=${stats.receivedTrades} acceptedTrades=${stats.acceptedTrades} duplicateDropped=${stats.duplicateDropped} outOfOrderDropped=${stats.outOfOrderDropped} staleDropped=${stats.staleDropped} invalidDropped=${stats.invalidDropped}`);
+        }
       }
+    },
+    onTradeRejected: (symbol, reason) => {
+      const stats = candleEngine.recordRejected(symbol, reason);
+      const count = reason === 'stale' ? stats.staleDropped : stats.invalidDropped;
+      if (shouldLogDrop(count)) log('info', `tradeDropped reason=${reason} symbol=${symbol} count=${count}`);
     },
     getSubscriptions: () => hub.subscriptionSnapshot(),
     onStateChange: (state) => log('info', `upstream ${state}`),

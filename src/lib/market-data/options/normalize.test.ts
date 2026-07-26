@@ -4,6 +4,7 @@ import { normalizeImpliedVolatility, normalizeOptionContracts } from './normaliz
 const context = {
   provider: 'test-provider',
   asOf: '2026-07-20T14:00:00.000Z',
+  timestampKind: 'provider' as const,
   status: 'live' as const,
   delayedMinutes: 0,
   ivUnit: 'decimal' as const,
@@ -28,6 +29,7 @@ describe('normalized options contracts', () => {
       volume: 0,
       openInterest: null,
       impliedVolatility: 0.35,
+      timestampKind: 'provider',
     });
   });
 

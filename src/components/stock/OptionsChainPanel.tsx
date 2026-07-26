@@ -267,7 +267,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
 
   return <section className="space-y-4 rounded-2xl border border-slate-800 bg-[#151B28] p-4 md:p-6" data-testid="options-chain-panel">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-white">Options Chain · {symbol}</h2><p className="mt-1 text-xs text-slate-400">ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว พร้อม ATM IV, Expected Move และ OI concentration</p></div><Button variant="outline" disabled={loading || cooldown > 0 || !appActive} onClick={() => chain ? void requestChain(expiration, true) : void requestExpirations()}><RefreshCw size={14}/>{cooldown ? ` ${cooldown}s` : ' Refresh'}</Button></div>
-    <DataProvenance status={chain?.status ?? expirations?.status ?? (error ? 'unavailable' : 'delayed')} provider={chain?.provider ?? expirations?.provider} asOf={chain?.asOf ?? expirations?.asOf} delayedMinutes={chain?.delayedMinutes ?? expirations?.delayedMinutes} reason={error?.message ?? null}/>
+    <DataProvenance status={chain?.status ?? expirations?.status ?? (error ? 'unavailable' : 'delayed')} provider={chain?.provider ?? expirations?.provider} asOf={chain?.asOf ?? expirations?.asOf} timestampKind={chain?.timestampKind ?? expirations?.timestampKind} delayedMinutes={chain?.delayedMinutes ?? expirations?.delayedMinutes} reason={error?.message ?? null}/>
     <p className="text-xs text-slate-400" data-testid="options-underlying-provenance">
       Underlying: {spot === null ? 'Unavailable' : `$${finite(spot)}`}
       {spot !== null ? ` · ${underlyingLabel?.provider ?? 'unknown source'} · ${underlyingLabel?.mode ?? 'UNAVAILABLE'} · ${underlyingLabel?.exchangeTimestamp ?? 'unknown time'}` : ''}

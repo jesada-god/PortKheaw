@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const marketDataStatusSchema = z.enum(['live', 'delayed', 'cached', 'stale']);
 export type MarketDataStatus = z.infer<typeof marketDataStatusSchema>;
 
+export const marketTimestampKindSchema = z.enum(['exchange', 'provider', 'receipt']);
+export type MarketTimestampKind = z.infer<typeof marketTimestampKindSchema>;
+
 const nullableFinite = z.number().finite().nullable();
 const nullableNonnegative = z.number().finite().nonnegative().nullable();
 const nullableInteger = z.number().int().nonnegative().nullable();
@@ -30,6 +33,7 @@ export const optionContractSchema = z.object({
   currency: z.string().min(3).max(8),
   provider: z.string().min(1),
   asOf: z.iso.datetime(),
+  timestampKind: marketTimestampKindSchema,
   status: marketDataStatusSchema,
 }).superRefine((contract, context) => {
   if (contract.bid !== null && contract.ask !== null && contract.bid > contract.ask) {
@@ -46,6 +50,7 @@ export const optionsChainSchema = z.object({
   puts: z.array(optionContractSchema),
   provider: z.string().min(1),
   asOf: z.iso.datetime(),
+  timestampKind: marketTimestampKindSchema,
   status: marketDataStatusSchema,
   delayedMinutes: z.number().int().nonnegative().nullable(),
   completeness: z.number().min(0).max(1),
@@ -61,6 +66,7 @@ export const optionsExpirationsSchema = z.object({
   expirations: z.array(z.iso.date()),
   provider: z.string().min(1),
   asOf: z.iso.datetime(),
+  timestampKind: marketTimestampKindSchema,
   status: marketDataStatusSchema,
   delayedMinutes: z.number().int().nonnegative().nullable(),
   warnings: z.array(z.string()),
@@ -76,6 +82,7 @@ export interface NormalizedOptionContracts {
   expirations: string[];
   provider: string;
   asOf: string;
+  timestampKind: MarketTimestampKind;
   status: MarketDataStatus;
   delayedMinutes: number | null;
   completeness: number;

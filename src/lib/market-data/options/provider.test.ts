@@ -31,14 +31,15 @@ describe('real options provider boundary', () => {
       implied_volatility: '0.35', delta: '0.4', gamma: '0.02', theta: '-0.03', vega: '0.05', rho: '0.01',
     }] }), { headers: { 'Content-Type': 'application/json' } })));
     const result = await new AlphaVantageOptionsProvider('secret', undefined, () => new Date('2026-07-20T15:00:00.000Z')).getOptionsContracts('RKLB');
-    expect(result.contracts[0]).toEqual(expect.objectContaining({ contractSymbol: 'RKLB260821C00050000', strike: 50, impliedVolatility: 0.35, multiplier: 100 }));
+    expect(result).toMatchObject({ asOf: '2026-07-20T15:00:00.000Z', timestampKind: 'receipt' });
+    expect(result.contracts[0]).toEqual(expect.objectContaining({ contractSymbol: 'RKLB260821C00050000', strike: 50, impliedVolatility: 0.35, multiplier: 100, timestampKind: 'receipt' }));
     expect(result.warnings.join(' ')).toMatch(/multiplier 100/i);
   });
 
   it('returns unavailable instead of fabricating a chain when no real contract matches', async () => {
     const provider = { id: 'test', getOptionsContracts: vi.fn(async () => ({
       underlyingSymbol: 'RKLB', contracts: [], expirations: [], provider: 'test',
-      asOf: '2026-07-20T15:00:00.000Z', status: 'delayed' as const, delayedMinutes: 15,
+      asOf: '2026-07-20T15:00:00.000Z', timestampKind: 'provider' as const, status: 'delayed' as const, delayedMinutes: 15,
       completeness: 0, warnings: ['provider returned no contracts'],
     })) };
     const quote = { getQuote: vi.fn(async () => { throw new Error('quote should not be requested'); }) };
@@ -66,5 +67,7 @@ describe('real options provider boundary', () => {
     expect(result.data.underlyingStatus).toBe('stale');
     expect(result.data.underlyingProvider).toBe('polygon');
     expect(result.data.calls[0].status).toBe('live');
+    expect(result.data.timestampKind).toBe('receipt');
+    expect(result.data.calls[0].timestampKind).toBe('receipt');
   });
 });

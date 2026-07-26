@@ -9,14 +9,14 @@ const contract = (overrides: Partial<OptionContract> = {}): OptionContract => ({
   volume: 42, openInterest: 900, impliedVolatility: 0.65,
   delta: 0.6, gamma: 0.03, theta: -0.04, vega: 0.08, rho: 0.01,
   inTheMoney: false, multiplier: 100, currency: 'USD', provider: 'alpha-vantage',
-  asOf: '2026-07-20T15:30:00.000Z', status: 'live',
+  asOf: '2026-07-20T15:30:00.000Z', timestampKind: 'receipt', status: 'live',
   ...overrides,
 });
 
 const chain = (item = contract()): OptionsChain => ({
   underlyingSymbol: 'RKLB', spot: 23.5, expiration: '2027-01-15', expirations: ['2027-01-15'],
   calls: item.type === 'call' ? [item] : [], puts: item.type === 'put' ? [item] : [],
-  provider: 'alpha-vantage', asOf: '2026-07-20T15:30:00.000Z', status: item.status,
+  provider: 'alpha-vantage', asOf: '2026-07-20T15:30:00.000Z', timestampKind: item.timestampKind, status: item.status,
   delayedMinutes: item.status === 'live' ? 0 : 15, completeness: 1, warnings: [],
 });
 

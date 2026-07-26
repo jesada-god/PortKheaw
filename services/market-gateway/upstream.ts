@@ -7,7 +7,7 @@ import {
   computeBackoffDelayMs,
   MarketTracer,
   normalizeAlpacaMessage,
-  normalizeFinnhubMessage,
+  normalizeFinnhubMessageWithDiagnostics,
   type BackoffOptions,
   type ChannelRef,
   type MarketChannel,
@@ -62,6 +62,8 @@ export interface UpstreamOptions {
   createSocket: (url: string) => SocketLike;
   /** Receives every normalized market event. */
   onEvent: (event: NormalizedMarketEvent) => void;
+  /** Classifies Finnhub rows rejected before canonical trade ingestion. */
+  onTradeRejected?: (symbol: string, reason: 'stale' | 'invalid') => void;
   /** The current live subscriptions to replay after a reconnect. */
   getSubscriptions: () => ChannelRef[];
   onStateChange?: (state: UpstreamState) => void;
@@ -263,14 +265,22 @@ export class UpstreamConnection {
   }
 
   private onUpstreamMessage(generation: number, data: string): void {
-    if (!this.isCurrent(generation)) return; // ignore stale-socket messages
-    this.markWire();
+    const current = this.isCurrent(generation);
+    if (!current && this.options.config.protocol !== 'finnhub') return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
     } catch {
       return;
     }
+    if (!current) {
+      if (this.options.config.protocol === 'finnhub') {
+        const diagnostics = normalizeFinnhubMessageWithDiagnostics(parsed);
+        for (const symbol of diagnostics.observedSymbols) this.options.onTradeRejected?.(symbol, 'stale');
+      }
+      return;
+    }
+    this.markWire();
     if (this.options.config.protocol === 'finnhub') {
       this.handleFinnhubMessage(generation, parsed);
       return;
@@ -291,7 +301,9 @@ export class UpstreamConnection {
       this.recycle(generation);
       return;
     }
-    const events = normalizeFinnhubMessage(message);
+    const diagnostics = normalizeFinnhubMessageWithDiagnostics(message);
+    for (const rejected of diagnostics.rejected) this.options.onTradeRejected?.(rejected.symbol, rejected.reason);
+    const events = diagnostics.trades;
     if (events.length === 0) return;
     this.markMarketEvent();
     for (const event of events) {

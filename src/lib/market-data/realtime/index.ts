@@ -75,7 +75,12 @@ export {
   type AlpacaFeed,
   type BackoffOptions,
 } from './config';
-export { normalizeFinnhubMessage, buildFinnhubSubscriptionFrame } from './finnhub-normalize';
+export {
+  normalizeFinnhubMessage,
+  normalizeFinnhubMessageWithDiagnostics,
+  buildFinnhubSubscriptionFrame,
+  type FinnhubNormalizationResult,
+} from './finnhub-normalize';
 export {
   US_EQUITY_SESSIONS,
   classifyUsEquityTimestamp,

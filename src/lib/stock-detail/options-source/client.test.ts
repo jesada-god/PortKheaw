@@ -12,7 +12,7 @@ function rawContract(type: 'call' | 'put', strike: number, openInterest: number)
     bid: null, ask: null, last: null, mark: null, volume: null, openInterest,
     impliedVolatility: null, delta: null, gamma: null, theta: null, vega: null, rho: null,
     inTheMoney: null, multiplier: 100, currency: 'USD', provider: 'alpha-vantage',
-    asOf: '2026-07-21T00:00:00.000Z', status: 'delayed',
+    asOf: '2026-07-21T00:00:00.000Z', timestampKind: 'receipt', status: 'delayed',
   };
 }
 
@@ -25,7 +25,7 @@ function chainEnvelope() {
         rawContract('call', 50, 500), rawContract('call', 51, 450),
       ],
       puts: [rawContract('put', 40, 600), rawContract('put', 45, 200), rawContract('put', 50, 120)],
-      provider: 'alpha-vantage', asOf: '2026-07-21T00:00:00.000Z', status: 'delayed',
+      provider: 'alpha-vantage', asOf: '2026-07-21T00:00:00.000Z', timestampKind: 'receipt', status: 'delayed',
       delayedMinutes: null, completeness: 0.8, warnings: [],
     },
     meta: { provider: 'alpha-vantage' },
@@ -73,7 +73,7 @@ describe('fetchOptionsExpirations', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
       data: {
         underlyingSymbol: 'RKLB', expirations: ['2020-01-01', '2026-09-18', '2026-08-21'],
-        provider: 'alpha-vantage', asOf: '2026-07-21T00:00:00.000Z', status: 'delayed', delayedMinutes: null, warnings: [],
+        provider: 'alpha-vantage', asOf: '2026-07-21T00:00:00.000Z', timestampKind: 'receipt', status: 'delayed', delayedMinutes: null, warnings: [],
       },
       meta: { provider: 'alpha-vantage' },
     })));

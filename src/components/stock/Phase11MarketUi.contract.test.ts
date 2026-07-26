@@ -61,6 +61,8 @@ describe('Phase 11 market UI production contract', () => {
     expect(options).toContain('Virtualized options chain');
     expect(options).toContain('VIEWPORT_HEIGHT');
     expect(options).toContain('connection?.saveData');
+    expect(options).toContain('timestampKind={chain?.timestampKind ?? expirations?.timestampKind}');
+    expect(read('src/components/market-data/DataProvenance.tsx')).toContain('เวลาที่ระบบได้รับข้อมูล');
   });
 
   it('revalidates a selected contract through the server API and marks edits custom', () => {

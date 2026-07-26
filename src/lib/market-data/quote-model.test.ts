@@ -8,7 +8,7 @@ const option = (overrides: Partial<OptionContract> = {}): OptionContract => ({
   volume: 10, openInterest: 100, impliedVolatility: 0.2,
   delta: null, gamma: null, theta: null, vega: null, rho: null, inTheMoney: null,
   multiplier: 100, currency: 'USD', provider: 'test-options',
-  asOf: '2026-07-27T15:00:00.000Z', status: 'live', ...overrides,
+  asOf: '2026-07-27T15:00:00.000Z', timestampKind: 'receipt', status: 'live', ...overrides,
 });
 
 describe('canonical market quote models', () => {
@@ -29,7 +29,7 @@ describe('canonical market quote models', () => {
     const quote = optionMarketQuote(option());
     expect(quote).toMatchObject({
       bid: 10, ask: 12, midpoint: 11, last: 11.5,
-      openInterest: 100, impliedVolatility: 0.2, freshness: 'LIVE',
+      openInterest: 100, impliedVolatility: 0.2, freshness: 'LIVE', timestampKind: 'receipt',
     });
   });
 

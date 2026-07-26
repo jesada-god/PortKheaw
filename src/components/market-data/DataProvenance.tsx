@@ -1,4 +1,5 @@
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
+import type { MarketTimestampKind } from '@/src/lib/market-data/options/contracts';
 
 export type DisplayDataStatus = 'live' | 'delayed' | 'end-of-day' | 'cached' | 'stale' | 'unavailable';
 
@@ -21,17 +22,19 @@ export function DataProvenance({
   asOf,
   reason,
   delayedMinutes,
+  timestampKind,
 }: {
   status: DisplayDataStatus;
   provider?: string | null;
   asOf?: string | null;
   reason?: string | null;
   delayedMinutes?: number | null;
+  timestampKind?: MarketTimestampKind | null;
 }) {
   return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400" data-testid="data-provenance">
     <DataStatusBadge status={status} />
     <span>{provider ?? 'provider unavailable'}</span>
-    {asOf && <span>{formatMarketDataAsOf(asOf)}</span>}
+    {asOf && <span>{timestampKind === 'receipt' ? 'เวลาที่ระบบได้รับข้อมูล ' : ''}{formatMarketDataAsOf(asOf)}</span>}
     {delayedMinutes != null && <span>delay {delayedMinutes}m</span>}
     {reason && <span className={status === 'unavailable' || status === 'stale' ? 'text-amber-300' : undefined}>{reason}</span>}
   </div>;

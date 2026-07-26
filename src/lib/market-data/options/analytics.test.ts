@@ -8,14 +8,14 @@ const contract = (overrides: Partial<OptionContract>): OptionContract => ({
   volume: 100, openInterest: 500, impliedVolatility: 0.4,
   delta: null, gamma: null, theta: null, vega: null, rho: null,
   inTheMoney: false, multiplier: 100, currency: 'USD', provider: 'test-provider',
-  asOf: '2026-07-20T14:00:00.000Z', status: 'live', ...overrides,
+  asOf: '2026-07-20T14:00:00.000Z', timestampKind: 'provider', status: 'live', ...overrides,
 });
 
 const chain = (overrides: Partial<OptionsChain> = {}): OptionsChain => optionsChainSchema.parse({
   underlyingSymbol: 'RKLB', spot: 50, expiration: '2026-08-21', expirations: ['2026-08-21'],
   calls: [contract({}), contract({ contractSymbol: 'RKLB260821C00055000', strike: 55, impliedVolatility: 0.5, openInterest: 1_000 })],
   puts: [contract({ contractSymbol: 'RKLB260821P00050000', type: 'put', impliedVolatility: 0.3, openInterest: 800 })],
-  provider: 'test-provider', asOf: '2026-07-20T14:00:00.000Z', status: 'live',
+  provider: 'test-provider', asOf: '2026-07-20T14:00:00.000Z', timestampKind: 'provider', status: 'live',
   delayedMinutes: 0, completeness: 0.8, warnings: [], ...overrides,
 });
 

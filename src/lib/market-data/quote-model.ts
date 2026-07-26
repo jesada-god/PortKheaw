@@ -1,4 +1,4 @@
-import type { OptionContract } from './options/contracts';
+import type { MarketTimestampKind, OptionContract } from './options/contracts';
 
 export type CanonicalQuoteFreshness = 'LIVE' | 'DELAYED' | 'STALE' | 'CACHED' | 'UNAVAILABLE';
 
@@ -27,6 +27,7 @@ export interface OptionMarketQuote {
   openInterest: number | null;
   impliedVolatility: number | null;
   timestamp: string;
+  timestampKind: MarketTimestampKind;
   source: string;
   freshness: CanonicalQuoteFreshness;
 }
@@ -87,6 +88,7 @@ export function optionMarketQuote(contract: OptionContract): OptionMarketQuote {
     openInterest: contract.openInterest,
     impliedVolatility: contract.impliedVolatility,
     timestamp: contract.asOf,
+    timestampKind: contract.timestampKind,
     source: contract.provider,
     freshness: quoteFreshness(contract.status),
   };

@@ -90,6 +90,9 @@ export class AlphaVantageOptionsProvider implements OptionsContractsProvider {
         {
           provider: this.id,
           asOf,
+          // REALTIME_OPTIONS does not supply a trustworthy exchange/provider
+          // quote timestamp, so `asOf` is precisely our receipt clock.
+          timestampKind: 'receipt',
           status: 'live',
           delayedMinutes: 0,
           ivUnit: 'decimal',
