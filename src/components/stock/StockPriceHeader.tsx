@@ -43,6 +43,7 @@ export interface ExtendedHoursQuote {
 interface TransientPriceMetadata {
   asOf: string | null;
   feed: string | null;
+  session?: string | null;
 }
 
 export type TransientPriceSink = (
@@ -280,6 +281,10 @@ export function StockPriceHeader({
     if (!transientPriceSinkRef) return;
     const sink: TransientPriceSink = (price, metadata) => {
       if (!Number.isFinite(price) || price <= 0) return;
+      // PRE/AFTER trades belong exclusively in the secondary row. The accepted
+      // React path partitions them with their regular-close comparison base; the
+      // imperative hot path must never overwrite the main regular price first.
+      if (metadata?.session === 'pre-market' || metadata?.session === 'after-hours') return;
       lastTransientUsdPriceRef.current = {
         symbol,
         price,

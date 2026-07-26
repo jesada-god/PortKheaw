@@ -101,6 +101,8 @@ export async function observedMarketDataResponse<T>(
     errorCode: response.ok ? null : `http-${response.status}`,
   }));
   response.headers.set('X-Request-Id', requestId);
+  response.headers.set('X-Market-Data-Cache-Status', cacheStatus);
+  if (result?.provider) response.headers.set('X-Market-Data-Provider', result.provider);
   return response;
 }
 

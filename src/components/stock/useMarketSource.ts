@@ -63,6 +63,7 @@ export interface UseMarketSourceOptions {
     current: ((price: number, metadata?: {
       asOf: string | null;
       feed: string | null;
+      session?: string | null;
     }) => void) | null;
   };
   /** Imperative chart hot path. Receives the same accepted gateway update. */
@@ -265,6 +266,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
         options.transientPriceSinkRef?.current?.(update.price, {
           asOf: update.label.exchangeTimestamp,
           feed: update.label.feed ?? null,
+          session: update.session ?? null,
         });
       }
       const commitMarketState = policy.commitMarketState

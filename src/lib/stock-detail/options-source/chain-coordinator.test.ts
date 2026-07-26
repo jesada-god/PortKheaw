@@ -19,6 +19,10 @@ function outcome(ok = true, retryAfterSeconds: number | null = null): OptionsCha
 }
 
 describe('OptionsChainCoordinator', () => {
+  it('uses a provider-semantic 30 second success TTL', () => {
+    expect(OPTIONS_CHAIN_FRESH_MS).toBe(30_000);
+  });
+
   it('single-flights the same symbol and expiration', async () => {
     let resolve!: (value: OptionsChainOutcome) => void;
     const fetcher = vi.fn(() => new Promise<OptionsChainOutcome>((done) => { resolve = done; }));

@@ -16,7 +16,7 @@ interface ChainState {
   inflight: Promise<OptionsChainOutcome> | null;
   controller: AbortController | null;
 }
-export const OPTIONS_CHAIN_FRESH_MS = 5 * 60_000;
+export const OPTIONS_CHAIN_FRESH_MS = 30_000;
 export const OPTIONS_CHAIN_ERROR_COOLDOWN_MS = 30_000;
 export const OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS = 60_000;
 

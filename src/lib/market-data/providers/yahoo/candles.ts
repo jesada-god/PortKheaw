@@ -219,6 +219,11 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         high: positiveNumber(result.meta.regularMarketDayHigh),
         low: positiveNumber(result.meta.regularMarketDayLow),
         previousClose: previousRegularClose,
+        // `regularMarketPrice` remains the latest regular-session close while
+        // Yahoo reports PRE/POST/CLOSED. Preserve it explicitly so an accepted
+        // extended trade can never force the header to fall back to the older
+        // `previousRegularClose` as its main row.
+        regularClose: price,
         previousRegularClose,
         change,
         changePercent,

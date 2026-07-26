@@ -62,6 +62,10 @@ export class AlphaVantageOptionsProvider implements OptionsContractsProvider {
       url,
       init: { cache: 'no-store' },
       timeoutMs: 10_000,
+      // A 429 is negatively cached by OptionsMarketDataService and the browser
+      // coordinators. Retrying it inside this single route invocation multiplies
+      // one UI request into an upstream burst, so Options gets one bounded attempt.
+      maxAttempts: 1,
     });
     try {
       const response = alphaVantageOptionsResponseSchema.parse(payload);

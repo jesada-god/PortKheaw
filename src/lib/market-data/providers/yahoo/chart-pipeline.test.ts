@@ -221,6 +221,7 @@ describe('Yahoo previous regular close priority', () => {
       // The main price is always the regular-session price, so a pre/post quote
       // can never replace the regular row.
       expect(result.data.priceSource).toBe('yahoo-chart-meta.regularMarketPrice');
+      expect(result.data.regularClose).toBe(210);
     }
   });
 });

@@ -92,6 +92,16 @@ function errorLabel(code: string | undefined): string {
   return 'ข้อมูลออปชันยังไม่พร้อมใช้งาน';
 }
 
+export function optionsPanelErrorLabel(code: string | undefined, cooldownSeconds: number): string {
+  if (code === 'rate-limited') {
+    return cooldownSeconds > 0
+      ? `ข้อมูลออปชันถูกจำกัดชั่วคราว · ลองใหม่ใน ${cooldownSeconds} วินาที`
+      : 'ข้อมูลออปชันถูกจำกัดชั่วคราว · ลองใหม่อีกครั้ง';
+  }
+  if (code === 'not-found') return 'ไม่พบข้อมูลออปชันสำหรับช่วงนี้';
+  return errorLabel(code);
+}
+
 export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   symbol: string;
   acceptedPrice: number | null;
@@ -220,6 +230,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     oi: calculateOiConcentration(canonicalChain),
   } : null, [canonicalChain]);
   const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1_000));
+  const displayedError = error ? optionsPanelErrorLabel(error.code, cooldown) : null;
 
   const addChartLine = (line: StrikeLine) => {
     const key = `nexora:strike-lines:${symbol.toUpperCase()}:v1`;
@@ -249,13 +260,13 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
 
   return <section className="space-y-4 rounded-2xl border border-slate-800 bg-[#151B28] p-4 md:p-6" data-testid="options-chain-panel">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-white">Options Chain · {symbol}</h2><p className="mt-1 text-xs text-slate-400">ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว พร้อม ATM IV, Expected Move และ OI concentration</p></div><Button variant="outline" disabled={loading || cooldown > 0 || !appActive} onClick={() => chain ? void requestChain(expiration, true) : void requestExpirations()}><RefreshCw size={14}/>{cooldown ? ` ${cooldown}s` : ' Refresh'}</Button></div>
-    <DataProvenance status={chain?.status ?? expirations?.status ?? (error ? 'unavailable' : 'delayed')} provider={chain?.provider ?? expirations?.provider} asOf={chain?.asOf ?? expirations?.asOf} timestampKind={chain?.timestampKind ?? expirations?.timestampKind} delayedMinutes={chain?.delayedMinutes ?? expirations?.delayedMinutes} reason={error?.message ?? null}/>
+    <DataProvenance status={chain?.status ?? expirations?.status ?? (error ? 'unavailable' : 'delayed')} provider={chain?.provider ?? expirations?.provider} asOf={chain?.asOf ?? expirations?.asOf} timestampKind={chain?.timestampKind ?? expirations?.timestampKind} delayedMinutes={chain?.delayedMinutes ?? expirations?.delayedMinutes} reason={displayedError}/>
     <p className="text-xs text-slate-400" data-testid="options-underlying-provenance">
       Underlying: {spot === null ? 'Unavailable' : `$${finite(spot)}`}
       {spot !== null ? ` · ${underlyingLabel?.provider ?? 'unknown source'} · ${underlyingLabel?.mode ?? 'UNAVAILABLE'} · ${underlyingLabel?.exchangeTimestamp ?? 'unknown time'}` : ''}
     </p>
-    {error && <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200"><p>{error.message}</p><p className="mt-1 text-xs text-slate-400">ไม่มีการสร้างหรือเติม Options data ทดแทน</p><Button className="mt-3" variant="outline" disabled={loading || cooldown > 0} onClick={() => { setUserStarted(true); setError(null); }}>ลองใหม่</Button></div>}
-    {loading && !chain && <div className="h-64 animate-pulse rounded-xl bg-slate-800/60" aria-label="Loading options chain"/>}
+    {error && <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200"><p>{displayedError}</p><p className="mt-1 text-xs text-slate-400">ไม่มีการสร้างหรือเติม Options data ทดแทน</p><Button className="mt-3" variant="outline" disabled={loading || cooldown > 0} onClick={() => { setUserStarted(true); setError(null); }}>ลองใหม่</Button></div>}
+    {loading && !chain && <div className="flex h-64 items-center justify-center rounded-xl bg-slate-800/60 text-sm text-slate-300" aria-label="กำลังโหลดข้อมูลออปชัน…">กำลังโหลดข้อมูลออปชัน…</div>}
     {expirations && expirations.expirations.length > 0 && <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">Expiration<Select className="mt-1" value={expiration} onChange={(event) => { setError(null); setExpiration(event.target.value); }}><option value="" disabled>เลือกวันหมดอายุ</option>{expirations.expirations.map((value) => <option key={value} value={value}>{value}</option>)}</Select></label><label className="text-xs text-slate-400">Strike range<Select className="mt-1" value={strikeRange} onChange={(event) => setStrikeRange(Number(event.target.value))}>{[5, 10, 20, 50].map((value) => <option key={value} value={value}>±{value}% around spot</option>)}</Select></label></div>}
     {chain && analytics && <>
       <div className="grid gap-3 md:grid-cols-3"><article className="rounded-xl border border-slate-700 p-3"><p className="text-xs text-slate-500">ATM IV</p><p className="mt-1 text-xl font-bold text-white">{analytics.atm.iv === null ? 'Unavailable' : `${finite(analytics.atm.iv * 100)}%`}</p><p className="mt-1 text-[10px] text-slate-400">robust median · {analytics.atm.sampledContracts.length} contracts · DTE {analytics.atm.dte} · confidence {finite(analytics.atm.confidence)}%</p></article>

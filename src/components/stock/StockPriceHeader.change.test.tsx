@@ -110,6 +110,19 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
   });
 
+  it('never lets a transient extended-hours trade overwrite the main regular row', () => {
+    const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
+    render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
+
+    transientPriceSinkRef.current?.(70.75, {
+      asOf: '2026-07-23T20:05:00.000Z',
+      feed: 'finnhub',
+      session: 'after-hours',
+    });
+
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+  });
+
   it('renders change + percent from a REST quote with price and previous close', () => {
     // Provider omitted its own change: derive from the real previous close.
     render(baseProps({ ...BASE_QUOTE, change: null, changePercent: null }));

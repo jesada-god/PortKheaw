@@ -176,6 +176,26 @@ describe('stock price header accepted quote partition', () => {
     expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 206.87 });
   });
 
+  it('uses the explicit latest regular close instead of the older previous close after hours', () => {
+    const initial = quoteResource({
+      ...HEADER_QUOTE,
+      price: 206.87,
+      regularClose: 206.87,
+      previousClose: 208.76,
+      previousRegularClose: 208.76,
+    }, '2026-07-24T20:00:00.000Z');
+    const current = quoteResource({ ...initial.data!, price: 207.42 }, '2026-07-24T23:58:31.000Z');
+    const result = resolvePriceHeaderData({
+      current,
+      initial,
+      marketStatus: 'after-hours',
+      evaluatedAt: '2026-07-24T23:58:32.000Z',
+    });
+    expect(result.quote?.price).toBe(206.87);
+    expect(result.quote?.previousRegularClose).toBe(208.76);
+    expect(result.extendedQuote?.price).toBe(207.42);
+  });
+
   it('shows a closed regular quote without an extended row when no extended quote was accepted', () => {
     const current = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
     const result = resolvePriceHeaderData({

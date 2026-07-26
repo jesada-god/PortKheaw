@@ -198,6 +198,7 @@ describe('useMarketSource connection state', () => {
     expect(sink).toHaveBeenCalledWith(206.87, {
       asOf: '2026-07-24T20:26:14.801Z',
       feed: 'iex',
+      session: null,
     });
     expect(latest?.quoteResource.data?.price).toBe(206.87);
     expect(latest?.dataLabel?.realtime).toBe(true);

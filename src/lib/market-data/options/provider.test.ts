@@ -8,6 +8,16 @@ vi.mock('server-only', () => ({}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('real options provider boundary', () => {
+  it('does not multiply one Options 429 into upstream retries', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      Information: 'rate limit',
+    }), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '45' } }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(new AlphaVantageOptionsProvider('secret').getOptionsContracts('AAPL'))
+      .rejects.toMatchObject({ code: 'rate-limited', retryAfterSeconds: 45 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('maps a plan entitlement response to forbidden without accepting sample data', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       Information: 'This premium endpoint requires a subscription or upgraded plan.',
