@@ -1,4 +1,10 @@
 import type { CandleInterval, CandleRange, NormalizedCandle } from './contracts';
+import {
+  EARLY_CLOSE_MINUTE,
+  isUsMarketEarlyClose,
+  isUsTradingDay,
+  US_MARKET_TIMEZONE,
+} from '../us-market-calendar';
 
 /**
  * Calendar days fetched for the `1d` range.
@@ -106,4 +112,75 @@ export function latestTradingDayCandles(
   const dateOf = (seconds: number) => format.format(new Date(seconds * 1_000));
   const newest = dateOf(candles.reduce((latest, candle) => Math.max(latest, candle.timestamp), 0));
   return candles.filter((candle) => dateOf(candle.timestamp) === newest);
+}
+
+function exchangeClock(date: Date, timeZone: string): { date: string; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minute: Number(part('hour')) * 60 + Number(part('minute')),
+  };
+}
+
+function periodStart(date: string, interval: 'Week' | 'Month'): string {
+  if (interval === 'Month') return `${date.slice(0, 7)}-01`;
+  const value = new Date(`${date}T12:00:00.000Z`);
+  const weekday = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() - weekday + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function finalUsTradingDate(period: string, interval: 'Week' | 'Month'): string | null {
+  const start = new Date(`${period}T12:00:00.000Z`);
+  const end = interval === 'Week'
+    ? new Date(start.valueOf() + 4 * 86_400_000)
+    : new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0, 12));
+  const maximumSteps = interval === 'Week' ? 5 : 10;
+  for (let step = 0; step < maximumSteps; step += 1) {
+    const candidate = new Date(end.valueOf() - step * 86_400_000).toISOString().slice(0, 10);
+    if (isUsTradingDay(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Remove provider rows whose weekly/monthly regular-session bucket has not
+ * closed yet. Some native HTF feeds omit `partial: true`, so that flag alone is
+ * not a finalization contract.
+ */
+export function finalizedHigherTimeframeCandles(
+  candles: readonly NormalizedCandle[],
+  interval: 'Week' | 'Month',
+  exchangeTimezone: string,
+  now = new Date(),
+): NormalizedCandle[] {
+  const current = exchangeClock(now, exchangeTimezone);
+  const currentPeriod = periodStart(current.date, interval);
+
+  return candles.filter((candle) => {
+    if (candle.partial === true) return false;
+    const candleDate = exchangeClock(new Date(candle.timestamp * 1_000), exchangeTimezone).date;
+    const candlePeriod = periodStart(candleDate, interval);
+    if (candlePeriod < currentPeriod) return true;
+    if (candlePeriod > currentPeriod) return false;
+
+    // US equities finalize at the last regular close in the bucket. For any
+    // other exchange, wait until the next calendar bucket rather than guessing
+    // its holiday or early-close rules.
+    if (exchangeTimezone !== US_MARKET_TIMEZONE) return false;
+    const finalDate = finalUsTradingDate(candlePeriod, interval);
+    if (!finalDate || current.date < finalDate) return false;
+    if (current.date > finalDate) return true;
+    const closeMinute = isUsMarketEarlyClose(finalDate) ? EARLY_CLOSE_MINUTE : 16 * 60;
+    return current.minute >= closeMinute;
+  });
 }

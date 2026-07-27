@@ -110,6 +110,27 @@ describe('candle provider service', () => {
     expect(response.data.actualStart).toBe(ipo);
   });
 
+  it('drops a current native monthly row even when the provider omits its partial flag', async () => {
+    const june = Date.parse('2026-06-01T04:00:00.000Z') / 1_000;
+    const july = Date.parse('2026-07-01T04:00:00.000Z') / 1_000;
+    const call = vi.fn(async (input) => ({
+      ...result('yahoo', input),
+      candles: [
+        { timestamp: june, open: 10, high: 12, low: 9, close: 11, adjustedClose: 11, volume: 100 },
+        { timestamp: july, open: 11, high: 13, low: 10, close: 12, adjustedClose: 12, volume: 200 },
+      ],
+    }));
+    const service = new CandleMarketDataService(
+      [provider('yahoo', YAHOO_CANDLE_CAPABILITIES, call)],
+      new SharedRequestCache(),
+      () => Date.parse('2026-07-27T19:22:00.000Z'),
+    );
+    const response = await service.getCandles({
+      symbol: 'AAPL', interval: 'Month', range: '5y', adjusted: true, session: 'regular',
+    });
+    expect(response.data.candles.map((bar) => bar.timestamp)).toEqual([june]);
+  });
+
   it('does not call any provider for unsupported daily-to-intraday substitution', async () => {
     const call = vi.fn(async (input) => result('daily-only', input));
     const dailyOnly: ProviderCapabilities = { ...FMP_CANDLE_CAPABILITIES, intervals: FMP_CANDLE_CAPABILITIES.intervals.filter((item) => item.interval === '1D') };

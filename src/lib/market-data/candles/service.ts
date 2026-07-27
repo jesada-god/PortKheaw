@@ -8,6 +8,7 @@ import {
   candleRangeBounds,
   canonicalCandleBounds,
   canonicalCandleRange,
+  finalizedHigherTimeframeCandles,
   latestTradingDayCandles,
 } from './range';
 
@@ -98,7 +99,12 @@ export class CandleMarketDataService {
         // The provider may include the still-forming current week/month; it is
         // retained in the raw provider result but never returned as history.
         const aggregated = input.interval === 'Week' || input.interval === 'Month'
-          ? aggregatedWithPartial.filter((candle) => candle.partial !== true)
+          ? finalizedHigherTimeframeCandles(
+            aggregatedWithPartial,
+            input.interval,
+            resolution.value.exchangeTimezone,
+            new Date(this.now()),
+          )
           : aggregatedWithPartial;
         if (!aggregated.length) throw new MarketDataError('insufficient-data', 'No candles remain after validated aggregation');
         const cacheStatus = resolution.state === 'fresh' ? 'miss' as const : resolution.state === 'cache' ? 'hit' as const : 'stale' as const;

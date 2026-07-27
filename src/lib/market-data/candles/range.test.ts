@@ -3,6 +3,7 @@ import {
   candleRangeBounds,
   canonicalCandleBounds,
   canonicalCandleRange,
+  finalizedHigherTimeframeCandles,
   latestTradingDayCandles,
   rangeMeetsMinimumLookback,
 } from './range';
@@ -85,5 +86,32 @@ describe('latestTradingDayCandles', () => {
 
   it('leaves an empty series empty rather than fabricating a session', () => {
     expect(latestTradingDayCandles([], NY)).toEqual([]);
+  });
+});
+
+describe('finalizedHigherTimeframeCandles', () => {
+  it('drops an unmarked current weekly/monthly provider row', () => {
+    const previousWeek = bar(Date.parse('2026-07-20T04:00:00.000Z') / 1_000);
+    const currentWeek = bar(Date.parse('2026-07-27T04:00:00.000Z') / 1_000);
+    const previousMonth = bar(Date.parse('2026-06-01T04:00:00.000Z') / 1_000);
+    const currentMonth = bar(Date.parse('2026-07-01T04:00:00.000Z') / 1_000);
+    const duringRegular = new Date('2026-07-27T19:22:00.000Z');
+
+    expect(finalizedHigherTimeframeCandles(
+      [previousWeek, currentWeek], 'Week', NY, duringRegular,
+    )).toEqual([previousWeek]);
+    expect(finalizedHigherTimeframeCandles(
+      [previousMonth, currentMonth], 'Month', NY, duringRegular,
+    )).toEqual([previousMonth]);
+  });
+
+  it('finalizes a US weekly bucket at its last regular-session close', () => {
+    const week = bar(Date.parse('2026-07-20T04:00:00.000Z') / 1_000);
+    expect(finalizedHigherTimeframeCandles(
+      [week], 'Week', NY, new Date('2026-07-24T19:59:00.000Z'),
+    )).toEqual([]);
+    expect(finalizedHigherTimeframeCandles(
+      [week], 'Week', NY, new Date('2026-07-24T20:00:00.000Z'),
+    )).toEqual([week]);
   });
 });
