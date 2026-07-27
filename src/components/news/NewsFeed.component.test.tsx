@@ -3,8 +3,8 @@
 /**
  * Behaviour contract for the shared news feed, exercised through the real
  * component: 5 cards by default, 10 after "ดูเพิ่มเติม" with no second request,
- * back to 5 after "แสดงน้อยลง", real publisher thumbnails, and a placeholder the
- * moment an image fails. Every article here is provider-shaped payload — the feed
+ * back to 5 after "แสดงน้อยลง", real publisher thumbnails, and no thumbnail frame
+ * after an image fails. Every article here is provider-shaped payload — the feed
  * renders exactly what it is given and invents nothing.
  */
 
@@ -132,20 +132,23 @@ describe('NewsFeed', () => {
     }
   });
 
-  it('renders the publisher thumbnail and swaps in the placeholder when it fails', async () => {
+  it('renders a real image, omits image=null, and removes a failed frame without leaving a gap', async () => {
     mockFetch(newsResponse(buildArticles(2)));
     await mount(<NewsFeed symbol="DDD" />);
 
     const image = container.querySelector('img');
     expect(image?.getAttribute('src')).toBe('https://cdn.publisher.com/thumb-0.jpg');
     expect(image?.getAttribute('referrerpolicy')).toBe('no-referrer');
-    // The article without an image already shows the shared placeholder.
-    expect(container.querySelectorAll('[data-testid="news-thumbnail-placeholder"]')).toHaveLength(1);
+    // The article without an image has only its full-width content column.
+    expect(cards()[1]?.querySelector('img')).toBeNull();
+    expect(cards()[1]?.children).toHaveLength(1);
+    expect(cards()[1]?.firstElementChild?.classList.contains('flex-1')).toBe(true);
 
     await act(async () => { image!.dispatchEvent(new Event('error')); });
 
-    expect(container.querySelector('img')).toBeNull();
-    expect(container.querySelectorAll('[data-testid="news-thumbnail-placeholder"]')).toHaveLength(2);
+    expect(cards()[0]?.querySelector('img')).toBeNull();
+    expect(cards()[0]?.children).toHaveLength(1);
+    expect(cards()[0]?.firstElementChild?.classList.contains('flex-1')).toBe(true);
   });
 
   it('shows the empty state rather than a card when the symbol has no news', async () => {

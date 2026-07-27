@@ -2,18 +2,16 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { ImageOff } from 'lucide-react';
 import { cn } from '@/src/utils/cn';
 import { shouldRenderNewsImage } from './news-policy';
 
 /**
  * The one news thumbnail in the app: the article's real image when the publisher
- * supplied a usable one, and the system placeholder in every other case
- * (no image, Data Saver, non-HTTPS link, or a request that fails at runtime).
+ * supplied a usable one, otherwise no thumbnail at all.
  *
- * The frame is a fixed aspect ratio whether or not an image loads, so a feed never
- * reflows as pictures arrive or fail. `unoptimized` keeps the publisher's own URL:
- * see the `images` note in next.config.ts for why the optimizer is not used.
+ * `unoptimized` keeps the publisher's own URL: see the `images` note in
+ * next.config.ts for why the optimizer is not used. If that request fails, the
+ * entire frame is removed so the card content occupies the full width.
  */
 export function NewsThumbnail({
   imageUrl,
@@ -27,8 +25,11 @@ export function NewsThumbnail({
   priority?: boolean;
   className?: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const renderable = shouldRenderNewsImage(saveData, imageUrl) && !failed;
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const renderable = shouldRenderNewsImage(saveData, imageUrl)
+    && failedUrl !== imageUrl;
+
+  if (!renderable) return null;
 
   return (
     <div
@@ -37,30 +38,18 @@ export function NewsThumbnail({
         className,
       )}
     >
-      {renderable ? (
-        <Image
-          src={imageUrl as string}
-          alt=""
-          fill
-          sizes="(min-width: 640px) 112px, 96px"
-          unoptimized
-          loading={priority ? 'eager' : 'lazy'}
-          priority={priority}
-          referrerPolicy="no-referrer"
-          className="object-cover"
-          // A publisher CDN that 404s, hotlink-blocks or times out falls back to the
-          // same placeholder instead of leaving a broken-image glyph in the card.
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <div
-          className="flex h-full w-full items-center justify-center text-slate-500"
-          aria-hidden="true"
-          data-testid="news-thumbnail-placeholder"
-        >
-          <ImageOff size={20} />
-        </div>
-      )}
+      <Image
+        src={imageUrl as string}
+        alt=""
+        fill
+        sizes="(min-width: 640px) 112px, 96px"
+        unoptimized
+        loading={priority ? 'eager' : 'lazy'}
+        priority={priority}
+        referrerPolicy="no-referrer"
+        className="object-cover"
+        onError={() => setFailedUrl(imageUrl)}
+      />
     </div>
   );
 }

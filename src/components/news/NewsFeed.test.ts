@@ -7,7 +7,7 @@ describe('NewsFeed states', () => {
     // so a hostname allowlist could only ever have blocked real thumbnails.
     expect(shouldRenderNewsImage(false, 'https://s.yimg.com/uu/api/res/1.2/image.jpg')).toBe(true);
     expect(shouldRenderNewsImage(false, 'https://biztoc.com/cdn/thumb.webp')).toBe(true);
-    // Mixed content, missing images and Data Saver all fall back to the placeholder.
+    // Mixed content, missing images and Data Saver all suppress the thumbnail.
     expect(shouldRenderNewsImage(false, 'http://publisher.com/image.jpg')).toBe(false);
     expect(shouldRenderNewsImage(false, 'not a url')).toBe(false);
     expect(shouldRenderNewsImage(false, null)).toBe(false);

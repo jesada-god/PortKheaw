@@ -57,8 +57,8 @@ function fail(message: string): string {
  * separates the two very different outcomes:
  *
  * - `blocked`: the publisher refuses hotlinking (Cloudflare 401/403/451 on
- *   `biztoc.com`, for one). Their call, not a defect here; the card shows the
- *   system placeholder.
+ *   `biztoc.com`, for one). Their call, not a defect here; the card hides the
+ *   optional thumbnail.
  * - `broken`: the link is dead or serves something that is not an image.
  */
 async function checkImage(url: string): Promise<ImageOutcome> {
@@ -121,7 +121,7 @@ for (const symbol of TARGETS) {
   const outcomes = await Promise.all(withImage.map((item) => checkImage(item.imageUrl as string)));
   const count = (outcome: ImageOutcome) => outcomes.filter((value) => value === outcome).length;
   // A broken link is a real defect to look at; a publisher block and a missing
-  // image are simply placeholder cards.
+  // image simply produce cards without thumbnails.
   if (count('broken')) failures += 1;
 
   rows.push({

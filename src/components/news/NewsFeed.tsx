@@ -45,14 +45,10 @@ function useDataSaver() {
 
 function NewsCardSkeleton() {
   return (
-    <div className="flex min-h-24 gap-3 rounded-xl border border-slate-800 bg-[#151B28] p-3">
-      {/* Same 4:3 frame the loaded card uses, so nothing shifts when data lands. */}
-      <Skeleton className="aspect-[4/3] w-24 shrink-0 rounded-lg sm:w-28" />
-      <div className="min-w-0 flex-1 space-y-2 py-1">
-        <Skeleton className="h-4 w-full rounded" />
-        <Skeleton className="h-4 w-4/5 rounded" />
-        <Skeleton className="h-3 w-2/5 rounded" />
-      </div>
+    <div className="space-y-2 rounded-xl border border-slate-800 bg-[#151B28] p-3">
+      <Skeleton className="h-4 w-full rounded" />
+      <Skeleton className="h-4 w-4/5 rounded" />
+      <Skeleton className="h-3 w-2/5 rounded" />
     </div>
   );
 }
@@ -145,10 +141,10 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
             href={article.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex min-h-24 gap-3 rounded-xl border border-slate-800 bg-[#151B28] p-3 transition-colors hover:border-slate-700"
+            className="flex gap-3 rounded-xl border border-slate-800 bg-[#151B28] p-3 transition-colors hover:border-slate-700"
           >
             <NewsThumbnail imageUrl={article.imageUrl} saveData={saveData} priority={index === 0} />
-            <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col justify-between">
               <h3 className="line-clamp-3 text-sm font-semibold leading-snug text-slate-100 sm:line-clamp-2">{article.title}</h3>
               <p className="mt-2 truncate text-xs text-slate-500">{article.source} · {formatBangkokDateTime(article.publishedAt)}</p>
               {saveData && <span className="mt-1 inline-block text-[10px] text-amber-300">Data Saver</span>}

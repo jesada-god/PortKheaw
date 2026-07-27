@@ -9,8 +9,7 @@
  *    remote-pattern allowlist when `process.env.NODE_ENV !== 'test'`, so this file
  *    renders under `production` to exercise the validation the app really runs.
  * 2. Everything that is not a renderable publisher image — none supplied, Data
- *    Saver, plain HTTP, or a request that fails — collapses to one placeholder in
- *    a frame of identical size.
+ *    Saver, plain HTTP, or a request that fails — renders no thumbnail frame.
  */
 
 import { act } from 'react';
@@ -31,8 +30,6 @@ function render(element: React.ReactElement) {
   act(() => { root.render(element); });
 }
 
-const placeholder = () => container.querySelector('[data-testid="news-thumbnail-placeholder"]');
-
 beforeEach(() => {
   (process.env as Record<string, string>).NODE_ENV = 'production';
 });
@@ -52,7 +49,6 @@ describe('NewsThumbnail', () => {
     // No optimizer in the path: the publisher's own URL, not /_next/image.
     expect(image?.getAttribute('src')).not.toContain('/_next/image');
     expect(image?.getAttribute('srcset')).toBeNull();
-    expect(placeholder()).toBeNull();
   });
 
   it('lazy-loads by default and only loads eagerly when asked', () => {
@@ -65,15 +61,10 @@ describe('NewsThumbnail', () => {
     expect(container.querySelector('img')?.getAttribute('loading')).not.toBe('lazy');
   });
 
-  it('keeps one fixed frame whether an image renders or not, so the feed never reflows', () => {
-    render(<NewsThumbnail imageUrl="https://cdn.publisher.example/a.jpg" saveData={false} />);
-    const withImage = container.firstElementChild?.className;
-    act(() => { root.unmount(); });
+  it('renders no frame when the provider supplies image=null', () => {
+    render(<NewsThumbnail imageUrl={null} saveData={false} />);
 
-    root = createRoot(container);
-    act(() => { root.render(<NewsThumbnail imageUrl={null} saveData={false} />); });
-    expect(container.firstElementChild?.className).toBe(withImage);
-    expect(withImage).toContain('aspect-[4/3]');
+    expect(container.firstElementChild).toBeNull();
     expect(container.querySelector('img')).toBeNull();
   });
 
@@ -82,13 +73,14 @@ describe('NewsThumbnail', () => {
     { name: 'Data Saver', imageUrl: 'https://cdn.publisher.example/a.jpg', saveData: true },
     { name: 'plain HTTP (mixed content)', imageUrl: 'http://cdn.publisher.example/a.jpg', saveData: false },
     { name: 'an unparseable link', imageUrl: 'not a url', saveData: false },
-  ])('falls back to the system placeholder for $name', ({ imageUrl, saveData }) => {
+  ])('renders no thumbnail for $name', ({ imageUrl, saveData }) => {
     render(<NewsThumbnail imageUrl={imageUrl} saveData={saveData} />);
+
     expect(container.querySelector('img')).toBeNull();
-    expect(placeholder()).not.toBeNull();
+    expect(container.firstElementChild).toBeNull();
   });
 
-  it('falls back to the placeholder when a publisher blocks or drops the request', () => {
+  it('removes the whole frame when a publisher blocks or drops the request', () => {
     // Observed live: biztoc.com answers hotlinked thumbnails with a Cloudflare 403.
     render(<NewsThumbnail imageUrl="https://biztoc.com/cdn/thumb.webp" saveData={false} />);
     const image = container.querySelector('img');
@@ -97,6 +89,6 @@ describe('NewsThumbnail', () => {
     act(() => { image!.dispatchEvent(new Event('error')); });
 
     expect(container.querySelector('img')).toBeNull();
-    expect(placeholder()).not.toBeNull();
+    expect(container.firstElementChild).toBeNull();
   });
 });
