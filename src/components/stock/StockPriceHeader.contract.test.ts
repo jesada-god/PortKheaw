@@ -24,7 +24,7 @@ describe('StockPriceHeader integration contract', () => {
     expect(header).toContain('<Detail label="สถานะตลาด"');
     expect(header).toContain('<Detail label="ช่วงเวลาของราคา"');
     expect(header).toContain("label={quoteDate ? 'Trading date' : 'Timestamp'}");
-    expect(header).toContain("value={extendedQuote && extendedChange ? 'Official Regular Close' : 'Previous Close'}");
+    expect(header).toContain("value={extendedQuote ? 'Official Regular Close' : 'Previous Close'}");
   });
 
   it('never uses a 1:1 FX fallback or a mock price', () => {
@@ -76,6 +76,12 @@ describe('StockPriceHeader integration contract', () => {
     // promoted into the market-wide status and shown as "ตลาดเปิด".
     expect(detail).not.toContain('liveMarketStatus');
     expect(detail).not.toContain('effectiveMarket');
+  });
+
+  it('persists the last-known extended quote and evaluates freshness on the ticking clock', () => {
+    expect(detail).toContain('preserveLastKnownExtendedQuote(');
+    expect(detail).toContain('evaluatedAt: exchangeNow');
+    expect(detail).toContain('evaluatedAt={exchangeNow}');
   });
 
   it('flashes the price on a live move without refetching, keyed on the source USD value', () => {

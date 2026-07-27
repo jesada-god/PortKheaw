@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
-import { ChevronDown, Clock3, Info, Moon, Sunrise } from 'lucide-react';
+import { ChevronDown, Clock3, Info, Moon, Sunrise, Sunset } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
@@ -161,10 +161,15 @@ function CurrentSessionIcon({ session }: { session: CurrentMarketSession }) {
   return <Clock3 aria-hidden="true" className={`shrink-0 ${className}`} size={14}/>;
 }
 
+/**
+ * Sunset, not the Moon used for "ตลาดปิด": a completed after-hours row is
+ * routinely shown while the market is closed, so the two rows must not carry the
+ * same glyph.
+ */
 function ExtendedSessionIcon({ session }: { session: ExtendedRowSession }) {
   return session === 'premarket'
     ? <Sunrise aria-hidden="true" className="shrink-0 text-accent-blue" size={15}/>
-    : <Moon aria-hidden="true" className="shrink-0 text-accent-blue" size={15}/>;
+    : <Sunset aria-hidden="true" className="shrink-0 text-accent-blue" size={15}/>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -236,9 +241,15 @@ export function StockPriceHeader({
   const sessionView = currentSessionPresentation(currentSession);
   const dataStatus = regularPrice === null ? 'unavailable' : resolveDataStatus(freshness, Date.parse(evaluatedAt));
   const dataStatusView = dataStatusPresentation(dataStatus);
-  const extendedDataStatusView = extendedQuote && extendedChange
+  const extendedDataStatusView = extendedQuote
     ? dataStatusPresentation(resolveDataStatus(extendedQuote.freshness, Date.parse(evaluatedAt)))
     : null;
+  const hasValidExtendedPrice = extendedQuote !== null
+    && Number.isFinite(extendedQuote.price)
+    && extendedQuote.price > 0;
+  const renderedExtendedPrice = displayExtendedPrice ?? (
+    hasValidExtendedPrice ? extendedQuote?.price ?? null : null
+  );
   const changeDirection = regularChange?.direction ?? null;
   const extendedDirection = extendedChange?.direction ?? null;
   // Flash the price on a real move only (keyed on the source USD value, so a
@@ -406,6 +417,20 @@ export function StockPriceHeader({
                 {connectionView.label}
               </span>
             </>}
+            {connectionView.kind === 'connecting' && <>
+              <span aria-hidden="true">·</span>
+              <span
+                role="status"
+                aria-live="polite"
+                className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold text-sky-300"
+              >
+                <span
+                  className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-sky-300/40 border-t-sky-300"
+                  aria-hidden="true"
+                />
+                {connectionView.label}
+              </span>
+            </>}
             {connectionView.kind === 'error' && <>
               <span aria-hidden="true">·</span>
               {/* Degraded/offline: shown next to the existing freshness badge, which
@@ -444,22 +469,28 @@ export function StockPriceHeader({
 
       {currency === 'THB' && thbUnavailable && <p className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-300">ไม่มีอัตรา USD/THB จริงที่ตรวจสอบได้</p>}
 
-      {/* Extended-hours row. It sits BELOW the regular price and never replaces
-          it, carries its own trading date so a Friday after-hours print read on
-          a Sunday is unambiguous, and is never labelled live. Provider and delay
-          class stay in the ⓘ detail. */}
-      {extendedQuote && extendedChange && displayExtendedPrice !== null && displayExtendedChange !== null && <div data-testid="extended-hours-row" className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-border/70 bg-bg-base/40 px-3 py-2 font-mono text-sm tabular-nums">
+      {/* Extended-hours row. A valid price is the render condition; freshness and
+          a missing comparison base may change its metadata, never erase it. */}
+      {hasValidExtendedPrice && extendedQuote && <div data-testid="extended-hours-row" className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-border/70 bg-bg-base/40 px-3 py-2 font-mono text-sm tabular-nums">
         <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans text-xs font-semibold text-text-muted">
           <ExtendedSessionIcon session={extendedQuote.session}/>
           {extendedSessionPresentation(extendedQuote.session).label}
         </span>
-        <span key={extendedFlash.nonce} data-testid="extended-hours-price" className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>{formatNumber(displayExtendedPrice)}</span>
-        <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>
+        <span key={extendedFlash.nonce} data-testid="extended-hours-price" className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>
+          {formatNumber(renderedExtendedPrice)}
+          {displayExtendedPrice === null && normalizedSourceCurrency ? ` ${normalizedSourceCurrency}` : ''}
+        </span>
+        {extendedChange && displayExtendedChange !== null && <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>
           <span>{formatSigned(displayExtendedChange)}</span>
           <span>{formatPercent(extendedChange.percent)}</span>
           {directionMark(extendedDirection) && <span className="text-[0.7em]" aria-label={extendedDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(extendedDirection)}</span>}
-        </span>
+        </span>}
         {extendedDateLabel && <span data-testid="extended-hours-date" className="ml-auto shrink-0 whitespace-nowrap text-xs text-text-muted">{extendedDateLabel}</span>}
+        {extendedDataStatusView && <span data-testid="extended-hours-status" className="basis-full font-sans text-[11px] text-text-muted">
+          {extendedDataStatusView.label}
+          {extendedQuote.provider ? ` · ${extendedQuote.provider}` : ''}
+          {extendedQuote.asOf ? ` · ${formatProviderTimestamp(extendedQuote.asOf)}` : ''}
+        </span>}
       </div>}
 
       {regularPrice === null && <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-bg-base/60 p-3 text-sm text-amber-300"><p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{stockDetailErrorMessage(quoteError, 'quote', providerConfigured)}</p><button type="button" disabled={quoteLoading || quoteCoolingDown} onClick={onRetryQuote} className="min-h-11 shrink-0 rounded-lg border border-amber-400/30 px-3 text-xs disabled:opacity-50">{quoteLoading ? 'กำลังโหลด…' : quoteCoolingDown ? 'รอตามระยะเวลาที่กำหนดแล้วลองอีกครั้ง' : 'ลองโหลดราคาอีกครั้ง'}</button></div>}
@@ -482,13 +513,13 @@ export function StockPriceHeader({
         <Detail label="ช่วงเวลาของราคา" value={priceSessionLabel(displayedQuoteAsOf)}/>
         <Detail label="Regular Price" value={`${formatNumber(regularPrice)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>
         {!fallbackLabel && <Detail label="Previous Close" value={`${formatNumber(regular.previousClose)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>}
-        {extendedQuote && extendedChange && <Detail
+        {extendedQuote && <Detail
           label="Extended Price"
           value={`${formatNumber(extendedQuote.price)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'} · ${extendedSessionPresentation(extendedQuote.session).label} · ${extendedQuote.tradingDate ?? 'ไม่ทราบวันซื้อขาย'}`}
         />}
-        {extendedQuote && extendedChange && <Detail label="Extended Source" value={`${extendedQuote.provider ?? 'ไม่พบข้อมูล'} · ${formatProviderTimestamp(extendedQuote.asOf)}`}/>}
+        {extendedQuote && <Detail label="Extended Source" value={`${extendedQuote.provider ?? 'ไม่พบข้อมูล'} · ${formatProviderTimestamp(extendedQuote.asOf)}`}/>}
         {extendedQuote && extendedDataStatusView && <Detail label="Extended Data Status" value={extendedDataStatusView.label}/>}
-        {!fallbackLabel && <Detail label="Comparison Base" value={extendedQuote && extendedChange ? 'Official Regular Close' : 'Previous Close'}/>}
+        {!fallbackLabel && <Detail label="Comparison Base" value={extendedQuote ? 'Official Regular Close' : 'Previous Close'}/>}
         <Detail label="Display Currency" value={displayedCurrency}/>
         <Detail
           label={quoteDate ? 'Trading date' : 'Timestamp'}
@@ -509,7 +540,7 @@ export function StockPriceHeader({
       </dl>
       <div className="mt-4 space-y-2 rounded-xl border border-border bg-bg-base/60 p-3 text-xs leading-5 text-text-muted">
         <p>Previous Close ยังใช้เป็นฐานคำนวณ Daily Change แม้ไม่ได้แสดงในการ์ด Overview</p>
-        {extendedQuote && extendedChange && <p>ราคาช่วง Extended Hours เปรียบเทียบกับราคาปิดของ Regular Session ล่าสุด</p>}
+        {extendedQuote && <p>ราคาช่วง Extended Hours เปรียบเทียบกับราคาปิดของ Regular Session ล่าสุด</p>}
       </div>
     </Modal>
   </>;

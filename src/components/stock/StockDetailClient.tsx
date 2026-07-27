@@ -34,6 +34,7 @@ import type {
 import { CompanyProfileCard } from './CompanyProfileCard';
 import {
   buildStockPriceHeaderModel,
+  preserveLastKnownExtendedQuote,
   resolvePriceCurrency,
   resolvePriceHeaderData,
   type PriceHeaderExtendedQuote,
@@ -165,6 +166,10 @@ export function StockDetailClient({
   const [profileLanguage, setProfileLanguage] = useState<CompanyProfileLanguage>(
     initialProfileResource.data?.description ? 'th' : 'en',
   );
+  const [lastKnownExtended, setLastKnownExtended] = useState<{
+    symbol: string;
+    quote: PriceHeaderExtendedQuote | null;
+  }>(() => ({ symbol, quote: serverExtendedQuote }));
   const isOnline = useOnlineStatus();
   // The live market socket follows tab VISIBILITY, not window focus: focusing the
   // DevTools/console, a split-screen app, a second monitor or the OS taskbar must
@@ -287,13 +292,29 @@ export function StockDetailClient({
   // A symbol halt replaces the REGULAR label only; it never turns an open market
   // into a closed one, and it never invents a session outside regular hours.
   const currentSession = applySymbolHalt(resolvedSession.session, halted);
+  const persistedExtendedQuote = preserveLastKnownExtendedQuote(
+    lastKnownExtended.symbol === symbol ? lastKnownExtended.quote : null,
+    serverExtendedQuote,
+  );
   const priceHeaderData = resolvePriceHeaderData({
     current: quoteResource,
     initial: initialQuoteResource,
     currentSession,
-    evaluatedAt,
-    serverExtendedQuote,
+    evaluatedAt: exchangeNow,
+    serverExtendedQuote: persistedExtendedQuote,
   });
+  // Canonical/regular snapshots often omit extended fields. Capture each real
+  // pre/post print independently so omission, reconnect and rerender cannot be
+  // mistaken for an instruction to clear the last-known valid quote. The pure
+  // merge returns the existing object for an equivalent quote, so this guarded
+  // derived-state update settles after at most one render.
+  const nextLastKnownExtended = preserveLastKnownExtendedQuote(
+    persistedExtendedQuote,
+    priceHeaderData.extendedQuote,
+  );
+  if (lastKnownExtended.symbol !== symbol || nextLastKnownExtended !== lastKnownExtended.quote) {
+    setLastKnownExtended({ symbol, quote: nextLastKnownExtended });
+  }
   const priceHeaderModel = buildStockPriceHeaderModel({
     data: priceHeaderData,
     currentSession,
@@ -432,7 +453,7 @@ export function StockDetailClient({
           quoteRetryAt={quoteRetryAt}
           onRetryQuote={refreshQuote}
           fxQuote={fxQuote}
-          evaluatedAt={evaluatedAt}
+          evaluatedAt={exchangeNow}
           realtime={dataLabel?.realtime ?? false}
           feed={dataLabel?.feed ?? null}
           symbolHalted={halted}

@@ -170,9 +170,45 @@ describe('selectExtendedHoursQuote', () => {
     expect(result!.price).toBe(206.9);
   });
 
-  it('returns null without provider-declared windows', () => {
-    expect(selectExtendedHoursQuote({
+  /**
+   * Verified live on 2026-07-27 04:27 ET: Yahoo reports the CURRENT trading day's
+   * windows (Monday pre/regular/post), while the newest completed extended print
+   * was Friday 19:55 ET — inside none of them. Dropping the row in that state is
+   * what made the extended row vanish overnight and over every weekend, so the
+   * exchange calendar takes over when the declared windows no longer cover it.
+   */
+  it("keeps a real extended print when the provider's declared windows have rolled over", () => {
+    const result = selectExtendedHoursQuote({
+      // 22:00Z is 18:00 ET on Friday — inside the after-hours window by the
+      // exchange calendar, but covered by neither of Monday's declared windows.
       buckets: [[seconds(2026, 6, 24, 22, 0), 206.6]],
+      preWindow: MONDAY_PRE,
+      postWindow: MONDAY_POST,
+      regularMarketTimeSeconds: FRIDAY_CLOSE_SECONDS,
+      provider: 'yahoo-finance-chart',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.session).toBe('after-hours');
+    expect(result!.price).toBe(206.6);
+    expect(result!.tradingDate).toBe('2026-07-24');
+  });
+
+  it('still returns null when no bucket falls in any extended window at all', () => {
+    expect(selectExtendedHoursQuote({
+      // 18:00Z is 14:00 ET — the middle of the regular session.
+      buckets: [[seconds(2026, 6, 27, 18, 0), 206.6]],
+      preWindow: null,
+      postWindow: null,
+      regularMarketTimeSeconds: FRIDAY_CLOSE_SECONDS,
+      provider: 'yahoo-finance-chart',
+    })).toBeNull();
+  });
+
+  it('never lets the calendar fallback resurface a print older than the regular close', () => {
+    expect(selectExtendedHoursQuote({
+      // Thursday's after-hours print, with Friday's close already known.
+      buckets: [[seconds(2026, 6, 23, 22, 0), 209.9]],
       preWindow: null,
       postWindow: null,
       regularMarketTimeSeconds: FRIDAY_CLOSE_SECONDS,
@@ -211,5 +247,49 @@ describe('extendedQuoteMatchesRegularSession', () => {
   it('rejects when either side is missing', () => {
     expect(extendedQuoteMatchesRegularSession(null, '2026-07-24T20:00:00.000Z')).toBe(false);
     expect(extendedQuoteMatchesRegularSession(fridayAfterHours, null)).toBe(false);
+  });
+
+  /**
+   * The reported defect. A pre-market print belongs to the session that has not
+   * opened yet, so it is ALWAYS dated after the completed regular close it is
+   * shown beside. Requiring one shared trading date deleted every pre-market row
+   * — reproduced live on 2026-07-27, where Monday's 04:25 ET print sat beside
+   * Friday's close and was discarded.
+   */
+  const mondayPreMarket = selectExtendedHoursQuote({
+    buckets: [[seconds(2026, 6, 27, 12, 45), 208.1]],
+    preWindow: MONDAY_PRE,
+    postWindow: MONDAY_POST,
+    regularMarketTimeSeconds: FRIDAY_CLOSE_SECONDS,
+    provider: 'yahoo-finance-chart',
+  });
+
+  it("accepts a pre-market print beside the previous session's regular close", () => {
+    expect(mondayPreMarket!.tradingDate).toBe('2026-07-27');
+    expect(extendedQuoteMatchesRegularSession(mondayPreMarket, '2026-07-24T20:00:00.000Z')).toBe(true);
+  });
+
+  it('rejects a pre-market print the regular session has already traded past', () => {
+    // Monday 16:00 ET close beside Monday's own pre-market print: history, not
+    // "ก่อนตลาดเปิด".
+    expect(extendedQuoteMatchesRegularSession(mondayPreMarket, '2026-07-27T20:00:00.000Z')).toBe(false);
+  });
+
+  it('rejects a pre-market print older than the regular close beside it', () => {
+    expect(extendedQuoteMatchesRegularSession(mondayPreMarket, '2026-07-28T20:00:00.000Z')).toBe(false);
+  });
+
+  it('keeps an after-hours print only until a newer regular close replaces it', () => {
+    // Beside its own session's close: the row it belongs to.
+    expect(extendedQuoteMatchesRegularSession(fridayAfterHours, '2026-07-24T20:00:00.000Z')).toBe(true);
+    // Once Monday's close is in the primary row, Friday's print is history.
+    expect(extendedQuoteMatchesRegularSession(fridayAfterHours, '2026-07-27T20:00:00.000Z')).toBe(false);
+  });
+
+  it('bounds the print age so a finished window ages out of "ราคาล่าช้า"', () => {
+    // Never null: an unbounded age can never become stale, which is what let a
+    // days-old print keep claiming it was the current delayed price.
+    expect(fridayAfterHours!.freshness.maxAgeSeconds).toBe(15 * 60);
+    expect(fridayAfterHours!.freshness.status).toBe('delayed');
   });
 });

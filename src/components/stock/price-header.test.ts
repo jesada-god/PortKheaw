@@ -9,6 +9,7 @@ import {
   extendedSessionPresentation,
   priceDirectionPresentation,
   priceFlashDirection,
+  preserveLastKnownExtendedQuote,
   resolvePriceChange,
   resolvePriceCurrency,
   resolveDataStatus,
@@ -22,7 +23,9 @@ import {
 describe('stock price header extended-row session labels', () => {
   it.each([
     ['premarket', '🌅', 'ก่อนตลาดเปิด'],
-    ['after-hours', '🌙', 'หลังเวลาทำการ'],
+    // Not the 🌙 of "ตลาดปิด": both are on screen whenever a completed
+    // after-hours row is shown while the market is closed.
+    ['after-hours', '🌇', 'หลังเวลาทำการ'],
   ] as const)('maps %s to a stable emoji and Thai label', (session, emoji, label) => {
     expect(extendedSessionPresentation(session)).toEqual(expect.objectContaining({ emoji, label }));
   });
@@ -30,10 +33,11 @@ describe('stock price header extended-row session labels', () => {
 
 describe('stock price header data status mapping', () => {
   it.each([
-    ['delayed', '⏱️', 'ข้อมูลล่าช้า'],
-    ['cached', '💾', 'ข้อมูลแคช'],
-    ['stale', '🕒', 'ข้อมูลเก่า'],
-    ['unavailable', '⚠️', 'ไม่มีข้อมูลราคา'],
+    ['live', null, 'ราคาสด'],
+    ['delayed', '⏱️', 'ราคาล่าช้า'],
+    ['cached', '💾', 'ข้อมูลที่บันทึกไว้'],
+    ['stale', '🕒', 'ข้อมูลอาจล่าช้า'],
+    ['unavailable', '⚠️', 'ไม่มีข้อมูล'],
   ] as const)('maps %s independently from market session', (status, emoji, label) => {
     expect(dataStatusPresentation(status)).toEqual(expect.objectContaining({ emoji, label }));
   });
@@ -178,7 +182,7 @@ describe('stock price header accepted quote partition', () => {
     expect(result.extendedQuote).toBeNull();
   });
 
-  it('never presents a stale extended quote as current or as a secondary quote', () => {
+  it('keeps a stale extended quote in the secondary row without promoting it to current', () => {
     const initial = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
     const current = quoteResource(
       { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
@@ -192,6 +196,125 @@ describe('stock price header accepted quote partition', () => {
       evaluatedAt: '2026-07-20T21:02:00.000Z',
     });
     expect(result.quote).toBe(HEADER_QUOTE);
+    expect(result.extendedQuote?.price).toBe(101);
+    expect(resolveDataStatus(result.extendedQuote!.freshness, Date.parse('2026-07-20T21:02:00.000Z'))).toBe('stale');
+  });
+});
+
+describe('last-known extended quote persistence', () => {
+  const afterHours: PriceHeaderExtendedQuote = {
+    session: 'after-hours',
+    price: 101.25,
+    asOf: '2026-07-20T23:55:00.000Z',
+    tradingDate: '2026-07-20',
+    freshness: { status: 'realtime', asOf: '2026-07-20T23:55:00.000Z', maxAgeSeconds: 60 },
+    provider: 'polygon',
+  };
+
+  it('does not clear the quote when a regular snapshot or canonical sync omits extended fields', () => {
+    const accepted = preserveLastKnownExtendedQuote(null, afterHours);
+    expect(preserveLastKnownExtendedQuote(accepted, null)).toBe(accepted);
+    expect(preserveLastKnownExtendedQuote(accepted, undefined)).toBe(accepted);
+  });
+
+  it('does not let an older reconnect snapshot overwrite the newer quote', () => {
+    const older = {
+      ...afterHours,
+      price: 100.5,
+      asOf: '2026-07-20T23:45:00.000Z',
+      freshness: { ...afterHours.freshness, asOf: '2026-07-20T23:45:00.000Z' },
+    };
+    expect(preserveLastKnownExtendedQuote(afterHours, older)).toBe(afterHours);
+  });
+
+  it('allows freshness to downgrade for the same real print without losing provenance', () => {
+    const cached = {
+      ...afterHours,
+      freshness: { ...afterHours.freshness, status: 'cached' as const },
+    };
+    expect(preserveLastKnownExtendedQuote(afterHours, cached)).toBe(cached);
+  });
+
+  it('reuses the persisted quote after a regular snapshot replaces the canonical price', () => {
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'CLOSED',
+      evaluatedAt: '2026-07-20T23:59:00.000Z',
+      serverExtendedQuote: preserveLastKnownExtendedQuote(null, afterHours),
+    });
+    expect(result.quote).toBe(HEADER_QUOTE);
+    expect(result.extendedQuote).toEqual(afterHours);
+  });
+
+  it('does not let a later regular-close snapshot overwrite the persisted extended price', () => {
+    const regularSnapshot = quoteResource(
+      { ...HEADER_QUOTE, price: 100, regularClose: 100 },
+      '2026-07-20T23:58:00.000Z',
+    );
+    const result = resolvePriceHeaderData({
+      current: regularSnapshot,
+      initial: quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z'),
+      currentSession: 'CLOSED',
+      evaluatedAt: '2026-07-20T23:59:00.000Z',
+      serverExtendedQuote: afterHours,
+    });
+    expect(result.quote?.price).toBe(100);
+    expect(result.extendedQuote).toBe(afterHours);
+  });
+
+  /**
+   * A pre-market print belongs to the session that has NOT traded yet, so it is
+   * always dated after the completed regular close beside it. It must survive the
+   * current session flipping to CLOSED — the row is dropped only by a newer real
+   * price, never by the clock.
+   */
+  it('preserves pre-market provenance after the session becomes closed', () => {
+    const premarket: PriceHeaderExtendedQuote = {
+      ...afterHours,
+      session: 'premarket',
+      price: 99.5,
+      asOf: '2026-07-27T12:45:00.000Z',
+      tradingDate: '2026-07-27',
+      freshness: { status: 'cached', asOf: '2026-07-27T12:45:00.000Z', maxAgeSeconds: null },
+    };
+    // Friday's close is still the primary row; Monday has not opened.
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'CLOSED',
+      evaluatedAt: '2026-07-27T13:10:00.000Z',
+      serverExtendedQuote: premarket,
+    });
+    expect(result.extendedQuote?.session).toBe('premarket');
+    expect(result.extendedQuote?.price).toBe(99.5);
+  });
+
+  /**
+   * The other half of the same policy: once the regular session has traded PAST a
+   * pre-market print, the primary row carries the newer price and the morning's
+   * print is history, not "ก่อนตลาดเปิด".
+   */
+  it('drops a pre-market print the regular session has already traded past', () => {
+    const premarket: PriceHeaderExtendedQuote = {
+      ...afterHours,
+      session: 'premarket',
+      price: 99.5,
+      asOf: '2026-07-27T12:45:00.000Z',
+      tradingDate: '2026-07-27',
+      freshness: { status: 'cached', asOf: '2026-07-27T12:45:00.000Z', maxAgeSeconds: null },
+    };
+    // Monday 15:59 ET — the same day's regular session is already under way.
+    const regular = quoteResource(HEADER_QUOTE, '2026-07-27T19:59:00.000Z');
+    const result = resolvePriceHeaderData({
+      current: regular,
+      initial: regular,
+      currentSession: 'CLOSED',
+      evaluatedAt: '2026-07-27T20:01:00.000Z',
+      serverExtendedQuote: premarket,
+    });
     expect(result.extendedQuote).toBeNull();
   });
 });
@@ -473,9 +596,10 @@ describe('stock price header currency resolution', () => {
 
 describe('connection status presentation mapping', () => {
   it('maps every typed connection state to the right indicator', () => {
-    // connecting/connected stay neutral: connected relies on the existing
-    // Real-time badge, connecting shows only the untouched freshness status.
-    expect(connectionStatusPresentation('connecting')).toEqual({ kind: 'none' });
+    expect(connectionStatusPresentation('connecting')).toEqual({
+      kind: 'connecting',
+      label: 'กำลังเชื่อมต่อ',
+    });
     expect(connectionStatusPresentation('connected')).toEqual({ kind: 'none' });
     // awaiting-data → a calm "connected, waiting for live data" pill (NOT an error):
     // the socket is open, just no tick yet. This is the state that used to be
@@ -487,16 +611,16 @@ describe('connection status presentation mapping', () => {
     // reconnecting → concise pill with the Thai "reconnecting" label.
     expect(connectionStatusPresentation('reconnecting')).toEqual({
       kind: 'reconnecting',
-      label: 'กำลังเชื่อมต่อใหม่…',
+      label: 'กำลังเชื่อมต่อใหม่',
     });
-    // degraded and disconnected both surface the same "connection problem" text.
+    // degraded and disconnected both surface the same explicit offline text.
     expect(connectionStatusPresentation('degraded')).toEqual({
       kind: 'error',
-      label: 'การเชื่อมต่อขัดข้อง',
+      label: 'ออฟไลน์',
     });
     expect(connectionStatusPresentation('disconnected')).toEqual({
       kind: 'error',
-      label: 'การเชื่อมต่อขัดข้อง',
+      label: 'ออฟไลน์',
     });
   });
 
@@ -595,16 +719,21 @@ describe('stock price header server-resolved extended quote', () => {
     expect(result.extendedQuote).toBeNull();
   });
 
+  /**
+   * The production shape of the reported defect: Monday's pre-market print beside
+   * Friday's close. A pre-market print NEVER shares the trading date of the
+   * regular close above it, so requiring one date deleted this row every morning.
+   */
   it('shows a pre-market row beside the latest completed regular close', () => {
-    const regular = quoteResource(regularClose, '2026-07-27T20:00:00.000Z');
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
     const result = resolvePriceHeaderData({
       current: regular,
       initial: regular,
       currentSession: 'PREMARKET',
-      evaluatedAt: '2026-07-28T11:00:00.000Z',
+      evaluatedAt: '2026-07-27T12:00:00.000Z',
       serverExtendedQuote: serverExtended({
         session: 'premarket', price: 208.1,
-        asOf: '2026-07-27T12:45:00.000Z', tradingDate: '2026-07-27',
+        asOf: '2026-07-27T11:45:00.000Z', tradingDate: '2026-07-27',
       }),
     });
 
@@ -703,6 +832,52 @@ describe('stock price header server-resolved extended quote', () => {
 
     expect(result.quote!.price).toBe(206.87);
     expect(result.extendedQuote!.tradingDate).toBe('2026-07-24');
+  });
+
+  /**
+   * §3 persistence at the resolver: the SAME inputs, evaluated once inside the
+   * after-hours window and once after it ended. Only the clock moved, so only
+   * the freshness LABEL may move with it — the row itself must survive.
+   */
+  it('keeps the after-hours row when the session ends and the market goes closed', () => {
+    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
+    const inputs = { current: regular, initial: regular, serverExtendedQuote: serverExtended() };
+
+    const duringSession = resolvePriceHeaderData({
+      ...inputs, currentSession: 'AFTER_HOURS', evaluatedAt: '2026-07-24T23:56:00.000Z',
+    });
+    const afterSession = resolvePriceHeaderData({
+      ...inputs, currentSession: 'CLOSED', evaluatedAt: '2026-07-25T02:00:00.000Z',
+    });
+
+    expect(duringSession.extendedQuote!.price).toBe(206.6);
+    expect(afterSession.extendedQuote!.price).toBe(206.6);
+    expect(afterSession.extendedQuote!.session).toBe('after-hours');
+    expect(afterSession.extendedQuote!.tradingDate).toBe('2026-07-24');
+    // And the primary row is still the regular close, never the extended print.
+    expect(afterSession.quote!.price).toBe(206.87);
+  });
+
+  /**
+   * §3 again, against the refresh that actually erased the row in production: a
+   * regular snapshot re-received on a LATER date must not delete a pre-market
+   * print, because a pre-market print is always dated after the close beside it.
+   */
+  it('survives a snapshot refresh that advances the regular timestamp', () => {
+    const premarket = serverExtended({
+      session: 'premarket', price: 208.1,
+      asOf: '2026-07-27T11:45:00.000Z', tradingDate: '2026-07-27',
+    });
+    const stale = quoteResource(regularClose, FRIDAY_CLOSE);
+    const refreshed = quoteResource(regularClose, '2026-07-27T11:50:00.000Z');
+
+    for (const current of [stale, refreshed]) {
+      const result = resolvePriceHeaderData({
+        current, initial: stale, currentSession: 'PREMARKET',
+        evaluatedAt: '2026-07-27T12:00:00.000Z', serverExtendedQuote: premarket,
+      });
+      expect(result.extendedQuote!.price).toBe(208.1);
+    }
   });
 
   it('shows no extended row when the current session could not be resolved', () => {

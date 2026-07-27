@@ -272,6 +272,65 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.textContent).not.toContain('Real-time · IEX');
   });
 
+  it.each([
+    ['delayed', 'ราคาล่าช้า'],
+    ['stale', 'ข้อมูลอาจล่าช้า'],
+    ['cached', 'ข้อมูลที่บันทึกไว้'],
+  ] as const)('keeps the extended row visible with the %s Thai status', (status, label) => {
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'CLOSED',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: { status, asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
+        provider: 'polygon',
+      },
+    }));
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).not.toBeNull();
+    const statusLine = container.querySelector('[data-testid="extended-hours-status"]');
+    expect(statusLine?.textContent).toContain(label);
+    expect(statusLine?.textContent).toContain('polygon');
+  });
+
+  it('renders a valid extended price even when its comparison base is unavailable', () => {
+    render(baseProps(null, {}, {
+      currentSession: 'CLOSED',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: { status: 'cached', asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
+        provider: 'polygon',
+      },
+    }));
+    const row = container.querySelector('[data-testid="extended-hours-row"]');
+    expect(row?.textContent).toContain('70.75');
+    expect(row?.textContent).toContain('ข้อมูลที่บันทึกไว้');
+  });
+
+  it('keeps the extended row through reconnect and an unrelated React rerender', () => {
+    const extendedQuote: PriceHeaderExtendedQuote = {
+      session: 'after-hours',
+      price: 70.75,
+      asOf: '2026-07-23T20:05:45.000Z',
+      tradingDate: '2026-07-23',
+      freshness: { status: 'stale', asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
+      provider: 'polygon',
+    };
+    render(baseProps(BASE_QUOTE, { connectionState: 'reconnecting' }, {
+      currentSession: 'CLOSED', extendedQuote,
+    }));
+    expect(container.querySelector('[data-testid="extended-hours-row"]')?.textContent).toContain('70.75');
+
+    render(baseProps(BASE_QUOTE, { connectionState: 'connected', quoteLoading: true }, {
+      currentSession: 'CLOSED', extendedQuote,
+    }));
+    expect(container.querySelector('[data-testid="extended-hours-row"]')?.textContent).toContain('70.75');
+  });
+
   it('cleanly hides the secondary row when closed without an extended quote', () => {
     render(baseProps(BASE_QUOTE, {}, { currentSession: 'CLOSED' }));
     expect(container.textContent).toContain('ตลาดปิด');

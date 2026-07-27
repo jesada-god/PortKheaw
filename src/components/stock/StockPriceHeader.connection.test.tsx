@@ -7,9 +7,9 @@
  * the typed {@link ConnectionStatus} handed down from the market coordinator.
  *
  * Covered here:
- *  - `reconnecting` shows the "กำลังเชื่อมต่อใหม่…" pill AND keeps the last price.
+ *  - `reconnecting` shows the "กำลังเชื่อมต่อใหม่" pill AND keeps the last price.
  *  - a `connected`/`null` transition hides the pill (recovery clears it).
- *  - `degraded`/`disconnected` show "การเชื่อมต่อขัดข้อง" alongside the existing
+ *  - `degraded`/`disconnected` show "ออฟไลน์" alongside the existing
  *    freshness badge.
  * The pure status→view mapping is unit-tested in `price-header.test.ts`.
  */
@@ -88,10 +88,16 @@ function render(connectionState: ConnectionStatus | null) {
 }
 
 describe('StockPriceHeader connection indicator', () => {
+  it('shows the Thai connecting status without clearing the accepted price', () => {
+    render('connecting');
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('กำลังเชื่อมต่อ');
+    expect(container.textContent).toContain('187.42');
+  });
+
   it('shows the reconnecting pill while keeping the last accepted price visible', () => {
     render('reconnecting');
     const status = container.querySelector('[role="status"]');
-    expect(status?.textContent).toContain('กำลังเชื่อมต่อใหม่…');
+    expect(status?.textContent).toContain('กำลังเชื่อมต่อใหม่');
     // The reconnecting state must NOT wipe the price — the last value still shows.
     expect(container.textContent).toContain('187.42');
     // A spinner is present and marked decorative (screen readers read the label).
@@ -100,13 +106,13 @@ describe('StockPriceHeader connection indicator', () => {
 
   it('hides the pill once the connection recovers (connected / null)', () => {
     render('reconnecting');
-    expect(container.textContent).toContain('กำลังเชื่อมต่อใหม่…');
+    expect(container.textContent).toContain('กำลังเชื่อมต่อใหม่');
     // Recovery — the same price stays, the pill disappears on its own.
     render('connected');
-    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่…');
+    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่');
     expect(container.textContent).toContain('187.42');
     render(null);
-    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่…');
+    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่');
   });
 
   it('shows a calm "connected · awaiting live data" pill (never a connection error) when the socket is open but no tick has arrived', () => {
@@ -114,7 +120,7 @@ describe('StockPriceHeader connection indicator', () => {
     // The healthy waiting state, NOT the error text — this is the regression the
     // production incident was about (WS open + REST 403 → falsely "ขัดข้อง").
     expect(container.textContent).toContain('เชื่อมต่อแล้ว · รอข้อมูลสด');
-    expect(container.textContent).not.toContain('การเชื่อมต่อขัดข้อง');
+    expect(container.textContent).not.toContain('ออฟไลน์');
     // The fallback price above is untouched.
     expect(container.textContent).toContain('187.42');
     // Calm status, no spinner (a spinner would imply an unhealthy reconnect).
@@ -123,15 +129,15 @@ describe('StockPriceHeader connection indicator', () => {
 
   it('shows a connection-problem badge for degraded/disconnected without dropping the price', () => {
     render('degraded');
-    expect(container.textContent).toContain('การเชื่อมต่อขัดข้อง');
+    expect(container.textContent).toContain('ออฟไลน์');
     expect(container.textContent).toContain('187.42');
     render('disconnected');
-    expect(container.textContent).toContain('การเชื่อมต่อขัดข้อง');
+    expect(container.textContent).toContain('ออฟไลน์');
   });
 
   it('renders no connection indicator for a REST-only header (null)', () => {
     render(null);
-    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่…');
-    expect(container.textContent).not.toContain('การเชื่อมต่อขัดข้อง');
+    expect(container.textContent).not.toContain('กำลังเชื่อมต่อใหม่');
+    expect(container.textContent).not.toContain('ออฟไลน์');
   });
 });

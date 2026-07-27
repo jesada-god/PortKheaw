@@ -3,6 +3,7 @@ import {
   usesLatestRegularClose,
   type CurrentMarketSession,
 } from '@/src/lib/market-data/current-session';
+import { extendedQuoteFollowsRegularClose } from '@/src/lib/market-data/extended-hours';
 import { classifyUsEquitySession, exchangeSessionDate, US_EQUITY_TIMEZONE } from '@/src/lib/market-data/session';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
@@ -72,16 +73,19 @@ const TRUSTED_EXCHANGE_CURRENCIES: Record<string, string> = {
  */
 const EXTENDED_ROW_PRESENTATION: Record<ExtendedRowSession, { emoji: string; label: string; fullName: string }> = {
   premarket: { emoji: '🌅', label: 'ก่อนตลาดเปิด', fullName: 'Pre-market Session' },
-  'after-hours': { emoji: '🌙', label: 'หลังเวลาทำการ', fullName: 'After-hours / Post-market Session' },
+  // 🌇, deliberately not the 🌙 of "ตลาดปิด": the two appear together whenever a
+  // completed after-hours row is shown while the market is closed, and they must
+  // stay visually distinguishable.
+  'after-hours': { emoji: '🌇', label: 'หลังเวลาทำการ', fullName: 'After-hours / Post-market Session' },
 };
 
 const DATA_STATUS_PRESENTATION: Record<PriceDataStatus, { emoji: string | null; label: string }> = {
-  live: { emoji: null, label: 'ข้อมูลสด' },
-  delayed: { emoji: '⏱️', label: 'ข้อมูลล่าช้า' },
-  cached: { emoji: '💾', label: 'ข้อมูลแคช' },
-  stale: { emoji: '🕒', label: 'ข้อมูลเก่า' },
-  unknown: { emoji: null, label: 'ไม่ทราบความสดของข้อมูล' },
-  unavailable: { emoji: '⚠️', label: 'ไม่มีข้อมูลราคา' },
+  live: { emoji: null, label: 'ราคาสด' },
+  delayed: { emoji: '⏱️', label: 'ราคาล่าช้า' },
+  cached: { emoji: '💾', label: 'ข้อมูลที่บันทึกไว้' },
+  stale: { emoji: '🕒', label: 'ข้อมูลอาจล่าช้า' },
+  unknown: { emoji: null, label: 'ไม่ทราบสถานะข้อมูล' },
+  unavailable: { emoji: '⚠️', label: 'ไม่มีข้อมูล' },
 };
 
 const PRICE_DIRECTION_PRESENTATION: Record<PriceDirection, { sign: '+' | '-' | ''; arrow: '▲' | '▼' | null; tone: 'positive' | 'negative' | 'neutral' }> = {
@@ -116,6 +120,41 @@ export function resolveDataStatus(freshness: DataFreshness, evaluatedAtMs: numbe
 
 function tradeablePrice(value: number | null | undefined): value is number {
   return value !== null && value !== undefined && Number.isFinite(value) && value > 0;
+}
+
+function sameExtendedQuote(left: PriceHeaderExtendedQuote, right: PriceHeaderExtendedQuote): boolean {
+  return left.session === right.session
+    && left.price === right.price
+    && left.asOf === right.asOf
+    && left.tradingDate === right.tradingDate
+    && left.provider === right.provider
+    && left.freshness.status === right.freshness.status
+    && left.freshness.asOf === right.freshness.asOf
+    && left.freshness.maxAgeSeconds === right.freshness.maxAgeSeconds;
+}
+
+/**
+ * Keeps the newest valid extended-hours print across regular snapshots,
+ * reconnects and canonical React syncs. Missing input never means "clear": a
+ * quote is replaced only by an equally-newer valid quote with real provenance.
+ */
+export function preserveLastKnownExtendedQuote(
+  previous: PriceHeaderExtendedQuote | null,
+  incoming: PriceHeaderExtendedQuote | null | undefined,
+): PriceHeaderExtendedQuote | null {
+  const validPrevious = previous && tradeablePrice(previous.price) && Number.isFinite(Date.parse(previous.asOf))
+    ? previous
+    : null;
+  const validIncoming = incoming && tradeablePrice(incoming.price) && Number.isFinite(Date.parse(incoming.asOf))
+    ? incoming
+    : null;
+  if (!validIncoming) return validPrevious;
+  if (!validPrevious) return validIncoming;
+
+  const previousAsOf = Date.parse(validPrevious.asOf);
+  const incomingAsOf = Date.parse(validIncoming.asOf);
+  if (incomingAsOf < previousAsOf) return validPrevious;
+  return sameExtendedQuote(validPrevious, validIncoming) ? validPrevious : validIncoming;
 }
 
 /**
@@ -173,21 +212,22 @@ export function resolvePriceHeaderData(input: {
   const serverExtendedQuote = expectedExtendedSession ? input.serverExtendedQuote ?? null : null;
 
   /**
-   * The server print is only valid beside a primary row from the SAME exchange
-   * trading date. This is what allows Friday's after-hours row on a Sunday
-   * (primary row is also Friday) while rejecting any older leftover.
+   * The server print is only valid beside a primary row it actually FOLLOWS (see
+   * {@link extendedQuoteFollowsRegularClose}). That admits both real shapes —
+   * Friday's after-hours row on a Sunday, and Monday's pre-market row beside
+   * Friday's close — while rejecting any older leftover.
    */
   const serverExtendedFor = (regularAsOf: string | null): PriceHeaderExtendedQuote | null => {
     if (!serverExtendedQuote || !regularAsOf || !serverExtendedQuote.tradingDate) return null;
-    return exchangeSessionDate(regularAsOf, US_EQUITY_TIMEZONE) === serverExtendedQuote.tradingDate
+    if (currentSession === 'PREMARKET' && serverExtendedQuote.session !== 'premarket') return null;
+    if (currentSession === 'AFTER_HOURS' && serverExtendedQuote.session !== 'after-hours') return null;
+    return extendedQuoteFollowsRegularClose(serverExtendedQuote.asOf, regularAsOf)
       ? serverExtendedQuote
       : null;
   };
   const currentQuote = current.data;
   const acceptedAsOf = current.freshness.asOf;
   const acceptedSession = acceptedAsOf ? classifyUsEquitySession(acceptedAsOf) : null;
-  const evaluatedAtMs = Date.parse(evaluatedAt);
-  const acceptedStatus = resolveDataStatus(current.freshness, evaluatedAtMs);
   // An extended print is only "now" if it belongs to the SAME New York trading
   // date we are evaluating. Both extended windows (04:00 and 20:00 ET) sit inside
   // one calendar date, so this never rejects a genuine tick — but it is the only
@@ -196,11 +236,46 @@ export function resolvePriceHeaderData(input: {
   // maxAgeSeconds: null and the freshness threshold therefore cannot age it out.
   const sameSessionDate = acceptedAsOf !== null
     && exchangeSessionDate(acceptedAsOf, US_EQUITY_TIMEZONE) === exchangeSessionDate(evaluatedAt, US_EQUITY_TIMEZONE);
+  const acceptedSessionMatches = currentSession === 'PREMARKET'
+    ? acceptedSession === 'premarket'
+    : currentSession === 'AFTER_HOURS'
+      ? acceptedSession === 'afterhours'
+      : currentSession === 'CLOSED'
+        || currentSession === 'HOLIDAY'
+        || currentSession === 'EARLY_CLOSE'
+        ? acceptedSession === 'premarket' || acceptedSession === 'afterhours'
+        : false;
+  // Some regular snapshots are timestamped when they are received after the
+  // bell but still carry only `regularClose`. They must not replace a distinct
+  // persisted extended print merely because that receipt time classifies as
+  // after-hours.
+  const regularSnapshotWithoutExtendedPrice = Boolean(
+    serverExtendedQuote
+    && currentQuote
+    && tradeablePrice(currentQuote.regularClose)
+    && currentQuote.price === currentQuote.regularClose
+    && serverExtendedQuote.price !== currentQuote.price,
+  );
   const acceptedExtended = currentQuote
     && tradeablePrice(currentQuote.price)
     && acceptedAsOf
     && sameSessionDate
-    && acceptedSession === expectedExtendedSession;
+    && acceptedSessionMatches
+    && !regularSnapshotWithoutExtendedPrice;
+
+  /**
+   * The instant the PRIMARY row's price actually printed — the only truthful
+   * thing to order an extended print against.
+   *
+   * The same regular-close snapshot detected above is stamped when it ARRIVED,
+   * not when the close printed. Ordering against that receipt time makes a
+   * genuine pre-market print look older than the close it follows, so a routine
+   * snapshot refresh silently deletes the row (§3). The server-rendered quote —
+   * the very value the server gated this print against — is used instead.
+   */
+  const regularRowAnchor = regularSnapshotWithoutExtendedPrice
+    ? initial.freshness.asOf ?? current.freshness.asOf
+    : current.freshness.asOf;
 
   // A pre/post print carried over from an earlier trading date (typically Friday's
   // after-hours seen over a weekend) is not a current price in EITHER row. It is
@@ -221,7 +296,7 @@ export function resolvePriceHeaderData(input: {
       // session there is correctly none, and the server resolver also returns
       // none. Outside it, this is what surfaces the latest session's pre/post
       // row without ever touching the primary price above.
-      extendedQuote: serverExtendedFor(current.freshness.asOf),
+      extendedQuote: serverExtendedFor(regularRowAnchor),
     };
   }
 
@@ -266,8 +341,6 @@ export function resolvePriceHeaderData(input: {
     };
   }
 
-  const eligibleExtended = acceptedExtended
-    && acceptedStatus !== 'stale' && acceptedStatus !== 'unavailable';
   const primaryFreshness = acceptedRegularQuote
     ? initial.freshness
     : { ...current.freshness, asOf: null };
@@ -279,16 +352,16 @@ export function resolvePriceHeaderData(input: {
     fallbackLabel: acceptedRegularQuote ? initial.fallbackLabel : null,
     // An accepted live/REST extended print wins; otherwise the server-resolved
     // pre/post print fills the row, matched to the primary row's trading date.
-    extendedQuote: eligibleExtended
+    extendedQuote: acceptedExtended
       ? {
-          session: expectedExtendedSession === 'premarket' ? 'premarket' : 'after-hours',
+          session: acceptedSession === 'premarket' ? 'premarket' : 'after-hours',
           price: currentQuote.price,
           asOf: acceptedAsOf,
           tradingDate: exchangeSessionDate(acceptedAsOf, US_EQUITY_TIMEZONE),
           freshness: current.freshness,
           provider: current.provider,
         }
-      : serverExtendedFor(primaryFreshness.asOf ?? acceptedAsOf),
+      : serverExtendedFor(primaryFreshness.asOf ?? regularRowAnchor),
   };
 }
 
@@ -455,6 +528,7 @@ export function priceDirectionPresentation(direction: PriceDirection) {
 export type ConnectionStatusView =
   | { kind: 'none' }
   | { kind: 'awaiting'; label: string }
+  | { kind: 'connecting'; label: string }
   | { kind: 'reconnecting'; label: string }
   | { kind: 'error'; label: string };
 
@@ -463,11 +537,12 @@ export function connectionStatusPresentation(status: ConnectionStatus | null | u
     case 'awaiting-data':
       return { kind: 'awaiting', label: 'เชื่อมต่อแล้ว · รอข้อมูลสด' };
     case 'reconnecting':
-      return { kind: 'reconnecting', label: 'กำลังเชื่อมต่อใหม่…' };
+      return { kind: 'reconnecting', label: 'กำลังเชื่อมต่อใหม่' };
     case 'degraded':
     case 'disconnected':
-      return { kind: 'error', label: 'การเชื่อมต่อขัดข้อง' };
+      return { kind: 'error', label: 'ออฟไลน์' };
     case 'connecting':
+      return { kind: 'connecting', label: 'กำลังเชื่อมต่อ' };
     case 'connected':
     case null:
     case undefined:

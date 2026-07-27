@@ -1,4 +1,4 @@
-import { exchangeSessionDate, US_EQUITY_TIMEZONE } from './session';
+import { classifyUsEquitySession, exchangeSessionDate, US_EQUITY_TIMEZONE } from './session';
 import type { DataFreshness } from './types';
 
 /**
@@ -23,6 +23,17 @@ import type { DataFreshness } from './types';
  *  2. **A stale extended print is rejected, but the latest completed session is
  *     not.** Friday's after-hours print is legitimate to show on a Sunday, dated
  *     as Friday. A print from any EARLIER session is not, and is dropped.
+ *
+ * One caveat about `currentTradingPeriod` that this module has to absorb: Yahoo
+ * reports the CURRENT/next trading day's windows, not the windows the last print
+ * was executed in. Verified live on 2026-07-27 04:27 ET, where the response
+ * carried Monday's pre/regular/post windows while the newest completed extended
+ * print was Friday 19:55 ET. Accepting only provider-declared windows therefore
+ * erases the whole row every time those windows roll over — overnight, over a
+ * weekend and over a holiday. So a bucket is also accepted when OUR OWN exchange
+ * calendar (`classifyUsEquitySession`, the same authority the header uses) places
+ * it inside an extended window. That is still a real provider bucket at a real
+ * timestamp; only the window ATTRIBUTION falls back, never the price.
  */
 
 export type ExtendedSession = 'premarket' | 'after-hours';
@@ -57,6 +68,16 @@ export interface ExtendedHoursQuoteData {
   freshness: DataFreshness;
 }
 
+/**
+ * How long an extended print may still be presented as a current delayed quote.
+ *
+ * Yahoo's extended-hours consolidated data is a delayed feed on a 5-minute grid,
+ * so a print stops being "the delayed current price" and becomes a record of a
+ * finished window well inside a quarter hour. Past this the header degrades the
+ * row's LABEL to "ข้อมูลอาจล่าช้า" — the row itself, and the price in it, stay.
+ */
+const EXTENDED_PRINT_MAX_AGE_SECONDS = 15 * 60;
+
 function lastBucketInWindow(
   buckets: ExtendedHoursCandidateInput['buckets'],
   window: TradingWindow | null,
@@ -80,14 +101,39 @@ function lastBucketInWindow(
 }
 
 /**
+ * Newest bucket that OUR exchange calendar places inside an extended window.
+ *
+ * The safety net for a rolled-over `currentTradingPeriod`: it keeps the same
+ * "strictly newer than the regular close" rule, and still refuses every bucket
+ * the calendar classifies as regular-session or outside trading hours entirely.
+ */
+function lastBucketInCalendarWindow(
+  buckets: ExtendedHoursCandidateInput['buckets'],
+  afterSeconds: number,
+  timeZone: string,
+): { session: ExtendedSession; time: number; price: number } | null {
+  let best: { session: ExtendedSession; time: number; price: number } | null = null;
+  for (const [time, close] of buckets) {
+    if (!Number.isFinite(time) || time <= afterSeconds) continue;
+    if (close === null || close === undefined || !Number.isFinite(close) || close <= 0) continue;
+    if (best && time <= best.time) continue;
+    const classified = classifyUsEquitySession(new Date(time * 1_000).toISOString(), timeZone);
+    if (classified !== 'premarket' && classified !== 'afterhours') continue;
+    best = { session: classified === 'premarket' ? 'premarket' : 'after-hours', time, price: close };
+  }
+  return best;
+}
+
+/**
  * Pick the newest valid extended print, or null.
  *
- * A candidate must satisfy both conditions: it lies inside one of the provider's
- * own declared extended windows, AND it is newer than the regular price it will
- * be displayed beside. The second condition is what rejects a completed
- * session's own pre-market prints — Friday's 04:00–09:30 prints must not
- * resurface on a Sunday as "ก่อนตลาดเปิด" — without needing to compare against
- * window boundaries, which the closing auction can overshoot by a second or two.
+ * A candidate must satisfy both conditions: it lies inside an extended window —
+ * one the provider declared, or failing that one our own exchange calendar
+ * resolves — AND it is newer than the regular price it will be displayed beside.
+ * The second condition is what rejects a completed session's own pre-market
+ * prints — Friday's 04:00–09:30 prints must not resurface on a Sunday as
+ * "ก่อนตลาดเปิด" — without needing to compare against window boundaries, which
+ * the closing auction can overshoot by a second or two.
  *
  * When both windows yield a candidate the newer timestamp wins, which is what
  * makes a fresh pre-market print supersede the previous session's after-hours
@@ -104,7 +150,11 @@ export function selectExtendedHoursQuote(input: ExtendedHoursCandidateInput): Ex
   const post = lastBucketInWindow(buckets, postWindow, regularMarketTimeSeconds);
   if (post) candidates.push({ session: 'after-hours', ...post });
 
-  const winner = candidates.sort((left, right) => right.time - left.time)[0];
+  // Only when the provider's declared windows yield nothing — the rolled-over
+  // `currentTradingPeriod` case — is the exchange calendar consulted. A print
+  // that is still inside a declared window therefore always wins on its own.
+  const winner = candidates.sort((left, right) => right.time - left.time)[0]
+    ?? lastBucketInCalendarWindow(buckets, regularMarketTimeSeconds, timeZone);
   if (!winner) return null;
 
   const asOf = new Date(winner.time * 1_000).toISOString();
@@ -122,26 +172,48 @@ export function selectExtendedHoursQuote(input: ExtendedHoursCandidateInput): Ex
       // delayed consolidated feed and the print may be from a prior session.
       status: 'delayed',
       asOf,
-      maxAgeSeconds: null,
+      // A real bound, so a print from a finished window ages truthfully into
+      // "ข้อมูลอาจล่าช้า" instead of claiming "ราคาล่าช้า" forever. Ageing only
+      // ever changes the row's label — never whether the row is rendered.
+      maxAgeSeconds: EXTENDED_PRINT_MAX_AGE_SECONDS,
     },
   };
 }
 
 /**
- * Reject an extended print that does not belong to the SAME trading date as the
- * regular price it is displayed next to.
+ * Whether an extended print legitimately BELONGS BESIDE a given regular price:
+ * it must have printed AFTER it.
  *
- * This is the guard that lets Friday's after-hours print appear on a Sunday —
- * because the primary row is also Friday's close — while still dropping a print
- * left over from any older session.
+ * This guard originally demanded that both share one exchange trading date. That
+ * is not a stricter form of the rule but a wrong one, because the two extended
+ * windows sit on opposite sides of the regular session:
+ *
+ *  - **after-hours** follows the close it is compared against and does share its
+ *    trading date (Friday 19:55 beside Friday's close);
+ *  - **pre-market** precedes the session that has not opened yet, so it can NEVER
+ *    share a date with the completed close above it (Monday 04:25 beside Friday's
+ *    close) — verified live on 2026-07-27, where exactly that print was discarded.
+ *
+ * Ordering by instant covers both, and is the same rule
+ * {@link selectExtendedHoursQuote} applies when choosing the print in the first
+ * place. It still rejects what this guard exists for: a print left over from a
+ * session older than the regular price beside it (Friday's after-hours print
+ * once Monday's close is in the row above), and a morning's pre-market print
+ * once the regular session has traded past it.
  */
+export function extendedQuoteFollowsRegularClose(
+  extendedAsOf: string | null,
+  regularAsOf: string | null,
+): boolean {
+  const extendedMs = extendedAsOf ? Date.parse(extendedAsOf) : Number.NaN;
+  const regularMs = regularAsOf ? Date.parse(regularAsOf) : Number.NaN;
+  if (!Number.isFinite(extendedMs) || !Number.isFinite(regularMs)) return false;
+  return extendedMs > regularMs;
+}
+
 export function extendedQuoteMatchesRegularSession(
   extended: ExtendedHoursQuoteData | null,
   regularAsOf: string | null,
-  timeZone = US_EQUITY_TIMEZONE,
 ): boolean {
-  if (!extended) return false;
-  if (!regularAsOf) return false;
-  const regularDate = exchangeSessionDate(regularAsOf, timeZone);
-  return regularDate !== null && regularDate === extended.tradingDate;
+  return extended ? extendedQuoteFollowsRegularClose(extended.asOf, regularAsOf) : false;
 }

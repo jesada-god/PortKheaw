@@ -247,12 +247,14 @@ describe('Stock price header — current market session integrity', () => {
     const { currentSession } = renderChain({
       // Monday 2026-07-27, 08:00 ET.
       now: '2026-07-27T12:00:00.000Z',
+      // Monday's OWN pre-market print, 07:45 ET. It follows Friday's close, so
+      // it never shares a trading date with the primary row beside it.
       serverExtendedQuote: {
         ...FRIDAY_EXTENDED,
         session: 'premarket',
         price: 208.1,
-        asOf: '2026-07-24T12:45:00.000Z',
-        tradingDate: '2026-07-24',
+        asOf: '2026-07-27T11:45:00.000Z',
+        tradingDate: '2026-07-27',
       },
     });
     expect(currentSession).toBe('PREMARKET');
@@ -264,10 +266,13 @@ describe('Stock price header — current market session integrity', () => {
   it('keeps no raw provider status or debug wording in the primary UI', () => {
     renderChain({ now: SUNDAY, serverExtendedQuote: FRIDAY_EXTENDED });
     const section = container.querySelector('section')?.textContent ?? '';
+    const primarySessionLine = container.querySelector('[data-testid="session-line"]')?.textContent ?? '';
     expect(section).not.toContain('ราคาปิด intraday ล่าสุด');
-    expect(section).not.toContain('exchange-calendar');
-    expect(section).not.toContain('polygon');
-    expect(section).not.toContain('yahoo-finance-chart');
+    expect(primarySessionLine).not.toContain('exchange-calendar');
+    expect(primarySessionLine).not.toContain('polygon');
+    // Extended provenance is intentionally compact and visible in its own row.
+    expect(container.querySelector('[data-testid="extended-hours-status"]')?.textContent)
+      .toContain('yahoo-finance-chart');
     expect(section).not.toContain('CLOSED');
   });
 });
