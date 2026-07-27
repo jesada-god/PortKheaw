@@ -8,7 +8,7 @@ import {
   createBrowserMarketTransport,
   freshnessFromMode,
   labelFromAccepted,
-  resolveAcceptedPrice,
+  resolveAcceptedPriceDomains,
   selectionKeyOf,
   type AcceptedPriceCandidate,
   type ConnectionStatus,
@@ -19,6 +19,8 @@ import {
   type MarketSessionKind,
 } from '@/src/lib/stock-detail/market-source';
 import { resolvePublicMarketWsUrl } from '@/src/lib/market-data/realtime';
+import { exchangeSessionDate, US_EQUITY_TIMEZONE } from '@/src/lib/market-data/session';
+import { previousUsTradingDate } from '@/src/lib/market-data/us-market-calendar';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
 import type { MarketUpdate } from '@/src/lib/stock-detail/market-source';
@@ -82,12 +84,8 @@ export interface UseMarketSourceResult {
    * accepted market event.
    */
   liveCandle: LiveCandle | null;
-  /**
-   * The single accepted price shared by the header, the chart price line and the
-   * (future) S/R currentPrice, or null when unavailable. Equal to
-   * `quoteResource.data?.price` for the accepted source.
-   */
-  acceptedPrice: number | null;
+  /** Atomic regular/extended source-of-truth. Extended updates never mutate regular fields. */
+  priceState: CanonicalPriceState;
   /**
    * Top-of-book and halt state from the live stream (null/false on REST paths).
    * Shown separately from Last Price in the header.
@@ -113,6 +111,21 @@ export interface UseMarketSourceResult {
   connectionState: ConnectionStatus | null;
   liveSession: string | null;
   refresh: () => void;
+}
+
+export interface CanonicalPriceState {
+  regularPrice: number | null;
+  regularTradingDate: string | null;
+  previousRegularClose: number | null;
+  previousTradingDate: string | null;
+  regularTimestamp: string | null;
+  regularProvider: string | null;
+  extendedPrice: number | null;
+  extendedSession: 'PRE' | 'AFTER' | null;
+  extendedTimestamp: string | null;
+  extendedTradingDate: string | null;
+  extendedProvider: string | null;
+  extendedMode: AcceptedPriceCandidate['mode'] | null;
 }
 
 interface LiveMeta {
@@ -367,24 +380,65 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   const aggCandidate = aggState?.symbol === symUpper && aggState.selectionKey === selectionKey ? aggState.candidate : null;
   const historyCandidate = historyFallback && historyFallback.source === 'history-fallback' ? historyFallback : null;
 
-  const accepted = useMemo(
-    () => resolveAcceptedPrice([snapCandidate, aggCandidate, historyCandidate]),
+  // Resolve the two semantic price domains before applying timestamp priority.
+  // A newer extended print therefore cannot overwrite the canonical regular quote.
+  const acceptedDomains = useMemo(
+    () => resolveAcceptedPriceDomains([snapCandidate, aggCandidate, historyCandidate]),
     [snapCandidate, aggCandidate, historyCandidate],
   );
+  const regularAccepted = acceptedDomains.regular;
+  const extendedAccepted = acceptedDomains.extended;
 
   const baseQuote = snapshotResource?.data ?? initialQuote.data;
   const quoteResource = useMemo<StockDetailQuoteResource>(() => {
-    if (accepted) return buildAcceptedResource({ accepted, snapshotResource, baseQuote, symbol });
+    if (regularAccepted) {
+      return buildAcceptedResource({
+        accepted: regularAccepted,
+        snapshotResource,
+        baseQuote,
+        symbol,
+      });
+    }
     // Nothing accepted yet: surface the last verified snapshot (or the initial
     // resource), annotated with any live error so the header can offer a retry.
     const base = snapshotResource ?? initialQuote;
     if (lastError) return { ...base, reason: `${lastError.code}: ${lastError.message}`, error: lastError };
     return base;
-  }, [accepted, snapshotResource, baseQuote, symbol, lastError, initialQuote]);
+  }, [regularAccepted, snapshotResource, baseQuote, symbol, lastError, initialQuote]);
+
+  const priceState = useMemo<CanonicalPriceState>(() => {
+    const quote = quoteResource.data;
+    const regularTimestamp = quoteResource.freshness.asOf ?? quote?.quoteTimestamp ?? null;
+    const regularTradingDate = regularTimestamp
+      ? exchangeSessionDate(regularTimestamp, US_EQUITY_TIMEZONE)
+      : quote?.latestTradingDay ?? null;
+    const previousRegularClose = quote?.previousRegularClose ?? quote?.previousClose ?? null;
+    const extendedTimestamp = extendedAccepted?.exchangeTimestamp ?? null;
+    return {
+      regularPrice: quote?.price ?? null,
+      regularTradingDate,
+      previousRegularClose,
+      previousTradingDate: regularTradingDate ? previousUsTradingDate(regularTradingDate) : null,
+      regularTimestamp,
+      regularProvider: quoteResource.provider,
+      extendedPrice: extendedAccepted?.price ?? null,
+      extendedSession: extendedAccepted?.priceRole === 'pre-market'
+        ? 'PRE'
+        : extendedAccepted?.priceRole === 'after-hours'
+          ? 'AFTER'
+          : null,
+      extendedTimestamp,
+      extendedTradingDate: extendedTimestamp
+        ? exchangeSessionDate(extendedTimestamp, US_EQUITY_TIMEZONE)
+        : null,
+      extendedProvider: extendedAccepted?.provider ?? null,
+      extendedMode: extendedAccepted?.mode ?? null,
+    };
+  }, [extendedAccepted, quoteResource]);
 
   const dataLabel = useMemo(
-    () => labelFromAccepted(accepted, initialReceivedAt),
-    [accepted, initialReceivedAt],
+    () => labelFromAccepted(extendedAccepted ?? regularAccepted, initialReceivedAt),
+    [extendedAccepted, regularAccepted, initialReceivedAt],
   );
 
   const refresh = useCallback(() => {
@@ -413,7 +467,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     quoteRetryAt,
     dataLabel,
     liveCandle,
-    acceptedPrice: accepted?.price ?? quoteResource.data?.price ?? null,
+    priceState,
     bid: meta.bid,
     ask: meta.ask,
     bidSize: meta.bidSize,

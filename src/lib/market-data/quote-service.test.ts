@@ -6,10 +6,10 @@ import { MarketDataError } from './errors';
 import { loadResilientQuote } from './quote-service';
 
 const instrument = {
-  requestedSymbol: 'NVTS',
   canonicalSymbol: 'NVTS',
   providerSymbol: 'NVTS',
-  assetClass: 'stock',
+  name: null,
+  assetType: 'stock',
   exchange: 'NASDAQ',
   mic: 'XNAS',
   currency: 'USD',
@@ -55,7 +55,32 @@ function yahooQuote() {
   };
 }
 
+function mondayYahooQuote() {
+  return {
+    ...yahooQuote(),
+    data: {
+      ...yahooQuote().data,
+      price: 11.41,
+      regularClose: 11.41,
+      previousClose: 10.92,
+      previousRegularClose: 10.92,
+      change: 0.49,
+      changePercent: (0.49 / 10.92) * 100,
+      latestTradingDay: '2026-07-27',
+      quoteTimestamp: '2026-07-27T20:00:01.000Z',
+      session: 'after-hours' as const,
+    },
+    freshness: {
+      status: 'delayed' as const,
+      asOf: '2026-07-27T20:00:01.000Z',
+      maxAgeSeconds: 60,
+    },
+  };
+}
+
 describe('resilient quote service', () => {
+  const fridayRegular = () => new Date('2026-07-24T19:05:00.000Z');
+
   it('keeps the primary provider and bypasses Yahoo on success', async () => {
     const primary = gateway(async () => ({
       symbol: 'NVTS',
@@ -73,7 +98,7 @@ describe('resilient quote service', () => {
       status: 'delayed',
     }));
     const yahoo = { getQuote: vi.fn(async () => yahooQuote()) };
-    const result = await loadResilientQuote('NVTS', primary as never, yahoo);
+    const result = await loadResilientQuote('NVTS', primary as never, yahoo, instrument, fridayRegular);
     expect(result.provider).toBe('polygon');
     expect(result.data).toMatchObject({
       previousRegularClose: 10,
@@ -103,7 +128,7 @@ describe('resilient quote service', () => {
     }));
     const yahoo = { getQuote: vi.fn(async () => yahooQuote()) };
 
-    const result = await loadResilientQuote('NVTS', primary as never, yahoo);
+    const result = await loadResilientQuote('NVTS', primary as never, yahoo, instrument, fridayRegular);
 
     expect(result.provider).toBe('polygon');
     expect(result.data).toMatchObject({
@@ -126,7 +151,7 @@ describe('resilient quote service', () => {
       throw new MarketDataError('forbidden', 'not entitled');
     });
     const yahoo = { getQuote: vi.fn(async () => yahooQuote()) };
-    const result = await loadResilientQuote('NVTS', primary as never, yahoo);
+    const result = await loadResilientQuote('NVTS', primary as never, yahoo, instrument, fridayRegular);
     expect(result.provider).toBe('yahoo-finance-chart');
     expect(result.data).toMatchObject({
       price: 10.9599,
@@ -148,8 +173,89 @@ describe('resilient quote service', () => {
         throw new MarketDataError(code, code);
       });
       const yahoo = { getQuote: vi.fn(async () => yahooQuote()) };
-      await expect(loadResilientQuote('NVTS', primary as never, yahoo)).rejects.toMatchObject({ code });
+      await expect(loadResilientQuote(
+        'NVTS',
+        primary as never,
+        yahoo,
+        instrument,
+        fridayRegular,
+      )).rejects.toMatchObject({ code });
       expect(yahoo.getQuote).not.toHaveBeenCalled();
     }
+  });
+
+  it('rejects a successful stale /prev snapshot and replaces it with the canonical US trading date', async () => {
+    const primary = gateway(async () => ({
+      symbol: 'NVTS',
+      currency: 'USD',
+      price: 10.92,
+      open: 12.08,
+      high: 12.08,
+      low: 10.9,
+      previousClose: 12.03,
+      regularClose: 10.92,
+      change: -1.11,
+      changePercent: -9.23,
+      volume: 13_682_807,
+      timestamp: Date.parse('2026-07-24T20:00:00.000Z') / 1_000,
+      provider: 'polygon',
+      status: 'end-of-day',
+    }));
+    const monday = mondayYahooQuote();
+    const yahoo = { getQuote: vi.fn(async () => monday) };
+
+    const result = await loadResilientQuote(
+      'NVTS',
+      primary as never,
+      yahoo,
+      instrument,
+      () => new Date('2026-07-27T21:05:00.000Z'),
+    );
+
+    expect(result.data).toMatchObject({
+      price: 11.41,
+      regularClose: 11.41,
+      previousRegularClose: 10.92,
+      latestTradingDay: '2026-07-27',
+    });
+    expect(result.data.change).toBeCloseTo(0.49);
+    expect(result.data.changePercent).toBeCloseTo(4.487179);
+    expect(result.diagnostics).toMatchObject({
+      provider: 'polygon->yahoo-finance-chart',
+      failureKind: 'stale-regular-snapshot-replaced',
+    });
+    expect(yahoo.getQuote).toHaveBeenCalledWith('NVTS', '2026-07-27');
+  });
+
+  it('does not expose an AFTER trade as the regular quote when both share today’s date', async () => {
+    const primary = gateway(async () => ({
+      symbol: 'NVTS',
+      currency: 'USD',
+      price: 11.05,
+      open: 11,
+      high: 11.5,
+      low: 10.8,
+      previousClose: 10.92,
+      regularClose: 11.41,
+      change: 0.13,
+      changePercent: 1.19,
+      volume: 20_892_453,
+      timestamp: Date.parse('2026-07-27T21:08:30.000Z') / 1_000,
+      provider: 'polygon',
+      status: 'real-time',
+    }));
+    const yahoo = { getQuote: vi.fn(async () => mondayYahooQuote()) };
+
+    const result = await loadResilientQuote(
+      'NVTS',
+      primary as never,
+      yahoo,
+      instrument,
+      () => new Date('2026-07-27T21:08:31.000Z'),
+    );
+
+    expect(result.data.price).toBe(11.41);
+    expect(result.data.previousRegularClose).toBe(10.92);
+    expect(result.diagnostics.failureKind).toBe('extended-primary-replaced');
   });
 });

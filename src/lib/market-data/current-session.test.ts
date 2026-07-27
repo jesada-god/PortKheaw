@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySymbolHalt,
+  canonicalRegularTradingDateAt,
   currentSessionPresentation,
   isRegularSession,
   resolveCurrentMarketSession,
@@ -21,6 +22,23 @@ const FRIDAY_AFTER_HOURS = '2026-07-24T21:00:00.000Z'; // 17:00 ET
 const FRIDAY_OVERNIGHT = '2026-07-25T02:00:00.000Z'; // Fri 22:00 ET
 const SUNDAY = '2026-07-26T17:00:00.000Z'; // Sun 13:00 ET
 const MONDAY_REGULAR = '2026-07-27T17:00:00.000Z'; // 13:00 ET
+
+describe('canonical regular trading date', () => {
+  it('uses the New York trading date when Bangkok has already crossed midnight', () => {
+    // 01:00 on 28/07 in Bangkok is still 14:00 on 27/07 in New York.
+    expect(canonicalRegularTradingDateAt('2026-07-27T18:00:00.000Z')).toBe('2026-07-27');
+  });
+
+  it('moves from the prior close in PRE to today after the regular close', () => {
+    expect(canonicalRegularTradingDateAt('2026-07-27T12:00:00.000Z')).toBe('2026-07-24');
+    expect(canonicalRegularTradingDateAt('2026-07-27T21:00:00.000Z')).toBe('2026-07-27');
+  });
+
+  it('uses the most recent finalized session on weekends and holidays', () => {
+    expect(canonicalRegularTradingDateAt(SUNDAY)).toBe('2026-07-24');
+    expect(canonicalRegularTradingDateAt('2026-07-03T17:00:00.000Z')).toBe('2026-07-02');
+  });
+});
 
 function report(overrides: Partial<MarketStatusReport> = {}): MarketStatusReport {
   return {

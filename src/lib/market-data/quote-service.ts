@@ -1,7 +1,13 @@
 import 'server-only';
 import { MarketDataError } from './errors';
 import { getYahooChartProvider } from './candles';
+import { canonicalRegularTradingDateAt } from './current-session';
 import { getMarketDataGateway } from './gateway/service';
+import {
+  classifyUsEquitySession,
+  exchangeSessionDate,
+  US_EQUITY_TIMEZONE,
+} from './session';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import type { ResolvedInstrument } from './gateway/contracts';
 import type { ProviderResult, Quote } from './types';
@@ -15,6 +21,8 @@ export interface ResilientQuoteDiagnostics {
     | 'none'
     | 'upstream-entitlement'
     | 'upstream-not-found'
+    | 'stale-regular-snapshot-replaced'
+    | 'extended-primary-replaced'
     | 'comparison-close-rescued'
     | 'comparison-close-unavailable';
 }
@@ -90,6 +98,16 @@ function tradingDay(timestamp: number, timeZone: string): string {
   }).format(new Date(timestamp * 1_000));
 }
 
+function quoteTradingDate(quote: Quote): string | null {
+  if (quote.quoteTimestamp) {
+    const date = exchangeSessionDate(quote.quoteTimestamp, US_EQUITY_TIMEZONE);
+    if (date) return date;
+  }
+  return quote.latestTradingDay && /^\d{4}-\d{2}-\d{2}$/.test(quote.latestTradingDay)
+    ? quote.latestTradingDay
+    : null;
+}
+
 /**
  * Provider-first server pipeline. Only a typed entitlement/not-found outcome
  * may move to Yahoo; invalid symbols, auth/config faults, rate limits and
@@ -100,6 +118,7 @@ export async function loadResilientQuote(
   gateway: QuoteGateway = getMarketDataGateway(),
   yahoo: YahooQuoteProvider = getYahooChartProvider(),
   resolvedInstrument?: ResolvedInstrument,
+  now: () => Date = () => new Date(),
 ): Promise<ResilientQuoteResult> {
   try {
     const instrument = resolvedInstrument ?? await gateway.resolveInstrument(symbol);
@@ -140,6 +159,41 @@ export async function loadResilientQuote(
         failureKind: 'none',
       },
     };
+    const canonicalTradingDate = canonicalRegularTradingDateAt(now());
+    const primaryTradingDate = quoteTradingDate(primary.data);
+    const primaryPriceSession = primary.data.quoteTimestamp
+      ? classifyUsEquitySession(primary.data.quoteTimestamp)
+      : null;
+    const extendedTradeInPrimary = (
+      primaryPriceSession === 'premarket' || primaryPriceSession === 'afterhours'
+    ) && primary.data.regularClose !== null
+      && primary.data.regularClose !== undefined
+      && primary.data.price !== primary.data.regularClose;
+    if (
+      canonicalTradingDate
+      && (primaryTradingDate !== canonicalTradingDate || extendedTradeInPrimary)
+    ) {
+      const replacement = await loadYahooQuote(symbol, yahoo, canonicalTradingDate);
+      const replacementTradingDate = quoteTradingDate(replacement.data);
+      if (replacementTradingDate !== canonicalTradingDate) {
+        throw new MarketDataError(
+          'stale-data',
+          `Regular quote for ${symbol} belongs to ${replacementTradingDate ?? 'an unknown date'}; expected ${canonicalTradingDate}`,
+        );
+      }
+      return {
+        ...replacement,
+        diagnostics: {
+          symbol,
+          routeStatus: 200,
+          provider: `${quote.provider}->${replacement.provider ?? 'yahoo-finance-chart'}`,
+          providerStatus: 200,
+          failureKind: primaryTradingDate !== canonicalTradingDate
+            ? 'stale-regular-snapshot-replaced'
+            : 'extended-primary-replaced',
+        },
+      };
+    }
     if (
       quote.previousClose !== null
       && Number.isFinite(quote.previousClose)
@@ -201,7 +255,11 @@ export async function loadResilientQuote(
     }
   } catch (cause) {
     if (!shouldUseYahoo(cause)) throw cause;
-    const fallback = await loadYahooQuote(symbol, yahoo);
+    const fallback = await loadYahooQuote(
+      symbol,
+      yahoo,
+      canonicalRegularTradingDateAt(now()) ?? undefined,
+    );
     return {
       ...fallback,
       diagnostics: {

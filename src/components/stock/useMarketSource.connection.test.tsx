@@ -65,6 +65,35 @@ const INITIAL_QUOTE = {
   data: null, freshness: 'live', provider: null, reason: null, error: null, fallbackLabel: null,
 } as unknown as StockDetailQuoteResource;
 
+const INITIAL_REGULAR_QUOTE = {
+  data: {
+    symbol: 'NVTS',
+    currency: 'USD',
+    price: 11.41,
+    regularClose: 11.41,
+    previousClose: 10.92,
+    previousRegularClose: 10.92,
+    change: 0.49,
+    changePercent: (0.49 / 10.92) * 100,
+    open: 11,
+    high: 11.5,
+    low: 10.8,
+    volume: 1_000,
+    latestTradingDay: '2026-07-27',
+    quoteTimestamp: '2026-07-27T20:00:01.000Z',
+    session: 'after-hours',
+  },
+  freshness: {
+    status: 'delayed',
+    asOf: '2026-07-27T20:00:01.000Z',
+    maxAgeSeconds: 60,
+  },
+  provider: 'yahoo-finance-chart',
+  reason: null,
+  error: null,
+  fallbackLabel: null,
+} as StockDetailQuoteResource;
+
 function baseOptions(overrides: Partial<Options> = {}): Options {
   return {
     symbol: 'AAPL',
@@ -103,8 +132,8 @@ function liveSnapshot(): MarketUpdate {
       mode: 'REAL-TIME',
       provider: 'alpaca:iex',
       source: 'aggregate-fallback',
-      exchangeTimestamp: '2026-07-24T20:26:14.801Z',
-      receivedAt: '2026-07-24T20:26:14.900Z',
+      exchangeTimestamp: '2026-07-24T19:26:14.801Z',
+      receivedAt: '2026-07-24T19:26:14.900Z',
       delayAgeSeconds: 0,
       fallbackNote: null,
       realtime: true,
@@ -113,6 +142,24 @@ function liveSnapshot(): MarketUpdate {
     error: null,
     connectionState: 'connected',
     eventKind: 'snapshot',
+    session: 'regular',
+  };
+}
+
+function afterHoursTrade(price = 11.05): MarketUpdate {
+  return {
+    ...liveSnapshot(),
+    symbol: 'NVTS',
+    price,
+    label: {
+      ...liveSnapshot().label,
+      provider: 'finnhub',
+      feed: 'finnhub',
+      exchangeTimestamp: '2026-07-27T21:08:30.000Z',
+      receivedAt: '2026-07-27T21:08:30.100Z',
+    },
+    session: 'after-hours',
+    eventKind: 'trade',
   };
 }
 
@@ -196,13 +243,36 @@ describe('useMarketSource connection state', () => {
     act(() => { rec.listener?.(liveSnapshot()); });
 
     expect(sink).toHaveBeenCalledWith(206.87, {
-      asOf: '2026-07-24T20:26:14.801Z',
+      asOf: '2026-07-24T19:26:14.801Z',
       feed: 'iex',
-      session: null,
+      session: 'regular',
     });
     expect(latest?.quoteResource.data?.price).toBe(206.87);
     expect(latest?.dataLabel?.realtime).toBe(true);
     expect(latest?.connectionState).toBe('connected');
+    view.unmount();
+  });
+
+  it('commits an AFTER trade only to the extended domain and preserves the regular snapshot atomically', async () => {
+    const useHook = await loadHook(WS_URL);
+    const view = mount(useHook, baseOptions({
+      symbol: 'NVTS',
+      initialQuote: INITIAL_REGULAR_QUOTE,
+      session: 'closed',
+    }));
+
+    act(() => { rec.listener?.(afterHoursTrade()); });
+
+    expect(latest?.quoteResource.data?.price).toBe(11.41);
+    expect(latest?.priceState).toMatchObject({
+      regularPrice: 11.41,
+      regularTradingDate: '2026-07-27',
+      previousRegularClose: 10.92,
+      previousTradingDate: '2026-07-24',
+      extendedPrice: 11.05,
+      extendedSession: 'AFTER',
+      extendedTradingDate: '2026-07-27',
+    });
     view.unmount();
   });
 

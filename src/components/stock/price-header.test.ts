@@ -974,4 +974,49 @@ describe('stock price header final model', () => {
     expect(model('REGULAR', afterHoursRow).extended).toBeNull();
     expect(model('HALTED', afterHoursRow).extended).toBeNull();
   });
+
+  it('matches the NVTS regular/after-hours arithmetic contract exactly', () => {
+    const result = buildStockPriceHeaderModel({
+      data: {
+        quote: {
+          ...regularClose,
+          price: 11.41,
+          regularClose: 11.41,
+          previousClose: 10.92,
+          previousRegularClose: 10.92,
+          latestTradingDay: '2026-07-27',
+          quoteTimestamp: '2026-07-27T20:00:01.000Z',
+        },
+        freshness: {
+          status: 'delayed',
+          asOf: '2026-07-27T20:00:01.000Z',
+          maxAgeSeconds: 60,
+        },
+        provider: 'yahoo-finance-chart',
+        fallbackLabel: null,
+        extendedQuote: {
+          session: 'after-hours',
+          price: 11.08,
+          asOf: '2026-07-27T21:05:00.000Z',
+          tradingDate: '2026-07-27',
+          freshness: {
+            status: 'delayed',
+            asOf: '2026-07-27T21:05:00.000Z',
+            maxAgeSeconds: 900,
+          },
+          provider: 'yahoo-finance-chart',
+        },
+      },
+      currentSession: 'AFTER_HOURS',
+      currentSessionEvaluatedAt: '2026-07-27T21:05:01.000Z',
+      currentSessionSource: 'exchange-calendar',
+    });
+
+    expect(result.regular.price).toBe(11.41);
+    expect(result.regular.change?.amount).toBeCloseTo(0.49);
+    expect(result.regular.change?.percent).toBeCloseTo(4.487179);
+    expect(result.extended?.price).toBe(11.08);
+    expect(result.extended?.change?.amount).toBeCloseTo(-0.33);
+    expect(result.extended?.change?.percent).toBeCloseTo(-2.8922);
+  });
 });

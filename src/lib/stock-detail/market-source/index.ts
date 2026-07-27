@@ -46,8 +46,10 @@ export { PollingMarketSource, type PollingMarketSourceOptions } from './polling-
 export { createBrowserMarketTransport } from './browser-transport';
 export {
   resolveAcceptedPrice,
+  resolveAcceptedPriceDomains,
   historyFallbackModeFromStatus,
   type AcceptedPriceCandidate,
+  type AcceptedPriceDomains,
 } from './accepted-price';
 export {
   buildAcceptedResource,

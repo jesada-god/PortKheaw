@@ -42,9 +42,19 @@ export interface AcceptedPriceCandidate {
    */
   mode: MarketDataMode;
   provider: string | null;
+  /**
+   * Semantic price domain. Legacy REST/history candidates default to `regular`;
+   * every live trade is tagged explicitly from its exchange timestamp/session.
+   */
+  priceRole?: 'regular' | 'pre-market' | 'after-hours';
   /** Carried through from a live stream so the header can gate its badge. */
   realtime?: boolean;
   feed?: string | null;
+}
+
+export interface AcceptedPriceDomains {
+  regular: AcceptedPriceCandidate | null;
+  extended: AcceptedPriceCandidate | null;
 }
 
 /**
@@ -97,4 +107,22 @@ export function resolveAcceptedPrice(
     if (rankDelta === 0 && candidateTime > bestTime) best = candidate;
   }
   return best;
+}
+
+/**
+ * Resolve regular and extended domains independently.
+ *
+ * An extended candidate is deliberately absent from the regular candidate set,
+ * so no newer PRE/AFTER timestamp can win by recency and mutate the main price.
+ * The returned object is an atomic snapshot consumed by React in one render.
+ */
+export function resolveAcceptedPriceDomains(
+  candidates: ReadonlyArray<AcceptedPriceCandidate | null | undefined>,
+): AcceptedPriceDomains {
+  return {
+    regular: resolveAcceptedPrice(candidates.filter((candidate) =>
+      candidate && (candidate.priceRole ?? 'regular') === 'regular')),
+    extended: resolveAcceptedPrice(candidates.filter((candidate) =>
+      candidate && (candidate.priceRole === 'pre-market' || candidate.priceRole === 'after-hours'))),
+  };
 }

@@ -1,4 +1,8 @@
-import { US_EQUITY_TIMEZONE, exchangeSessionDate } from '@/src/lib/market-data/session';
+import {
+  US_EQUITY_TIMEZONE,
+  classifyUsEquitySession,
+  exchangeSessionDate,
+} from '@/src/lib/market-data/session';
 import { previousUsTradingDate } from '@/src/lib/market-data/us-market-calendar';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
@@ -38,9 +42,28 @@ export function freshnessFromMode(mode: MarketDataMode, asOf: string | null): Da
 /** Map a live {@link MarketUpdate} to a priced accepted-price candidate, or null. */
 export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidate | null {
   if (update.price === null || !update.label.source || update.label.source === 'history-fallback') return null;
+  const priceRole = update.label.source === 'snapshot'
+    ? 'regular' as const
+    : update.session === 'pre-market' || update.session === 'premarket'
+      ? 'pre-market' as const
+      : update.session === 'after-hours' || update.session === 'afterhours'
+        ? 'after-hours' as const
+        : update.session === 'regular'
+          ? 'regular' as const
+          : update.label.feed && update.label.exchangeTimestamp
+            ? (() => {
+                const classified = classifyUsEquitySession(update.label.exchangeTimestamp!);
+                return classified === 'premarket'
+                  ? 'pre-market' as const
+                  : classified === 'afterhours'
+                    ? 'after-hours' as const
+                    : 'regular' as const;
+              })()
+            : 'regular' as const;
   return {
     price: update.price,
     source: update.label.source,
+    priceRole,
     exchangeTimestamp: update.label.exchangeTimestamp,
     mode: update.label.mode,
     provider: update.label.provider,

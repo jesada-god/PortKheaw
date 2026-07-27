@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketDataError } from '@/src/lib/market-data/errors';
 import type {
   NormalizedBarsResult,
@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getBars: vi.fn(),
   getCompanyProfile: vi.fn(),
+  getYahooQuote: vi.fn(),
+  getExtendedQuote: vi.fn(),
 }));
 
 vi.mock('@/src/lib/market-data/gateway/service', () => ({
@@ -28,6 +30,13 @@ vi.mock('@/src/lib/market-data/gateway/service', () => ({
 
 vi.mock('@/src/lib/market-data', () => ({
   getCompanyProfileService: () => ({ getCompanyProfile: mocks.getCompanyProfile }),
+}));
+
+vi.mock('@/src/lib/market-data/candles', () => ({
+  getYahooChartProvider: () => ({
+    getQuote: mocks.getYahooQuote,
+    getExtendedQuote: mocks.getExtendedQuote,
+  }),
 }));
 
 import { loadStockDetailGatewaySnapshot } from './gateway-snapshot';
@@ -114,7 +123,18 @@ function reset() {
   mocks.getBars.mockReset();
   mocks.getQuote.mockReset();
   mocks.getCompanyProfile.mockReset().mockResolvedValue(profileResult);
+  mocks.getYahooQuote.mockReset();
+  mocks.getExtendedQuote.mockReset().mockResolvedValue(null);
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(quote.timestamp * 1_000 + 1_000));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('loadStockDetailGatewaySnapshot quote/chart capability separation', () => {
   it('serves the quote header even when the intraday chart provider fails', async () => {

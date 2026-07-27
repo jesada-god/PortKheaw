@@ -228,4 +228,19 @@ describe('candidateFromUpdate', () => {
     expect(candidateFromUpdate(update(null, 'snapshot'))).toBeNull();
     expect(candidateFromUpdate(update(10, 'history-fallback'))).toBeNull();
   });
+
+  it('assigns live PRE/AFTER trades to an extended domain while REST snapshots stay regular', () => {
+    expect(candidateFromUpdate({
+      ...update(11.05, 'aggregate-fallback'),
+      session: 'after-hours',
+    })?.priceRole).toBe('after-hours');
+    expect(candidateFromUpdate({
+      ...update(11.08, 'aggregate-fallback'),
+      session: 'pre-market',
+    })?.priceRole).toBe('pre-market');
+    expect(candidateFromUpdate({
+      ...update(11.41, 'snapshot'),
+      session: 'after-hours',
+    })?.priceRole).toBe('regular');
+  });
 });

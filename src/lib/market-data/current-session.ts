@@ -1,5 +1,10 @@
 import { US_EQUITY_TIMEZONE, exchangeSessionDate } from './session';
-import { EARLY_CLOSE_MINUTE, isUsMarketEarlyClose, usMarketHolidays } from './us-market-calendar';
+import {
+  EARLY_CLOSE_MINUTE,
+  isUsMarketEarlyClose,
+  previousUsTradingDate,
+  usMarketHolidays,
+} from './us-market-calendar';
 
 /**
  * SINGLE SOURCE OF TRUTH for "what session is the market in RIGHT NOW".
@@ -197,6 +202,34 @@ function calendarSession(
     return { session: 'AFTER_HOURS', tradingDay: true };
   }
   return { session: 'CLOSED', tradingDay: true };
+}
+
+/**
+ * The US trading date whose regular-session price is canonical at `now`.
+ *
+ * PRE / before the open -> the previous finalized trading day.
+ * REGULAR              -> today's live regular session.
+ * AFTER / after close  -> today's finalized regular close.
+ * Weekend / holiday    -> the most recent finalized trading day.
+ *
+ * The instant is always interpreted in America/New_York. This is also the cache
+ * generation key for regular quotes, so a Friday `/prev` response cannot survive
+ * into Monday's regular/after-hours state.
+ */
+export function canonicalRegularTradingDateAt(now: Date | string): string | null {
+  const instant = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(instant.valueOf())) return null;
+  const date = exchangeSessionDate(instant.toISOString(), US_EQUITY_TIMEZONE);
+  if (!date) return null;
+
+  const calendar = calendarSession(instant, US_EQUITY_TIMEZONE, new Set());
+  if (calendar.session === 'REGULAR' || calendar.session === 'AFTER_HOURS') return date;
+
+  if (calendar.session === 'CLOSED' && calendar.tradingDay) {
+    const closeMinute = isUsMarketEarlyClose(date) ? EARLY_CLOSE_MINUTE : REGULAR_CLOSE_MINUTE;
+    if (exchangeClock(instant, US_EQUITY_TIMEZONE).minute >= closeMinute) return date;
+  }
+  return previousUsTradingDate(date);
 }
 
 function providerSession(status: MarketStatusReport['status']): CurrentMarketSession | null {

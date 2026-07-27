@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { historyFallbackModeFromStatus, resolveAcceptedPrice, type AcceptedPriceCandidate } from './accepted-price';
+import {
+  historyFallbackModeFromStatus,
+  resolveAcceptedPrice,
+  resolveAcceptedPriceDomains,
+  type AcceptedPriceCandidate,
+} from './accepted-price';
 
 function snapshot(price: number, ts = '2026-07-21T14:00:00.000Z'): AcceptedPriceCandidate {
   return { price, source: 'snapshot', exchangeTimestamp: ts, mode: 'DELAYED', provider: 'polygon' };
@@ -73,6 +78,44 @@ describe('resolveAcceptedPrice — shared accepted-price priority', () => {
     };
     expect(resolveAcceptedPrice([freshWs, staleSnapshot])).toBe(freshWs);
     expect(resolveAcceptedPrice([staleSnapshot, freshWs])).toBe(freshWs);
+  });
+
+  it('keeps AFTER WebSocket trades out of the canonical regular domain', () => {
+    const regular = {
+      ...snapshot(11.41, '2026-07-27T20:00:01.000Z'),
+      priceRole: 'regular' as const,
+    };
+    const after = {
+      ...aggregate(11.05, '2026-07-27T21:08:30.000Z'),
+      priceRole: 'after-hours' as const,
+      mode: 'REAL-TIME' as const,
+      realtime: true,
+      feed: 'finnhub',
+    };
+
+    const domains = resolveAcceptedPriceDomains([regular, after]);
+
+    expect(domains.regular).toEqual(regular);
+    expect(domains.regular?.price).toBe(11.41);
+    expect(domains.extended).toEqual(after);
+    expect(domains.extended?.price).toBe(11.05);
+  });
+
+  it('updates only the extended domain across a sequence of AFTER trades', () => {
+    const regular = {
+      ...snapshot(11.41, '2026-07-27T20:00:01.000Z'),
+      priceRole: 'regular' as const,
+    };
+    const afterTrades = [11.30, 11.20, 11.08, 11.05].map((price, index) => ({
+      ...aggregate(price, `2026-07-27T21:0${index}:00.000Z`),
+      priceRole: 'after-hours' as const,
+      mode: 'REAL-TIME' as const,
+    }));
+
+    const domains = resolveAcceptedPriceDomains([regular, ...afterTrades]);
+
+    expect(domains.regular?.price).toBe(11.41);
+    expect(domains.extended?.price).toBe(11.05);
   });
 
   it('returns null (unavailable) when no candidate carries a finite price', () => {

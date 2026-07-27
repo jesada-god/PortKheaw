@@ -2,6 +2,7 @@ import 'server-only';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import { serverEnv } from '@/src/config/env/server';
 import { MarketDataError } from '../errors';
+import { canonicalRegularTradingDateAt } from '../current-session';
 import { gatewayBarsCacheKey } from './cache';
 import { isCompatibleSelection } from './capabilities';
 import type { MarketDataGateway, ResolvedInstrument } from './contracts';
@@ -31,8 +32,9 @@ export class DefaultMarketDataGateway implements MarketDataGateway {
   async getQuote({ instrument }: { instrument: ResolvedInstrument }) {
     const provider = this.configuredProvider();
     assertInstrument(instrument);
+    const regularTradingDate = canonicalRegularTradingDateAt(new Date()) ?? 'unknown-date';
     const resolution = await this.cache.resolve(
-      `market-gateway:${provider.id}:quote:${instrument.canonicalSymbol}:${instrument.providerSymbol}`,
+      `market-gateway:${provider.id}:quote:${instrument.canonicalSymbol}:${instrument.providerSymbol}:${regularTradingDate}`,
       () => provider.getQuote(instrument),
       { freshMs: 15_000, staleMs: 5 * 60_000, errorMs: 30_000 },
     );
@@ -96,4 +98,3 @@ export function getMarketDataGateway(): DefaultMarketDataGateway {
   }
   return gateway;
 }
-

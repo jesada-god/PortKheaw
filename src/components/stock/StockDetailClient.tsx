@@ -12,7 +12,13 @@ import { useAppVisible } from '@/src/hooks/useAppVisible';
 import { useExchangeClock } from '@/src/hooks/useExchangeClock';
 import { applySymbolHalt, resolveCurrentMarketSession } from '@/src/lib/market-data/current-session';
 import { useMarketSource, type CanonicalLiveUpdateSink } from './useMarketSource';
-import { selectionKeyOf, type AcceptedPriceCandidate, type MarketSelection, type MarketSessionKind } from '@/src/lib/stock-detail/market-source';
+import {
+  freshnessFromMode,
+  selectionKeyOf,
+  type AcceptedPriceCandidate,
+  type MarketSelection,
+  type MarketSessionKind,
+} from '@/src/lib/stock-detail/market-source';
 import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/KeyStatisticsSection';
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
 import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
@@ -245,7 +251,7 @@ export function StockDetailClient({
     quoteLoading,
     quoteRetryAt,
     liveCandle,
-    acceptedPrice,
+    priceState,
     dataLabel,
     liveSession,
     halted,
@@ -292,9 +298,29 @@ export function StockDetailClient({
   // A symbol halt replaces the REGULAR label only; it never turns an open market
   // into a closed one, and it never invents a session outside regular hours.
   const currentSession = applySymbolHalt(resolvedSession.session, halted);
+  const liveExtendedQuote: PriceHeaderExtendedQuote | null = (
+    priceState.extendedPrice !== null
+    && priceState.extendedSession !== null
+    && priceState.extendedTimestamp !== null
+  ) ? {
+      session: priceState.extendedSession === 'PRE' ? 'premarket' : 'after-hours',
+      price: priceState.extendedPrice,
+      asOf: priceState.extendedTimestamp,
+      tradingDate: priceState.extendedTradingDate,
+      freshness: freshnessFromMode(
+        priceState.extendedMode ?? 'DELAYED',
+        priceState.extendedTimestamp,
+      ),
+      provider: priceState.extendedProvider,
+    }
+    : null;
+  const incomingExtendedQuote = preserveLastKnownExtendedQuote(
+    serverExtendedQuote,
+    liveExtendedQuote,
+  );
   const persistedExtendedQuote = preserveLastKnownExtendedQuote(
     lastKnownExtended.symbol === symbol ? lastKnownExtended.quote : null,
-    serverExtendedQuote,
+    incomingExtendedQuote,
   );
   const priceHeaderData = resolvePriceHeaderData({
     current: quoteResource,
@@ -323,6 +349,11 @@ export function StockDetailClient({
       ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
       : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
   });
+  const analyticalSpotPrice = currentSession === 'REGULAR' || currentSession === 'HALTED'
+    ? priceState.regularPrice
+    : currentSession === 'PREMARKET' || currentSession === 'AFTER_HOURS'
+      ? priceState.extendedPrice ?? priceState.regularPrice
+      : priceState.regularPrice;
 
   const toggleWatch = () => {
     if (!isOnline) {
@@ -485,10 +516,10 @@ export function StockDetailClient({
               symbol={symbol}
               active={tab === 'Chart'}
               initialHistory={initialHistory}
-              // Header price, chart current candle and S/R distance all derive
-              // from the same accepted market event: `currentPrice` and
-              // `liveCandle` come from one `useMarketSource` subscription.
-              currentPrice={acceptedPrice}
+              // Analytics follows the session-selected spot from the same
+              // atomic source state: regular in REGULAR/CLOSED and the separate
+              // extended domain in PRE/AFTER when a verified print exists.
+              currentPrice={analyticalSpotPrice}
               marketLabel={dataLabel}
               liveCandle={liveCandle}
               liveUpdateSinkRef={liveUpdateSinkRef}
@@ -515,7 +546,7 @@ export function StockDetailClient({
             <div className="space-y-4">
               <OptionsChainPanel
                 symbol={symbol}
-                acceptedPrice={acceptedPrice}
+                acceptedPrice={analyticalSpotPrice}
                 underlyingLabel={dataLabel}
               />
               <div className="rounded-2xl border border-amber-500/20 bg-[#151B28] p-5 text-center">
