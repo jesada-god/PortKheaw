@@ -32,6 +32,10 @@ async function scriptSrc(): Promise<string> {
   return directiveOf('script-src ');
 }
 
+async function imgSrc(): Promise<string> {
+  return directiveOf('img-src ');
+}
+
 describe('middleware CSP connect-src for the market WebSocket Gateway', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -82,6 +86,32 @@ describe('middleware CSP connect-src for the market WebSocket Gateway', () => {
     process.env.NEXT_PUBLIC_MARKET_WS_URL = 'not a url';
     const directive = await connectSrc();
     expect(directive).toBe(`connect-src 'self'`);
+    expect(directive).not.toContain('*');
+  });
+});
+
+describe('middleware CSP img-src for publisher news thumbnails', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    setNodeEnv(ORIGINAL_NODE_ENV ?? 'test');
+  });
+
+  it('permits any HTTPS publisher CDN so real article thumbnails can render', async () => {
+    setNodeEnv('production');
+    const directive = await imgSrc();
+    expect(directive).toContain(`'self'`);
+    expect(directive).toContain('https:');
+    // The previous single-host allowlist meant no genuine news image ever loaded.
+    expect(directive).not.toContain('picsum.photos');
+  });
+
+  it('never widens img-src to plaintext HTTP or a wildcard', async () => {
+    setNodeEnv('production');
+    const directive = await imgSrc();
+    expect(directive).not.toContain('http:');
     expect(directive).not.toContain('*');
   });
 });

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { serverEnv } from '@/src/config/env/server';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
+import { NEWS_MAX_COUNT, selectLatestNews } from './feed';
 import { safeExternalUrl } from './url';
 import type {
   NewsArticle,
@@ -36,7 +37,16 @@ const articleSchema = z.object({
 });
 const responseSchema = z.object({ status: z.literal('ok'), articles: z.array(articleSchema) });
 const errorSchema = z.object({ status: z.literal('error'), code: z.string().optional(), message: z.string().optional() });
-const PAGE_SIZE = 10;
+const PAGE_SIZE = NEWS_MAX_COUNT;
+
+/**
+ * NewsAPI keeps articles whose content the publisher withdrew, replacing every
+ * field with the literal `[Removed]` tombstone. Those carry no story and no image,
+ * so they are dropped instead of reaching the reader as an empty card.
+ */
+function isRemovedArticle(title: string, url: string): boolean {
+  return /^\[removed\]$/i.test(title) || new URL(url).hostname === 'removed.com';
+}
 
 function retryAfter(response: Response): number | undefined {
   const value = Number(response.headers.get('retry-after')); return Number.isFinite(value) && value > 0 ? Math.ceil(value) : undefined;
@@ -72,16 +82,21 @@ export class NewsApiProvider implements NewsProvider {
     if (!response.ok) throw new NewsProviderError('NEWS_PROVIDER_UPSTREAM_FAILURE', 'News provider is temporarily unavailable');
     const parsed = responseSchema.safeParse(payload);
     if (!parsed.success) throw new NewsProviderError('NEWS_PROVIDER_UPSTREAM_FAILURE', 'News provider returned invalid data');
-    const seen = new Set<string>(); const articles: NewsArticle[] = [];
+    const articles: NewsArticle[] = [];
     for (const item of parsed.data.articles) {
       const title = item.title?.trim(); const externalUrl = safeExternalUrl(item.url); const date = item.publishedAt ? new Date(item.publishedAt) : null;
-      const key = `${title?.toLowerCase() ?? ''}|${externalUrl ?? ''}`;
-      if (!title || !externalUrl || !date || Number.isNaN(date.valueOf()) || seen.has(key)) continue;
-      seen.add(key); articles.push({ id: createHash('sha256').update(key).digest('hex').slice(0, 20), title, source: item.source.name?.trim() || new URL(externalUrl).hostname, publishedAt: date.toISOString(), url: externalUrl, imageUrl: safeExternalUrl(item.urlToImage), symbols: [] });
+      if (!title || !externalUrl || !date || Number.isNaN(date.valueOf()) || isRemovedArticle(title, externalUrl)) continue;
+      const key = `${title.toLowerCase()}|${externalUrl}`;
+      // `urlToImage` is the provider's own article image: mapped verbatim when it
+      // is a usable link, and left null when the publisher supplied none. No image
+      // is ever substituted or borrowed from another article.
+      articles.push({ id: createHash('sha256').update(key).digest('hex').slice(0, 20), title, source: item.source.name?.trim() || new URL(externalUrl).hostname, publishedAt: date.toISOString(), url: externalUrl, imageUrl: safeExternalUrl(item.urlToImage), symbols: [] });
     }
     return {
       data: {
-        articles,
+        // One ordering/de-duplication rule for every consumer, applied where the
+        // data enters the system rather than in each UI.
+        articles: selectLatestNews(articles, PAGE_SIZE),
         nextCursor: parsed.data.articles.length === PAGE_SIZE ? String(page + 1) : null,
       },
       status: 'live',

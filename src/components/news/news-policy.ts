@@ -1,10 +1,19 @@
-const CSP_IMAGE_HOSTS = new Set(['picsum.photos']);
-
+/**
+ * Whether an article's own image may be requested.
+ *
+ * The set of publisher CDNs behind a news feed is unbounded and changes per
+ * article (`biztoc.com`, `s.yimg.com`, `media.cnn.com`, …), so a hostname
+ * allowlist cannot express "this article's real picture" — the previous one
+ * admitted a single placeholder-image service, which meant no genuine thumbnail
+ * ever rendered. The rule that actually protects the reader is transport, not
+ * host: HTTPS only (an `http:` thumbnail is mixed content and would be blocked
+ * anyway), matched by `img-src 'self' data: blob: https:` in the middleware CSP.
+ * Data Saver still suppresses every image request.
+ */
 export function shouldRenderNewsImage(saveData: boolean, imageUrl: string | null) {
   if (saveData || !imageUrl) return false;
   try {
-    const url = new URL(imageUrl);
-    return url.protocol === 'https:' && CSP_IMAGE_HOSTS.has(url.hostname);
+    return new URL(imageUrl).protocol === 'https:';
   } catch {
     return false;
   }

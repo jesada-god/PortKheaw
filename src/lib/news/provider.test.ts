@@ -67,6 +67,57 @@ describe('NewsApiProvider', () => {
     expect(String(fetcher.mock.lastCall?.[0])).not.toContain('private-key');
   });
 
+  it('maps the publisher image verbatim and leaves it null when the article has none', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({
+      status: 'ok',
+      articles: [
+        { source: { name: 'Biztoc.com' }, title: 'With image', url: 'https://biztoc.com/x/1', urlToImage: 'https://biztoc.com/cdn/thumb.webp', publishedAt: '2026-07-25T19:22:04Z' },
+        { source: { name: 'Yahoo' }, title: 'Without image', url: 'https://finance.yahoo.com/news/2', urlToImage: null, publishedAt: '2026-07-25T19:04:42Z' },
+        { source: { name: 'Broken' }, title: 'Unusable image link', url: 'https://publisher.com/3', urlToImage: 'not a url', publishedAt: '2026-07-25T18:00:00Z' },
+      ],
+    }));
+
+    const { data } = await new NewsApiProvider('private-key', fetcher, () => NOW).getSymbolNews('NVDA');
+
+    expect(data.articles.map((article) => article.imageUrl)).toEqual([
+      'https://biztoc.com/cdn/thumb.webp',
+      null,
+      null,
+    ]);
+  });
+
+  it('drops withdrawn [Removed] tombstones instead of serving empty cards', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({
+      status: 'ok',
+      articles: [
+        { source: { name: '[Removed]' }, title: '[Removed]', url: 'https://removed.com', urlToImage: null, publishedAt: '2026-07-25T19:00:00Z' },
+        { source: { name: 'Example' }, title: 'Real story', url: 'https://example.com/real', urlToImage: null, publishedAt: '2026-07-25T18:00:00Z' },
+      ],
+    }));
+
+    const { data } = await new NewsApiProvider('private-key', fetcher, () => NOW).getMarketNews();
+
+    expect(data.articles.map((article) => article.title)).toEqual(['Real story']);
+  });
+
+  it('serves the feed newest-first with one card per story', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({
+      status: 'ok',
+      articles: [
+        { source: { name: 'Biztoc.com' }, title: 'Citi sends a strong verdict on Mag 7, stock market', url: 'https://biztoc.com/x/older', urlToImage: null, publishedAt: '2026-07-23T13:18:58Z' },
+        { source: { name: 'Macdailynews.com' }, title: 'Apple stock split buzz returns', url: 'https://macdailynews.com/split', urlToImage: null, publishedAt: '2026-07-23T14:00:22Z' },
+        { source: { name: 'Biztoc.com' }, title: 'Citi sends a strong verdict on Mag 7, stock market', url: 'https://biztoc.com/x/newer', urlToImage: null, publishedAt: '2026-07-23T16:38:10Z' },
+      ],
+    }));
+
+    const { data } = await new NewsApiProvider('private-key', fetcher, () => NOW).getSymbolNews('AAPL');
+
+    expect(data.articles.map((article) => article.url)).toEqual([
+      'https://biztoc.com/x/newer',
+      'https://macdailynews.com/split',
+    ]);
+  });
+
   it.each([
     {
       name: 'invalid key',

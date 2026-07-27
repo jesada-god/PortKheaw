@@ -45,7 +45,13 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
     `object-src 'none'`,
     `script-src ${scriptSources.join(' ')}`,
     `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' data: blob: https://picsum.photos`,
+    // News thumbnails come from the publisher CDN named by each article, an
+    // unbounded and per-article set, so no hostname allowlist can express them.
+    // The scheme source keeps the guarantee that matters — HTTPS only, no
+    // mixed content — and images cannot execute. Every other directive stays
+    // origin-locked, and `referrerPolicy="no-referrer"` on the thumbnails keeps
+    // the reader's page out of the publisher's logs.
+    `img-src 'self' data: blob: https:`,
     `font-src 'self' data:`,
     `connect-src ${[`'self'`, ...supabaseConnectSources(), ...marketWsConnectSources()].join(' ')}`,
     `worker-src 'self' blob:`,

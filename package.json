@@ -16,6 +16,7 @@
     "probe:options-chain": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/probe-options-chain.ts",
     "probe:options-providers": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/probe-options-providers.ts",
     "probe:chart-history": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-chart-history.ts",
+    "probe:news": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-news.ts",
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
     "clean": "next clean"

@@ -13,16 +13,15 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  // Keep this allowlist synchronized with CSP and news-policy.ts.
+  // No `remotePatterns` on purpose. News thumbnails are served by whichever
+  // publisher CDN each article names, so routing them through the built-in
+  // optimizer would require `hostname: '**'` — an open image proxy anyone could
+  // point at any URL, billed to this deployment. `NewsThumbnail` therefore renders
+  // `next/image` with `unoptimized`, which streams the publisher's own URL
+  // directly (no optimizer, no allowlist) and is bounded by the `img-src https:`
+  // CSP in middleware.ts instead.
   images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'picsum.photos',
-        port: '',
-        pathname: '/**', // This allows any path under the hostname
-      },
-    ],
+    remotePatterns: [],
   },
   output: 'standalone',
   transpilePackages: ['motion'],
