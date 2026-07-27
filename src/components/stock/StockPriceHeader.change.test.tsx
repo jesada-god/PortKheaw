@@ -4,9 +4,8 @@
  * Behavioural guard for the daily-change display in {@link StockPriceHeader}.
  *
  * The header must render `change` + `changePercent` next to the price whenever a
- * truthful change exists — either the provider's own change (even when it omitted
- * a previous close) or one derived from a real previous close — and hide it only
- * when neither exists. Colour/arrow follow the sign; a USD/THB toggle converts the
+ * truthful canonical previous close exists, and hide it when that base is
+ * unavailable. Colour/arrow follow the sign; a USD/THB toggle converts the
  * change amount but never the percentage.
  */
 
@@ -112,7 +111,7 @@ function changeRow(): HTMLElement | null {
 }
 
 describe('StockPriceHeader daily change display', () => {
-  it('updates a trade tick through the ref sink without a React state update', () => {
+  it('updates live price/change/% atomically through the ref sink', () => {
     const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
     render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
 
@@ -120,6 +119,8 @@ describe('StockPriceHeader daily change display', () => {
     transientPriceSinkRef.current?.(70.1234);
 
     expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.1234');
+    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.3266');
+    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('(-3.21%)');
   });
 
   it('does not let an unrelated React render overwrite the latest transient price', () => {
@@ -159,12 +160,11 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.textContent).toContain('(-3.73%)');
   });
 
-  it('renders the provider change even when the previous close is missing', () => {
-    // The production defect: previousClose null but todaysChange/Perc present.
+  it('hides provider change when the canonical previous close is missing', () => {
     render(baseProps({ ...BASE_QUOTE, previousClose: null }));
     expect(container.textContent).toContain('69.75');
-    expect(container.textContent).toContain('-2.70');
-    expect(container.textContent).toContain('(-3.73%)');
+    expect(container.textContent).not.toContain('(-3.73%)');
+    expect(changeRow()).toBeNull();
   });
 
   it('uses a negative tone and a down arrow for a loss', () => {
@@ -193,7 +193,7 @@ describe('StockPriceHeader daily change display', () => {
     expect(row?.textContent).not.toContain('▼');
   });
 
-  it('hides the change only when neither a provider change nor a real base exists', () => {
+  it('hides the change when no real base exists', () => {
     render(baseProps({ ...BASE_QUOTE, previousClose: null, change: null, changePercent: null }));
     expect(container.textContent).toContain('69.75');
     expect(container.textContent).not.toContain('(-3.73%)');

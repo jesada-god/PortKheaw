@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import { ChevronDown, Clock3, Info, Moon, Sunrise, Sunset } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
@@ -13,6 +13,7 @@ import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import { stockDetailErrorMessage } from '@/src/lib/stock-detail/error-presentation';
 import {
   connectionStatusPresentation,
+  calculatePriceChange,
   convertUsdForDisplay,
   dataStatusPresentation,
   extendedSessionPresentation,
@@ -72,7 +73,8 @@ interface StockPriceHeaderProps {
   connectionState?: ConnectionStatus | null;
   /**
    * Shared imperative sink used by the live source for Finnhub trade ticks.
-   * The sink mutates only the price text node, avoiding a component-tree render.
+   * The sink mutates the canonical price/change/% group in one synchronous turn,
+   * avoiding a component-tree render without showing mismatched values.
    */
   transientPriceSinkRef?: MutableRefObject<TransientPriceSink | null>;
 }
@@ -198,6 +200,10 @@ export function StockPriceHeader({
   const [currency, setCurrency] = useState<PriceDisplayCurrency>('USD');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const priceDisplayRef = useRef<HTMLSpanElement>(null);
+  const changeRowRef = useRef<HTMLDivElement>(null);
+  const changeAmountRef = useRef<HTMLSpanElement>(null);
+  const changePercentRef = useRef<HTMLSpanElement>(null);
+  const changeDirectionRef = useRef<HTMLSpanElement>(null);
   const lastTransientUsdPriceRef = useRef<{
     symbol: string;
     price: number;
@@ -279,28 +285,54 @@ export function StockPriceHeader({
   // rendered ALONGSIDE the existing status, never replacing it.
   const connectionView = connectionStatusPresentation(connectionState);
 
+  const applyTransientPrice = useCallback<TransientPriceSink>((price, metadata) => {
+    if (!Number.isFinite(price) || price <= 0) return;
+    // PRE/AFTER trades belong exclusively in the secondary row. The accepted
+    // React path partitions them with their regular-close comparison base; the
+    // imperative hot path must never overwrite the main regular price first.
+    if (metadata?.session === 'pre-market' || metadata?.session === 'after-hours') return;
+    lastTransientUsdPriceRef.current = {
+      symbol,
+      price,
+      asOf: metadata?.asOf ?? null,
+      feed: metadata?.feed ?? null,
+    };
+    const nextDisplayPrice = verifiedUsdSource
+      ? convertUsdForDisplay(price, selectedCurrency, fxRate)
+      : price;
+    const nextChange = calculatePriceChange(price, regular.previousClose);
+    if (priceDisplayRef.current) priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
+    if (
+      !nextChange
+      || !changeRowRef.current
+      || !changeAmountRef.current
+      || !changePercentRef.current
+      || !changeDirectionRef.current
+    ) return;
+    const nextDisplayChange = verifiedUsdSource
+      ? convertUsdForDisplay(nextChange.amount, selectedCurrency, fxRate)
+      : nextChange.amount;
+    // All writes are synchronous in one JS task, so the browser cannot paint a
+    // fresh WS price beside the previous tick's amount or percentage.
+    changeAmountRef.current.textContent = formatSigned(nextDisplayChange);
+    changePercentRef.current.textContent = formatPercent(nextChange.percent);
+    changeRowRef.current.className = `inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(nextChange.direction)}`;
+    const mark = directionMark(nextChange.direction);
+    changeDirectionRef.current.textContent = mark ?? '';
+    changeDirectionRef.current.classList.toggle('hidden', mark === null);
+    if (mark) {
+      changeDirectionRef.current.setAttribute(
+        'aria-label',
+        nextChange.direction === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง',
+      );
+    } else {
+      changeDirectionRef.current.removeAttribute('aria-label');
+    }
+  }, [fxRate, regular.previousClose, selectedCurrency, symbol, verifiedUsdSource]);
+
   useEffect(() => {
     if (!transientPriceSinkRef) return;
-    const sink: TransientPriceSink = (price, metadata) => {
-      if (!Number.isFinite(price) || price <= 0) return;
-      // PRE/AFTER trades belong exclusively in the secondary row. The accepted
-      // React path partitions them with their regular-close comparison base; the
-      // imperative hot path must never overwrite the main regular price first.
-      if (metadata?.session === 'pre-market' || metadata?.session === 'after-hours') return;
-      lastTransientUsdPriceRef.current = {
-        symbol,
-        price,
-        asOf: metadata?.asOf ?? null,
-        feed: metadata?.feed ?? null,
-      };
-      const nextDisplayPrice = verifiedUsdSource
-        ? convertUsdForDisplay(price, selectedCurrency, fxRate)
-        : price;
-      if (priceDisplayRef.current) {
-        // Hot trade-tick path: one text-node write, zero React state updates.
-        priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
-      }
-    };
+    const sink = applyTransientPrice;
     transientPriceSinkRef.current = sink;
     // Re-apply the newest tick after a USD/THB toggle without waiting for another
     // market event; React may just have rendered the slower bar-backed price.
@@ -311,7 +343,7 @@ export function StockPriceHeader({
     return () => {
       if (transientPriceSinkRef.current === sink) transientPriceSinkRef.current = null;
     };
-  }, [fxRate, selectedCurrency, symbol, transientPriceSinkRef, verifiedUsdSource]);
+  }, [applyTransientPrice, symbol, transientPriceSinkRef]);
 
   useLayoutEffect(() => {
     const latest = lastTransientUsdPriceRef.current;
@@ -319,14 +351,9 @@ export function StockPriceHeader({
       latest?.symbol !== symbol
       || (!realtime && connectionState !== 'connected')
     ) return;
-    const nextDisplayPrice = verifiedUsdSource
-      ? convertUsdForDisplay(latest.price, selectedCurrency, fxRate)
-      : latest.price;
-    if (priceDisplayRef.current) {
-      // React may just have committed an older REST/error value. Restore the
-      // newest live observation before paint without scheduling another render.
-      priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
-    }
+    // React may just have committed an older REST/error value. Restore the
+    // complete newest live observation before paint without scheduling a render.
+    applyTransientPrice(latest.price, { asOf: latest.asOf, feed: latest.feed });
   });
 
   return <>
@@ -352,10 +379,16 @@ export function StockPriceHeader({
                 below the price group at every width, giving the fixed reading
                 order price → change → session that the header specifies, while
                 remaining a sibling so no numeric token can ever split. */}
-            {regularChange && <div data-testid="regular-change" className={`inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
-              <span className="whitespace-nowrap">{formatSigned(displayChange)}</span>
-              <span className="whitespace-nowrap">{formatPercent(regularChange.percent)}</span>
-              {directionMark(changeDirection) && <span className="text-[0.7em]" aria-label={changeDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(changeDirection)}</span>}
+            {regularChange && <div ref={changeRowRef} data-testid="regular-change" className={`inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
+              <span ref={changeAmountRef} className="whitespace-nowrap">{formatSigned(displayChange)}</span>
+              <span ref={changePercentRef} className="whitespace-nowrap">{formatPercent(regularChange.percent)}</span>
+              <span
+                ref={changeDirectionRef}
+                className={`text-[0.7em] ${directionMark(changeDirection) ? '' : 'hidden'}`}
+                {...(directionMark(changeDirection)
+                  ? { 'aria-label': changeDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง' }
+                  : {})}
+              >{directionMark(changeDirection)}</span>
             </div>}
           </div>
 

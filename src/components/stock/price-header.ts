@@ -419,7 +419,8 @@ export function buildStockPriceHeaderModel(input: {
   const regular: PriceHeaderRegularRow = {
     price,
     previousClose: quote?.previousClose ?? null,
-    // Provider-first daily change; falls back to `price - previousClose`.
+    // Canonical daily change: always `price - previousClose`. Provider change
+    // fields are never allowed to describe a different/stale accepted price.
     change: resolvePriceChange({
       price,
       previousClose: quote?.previousClose,
@@ -601,21 +602,25 @@ export function calculatePriceChange(price: number | null | undefined, compariso
 }
 
 /**
- * Resolve the regular-session daily change with a truthful, provider-first policy:
+ * Resolve the regular-session daily change against the canonical contract:
  *
- *   1. Trust the provider's own `change` + `changePercent` when BOTH are finite —
- *      they are the authoritative daily change for this price (Polygon's
- *      `todaysChange`/`todaysChangePerc`) and remain valid even when the provider
- *      did not also return a previous close.
- *   2. Otherwise derive it from a real `previousClose` via
- *      {@link calculatePriceChange}, which rejects a non-finite / non-positive base
- *      and computes `price - previousClose` (never from open/high/low, never from a
- *      cached price).
- *   3. Otherwise return null so the header hides the change — but ONLY when neither
- *      a provider change nor a real previous close exists.
+ *     change        = displayedPrice - previousClose
+ *     changePercent = change / previousClose * 100
  *
- * The percentage is carried straight through from whichever source supplied it and
- * is never currency-converted by the caller. Nothing here is fabricated.
+ * where `previousClose` is the finalized regular-session close of the previous US
+ * trading day (resolved upstream by `comparisonCloseForAcceptedPrice`).
+ *
+ * With a real `previousClose`, derive from the DISPLAYED price via
+ * {@link calculatePriceChange}. A provider `change` describes the price the
+ * provider itself returned; once a fresher accepted price (a live stream tick)
+ * has replaced it, that number no longer matches what the header shows.
+ *
+ * With no usable canonical previous close, return null. Provider change fields
+ * cannot establish that the comparison base is the finalized close of the
+ * immediately preceding US trading day, so using them would violate the
+ * contract rather than rescue it.
+ *
+ * Nothing here is fabricated, and the percentage is never currency-converted.
  */
 export function resolvePriceChange(input: {
   price: number | null | undefined;
@@ -623,20 +628,10 @@ export function resolvePriceChange(input: {
   providerChange: number | null | undefined;
   providerChangePercent: number | null | undefined;
 }): PriceChange | null {
-  const { price, previousClose, providerChange, providerChangePercent } = input;
+  const { price, previousClose } = input;
   // The displayed price itself must be a real, tradeable value.
   if (price === null || price === undefined || !Number.isFinite(price) || price <= 0) {
     return null;
-  }
-  if (
-    providerChange !== null && providerChange !== undefined && Number.isFinite(providerChange)
-    && providerChangePercent !== null && providerChangePercent !== undefined && Number.isFinite(providerChangePercent)
-  ) {
-    return {
-      amount: providerChange,
-      percent: providerChangePercent,
-      direction: providerChange > 0 ? 'up' : providerChange < 0 ? 'down' : 'neutral',
-    };
   }
   return calculatePriceChange(price, previousClose);
 }

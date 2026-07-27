@@ -1,3 +1,5 @@
+import { US_EQUITY_TIMEZONE, exchangeSessionDate } from '@/src/lib/market-data/session';
+import { previousUsTradingDate } from '@/src/lib/market-data/us-market-calendar';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
 import type { AcceptedPriceCandidate } from './accepted-price';
@@ -50,10 +52,8 @@ export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidat
 /**
  * Resolve a real regular comparison close already present in the accepted
  * pipeline. The canonical `previousRegularClose` wins, followed by the legacy
- * `previousClose`. If Polygon supplied only the authoritative daily `change` +
- * `changePercent`, both fields must independently imply the same positive close
- * before it is accepted. No open/high/low, intraday candle, cached price, or
- * arbitrary fallback is used.
+ * `previousClose`. No open/high/low, provider change arithmetic, intraday candle,
+ * cached price, or arbitrary fallback is used.
  */
 export function regularComparisonClose(quote: Quote | null): number | null {
   if (!quote) return null;
@@ -67,24 +67,74 @@ export function regularComparisonClose(quote: Quote | null): number | null {
   if (quote.previousClose != null && Number.isFinite(quote.previousClose) && quote.previousClose > 0) {
     return quote.previousClose;
   }
-  if (
-    !Number.isFinite(quote.price)
-    || quote.price <= 0
-    || quote.change == null
-    || !Number.isFinite(quote.change)
-    || quote.changePercent == null
-    || !Number.isFinite(quote.changePercent)
-    || quote.changePercent <= -100
-  ) {
-    return null;
-  }
-  const fromAmount = quote.price - quote.change;
-  const fromPercent = quote.price / (1 + quote.changePercent / 100);
-  if (!Number.isFinite(fromAmount) || !Number.isFinite(fromPercent) || fromAmount <= 0 || fromPercent <= 0) {
-    return null;
-  }
-  const relativeDifference = Math.abs(fromAmount - fromPercent) / Math.max(fromAmount, fromPercent);
-  return relativeDifference <= 0.001 ? fromAmount : null;
+  return null;
+}
+
+function positivePrice(value: number | null | undefined): value is number {
+  return value != null && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * The exchange-local (ET) trading date a quote's own price belongs to.
+ *
+ * The instant wins over `latestTradingDay`: several providers derive that field
+ * by slicing a UTC timestamp, which lands on the NEXT calendar day for any
+ * after-hours print (20:30 ET is already tomorrow in UTC).
+ */
+function quoteTradingDate(quote: Quote): string | null {
+  const fromInstant = quote.quoteTimestamp
+    ? exchangeSessionDate(quote.quoteTimestamp, US_EQUITY_TIMEZONE)
+    : null;
+  if (fromInstant) return fromInstant;
+  return quote.latestTradingDay && /^\d{4}-\d{2}-\d{2}$/.test(quote.latestTradingDay)
+    ? quote.latestTradingDay
+    : null;
+}
+
+/**
+ * The canonical comparison base for ONE specific accepted price: the finalized
+ * regular-session close of the US trading day immediately preceding that price's
+ * own trading date.
+ *
+ * This is the fix for the production header. The accepted price and the base
+ * quote routinely come from DIFFERENT sessions — an entitled live stream prints
+ * today's trade while the REST snapshot is still the previous session's
+ * end-of-day row. Taking `quote.previousClose` in that state compares today's
+ * price against the close from *two* sessions ago, which is exactly how a
+ * correct price ended up beside a wrong change and percentage.
+ *
+ * Three cases, and nothing is ever guessed:
+ *
+ *  - the quote belongs to the SAME trading date as the price → its own
+ *    `previousRegularClose` / `previousClose` is by definition the previous
+ *    close (see {@link regularComparisonClose});
+ *  - the quote belongs to the trading date immediately BEFORE the price → that
+ *    quote's own finalized regular close *is* the previous close;
+ *  - anything else (a quote from the future, or one older than the immediately
+ *    preceding session) → null, so the header shows the change as unavailable
+ *    rather than inventing a base.
+ *
+ * When either trading date cannot be established the result is unavailable:
+ * without both dates the pipeline cannot prove that the close is adjacent to
+ * the accepted price's trading day.
+ */
+export function comparisonCloseForAcceptedPrice(
+  quote: Quote | null,
+  priceAsOf: string | null | undefined,
+): number | null {
+  if (!quote) return null;
+  const priceDate = priceAsOf ? exchangeSessionDate(priceAsOf, US_EQUITY_TIMEZONE) : null;
+  const quoteDate = quoteTradingDate(quote);
+  if (!priceDate || !quoteDate) return null;
+  if (priceDate === quoteDate) return regularComparisonClose(quote);
+  // A base quote stamped AFTER the accepted price cannot describe it at all.
+  if (priceDate < quoteDate) return null;
+  if (previousUsTradingDate(priceDate) !== quoteDate) return null;
+  // `regularClose` is the explicit regular-session close; `price` is it too on a
+  // completed end-of-day row. An extended-hours print never reaches this field
+  // because the pipeline keeps it in `regularClose`'s sibling row.
+  const close = positivePrice(quote.regularClose) ? quote.regularClose : quote.price;
+  return positivePrice(close) ? close : null;
 }
 
 /**
@@ -104,9 +154,14 @@ export function buildAcceptedResource(input: {
   const { accepted, snapshotResource, baseQuote, symbol } = input;
   if (accepted.source === 'snapshot' && snapshotResource) return snapshotResource;
 
-  const previousClose = regularComparisonClose(baseQuote);
+  // The comparison base must belong to the session before the ACCEPTED price,
+  // not before the base quote — see `comparisonCloseForAcceptedPrice`.
+  const previousClose = comparisonCloseForAcceptedPrice(baseQuote, accepted.exchangeTimestamp);
   const change = previousClose != null ? accepted.price - previousClose : null;
   const changePercent = previousClose ? (change! / previousClose) * 100 : null;
+  // Only the four fields that describe the DISPLAYED price are refined.
+  // `regularClose` / `previousRegularClose` keep describing the base quote's own
+  // session, which is what the header's extended-hours partitioning reads.
   const data: Quote = baseQuote
     ? { ...baseQuote, price: accepted.price, previousClose, change, changePercent }
     : {

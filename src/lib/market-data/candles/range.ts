@@ -1,4 +1,4 @@
-import type { CandleRange, NormalizedCandle } from './contracts';
+import type { CandleInterval, CandleRange, NormalizedCandle } from './contracts';
 
 /**
  * Calendar days fetched for the `1d` range.
@@ -15,6 +15,55 @@ import type { CandleRange, NormalizedCandle } from './contracts';
  * inside the 8-day cap Yahoo enforces on 1-minute history.
  */
 const LATEST_SESSION_LOOKBACK_DAYS = 5;
+export const FIVE_YEAR_LOOKBACK_DAYS = 1_825;
+
+/**
+ * The shortest calendar lookback each range can guarantee. `ytd` is one day at
+ * the start of a year, so it cannot satisfy a multi-year history contract.
+ */
+const RANGE_MIN_LOOKBACK_DAYS: Record<CandleRange, number> = {
+  '1d': 1,
+  '5d': 5,
+  '1m': 28,
+  '3m': 89,
+  '6m': 181,
+  ytd: 1,
+  '1y': 365,
+  '3y': 1_095,
+  '5y': FIVE_YEAR_LOOKBACK_DAYS,
+};
+
+/** Weekly and wider candles always load at least five years of real history. */
+export function minimumLookbackDays(interval: CandleInterval): number | null {
+  return interval === 'Week' || interval === 'Month' ? FIVE_YEAR_LOOKBACK_DAYS : null;
+}
+
+export function rangeMeetsMinimumLookback(interval: CandleInterval, range: CandleRange): boolean {
+  const minimum = minimumLookbackDays(interval);
+  return minimum === null || RANGE_MIN_LOOKBACK_DAYS[range] >= minimum;
+}
+
+/** Canonical server lookback; never fabricates bars for a younger listing. */
+export function canonicalCandleRange(interval: CandleInterval, range: CandleRange): CandleRange {
+  return rangeMeetsMinimumLookback(interval, range) ? range : '5y';
+}
+
+/**
+ * Widen explicit period bounds when a higher-timeframe caller supplied less than
+ * five calendar years. The end instant is preserved and only the start moves.
+ */
+export function canonicalCandleBounds(
+  interval: CandleInterval,
+  bounds: { period1: number; period2: number },
+): { period1: number; period2: number } {
+  if (minimumLookbackDays(interval) === null) return bounds;
+  const earliest = new Date(bounds.period2 * 1_000);
+  earliest.setUTCFullYear(earliest.getUTCFullYear() - 5);
+  return {
+    period1: Math.min(bounds.period1, Math.floor(earliest.valueOf() / 1_000)),
+    period2: bounds.period2,
+  };
+}
 
 export function candleRangeBounds(
   range: CandleRange,
@@ -58,4 +107,3 @@ export function latestTradingDayCandles(
   const newest = dateOf(candles.reduce((latest, candle) => Math.max(latest, candle.timestamp), 0));
   return candles.filter((candle) => dateOf(candle.timestamp) === newest);
 }
-

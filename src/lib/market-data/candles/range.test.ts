@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { candleRangeBounds, latestTradingDayCandles } from './range';
+import {
+  candleRangeBounds,
+  canonicalCandleBounds,
+  canonicalCandleRange,
+  latestTradingDayCandles,
+  rangeMeetsMinimumLookback,
+} from './range';
 import type { NormalizedCandle } from './contracts';
 
 function bar(timestamp: number, close = 10): NormalizedCandle {
@@ -21,6 +27,23 @@ describe('candleRangeBounds', () => {
     expect(spanDays).toBeLessThanOrEqual(8);
     // Friday's regular open (2026-07-24 13:30Z) is inside the window.
     expect(period1).toBeLessThan(Date.parse('2026-07-24T13:30:00.000Z') / 1_000);
+  });
+
+  it('canonicalizes 1W and wider requests to at least five years', () => {
+    expect(canonicalCandleRange('Week', '6m')).toBe('5y');
+    expect(canonicalCandleRange('Month', '3y')).toBe('5y');
+    expect(canonicalCandleRange('1D', '6m')).toBe('6m');
+    expect(rangeMeetsMinimumLookback('Week', '3y')).toBe(false);
+    expect(rangeMeetsMinimumLookback('Week', '5y')).toBe(true);
+  });
+
+  it('widens explicit higher-timeframe bounds without moving the end instant', () => {
+    const period2 = Date.parse('2026-07-28T00:00:00.000Z') / 1_000;
+    const oneYear = Date.parse('2025-07-28T00:00:00.000Z') / 1_000;
+    expect(canonicalCandleBounds('Week', { period1: oneYear, period2 })).toEqual({
+      period1: Date.parse('2021-07-28T00:00:00.000Z') / 1_000,
+      period2,
+    });
   });
 
   it('leaves every other range on its calendar definition', () => {

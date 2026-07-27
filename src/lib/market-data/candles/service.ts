@@ -4,7 +4,12 @@ import type { ProviderResult } from '../types';
 import { aggregateCandles } from './aggregate';
 import { sourceIntervalFor, supportsCandleRequest } from './capabilities';
 import { normalizedCandleResultSchema, type CandleRequest, type NormalizedCandleResult, type NormalizedMarketDataProvider } from './contracts';
-import { candleRangeBounds, latestTradingDayCandles } from './range';
+import {
+  candleRangeBounds,
+  canonicalCandleBounds,
+  canonicalCandleRange,
+  latestTradingDayCandles,
+} from './range';
 
 const INTRADAY_INTERVALS = new Set(['1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m', '1h', '2h', '3h', '4h']);
 const INTRADAY_POLICY = { freshMs: 60_000, staleMs: 15 * 60_000, errorMs: 30_000 } as const;
@@ -37,6 +42,8 @@ export class CandleMarketDataService {
   ) {}
 
   async getCandles(input: CandleRequest): Promise<ProviderResult<NormalizedCandleResult>> {
+    const effectiveRange = canonicalCandleRange(input.interval, input.range);
+    const effectiveInput = effectiveRange === input.range ? input : { ...input, range: effectiveRange };
     const failures: MarketDataError[] = [];
     const attemptedProviders: string[] = [];
     const fallbackReasons: string[] = [];
@@ -44,14 +51,14 @@ export class CandleMarketDataService {
     let bounds: { period1: number; period2: number };
     if (input.period1 !== undefined && input.period2 !== undefined) {
       explicitBounds = true;
-      bounds = { period1: input.period1, period2: input.period2 };
+      bounds = canonicalCandleBounds(input.interval, { period1: input.period1, period2: input.period2 });
     } else {
-      bounds = candleRangeBounds(input.range, new Date(this.now()));
+      bounds = candleRangeBounds(effectiveRange, new Date(this.now()));
     }
 
     for (const provider of this.providers) {
       const capabilities = provider.getCapabilities();
-      if (!supportsCandleRequest(capabilities, input.interval, input.range, Boolean(input.adjusted), input.session ?? 'regular')) continue;
+      if (!supportsCandleRequest(capabilities, input.interval, effectiveRange, Boolean(input.adjusted), input.session ?? 'regular')) continue;
       const sourceInterval = sourceIntervalFor(capabilities, input.interval);
       if (!sourceInterval) continue;
       const circuitKey = `${provider.id}:${sourceInterval}:${Boolean(input.adjusted)}:${input.session ?? 'regular'}`;
@@ -62,7 +69,7 @@ export class CandleMarketDataService {
       }
       attemptedProviders.push(provider.id);
       const cacheKey = [
-        'candles', provider.id, input.symbol, input.interval, sourceInterval, input.range,
+        'candles', provider.id, input.symbol, input.interval, sourceInterval, effectiveRange,
         explicitBounds ? bounds.period1 : 'rolling-range',
         explicitBounds ? bounds.period2 : 'rolling-range',
         Boolean(input.adjusted), input.session ?? 'regular',
@@ -70,7 +77,7 @@ export class CandleMarketDataService {
       try {
         const resolution = await this.cache.resolve(
           cacheKey,
-          () => provider.getCandles({ ...input, ...bounds, sourceInterval }),
+          () => provider.getCandles({ ...effectiveInput, ...bounds, sourceInterval }),
           INTRADAY_INTERVALS.has(input.interval) ? INTRADAY_POLICY : HISTORICAL_POLICY,
         );
         const bucketed = aggregateCandles(
@@ -84,9 +91,15 @@ export class CandleMarketDataService {
         // exchange-local date. Explicit period bounds are the caller's own window
         // and are never trimmed.
         const latestSessionOnly = !explicitBounds && input.range === '1d';
-        const aggregated = latestSessionOnly
+        const aggregatedWithPartial = latestSessionOnly
           ? latestTradingDayCandles(bucketed, resolution.value.exchangeTimezone)
           : bucketed;
+        // Historical higher-timeframe series consist only of finalized candles.
+        // The provider may include the still-forming current week/month; it is
+        // retained in the raw provider result but never returned as history.
+        const aggregated = input.interval === 'Week' || input.interval === 'Month'
+          ? aggregatedWithPartial.filter((candle) => candle.partial !== true)
+          : aggregatedWithPartial;
         if (!aggregated.length) throw new MarketDataError('insufficient-data', 'No candles remain after validated aggregation');
         const cacheStatus = resolution.state === 'fresh' ? 'miss' as const : resolution.state === 'cache' ? 'hit' as const : 'stale' as const;
         const dataStatus = resolution.state === 'stale' ? 'stale' as const
@@ -109,7 +122,7 @@ export class CandleMarketDataService {
           requestedInterval: input.interval,
           actualInterval: input.interval,
           sourceInterval,
-          requestedRange: input.range,
+          requestedRange: effectiveRange,
           actualStart: aggregated[0]?.timestamp ?? null,
           actualEnd: aggregated.at(-1)?.timestamp ?? null,
           dataStatus,

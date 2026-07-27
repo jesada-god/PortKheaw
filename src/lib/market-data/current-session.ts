@@ -1,4 +1,5 @@
 import { US_EQUITY_TIMEZONE, exchangeSessionDate } from './session';
+import { EARLY_CLOSE_MINUTE, isUsMarketEarlyClose, usMarketHolidays } from './us-market-calendar';
 
 /**
  * SINGLE SOURCE OF TRUTH for "what session is the market in RIGHT NOW".
@@ -16,21 +17,25 @@ import { US_EQUITY_TIMEZONE, exchangeSessionDate } from './session';
  * deriving the current session from it labels a Sunday "ตลาดเปิด". The header
  * bug this module exists to kill did exactly that.
  *
- * Accepted evidence, in priority order:
+ * The **exchange calendar in America/New_York is authoritative**. It is
+ * evaluated at the current instant and decides the window:
  *
- *  1. a **verified market-status provider report that is still fresh** — same
- *     New York trading date, not flagged stale, not older than its own max age
- *     and not from the future;
- *  2. the **exchange calendar** evaluated at the current instant in
- *     America/New_York.
+ *   PRE      04:00–09:30 ET
+ *   REGULAR  09:30–16:00 ET  (09:30–13:00 on a published half-day)
+ *   AFTER    16:00–20:00 ET  (13:00–17:00 on a published half-day)
+ *   CLOSED   anything else, every weekend, every exchange holiday
  *
- * Rejected as evidence, always: the browser's local time zone (the instant is
- * used, the zone never is), any quote/candle/extended timestamp, and a cached
- * provider status whose `asOf` no longer belongs to the current trading date.
+ * A market-status provider report may only REFINE that answer — it may declare a
+ * HOLIDAY or an EARLY_CLOSE the calendar does not know about, and it may confirm
+ * the window the calendar already resolved. It may never contradict the ET
+ * clock: a coarse or stale `closed` report at 15:22 ET is rejected exactly as a
+ * cached `open` on a Sunday is. That clamp runs in BOTH directions, because both
+ * failures put a false session label in the header.
  *
- * The calendar additionally CLAMPS the provider: a weekend or a verified
- * holiday can never resolve to REGULAR/PREMARKET/AFTER_HOURS no matter what a
- * cached "open" says.
+ * Rejected as evidence, always: the browser's (or server's) local time zone —
+ * the instant is used, the zone never is — any quote/candle/extended timestamp,
+ * and a provider status whose `asOf` no longer belongs to the current trading
+ * date.
  */
 
 export type CurrentMarketSession =
@@ -77,7 +82,10 @@ export interface CurrentMarketSessionInput {
   /** The instant to evaluate, as an ISO string or Date. Never a quote timestamp. */
   now: string | Date;
   marketStatus?: MarketStatusReport | null;
-  /** Verified exchange holidays (`YYYY-MM-DD`, exchange-local). Never guessed. */
+  /**
+   * Extra verified exchange holidays (`YYYY-MM-DD`, exchange-local) on top of
+   * the built-in US calendar — an unscheduled closure, say. Never guessed.
+   */
   holidays?: ReadonlySet<string>;
   timeZone?: string;
 }
@@ -148,9 +156,19 @@ function exchangeClock(instant: Date, timeZone: string): { weekday: string; minu
   };
 }
 
+/** Sessions in which the exchange is actually trading right now. */
+function isLiveSession(session: CurrentMarketSession): boolean {
+  return session === 'REGULAR' || session === 'PREMARKET' || session === 'AFTER_HOURS';
+}
+
 /**
- * The exchange calendar evaluated at `instant` — the floor every other source is
- * clamped against. Weekends and verified holidays are non-trading days, full stop.
+ * The exchange calendar evaluated at `instant` — the authority every other
+ * source is clamped against. Weekends and holidays are non-trading days, full
+ * stop, and the four windows come from the ET wall clock alone.
+ *
+ * On a published half-day the regular session ends at 13:00 ET and the
+ * after-hours window runs 13:00–17:00 ET; the pre-market window is unchanged.
+ * Half-days are still trading days.
  */
 function calendarSession(
   instant: Date,
@@ -160,14 +178,22 @@ function calendarSession(
   const { weekday, minute } = exchangeClock(instant, timeZone);
   if (weekday === 'Sat' || weekday === 'Sun') return { session: 'CLOSED', tradingDay: false };
   const date = exchangeSessionDate(instant.toISOString(), timeZone);
-  if (date && holidays.has(date)) return { session: 'HOLIDAY', tradingDay: false };
-  if (minute >= REGULAR_OPEN_MINUTE && minute < REGULAR_CLOSE_MINUTE) {
+  const usCalendar = timeZone === US_EQUITY_TIMEZONE;
+  if (date && (holidays.has(date) || (usCalendar && usMarketHolidays(Number(date.slice(0, 4))).has(date)))) {
+    return { session: 'HOLIDAY', tradingDay: false };
+  }
+  const earlyClose = usCalendar && date !== null && isUsMarketEarlyClose(date);
+  const regularCloseMinute = earlyClose ? EARLY_CLOSE_MINUTE : REGULAR_CLOSE_MINUTE;
+  const afterHoursCloseMinute = earlyClose
+    ? EARLY_CLOSE_MINUTE + (AFTER_HOURS_CLOSE_MINUTE - REGULAR_CLOSE_MINUTE)
+    : AFTER_HOURS_CLOSE_MINUTE;
+  if (minute >= REGULAR_OPEN_MINUTE && minute < regularCloseMinute) {
     return { session: 'REGULAR', tradingDay: true };
   }
   if (minute >= PREMARKET_OPEN_MINUTE && minute < REGULAR_OPEN_MINUTE) {
     return { session: 'PREMARKET', tradingDay: true };
   }
-  if (minute >= REGULAR_CLOSE_MINUTE && minute < AFTER_HOURS_CLOSE_MINUTE) {
+  if (minute >= regularCloseMinute && minute < afterHoursCloseMinute) {
     return { session: 'AFTER_HOURS', tradingDay: true };
   }
   return { session: 'CLOSED', tradingDay: true };
@@ -252,14 +278,25 @@ export function resolveCurrentMarketSession(
   let rejection = judged.rejection;
 
   if (judged.session) {
-    // A live session claim is only admissible on a real trading day. This is the
-    // clamp behind invariants G and H: no cached "open" can survive a weekend or
-    // a verified holiday. HOLIDAY/EARLY_CLOSE are calendar facts the provider
-    // knows better than we do, so those are always taken.
-    const liveClaim = judged.session === 'REGULAR'
-      || judged.session === 'PREMARKET'
-      || judged.session === 'AFTER_HOURS';
-    if (liveClaim && !calendar.tradingDay) {
+    // The ET calendar decides the window; the provider may only agree with it or
+    // add a closure it knows about. Both clamp directions matter:
+    //
+    //  - a cached "open" must not survive a weekend, a holiday, or 03:00 ET
+    //    (invariants G and H);
+    //  - a coarse or stale "closed" must not black out a genuinely open market —
+    //    the production bug where 15:22 ET read as "ตลาดปิด".
+    //
+    // HOLIDAY and EARLY_CLOSE remain provider-owned: an unscheduled closure is
+    // something only the provider can know.
+    const calendarFact = judged.session === 'HOLIDAY' || judged.session === 'EARLY_CLOSE';
+    const contradictsCalendar = !calendarFact && (
+      isLiveSession(judged.session)
+        ? !calendar.tradingDay || judged.session !== calendar.session
+        // A plain "closed" never overwrites an open window, nor downgrades the
+        // calendar's more specific HOLIDAY label to a generic close.
+        : isLiveSession(calendar.session) || calendar.session === 'HOLIDAY'
+    );
+    if (contradictsCalendar) {
       rejection = 'contradicts-calendar';
     } else {
       session = judged.session;

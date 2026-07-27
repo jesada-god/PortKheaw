@@ -64,6 +64,25 @@ describe('current market session — exchange calendar', () => {
   it('resolves UNKNOWN rather than guessing when the instant is unusable', () => {
     expect(resolveCurrentMarketSession({ now: 'not-a-date' }).session).toBe('UNKNOWN');
   });
+
+  it('resolves the Bangkok-to-ET date crossing as REGULAR', () => {
+    // 2026-07-28 02:22 Asia/Bangkok = 2026-07-27 15:22 America/New_York.
+    const result = resolveCurrentMarketSession({
+      now: '2026-07-27T19:22:00.000Z',
+      marketStatus: report({
+        status: 'closed',
+        asOf: '2026-07-27T19:22:00.000Z',
+      }),
+    });
+    expect(result.exchangeDate).toBe('2026-07-27');
+    expect(result.session).toBe('REGULAR');
+    expect(result.provider.rejection).toBe('contradicts-calendar');
+  });
+
+  it('uses the built-in US exchange holiday calendar', () => {
+    // Thanksgiving 2026 at 13:00 ET.
+    expect(resolveCurrentMarketSession({ now: '2026-11-26T18:00:00.000Z' }).session).toBe('HOLIDAY');
+  });
 });
 
 describe('current market session — provider status freshness', () => {

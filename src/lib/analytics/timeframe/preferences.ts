@@ -17,6 +17,7 @@ import { candleIntervalSchema, candleRangeSchema, type CandleInterval, type Cand
 import { CHART_TYPE_IDS } from '@/src/lib/analytics/chart-types/catalog';
 import type { AdvancedChartType } from '@/src/lib/analytics/chart-types/types';
 import { canonicalRange } from './catalog';
+import { chartCompatibleSelection } from './compatibility';
 
 export const CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v2';
 /** v1 stored the Options section closed by default; v2 opens it as part of the page order. */
@@ -102,6 +103,20 @@ function unique<T>(values: readonly T[]): T[] {
 }
 
 /**
+ * A record written before an interval's lookback rules tightened can hold a pair
+ * the chart no longer offers — a stored `Week` + `6m` would restore as 1W over
+ * six months, the exact selection the minimum-lookback rule exists to prevent.
+ * The stored INTERVAL is the user's decision and is kept; the lookback moves to
+ * the shortest one that interval now allows.
+ */
+function withCompatibleSelection(preferences: ChartPreferences): ChartPreferences {
+  const next = chartCompatibleSelection(preferences.selectedInterval, preferences.selectedRange, 'interval');
+  return next.changed
+    ? { ...preferences, selectedInterval: next.interval, selectedRange: next.range }
+    : preferences;
+}
+
+/**
  * Merges a stored record over the defaults, keeping only fields that validate.
  * A legacy `12M` range alias is folded onto the canonical `1y` key.
  */
@@ -120,12 +135,12 @@ export function mergeChartPreferences(stored: unknown): ChartPreferences {
   const parsed = preferencesSchema.safeParse(normalized);
   if (!parsed.success) return { ...DEFAULT_CHART_PREFERENCES };
   const value = parsed.data;
-  return {
+  return withCompatibleSelection({
     ...DEFAULT_CHART_PREFERENCES,
     ...Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)),
     ...(value.favoriteIntervals ? { favoriteIntervals: unique(value.favoriteIntervals) } : {}),
     ...(value.favoriteRanges ? { favoriteRanges: unique(value.favoriteRanges) } : {}),
-  } as ChartPreferences;
+  } as ChartPreferences);
 }
 
 /**

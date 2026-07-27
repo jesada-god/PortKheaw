@@ -161,6 +161,43 @@ describe('Yahoo daily bucket completeness by market session', () => {
 });
 
 describe('Yahoo previous regular close priority', () => {
+  it('uses the prior finalized D1 close and never todays partial D1 row', async () => {
+    const friday = Date.parse('2026-07-24T13:30:00.000Z') / 1_000;
+    const monday = Date.parse('2026-07-27T13:30:00.000Z') / 1_000;
+    const { provider } = providerFor({
+      chart: {
+        result: [{
+          meta: {
+            symbol: 'AAPL',
+            currency: 'USD',
+            exchangeTimezoneName: 'America/New_York',
+            marketState: 'REGULAR',
+            regularMarketPrice: 11.475,
+            regularMarketTime: Date.parse('2026-07-27T19:22:00.000Z') / 1_000,
+          },
+          // Monday is still forming. Only Friday's regular close is canonical.
+          timestamp: [friday, monday],
+          indicators: {
+            quote: [{
+              open: [10.5, 11],
+              high: [11.1, 11.6],
+              low: [10.4, 10.9],
+              close: [10.92, 11.475],
+              volume: [1_000, 500],
+            }],
+          },
+        }],
+        error: null,
+      },
+    }, '2026-07-27T19:22:00.000Z');
+
+    const result = await provider.getQuote('AAPL');
+    expect(result.data.previousClose).toBe(10.92);
+    expect(result.data.change).toBeCloseTo(0.555, 10);
+    expect(result.data.changePercent).toBeCloseTo(5.08, 2);
+    expect(result.data.previousCloseSource).toBe('yahoo-chart.previous-completed-daily-candle');
+  });
+
   it('falls back to chartPreviousClose only when neither meta nor a completed candle exists', async () => {
     const { provider } = providerFor({
       chart: {

@@ -6,7 +6,6 @@ import {
   timeframeCapability,
 } from '@/src/lib/market-data/candles/capabilities';
 import { supportedRangesForInterval } from '@/src/lib/market-data/gateway/capabilities';
-import type { CandleInterval } from '@/src/lib/market-data/candles/contracts';
 import {
   chartCompatibleSelection,
   chartSupportedRanges,
@@ -40,18 +39,19 @@ describe('chart timeframe compatibility', () => {
     expect(chartSupportedRanges('30m')).toEqual(['5d', '1m']);
   });
 
-  it('keeps "12 เดือน" and 5Y loadable on the day/week/month intervals', () => {
+  it('keeps daily ranges independent while requiring 5Y for Week/Month', () => {
     // "12 เดือน" is the canonical `1y` range key — a historical range, never an
     // interval — and it must remain a first-class selection on the daily chart.
     expect(isChartSelectionSupported('1D', '1y')).toBe(true);
-    expect(isChartSelectionSupported('Week', '1y')).toBe(true);
-    for (const interval of ['1D', 'Week', 'Month'] as CandleInterval[]) {
-      expect(chartSupportedRanges(interval)).toContain('5y');
-    }
-    // 5Y and 12 เดือน both resolve to a Yahoo-native daily/weekly/monthly source
-    // interval, so neither depends on client-side aggregation.
+    expect(chartSupportedRanges('Week')).toEqual(['5y']);
+    expect(chartSupportedRanges('Month')).toEqual(['5y']);
+    expect(isChartSelectionSupported('Week', '1y')).toBe(false);
+    expect(isChartSelectionSupported('Month', '3y')).toBe(false);
+    // 5Y resolves to Yahoo-native weekly/monthly source intervals, so neither
+    // depends on client-side aggregation.
     expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, '1D')).toBe('1D');
     expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, 'Week')).toBe('Week');
+    expect(sourceIntervalFor(YAHOO_CANDLE_CAPABILITIES, 'Month')).toBe('Month');
   });
 
   it('never offers a minute interval for a year of history', () => {
@@ -71,6 +71,13 @@ describe('chart timeframe compatibility', () => {
     const byInterval = chartCompatibleSelection('30m', '3m', 'interval');
     expect(byInterval.interval).toBe('30m');
     expect(isChartSelectionSupported(byInterval.interval, byInterval.range)).toBe(true);
+
+    expect(chartCompatibleSelection('Week', '6m', 'interval')).toMatchObject({
+      interval: 'Week', range: '5y', changed: true,
+    });
+    expect(chartCompatibleSelection('Month', '1y', 'interval')).toMatchObject({
+      interval: 'Month', range: '5y', changed: true,
+    });
 
     // A pair that is already loadable is returned untouched and silent.
     expect(chartCompatibleSelection('1D', '1y', 'range')).toEqual({

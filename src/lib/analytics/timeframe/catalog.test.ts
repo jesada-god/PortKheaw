@@ -124,6 +124,13 @@ describe('chart preferences', () => {
     expect(restored.favoriteRanges).toEqual(['1y', '3m']);
   });
 
+  it('upgrades persisted Week/Month lookbacks to 5Y before the first request', () => {
+    expect(mergeChartPreferences({ selectedInterval: 'Week', selectedRange: '6m' }))
+      .toMatchObject({ selectedInterval: 'Week', selectedRange: '5y' });
+    expect(mergeChartPreferences({ selectedInterval: 'Month', selectedRange: '1y' }))
+      .toMatchObject({ selectedInterval: 'Month', selectedRange: '5y' });
+  });
+
   it('opens the Options section by default so the page order is Chart → Options → S/R', () => {
     expect(DEFAULT_CHART_PREFERENCES.options).toBe(true);
   });

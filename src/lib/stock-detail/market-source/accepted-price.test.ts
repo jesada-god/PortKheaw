@@ -60,6 +60,21 @@ describe('resolveAcceptedPrice — shared accepted-price priority', () => {
     expect(resolveAcceptedPrice([newer, older])?.price).toBe(12);
   });
 
+  it('never lets a stale REST/cache snapshot override a fresh WebSocket tick', () => {
+    const staleSnapshot = {
+      ...snapshot(10, '2026-07-27T14:00:00.000Z'),
+      mode: 'STALE' as const,
+    };
+    const freshWs = {
+      ...aggregate(11.475, '2026-07-27T19:22:00.000Z'),
+      mode: 'REAL-TIME' as const,
+      realtime: true,
+      feed: 'iex',
+    };
+    expect(resolveAcceptedPrice([freshWs, staleSnapshot])).toBe(freshWs);
+    expect(resolveAcceptedPrice([staleSnapshot, freshWs])).toBe(freshWs);
+  });
+
   it('returns null (unavailable) when no candidate carries a finite price', () => {
     expect(resolveAcceptedPrice([null, undefined, null])).toBeNull();
     expect(resolveAcceptedPrice([{ ...snapshot(Number.NaN) }])).toBeNull();

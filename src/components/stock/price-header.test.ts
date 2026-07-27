@@ -469,24 +469,30 @@ describe('stock price header calculations', () => {
 });
 
 describe('stock price header regular change resolution', () => {
-  it('trusts the provider change/percent when both are finite', () => {
-    expect(resolvePriceChange({
-      price: 69.75,
-      previousClose: 72.45,
-      providerChange: -2.7,
-      providerChangePercent: -3.73,
-    })).toEqual({ amount: -2.7, percent: -3.73, direction: 'down' });
+  it.each([
+    [11.475, 10.92, 0.555, 5.08, 'up'],
+    [11.445, 12.03, -0.585, -4.86, 'down'],
+  ] as const)('derives %s against canonical previous close %s', (price, previousClose, amount, percent, direction) => {
+    const resolved = resolvePriceChange({
+      price,
+      previousClose,
+      // Deliberately wrong provider values: they describe a stale price and
+      // must never override arithmetic from the accepted price.
+      providerChange: 99,
+      providerChangePercent: 99,
+    });
+    expect(resolved?.amount).toBeCloseTo(amount, 10);
+    expect(resolved?.percent).toBeCloseTo(percent, 2);
+    expect(resolved?.direction).toBe(direction);
   });
 
-  it('shows the provider change even when the provider omitted the previous close', () => {
-    // The exact production defect: Polygon returned todaysChange/todaysChangePerc
-    // but no prevDay close, so previousClose is null. The change must still show.
+  it('is unavailable when the canonical previous close is missing', () => {
     expect(resolvePriceChange({
       price: 69.75,
       previousClose: null,
       providerChange: -2.7,
       providerChangePercent: -3.73,
-    })).toEqual({ amount: -2.7, percent: -3.73, direction: 'down' });
+    })).toBeNull();
   });
 
   it('derives the change from a real previous close when the provider sent none', () => {
@@ -502,7 +508,7 @@ describe('stock price header regular change resolution', () => {
     });
   });
 
-  it('keeps a zero change neutral from either source', () => {
+  it('keeps a zero change neutral from the canonical base', () => {
     expect(resolvePriceChange({
       price: 100,
       previousClose: 100,
@@ -517,8 +523,8 @@ describe('stock price header regular change resolution', () => {
     })).toEqual({ amount: 0, percent: 0, direction: 'neutral' });
   });
 
-  it('never fabricates a change when neither a provider change nor a real base exists', () => {
-    // previousClose null/0 and no provider change → hide (return null).
+  it('never fabricates a change without a real base', () => {
+    // previousClose null/0 always hides the derived values.
     expect(resolvePriceChange({ price: 69.75, previousClose: null, providerChange: null, providerChangePercent: null })).toBeNull();
     expect(resolvePriceChange({ price: 69.75, previousClose: 0, providerChange: null, providerChangePercent: null })).toBeNull();
     // A lone finite change with a non-finite percent is not enough to show truthfully.

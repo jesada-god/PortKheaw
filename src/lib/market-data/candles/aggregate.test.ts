@@ -109,4 +109,20 @@ describe('normalized candle aggregation', () => {
       session: 'regular',
     }]);
   });
+
+  it('starts a new weekly bucket at the exchange-local Monday boundary', () => {
+    const friday = candle('2026-01-02T14:30:00.000Z', 10, 12, 9, 11, 100);
+    const monday = candle('2026-01-05T14:30:00.000Z', 20, 22, 19, 21, 200);
+    const result = aggregateCandles(
+      [friday, monday],
+      'Week',
+      '1D',
+      'America/New_York',
+      Date.parse('2026-01-12T14:30:00.000Z') / 1_000,
+    );
+    expect(result).toEqual([
+      { ...friday },
+      { ...monday },
+    ]);
+  });
 });

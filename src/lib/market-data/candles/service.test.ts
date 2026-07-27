@@ -74,6 +74,42 @@ describe('candle provider service', () => {
     expect(response.data.actualEnd).not.toBeNull();
   });
 
+  it.each(['Week', 'Month'] as const)('upgrades a short %s request to a real 5Y provider window', async (interval) => {
+    const call = vi.fn(async (input) => result('yahoo', input));
+    const now = Date.parse('2026-07-28T00:00:00.000Z');
+    const service = new CandleMarketDataService(
+      [provider('yahoo', YAHOO_CANDLE_CAPABILITIES, call)],
+      new SharedRequestCache(),
+      () => now,
+    );
+    const response = await service.getCandles({
+      symbol: 'AAPL', interval, range: '6m', adjusted: true, session: 'regular',
+    });
+    const request = call.mock.calls[0][0];
+    expect(request.range).toBe('5y');
+    expect(request.period1).toBe(Date.parse('2021-07-28T00:00:00.000Z') / 1_000);
+    expect(response.data.requestedRange).toBe('5y');
+  });
+
+  it('returns only real IPO history and drops a forming HTF bar without filling either gap', async () => {
+    const ipo = Date.parse('2025-11-14T14:30:00.000Z') / 1_000;
+    const call = vi.fn(async (input) => ({
+      ...result('yahoo', input),
+      candles: [
+        { timestamp: ipo, open: 10, high: 12, low: 9, close: 11, adjustedClose: 11, volume: 100 },
+        { timestamp: ipo + 7 * 86_400, open: 11, high: 13, low: 10, close: 12, adjustedClose: 12, volume: 200 },
+        { timestamp: ipo + 14 * 86_400, open: 12, high: 14, low: 11, close: 13, adjustedClose: 13, volume: 50, partial: true },
+      ],
+    }));
+    const service = new CandleMarketDataService([provider('yahoo', YAHOO_CANDLE_CAPABILITIES, call)]);
+    const response = await service.getCandles({
+      symbol: 'IPO', interval: 'Week', range: '5y', adjusted: true, session: 'regular',
+    });
+    expect(response.data.candles.map((bar) => bar.timestamp)).toEqual([ipo, ipo + 7 * 86_400]);
+    expect(response.data.candles).toHaveLength(2);
+    expect(response.data.actualStart).toBe(ipo);
+  });
+
   it('does not call any provider for unsupported daily-to-intraday substitution', async () => {
     const call = vi.fn(async (input) => result('daily-only', input));
     const dailyOnly: ProviderCapabilities = { ...FMP_CANDLE_CAPABILITIES, intervals: FMP_CANDLE_CAPABILITIES.intervals.filter((item) => item.interval === '1D') };
