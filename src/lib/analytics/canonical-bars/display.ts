@@ -8,9 +8,15 @@
  * in memory — never a refetch, and never a reason for the volume column to move.
  */
 
+import type { AdvancedChartType } from '../chart-types/types';
 import type { CanonicalBar } from './bars';
 
-export type CanonicalDisplayMode = 'candlestick' | 'heikin-ashi';
+/**
+ * Which drawn form the bars are for. Only Heikin-Ashi transforms the OHLC; every
+ * other form draws the traded values and differs in the *series* that renders
+ * them, never in the numbers.
+ */
+export type CanonicalDisplayMode = AdvancedChartType;
 
 export interface DisplayBar {
   time: number;

@@ -51,9 +51,14 @@ describe('Phase 11 market UI production contract', () => {
     const host = read('src/components/stock/chart/technical/TechnicalChartHost.tsx');
     expect(host.match(/createChart\(/g) ?? []).toHaveLength(1);
     // Candles and volume are panes of that one chart, not two synchronized charts.
-    expect(host).toContain('CandlestickSeries');
+    // The price series itself comes from the shared factory, which is the only
+    // place a chart type decides which lightweight-charts series draws the bars.
+    expect(host).toContain('addPriceSeries(chart');
     expect(host).toContain('HistogramSeries');
     expect(host).not.toContain('subscribeVisibleLogicalRangeChange(syncVolume)');
+    const priceSeries = read('src/components/stock/chart/technical/price-series.ts');
+    expect(priceSeries).toContain('CandlestickSeries');
+    expect(priceSeries.match(/chart\.addSeries\(/g) ?? []).toHaveLength(4);
   });
 
   it('lazy-loads the options UI with generation guards, cooldown and virtualization', () => {

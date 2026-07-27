@@ -203,6 +203,55 @@ describe('TimeframeSelector — desktop popover', () => {
   });
 });
 
+describe('TimeframeSelector — the panel is the scroll container', () => {
+  it('bounds the popover with flex so its max-height reaches the list', async () => {
+    const { root } = await render();
+    await open();
+    const popover = document.querySelector<HTMLElement>('[data-testid="timeframe-popover"]')!;
+    // Without `flex flex-col` the body kept its full content height, the list had
+    // nothing to overflow, and the surplus was silently clipped.
+    expect(popover.className).toContain('flex');
+    expect(popover.className).toContain('flex-col');
+    expect(popover.style.maxHeight).not.toBe('');
+    expect(popover.firstElementChild?.className).toContain('min-h-0');
+  });
+
+  it('scrolls only the option list, keeping the header and favourites pinned', async () => {
+    const { root } = await render({ favoriteIntervals: ['1m', '5m'], favoriteRanges: ['1y'] });
+    await open();
+    const scrollArea = document.querySelector<HTMLElement>('[data-testid="timeframe-scroll-area"]')!;
+    expect(scrollArea.className).toContain('overflow-y-auto');
+    expect(scrollArea.className).toContain('min-h-0');
+    expect(scrollArea.className).toContain('flex-1');
+    // A wheel over the panel must stay in the panel — it must never reach the
+    // chart behind it.
+    expect(scrollArea.className).toContain('overscroll-contain');
+
+    const favourites = document.querySelector<HTMLElement>('[data-testid="timeframe-favorites"]')!;
+    expect(favourites.className).toContain('shrink-0');
+    expect(scrollArea.contains(favourites)).toBe(false);
+    // Every interval and range option lives inside the one scroll container, so
+    // the last row is always reachable.
+    const options = Array.from(document.querySelectorAll<HTMLElement>('[data-timeframe-option]'));
+    expect(options.length).toBeGreaterThan(0);
+    options.forEach((option) => expect(scrollArea.contains(option)).toBe(true));
+  });
+
+  it('never positions the panel outside the viewport', async () => {
+    const { root } = await render();
+    await open();
+    const popover = document.querySelector<HTMLElement>('[data-testid="timeframe-popover"]')!;
+    const top = Number.parseFloat(popover.style.top);
+    const left = Number.parseFloat(popover.style.left);
+    const width = Number.parseFloat(popover.style.width);
+    const maxHeight = Number.parseFloat(popover.style.maxHeight);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top + maxHeight).toBeLessThanOrEqual(window.innerHeight);
+    expect(left + width).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
+
 describe('TimeframeSelector — keyboard and focus', () => {
   it('moves focus with the arrow keys between options', async () => {
     const { root } = await render();

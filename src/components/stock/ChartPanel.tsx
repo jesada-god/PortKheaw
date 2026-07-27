@@ -117,16 +117,16 @@ export function ChartPanel({
     update((previous) => ({ ...previous, [key]: !previous[key] }));
   }, [update]);
 
-  const feedLabel = marketLabel?.realtime
-    ? 'LIVE'
-    : marketLabel?.mode ?? (liveActive ? 'CONNECTING' : 'OFFLINE');
-  const feedTone = marketLabel?.realtime
-    ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
-    : 'border-amber-400/30 bg-amber-400/10 text-amber-200';
+  // One live/delayed statement per screen. Once a label has arrived, the chart's
+  // own provenance row states the feed, its provider and its delay — repeating
+  // "LIVE" here (and again on the candle) said the same thing three times. Only
+  // the states that row cannot express, because there is no label yet, still get
+  // a chip.
+  const feedLabel = marketLabel ? null : (liveActive ? 'CONNECTING' : 'OFFLINE');
 
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-2" data-testid="chart-session-controls">
-      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold tracking-wide ${feedTone}`} data-testid="chart-feed-status">{feedLabel}</span>
+      {feedLabel && <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-amber-200" data-testid="chart-feed-status">{feedLabel}</span>}
       {intraday && <select aria-label="Market session" value={session} onChange={(event) => setSession(event.target.value as MarketSessionMode)} className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs text-slate-200"><option value="extended">Pre + Regular + Post</option><option value="regular">Regular only</option></select>}
       <span className="ml-auto text-xs text-slate-500">{rangeOption(range).label} · {interval} · {session === 'extended' ? 'EXT' : 'REG'}</span>
     </div>

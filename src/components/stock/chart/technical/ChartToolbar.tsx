@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { InfoHint } from '@/src/components/ui/InfoHint';
+import { resolveAnchoredPanel, type AnchoredPanelPlacement } from '@/src/components/ui/anchored-panel';
+import { useHydrated } from '@/src/hooks/useHydrated';
 import type { CandleInterval, CandleRange } from '@/src/lib/market-data/candles/contracts';
 import type { ChartDisplayType, ChartPreferences } from '@/src/lib/analytics/timeframe';
+import { CHART_TYPE_OPTIONS, chartTypeOption } from '@/src/lib/analytics/chart-types/catalog';
 import { TimeframeSelector } from './TimeframeSelector';
 
 export type ToolbarToggleKey = Extract<
@@ -17,11 +21,50 @@ const ON = 'border-[#D4FF00] bg-[#D4FF00]/15 text-[#D4FF00]';
 const OPTIONS_ON = 'border-[#D4FF00]/50 bg-[#D4FF00]/[.06] text-slate-100';
 const OFF = 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500';
 
-/** A compact anchored menu that closes on outside click, Escape and selection. */
+/** Wide enough to contain an InfoHint popover (`w-64`), so no row can push a
+ *  horizontal scrollbar inside the menu. */
+const MENU_WIDTH = 288;
+const MENU_MAX_HEIGHT = 420;
+
+/**
+ * A compact anchored menu that closes on outside click, Escape and selection.
+ *
+ * The panel is portalled to `document.body` and positioned as `fixed`. Anchored
+ * absolutely inside the toolbar it was clipped by the chart card's
+ * `overflow-hidden`, and its `right-0`/`100vw` sizing could reach past the card
+ * and widen the page — the source of the stray horizontal scrollbar. Fixed
+ * placement resolved against the real viewport can do neither.
+ */
 function Menu({ label, testId, children }: { label: ReactNode; testId: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState<AnchoredPanelPlacement | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const mounted = useHydrated();
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    setPlacement(resolveAnchoredPanel({
+      rect: trigger.getBoundingClientRect(),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      width: MENU_WIDTH,
+      preferredMaxHeight: MENU_MAX_HEIGHT,
+      minHeight: 180,
+    }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [open, reposition]);
 
   useEffect(() => {
     if (!open) return;
@@ -32,7 +75,9 @@ function Menu({ label, testId, children }: { label: ReactNode; testId: string; c
       triggerRef.current?.focus();
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('pointerdown', onPointerDown);
@@ -43,7 +88,7 @@ function Menu({ label, testId, children }: { label: ReactNode; testId: string; c
   }, [open]);
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div className="relative">
       <button
         ref={triggerRef}
         type="button"
@@ -56,14 +101,22 @@ function Menu({ label, testId, children }: { label: ReactNode; testId: string; c
         {label}
         <ChevronDown aria-hidden="true" size={14} />
       </button>
-      {open && (
+      {mounted && open && placement && createPortal(
         <div
+          ref={panelRef}
           role="menu"
-          className="absolute right-0 z-50 mt-1 max-h-[60vh] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-slate-700 bg-[#0F1420] p-2 shadow-2xl"
+          style={{ position: 'fixed', top: placement.top, left: placement.left, width: placement.width, maxHeight: placement.maxHeight }}
+          // `pr-3.5` is the InfoHint's tap target, not decoration: its ⓘ expands to
+          // ≥44px with an absolutely positioned `-inset-[13px]` pseudo-element, and
+          // at the row's right edge that reached 5px past an 8px padding. In a
+          // scroll container (overflow-y:auto forces overflow-x:auto) those 5px
+          // became a horizontal scrollbar inside the menu.
+          className="z-[110] overflow-y-auto overscroll-contain rounded-xl border border-slate-700 bg-[#0F1420] p-2 pr-3.5 shadow-2xl"
           data-testid={`${testId}-menu`}
         >
           {children}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -156,28 +209,28 @@ export function ChartToolbar({
         onToggleFavoriteRange={onToggleFavoriteRange}
       />
 
-      <Menu testId="chart-type-trigger" label={preferences.chartType === 'heikin-ashi' ? 'Heikin-Ashi' : 'Candles'}>
-        <button
-          type="button"
-          role="menuitemradio"
-          aria-checked={preferences.chartType === 'candlestick'}
-          onClick={() => onChartType('candlestick')}
-          className={`flex min-h-11 w-full items-center rounded-md px-2 text-left text-sm ${preferences.chartType === 'candlestick' ? 'text-[#D4FF00]' : 'text-slate-200'} hover:bg-slate-800/70`}
-        >
-          แท่งเทียนจริง (Candles)
-        </button>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={preferences.chartType === 'heikin-ashi'}
-            onClick={() => onChartType('heikin-ashi')}
-            className={`flex min-h-11 flex-1 items-center rounded-md px-2 text-left text-sm ${preferences.chartType === 'heikin-ashi' ? 'text-[#D4FF00]' : 'text-slate-200'} hover:bg-slate-800/70`}
-          >
-            Heikin-Ashi
-          </button>
-          <InfoHint term="heikinAshi" align="end" />
-        </div>
+      {/*
+        Every drawable form comes from the shared chart-type catalog, so the menu,
+        the persisted preference and the series factory can never disagree.
+        Switching one is pure presentation: it re-draws bars already in memory.
+      */}
+      <Menu testId="chart-type-trigger" label={chartTypeOption(preferences.chartType).short}>
+        {CHART_TYPE_OPTIONS.map((option) => (
+          <div key={option.id} className="flex items-center gap-1">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={preferences.chartType === option.id}
+              onClick={() => onChartType(option.id)}
+              data-testid={`chart-type-${option.id}`}
+              className={`flex min-h-11 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm ${preferences.chartType === option.id ? 'text-[#D4FF00]' : 'text-slate-200'} hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]`}
+            >
+              <span aria-hidden="true" className="w-3 shrink-0 text-xs">{preferences.chartType === option.id ? '●' : ''}</span>
+              <span className="min-w-0 truncate">{option.label}</span>
+            </button>
+            {option.id === 'heikin-ashi' && <InfoHint term="heikinAshi" align="end" />}
+          </div>
+        ))}
       </Menu>
 
       <Menu testId="indicators-trigger" label="Indicators">

@@ -19,6 +19,9 @@ interface SeriesStub {
   priceToCoordinate: ReturnType<typeof vi.fn>;
 }
 
+/** Pixels the stubbed time scale reports; drives the readable-spacing rule. */
+const timeScaleWidth = vi.hoisted(() => ({ value: 900 }));
+
 vi.mock('lightweight-charts', () => {
   const definition = (name: string) => ({ name });
   return {
@@ -27,6 +30,8 @@ vi.mock('lightweight-charts', () => {
     CandlestickSeries: definition('Candlestick'),
     HistogramSeries: definition('Histogram'),
     LineSeries: definition('Line'),
+    AreaSeries: definition('Area'),
+    BarSeries: definition('Bar'),
     createChart: vi.fn((container: HTMLElement) => {
       const series: SeriesStub[] = [];
       const panes: Array<{ setHeight: ReturnType<typeof vi.fn> }> = [
@@ -38,6 +43,8 @@ vi.mock('lightweight-charts', () => {
         getVisibleLogicalRange: vi.fn(() => ({ from: 0, to: 10 })),
         fitContent: vi.fn(),
         scrollToRealTime: vi.fn(),
+        width: vi.fn(() => timeScaleWidth.value),
+        applyOptions: vi.fn(),
       };
       const chart = {
         container,
@@ -125,6 +132,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   lightweight.charts.length = 0;
   resizeCallbacks.length = 0;
+  timeScaleWidth.value = 900;
   fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
   vi.stubGlobal('React', React);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -327,6 +335,81 @@ describe('TechnicalChartHost — indicator panes never fetch', () => {
     // Heikin-Ashi actually transformed the drawn OHLC.
     const expected = toDisplayBars(short, 'heikin-ashi');
     haCandles.forEach((point, index) => expect(point.close).toBeCloseTo(expected[index].close, 10));
+    await act(async () => root.unmount());
+  });
+
+  it('swaps the price series for Line, Area, OHLC and Hollow without fetching or touching volume', async () => {
+    const short = bars(20);
+    const { root } = mount();
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} />));
+    const chart = lightweight.charts[0];
+    const volume = volumeOf(chart);
+    const originalVolume = volume.setData.mock.calls.at(-1)?.[0] as Array<{ time: number; value?: number }>;
+    fetchMock.mockClear();
+
+    for (const [chartType, expected] of [
+      ['line', 'Line'], ['area', 'Area'], ['ohlc', 'Bar'], ['hollow-candles', 'Candlestick'],
+    ] as const) {
+      await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} chartType={chartType} />));
+      const price = (chart.series as SeriesStub[]).find((item) => item.paneIndex === 0)!;
+      expect(price.definition).toBe(expected);
+      // The new series is written in full, from the same bars.
+      const written = price.setData.mock.calls.at(-1)?.[0] as Array<{ time: number }>;
+      expect(written).toHaveLength(short.length);
+      // Exactly one price series on the price pane — the old one is removed.
+      expect((chart.series as SeriesStub[]).filter((item) => item.paneIndex === 0)).toHaveLength(1);
+    }
+
+    // Line and area carry the closing value only; OHLC carries the traded bar.
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} chartType="line" />));
+    const line = (chart.series as SeriesStub[]).find((item) => item.paneIndex === 0)!;
+    const linePoints = line.setData.mock.calls.at(-1)?.[0] as Array<{ value?: number; close?: number }>;
+    expect(linePoints[0].value).toBe(short[0].close);
+    expect(linePoints[0].close).toBeUndefined();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The volume histogram is never recreated by a chart-type change, and the
+    // traded sizes it carries are byte-for-byte the ones it started with.
+    expect(volumeOf(chart)).toBe(volume);
+    expect(volume.setData.mock.calls.at(-1)?.[0]).toEqual(originalVolume);
+    await act(async () => root.unmount());
+  });
+
+  it('re-creates the S/R price lines on the new series after a chart-type swap', async () => {
+    const short = bars(20);
+    const priceLines = [{ id: 'S1', price: 100, color: '#0f0', title: 'S1' }];
+    const { root } = mount();
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} priceLines={priceLines} />));
+    const chart = lightweight.charts[0];
+
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} priceLines={priceLines} chartType="line" />));
+    const line = (chart.series as SeriesStub[]).find((item) => item.paneIndex === 0)!;
+    expect(line.definition).toBe('Line');
+    expect(line.createPriceLine).toHaveBeenCalledTimes(1);
+    expect(line.attachPrimitive).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it('opens at a readable bar width instead of squeezing a long history to fit', async () => {
+    // 900px / 260 bars ≈ 3.5px per bar — too tight to count a level touch.
+    const { root } = mount();
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(bars(260))} />));
+    const chart = lightweight.charts[0];
+    const timeScale = (chart.timeScale as () => Record<string, ReturnType<typeof vi.fn>>)();
+    expect(timeScale.applyOptions).toHaveBeenCalledWith({ barSpacing: 9 });
+    expect(timeScale.scrollToRealTime).toHaveBeenCalled();
+    // The whole history is still loaded; only the viewport starts nearer.
+    expect(candlesOf(chart).setData.mock.calls.at(-1)?.[0]).toHaveLength(260);
+    await act(async () => root.unmount());
+  });
+
+  it('still fits the content when the bars already have room to breathe', async () => {
+    const { root } = mount();
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(bars(20))} />));
+    const chart = lightweight.charts[0];
+    const timeScale = (chart.timeScale as () => Record<string, ReturnType<typeof vi.fn>>)();
+    expect(timeScale.fitContent).toHaveBeenCalled();
+    expect(timeScale.applyOptions).not.toHaveBeenCalled();
     await act(async () => root.unmount());
   });
 

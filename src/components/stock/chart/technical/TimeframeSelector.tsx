@@ -17,10 +17,12 @@ import {
 } from '@/src/lib/analytics/timeframe';
 import { DESKTOP_QUERY, useMediaQuery } from '@/src/hooks/useMediaQuery';
 import { useHydrated } from '@/src/hooks/useHydrated';
+import { resolveAnchoredPanel } from '@/src/components/ui/anchored-panel';
 
 const GROUPS: IntervalGroup[] = ['minute', 'hour', 'day'];
 const PANEL_WIDTH = 288;
-const GAP = 8;
+const PANEL_MAX_HEIGHT = 520;
+const PANEL_MIN_HEIGHT = 200;
 
 export interface TimeframeSelectorProps {
   interval: CandleInterval;
@@ -33,7 +35,7 @@ export interface TimeframeSelectorProps {
   onToggleFavoriteRange(range: CandleRange): void;
 }
 
-interface PanelPosition { top: number; left: number; maxHeight: number; }
+interface PanelPosition { top: number; left: number; width: number; maxHeight: number; }
 
 function FavoriteButton({ active, label, onToggle }: { active: boolean; label: string; onToggle: () => void }) {
   return (
@@ -148,19 +150,17 @@ export function TimeframeSelector({
     const trigger = triggerRef.current;
     if (!trigger || !desktop) return;
     const rect = trigger.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const below = viewportHeight - rect.bottom - GAP * 2;
-    const above = rect.top - GAP * 2;
-    // Flip above the trigger when there is more room there, and clamp the
-    // horizontal position so the panel can never leave the viewport.
-    const flip = below < 260 && above > below;
-    const maxHeight = Math.max(200, Math.min(520, flip ? above : below));
-    setPosition({
-      top: flip ? Math.max(GAP, rect.top - GAP - maxHeight) : rect.bottom + GAP,
-      left: Math.max(GAP, Math.min(rect.left, viewportWidth - PANEL_WIDTH - GAP)),
-      maxHeight,
-    });
+    // Shared collision rules: flip when below is cramped, clamp to every viewport
+    // edge, and cap the height at the room that exists so the list — not the
+    // page — is what scrolls.
+    setPosition(resolveAnchoredPanel({
+      rect,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      width: PANEL_WIDTH,
+      preferredMaxHeight: PANEL_MAX_HEIGHT,
+      minHeight: PANEL_MIN_HEIGHT,
+    }));
   }, [desktop]);
 
   useLayoutEffect(() => {
@@ -219,6 +219,9 @@ export function TimeframeSelector({
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
+  // `min-h-0` lets this box shrink to its parent's max-height; an auto flex basis
+  // then makes the pinned header/favourites and the scrolling list share exactly
+  // that height.
   const content = (
     <div ref={panelRef} role="dialog" aria-modal={!desktop} aria-labelledby={titleId} className="flex min-h-0 flex-col">
       <div className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b border-slate-800 px-3">
@@ -232,41 +235,46 @@ export function TimeframeSelector({
           <X aria-hidden="true" size={17} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-        {(favoriteIntervals.length > 0 || favoriteRanges.length > 0) && (
-          <section aria-label="รายการโปรด" className="mb-2 border-b border-slate-800 pb-2">
-            <h3 className="px-1 pb-1 text-[11px] font-semibold text-slate-500">รายการโปรด</h3>
-            <div className="flex flex-wrap gap-1">
-              {favoriteIntervals.map((id) => (
-                <button
-                  key={`fav-interval-${id}`}
-                  type="button"
-                  onClick={() => selectInterval(id)}
-                  aria-label={id === interval ? `${intervalOption(id).label} เลือกอยู่` : intervalOption(id).label}
-                  className={`min-h-11 min-w-11 rounded-md border px-2.5 font-mono text-xs ${
-                    id === interval ? 'border-[#D4FF00] bg-[#D4FF00]/15 text-[#D4FF00]' : 'border-slate-700 text-slate-200'
-                  }`}
-                >
-                  {intervalOption(id).short}
-                </button>
-              ))}
-              {favoriteRanges.map((id) => (
-                <button
-                  key={`fav-range-${id}`}
-                  type="button"
-                  onClick={() => selectRange(id)}
-                  aria-label={id === range ? `${rangeOption(id).label} เลือกอยู่` : rangeOption(id).label}
-                  className={`min-h-11 min-w-11 rounded-md border px-2.5 font-mono text-xs ${
-                    id === range ? 'border-sky-400 bg-sky-400/15 text-sky-300' : 'border-slate-700 text-slate-300'
-                  }`}
-                >
-                  {rangeOption(id).short}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
 
+      {/*
+        Header and favourites are pinned: they are the quick path, so they must
+        never scroll out of reach. Only the grouped list below them scrolls.
+      */}
+      {(favoriteIntervals.length > 0 || favoriteRanges.length > 0) && (
+        <section aria-label="รายการโปรด" className="shrink-0 border-b border-slate-800 px-2 py-2" data-testid="timeframe-favorites">
+          <h3 className="px-1 pb-1 text-[11px] font-semibold text-slate-500">รายการโปรด</h3>
+          <div className="flex flex-wrap gap-1">
+            {favoriteIntervals.map((id) => (
+              <button
+                key={`fav-interval-${id}`}
+                type="button"
+                onClick={() => selectInterval(id)}
+                aria-label={id === interval ? `${intervalOption(id).label} เลือกอยู่` : intervalOption(id).label}
+                className={`min-h-11 min-w-11 rounded-md border px-2.5 font-mono text-xs ${
+                  id === interval ? 'border-[#D4FF00] bg-[#D4FF00]/15 text-[#D4FF00]' : 'border-slate-700 text-slate-200'
+                }`}
+              >
+                {intervalOption(id).short}
+              </button>
+            ))}
+            {favoriteRanges.map((id) => (
+              <button
+                key={`fav-range-${id}`}
+                type="button"
+                onClick={() => selectRange(id)}
+                aria-label={id === range ? `${rangeOption(id).label} เลือกอยู่` : rangeOption(id).label}
+                className={`min-h-11 min-w-11 rounded-md border px-2.5 font-mono text-xs ${
+                  id === range ? 'border-sky-400 bg-sky-400/15 text-sky-300' : 'border-slate-700 text-slate-300'
+                }`}
+              >
+                {rangeOption(id).short}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2" data-testid="timeframe-scroll-area">
         {GROUPS.map((group) => (
           <section key={group} role="listbox" aria-label={`แท่งเทียน ${INTERVAL_GROUP_LABEL[group]}`} className="mb-1 border-b border-slate-800 pb-1 last-of-type:border-0">
             <h3 className="px-1 pb-1 text-[11px] font-semibold text-slate-500">{INTERVAL_GROUP_LABEL[group]}</h3>
@@ -326,9 +334,14 @@ export function TimeframeSelector({
       </button>
 
       {mounted && open && desktop && position && createPortal(
+        // `flex` is load-bearing, not decoration: the panel body is only bounded
+        // by `maxHeight` when it is a flex item of this box. As a plain block
+        // child it kept its full content height, the inner `overflow-y-auto` had
+        // nothing to overflow, and the surplus was simply clipped by
+        // `overflow-hidden` — the list could not be scrolled or reached at all.
         <div
-          style={{ position: 'fixed', top: position.top, left: position.left, width: PANEL_WIDTH, maxHeight: position.maxHeight }}
-          className="z-[110] overflow-hidden rounded-xl border border-slate-700 bg-[#0F1420] shadow-2xl"
+          style={{ position: 'fixed', top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
+          className="z-[110] flex flex-col overflow-hidden rounded-xl border border-slate-700 bg-[#0F1420] shadow-2xl"
           data-testid="timeframe-popover"
         >
           {content}

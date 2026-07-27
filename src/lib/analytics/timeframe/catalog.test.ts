@@ -21,6 +21,7 @@ import {
   LEGACY_CHART_PREFERENCES_STORAGE_KEY,
 } from './preferences';
 import { candleIntervalSchema, candleRangeSchema } from '@/src/lib/market-data/candles/contracts';
+import { CHART_TYPE_OPTIONS } from '@/src/lib/analytics/chart-types/catalog';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -125,6 +126,16 @@ describe('chart preferences', () => {
 
   it('opens the Options section by default so the page order is Chart → Options → S/R', () => {
     expect(DEFAULT_CHART_PREFERENCES.options).toBe(true);
+  });
+
+  it('persists every catalogued chart type and still restores the two original ones', () => {
+    for (const option of CHART_TYPE_OPTIONS) {
+      expect(mergeChartPreferences({ chartType: option.id }).chartType).toBe(option.id);
+    }
+    // Records written before the wider list must survive untouched.
+    expect(mergeChartPreferences({ chartType: 'heikin-ashi' }).chartType).toBe('heikin-ashi');
+    // An unknown value is not a chart type; the record degrades to the default.
+    expect(mergeChartPreferences({ chartType: 'renko' }).chartType).toBe(DEFAULT_CHART_PREFERENCES.chartType);
   });
 
   it('carries a v1 record forward, keeping real choices but re-taking the Options default', () => {

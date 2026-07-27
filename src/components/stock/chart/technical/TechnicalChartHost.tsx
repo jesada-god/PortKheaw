@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CandlestickSeries,
   ColorType,
   HistogramSeries,
   LineSeries,
@@ -19,6 +18,15 @@ import type { InstitutionalOverlaySpec } from '@/src/lib/analytics/institutional
 import { toDisplayBars, type CanonicalBar, type CanonicalDisplayMode, type DisplayBar } from '@/src/lib/analytics/canonical-bars';
 import type { IndicatorPoint, MacdPoint } from '@/src/lib/analytics/chart-indicators';
 import { InstitutionalOverlayPrimitive } from '../chart-institutional-primitive';
+import {
+  addPriceSeries,
+  priceSeriesKind,
+  resolveDefaultViewport,
+  setPriceSeriesData,
+  updatePriceSeries,
+  type PriceSeries,
+  type PriceSeriesKind,
+} from './price-series';
 
 /** A visible logical bar-index range, reported for viewport-scoped analytics. */
 export interface VisibleLogicalRange { from: number; to: number; }
@@ -41,8 +49,6 @@ export interface EmaLineSpec {
 
 const EMPTY_SPEC: InstitutionalOverlaySpec = { bands: [], lines: [] };
 const RSI_PANE = 2;
-const UP = '#00c57f';
-const DOWN = '#ff3b30';
 
 function layout() {
   return {
@@ -60,16 +66,6 @@ function layout() {
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { axisPressedMouseMove: { time: true, price: true }, mouseWheel: true, pinch: true },
   };
-}
-
-function candleData(bars: readonly DisplayBar[]) {
-  return bars.map((bar) => ({
-    time: bar.time as UTCTimestamp as Time,
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: bar.close,
-  }));
 }
 
 /**
@@ -158,7 +154,7 @@ export function TechnicalChartHost({
 }: TechnicalChartHostProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const candleRef = useRef<PriceSeries | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const emaRefs = useRef<ISeriesApi<'Line'>[]>([]);
   const rsiRefs = useRef<ISeriesApi<'Line'>[]>([]);
@@ -171,6 +167,13 @@ export function TechnicalChartHost({
   const previousChartTypeRef = useRef<CanonicalDisplayMode | null>(null);
   const barsRef = useRef<readonly DisplayBar[]>([]);
   const fittedRef = useRef<string | null>(null);
+  /** Only a change of series *shape* recreates the price series; Candles ↔
+   *  Heikin-Ashi share one and just rewrite their data. */
+  const seriesKind = priceSeriesKind(chartType);
+  /** The shape to create at mount; later changes go through the swap effect. */
+  const initialSeriesKindRef = useRef<PriceSeriesKind>(seriesKind);
+  /** The shape actually on the chart right now. */
+  const activeKindRef = useRef<PriceSeriesKind | null>(null);
   const disposedRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const rangeFrameRef = useRef<number | null>(null);
@@ -195,15 +198,8 @@ export function TechnicalChartHost({
     const chart = createChart(container, layout());
     chartRef.current = chart;
 
-    const candles = chart.addSeries(CandlestickSeries, {
-      upColor: UP,
-      downColor: DOWN,
-      borderVisible: false,
-      wickUpColor: UP,
-      wickDownColor: DOWN,
-      lastValueVisible: true,
-      priceLineVisible: false,
-    }, 0);
+    const candles = addPriceSeries(chart, initialSeriesKindRef.current, 0);
+    activeKindRef.current = initialSeriesKindRef.current;
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
@@ -281,14 +277,65 @@ export function TechnicalChartHost({
     };
   }, []);
 
+  // ── Chart type: swap the price series when its *shape* changes ─────────────
+  // Candles, Hollow, Heikin-Ashi, OHLC, Line and Area are different series in
+  // lightweight-charts, so a shape change replaces the series and re-attaches
+  // what hangs off it (the overlay primitive here; the S/R price lines in their
+  // own effect, which also keys on the chart type). Panes, the time scale, the
+  // volume histogram and every indicator series are untouched.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!ready || !chart || disposedRef.current) return;
+    if (activeKindRef.current === seriesKind) return;
+    const previousSeries = candleRef.current;
+    if (previousSeries) {
+      try { chart.removeSeries(previousSeries); } catch { /* already removed */ }
+    }
+    const series = addPriceSeries(chart, seriesKind, 0);
+    candleRef.current = series;
+    activeKindRef.current = seriesKind;
+    // A new series starts empty, so the next write must be a full setData.
+    previousBarsRef.current = [];
+    previousChartTypeRef.current = null;
+    priceLineRefs.current = [];
+    if (primitiveRef.current) {
+      try {
+        series.attachPrimitive(primitiveRef.current);
+        primitiveRef.current.setSpec(overlaySpecRef.current ?? EMPTY_SPEC);
+      } catch { /* only throws on a disposed series */ }
+    }
+  }, [ready, seriesKind]);
+
+  /**
+   * The default view: fit everything, unless fitting would squeeze the bars
+   * below a readable width — then open at that width, anchored to the newest
+   * bar. History stays one pan away.
+   */
+  const applyDefaultViewport = useCallback((barCount: number) => {
+    const chart = chartRef.current;
+    if (!chart || disposedRef.current) return;
+    try {
+      const timeScale = chart.timeScale();
+      const viewport = resolveDefaultViewport(
+        typeof timeScale.width === 'function' ? timeScale.width() : 0,
+        barCount,
+      );
+      if (viewport.mode === 'fit') { timeScale.fitContent(); return; }
+      timeScale.applyOptions({ barSpacing: viewport.barSpacing });
+      timeScale.scrollToRealTime();
+    } catch { /* chart may be mid-teardown */ }
+  }, []);
+
   const reset = useCallback(() => {
     const chart = chartRef.current;
     if (!chart || disposedRef.current) return;
     try {
       chart.priceScale('right').applyOptions({ autoScale: true });
-      chart.timeScale().fitContent();
     } catch { /* chart may be mid-teardown */ }
-  }, []);
+    // Reset returns to the *default* view, which is the same readable-width view
+    // the chart opens with — not a fit that squeezes a year into one screen.
+    applyDefaultViewport(barsRef.current.length);
+  }, [applyDefaultViewport]);
   const fit = useCallback(() => {
     if (!chartRef.current || disposedRef.current) return;
     try { chartRef.current.timeScale().fitContent(); } catch { /* mid-teardown */ }
@@ -314,23 +361,23 @@ export function TechnicalChartHost({
       // newest one. Both series receive exactly the same bars in the same order.
       if (displayBars.length > previous.length && displayBars.length > 1) {
         const settled = displayBars[displayBars.length - 2];
-        candles.update(candleData([settled])[0]);
+        updatePriceSeries(candles, seriesKind, settled);
         volume.update(volumeData([settled])[0]);
       }
       const latest = displayBars[displayBars.length - 1];
-      candles.update(candleData([latest])[0]);
+      updatePriceSeries(candles, seriesKind, latest);
       volume.update(volumeData([latest])[0]);
     } else {
-      candles.setData(candleData(displayBars));
+      setPriceSeriesData(candles, seriesKind, displayBars);
       volume.setData(volumeData(displayBars));
     }
     previousBarsRef.current = [...displayBars];
     previousChartTypeRef.current = chartType;
     if (displayBars.length >= 2 && fittedRef.current !== datasetKey) {
       fittedRef.current = datasetKey;
-      try { chartRef.current?.timeScale().fitContent(); } catch { /* mid-teardown */ }
+      applyDefaultViewport(displayBars.length);
     }
-  }, [ready, displayBars, chartType, datasetKey]);
+  }, [ready, displayBars, chartType, seriesKind, datasetKey, applyDefaultViewport]);
 
   useEffect(() => {
     if (!ready || disposedRef.current || !volumeRef.current) return;
@@ -441,7 +488,9 @@ export function TechnicalChartHost({
       });
       priceLineRefs.current = [];
     };
-  }, [ready, priceLines]);
+    // `seriesKind` is a dependency because the lines hang off the price series:
+    // when that series is replaced they must be created again on the new one.
+  }, [ready, priceLines, seriesKind]);
 
   useEffect(() => {
     overlaySpecRef.current = overlaySpec;

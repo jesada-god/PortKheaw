@@ -14,13 +14,21 @@
 
 import { z } from 'zod';
 import { candleIntervalSchema, candleRangeSchema, type CandleInterval, type CandleRange } from '@/src/lib/market-data/candles/contracts';
+import { CHART_TYPE_IDS } from '@/src/lib/analytics/chart-types/catalog';
+import type { AdvancedChartType } from '@/src/lib/analytics/chart-types/types';
 import { canonicalRange } from './catalog';
 
 export const CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v2';
 /** v1 stored the Options section closed by default; v2 opens it as part of the page order. */
 export const LEGACY_CHART_PREFERENCES_STORAGE_KEY = 'nexora.chart.preferences.v1';
 
-export type ChartDisplayType = 'candlestick' | 'heikin-ashi';
+/**
+ * The chart type the toolbar persists. It is the app-wide `AdvancedChartType`
+ * vocabulary — one list of drawable forms, shared with the chart-type catalog and
+ * the series factory. Records written when only Candles/Heikin-Ashi existed stay
+ * valid, so no stored preference is reset by the wider list.
+ */
+export type ChartDisplayType = AdvancedChartType;
 
 export interface ChartPreferences {
   chartType: ChartDisplayType;
@@ -63,7 +71,7 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
 };
 
 const preferencesSchema = z.object({
-  chartType: z.enum(['candlestick', 'heikin-ashi']),
+  chartType: z.enum(CHART_TYPE_IDS),
   volume: z.boolean(),
   ema20: z.boolean(),
   ema50: z.boolean(),

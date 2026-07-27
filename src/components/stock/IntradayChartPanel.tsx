@@ -256,8 +256,14 @@ export function MarketCandleChartPanel(props: Props) {
       provenance, not headline copy: they live in the ⓘ detail so the primary
       row stays readable and free of raw provider diagnostics.
     */}
-    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>{provenance?.realtime && liveCandle && <span role="status" className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 font-mono text-xs text-emerald-300" data-testid="live-candle-status">LIVE · {liveCandle.close.toFixed(2)}</span>}
-    {result && <DetailPopover triggerLabel="ดูรายละเอียดข้อมูลย้อนหลัง" title="ข้อมูลย้อนหลังที่กำลังแสดง" testId="chart-history-detail" align="start">
+    {/*
+      The live state is stated once, by the provenance row below: it already
+      carries the status, the provider and the delay. A second "LIVE · price"
+      chip here only repeated the header's price with a third badge, so it is
+      gone; the realtime source itself stays in the ⓘ detail.
+    */}
+    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>
+    {result &&<DetailPopover triggerLabel="ดูรายละเอียดข้อมูลย้อนหลัง" title="ข้อมูลย้อนหลังที่กำลังแสดง" testId="chart-history-detail" align="start">
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
         <dt className="text-slate-500">จำนวนแท่ง</dt><dd className="text-right font-mono text-slate-200">{displayPrices.length.toLocaleString()}</dd>
         <dt className="text-slate-500">เขตเวลาตลาด</dt><dd className="text-right text-slate-200">{result.exchangeTimezone}</dd>
