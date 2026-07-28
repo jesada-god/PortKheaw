@@ -269,6 +269,6 @@ describe('deriveValuation', () => {
 
     expect(result.derivedValuedCount).toBe(10);
     expect(result.providerValuedCount).toBe(0);
-    expect(result.warnings.join(' ')).toMatch(/calculated by Nexora/i);
+    expect(result.warnings.join(' ')).toMatch(/calculated by PortKheaw/i);
   });
 });

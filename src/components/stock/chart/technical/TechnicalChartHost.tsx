@@ -27,6 +27,7 @@ import {
   type PriceSeries,
   type PriceSeriesKind,
 } from './price-series';
+import { getChartThemeColors, subscribeToAppearanceChange } from '@/src/themes/chart-theme';
 
 /** A visible logical bar-index range, reported for viewport-scoped analytics. */
 export interface VisibleLogicalRange { from: number; to: number; }
@@ -51,18 +52,19 @@ const EMPTY_SPEC: InstitutionalOverlaySpec = { bands: [], lines: [] };
 const RSI_PANE = 2;
 
 function layout() {
+  const colors = getChartThemeColors();
   return {
     autoSize: false,
     layout: {
-      textColor: '#cbd5e1',
-      background: { type: ColorType.Solid, color: '#141722' },
+      textColor: colors.text,
+      background: { type: ColorType.Solid, color: colors.background },
       attributionLogo: true,
-      panes: { separatorColor: '#242733', separatorHoverColor: '#2f3446', enableResize: true },
+      panes: { separatorColor: colors.border, separatorHoverColor: colors.axis, enableResize: true },
     },
-    grid: { vertLines: { color: '#1e2232' }, horzLines: { color: '#1e2232' } },
-    rightPriceScale: { visible: true, borderColor: '#242733' },
-    timeScale: { borderColor: '#242733', timeVisible: true, secondsVisible: false, rightOffset: 6 },
-    crosshair: { vertLine: { color: '#64748b' }, horzLine: { color: '#64748b' } },
+    grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+    rightPriceScale: { visible: true, borderColor: colors.border },
+    timeScale: { borderColor: colors.border, timeVisible: true, secondsVisible: false, rightOffset: 6 },
+    crosshair: { vertLine: { color: colors.axis }, horzLine: { color: colors.axis } },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { axisPressedMouseMove: { time: true, price: true }, mouseWheel: true, pinch: true },
   };
@@ -197,6 +199,10 @@ export function TechnicalChartHost({
     disposedRef.current = false;
     const chart = createChart(container, layout());
     chartRef.current = chart;
+    const unsubscribeAppearance = subscribeToAppearanceChange(window, () => {
+      if (disposedRef.current || chartRef.current !== chart) return;
+      chart.applyOptions(layout());
+    });
 
     const candles = addPriceSeries(chart, initialSeriesKindRef.current, 0);
     activeKindRef.current = initialSeriesKindRef.current;
@@ -257,6 +263,7 @@ export function TechnicalChartHost({
     return () => {
       disposedRef.current = true;
       setReady(false);
+      unsubscribeAppearance();
       observer.disconnect();
       chart.unsubscribeCrosshairMove(crosshair);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(emitRange);

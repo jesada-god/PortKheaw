@@ -19,6 +19,7 @@ import { InstitutionalOverlayPrimitive } from './chart-institutional-primitive';
 import { addPrimarySeries, addVolumeSeries, setPrimaryData, setVolumeData, updatePrimary, updateVolume, type PrimarySeries } from './chart-series-manager';
 import { ChartTooltip } from './chart-tooltip';
 import type { ChartActions, ChartBar, ChartIndicatorLine, ChartPriceLine, ChartTooltipContext } from './chart-types';
+import { getChartThemeColors, subscribeToAppearanceChange } from '@/src/themes/chart-theme';
 
 /** A visible logical bar-index range, reported for viewport-scoped analytics. */
 export interface VisibleLogicalRange { from: number; to: number; }
@@ -82,17 +83,29 @@ export function LightweightChartHost({
     const container = containerRef.current;
     if (!container) return;
     disposedRef.current = false;
+    const colors = getChartThemeColors();
     const chart = createChart(container, {
       autoSize: false,
-      layout: { background: { type: ColorType.Solid, color: '#101621' }, textColor: '#94a3b8', attributionLogo: true },
-      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-      rightPriceScale: { borderColor: '#334155' },
-      timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false, rightOffset: 4 },
-      crosshair: { vertLine: { color: '#94a3b8' }, horzLine: { color: '#94a3b8' } },
+      layout: { background: { type: ColorType.Solid, color: colors.background }, textColor: colors.text, attributionLogo: true },
+      grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+      rightPriceScale: { borderColor: colors.border },
+      timeScale: { borderColor: colors.border, timeVisible: true, secondsVisible: false, rightOffset: 4 },
+      crosshair: { vertLine: { color: colors.axis }, horzLine: { color: colors.axis } },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
     chartRef.current = chart;
+    const unsubscribeAppearance = subscribeToAppearanceChange(window, () => {
+      if (disposedRef.current || chartRef.current !== chart) return;
+      const next = getChartThemeColors();
+      chart.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: next.background }, textColor: next.text },
+        grid: { vertLines: { color: next.grid }, horzLines: { color: next.grid } },
+        rightPriceScale: { borderColor: next.border },
+        timeScale: { borderColor: next.border },
+        crosshair: { vertLine: { color: next.axis }, horzLine: { color: next.axis } },
+      });
+    });
     const crosshair = (parameter: MouseEventParams<Time>) => {
       if (parameter.time == null) { setTooltipBar(null); return; }
       const key = typeof parameter.time === 'number' ? parameter.time : String(parameter.time);
@@ -144,6 +157,7 @@ export function LightweightChartHost({
       disposedRef.current = true;
       onActions(null);
       setChartReady(false);
+      unsubscribeAppearance();
       observer.disconnect();
       chart.unsubscribeCrosshairMove(crosshair);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(emitVisibleRange);
@@ -266,7 +280,7 @@ export function LightweightChartHost({
     };
   }, [chartReady, indicatorLines]);
 
-  return <div className="relative h-[26rem] min-h-[20rem] w-full overflow-hidden rounded-xl border border-slate-800 bg-[#101621] md:h-[32rem]" aria-label="Interactive price and volume chart" data-testid="lightweight-chart-host">
+  return <div className="relative h-[26rem] min-h-[20rem] w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--chart-bg)] md:h-[32rem]" aria-label="Interactive price and volume chart" data-testid="lightweight-chart-host">
     <div ref={containerRef} className="h-full w-full" />
     {tooltipBar && <div className="absolute left-2 top-2 z-10"><ChartTooltip bar={tooltipBar} context={tooltipContext}/></div>}
   </div>;

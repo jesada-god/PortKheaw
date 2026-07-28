@@ -103,7 +103,7 @@ describe('options provenance detail', () => {
     expect(presentOptionsProvenance(withGreeks, null).source).toContain('Alpaca Options Data (indicative)');
   });
 
-  it('labels deterministic IV/Greeks as calculated by Nexora, not provider-supplied', () => {
+  it('labels deterministic IV/Greeks as calculated by PortKheaw, not provider-supplied', () => {
     const derived = chain({ calls: [contract('call', {
       delta: 0.55,
       valuationSource: 'nexora-derived',
@@ -111,7 +111,7 @@ describe('options provenance detail', () => {
       marketDataFeed: 'indicative',
     })] });
     const detail = presentOptionsProvenance(derived, null);
-    expect(detail.greeks).toContain('คำนวณโดย Nexora');
+    expect(detail.greeks).toContain('คำนวณโดย PortKheaw');
     expect(detail.greeks).not.toContain('ผู้ให้บริการส่ง');
   });
 

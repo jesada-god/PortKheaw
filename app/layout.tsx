@@ -3,6 +3,8 @@ import './globals.css';
 import MainLayout from '@/src/components/layout/MainLayout';
 import { Toaster } from '@/src/components/ui/Toast';
 import { appConfig } from '@/src/config/app';
+import { ThemeProvider } from '@/src/themes/ThemeProvider';
+import { THEME_BOOTSTRAP } from '@/src/themes/bootstrap';
 
 export const metadata: Metadata = {
   applicationName: appConfig.name,
@@ -24,7 +26,10 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#0A0E17',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#F4F7F3' },
+    { media: '(prefers-color-scheme: dark)', color: '#070A08' },
+  ],
 };
 
 /**
@@ -43,11 +48,16 @@ const ZOD_JITLESS_BOOTSTRAP = '(globalThis.__zod_globalConfig=globalThis.__zod_g
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="th" className="dark">
-      <body className="bg-[#0A0E17] text-slate-200 antialiased selection:bg-[#D4FF00]/30">
+    <html lang="th" data-theme="portkheaw" data-appearance="dark">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
+      <body className="bg-[var(--bg)] text-[var(--text)] antialiased selection:bg-[var(--accent-soft)]">
         <script dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
-        <MainLayout>{children}</MainLayout>
-        <Toaster />
+        <ThemeProvider>
+          <MainLayout>{children}</MainLayout>
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

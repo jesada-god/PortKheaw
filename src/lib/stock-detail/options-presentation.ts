@@ -161,9 +161,9 @@ export function presentOptionsProvenance(
     .sort()
     .at(-1);
   const greeks = providerValued && nexoraValued
-    ? 'ผู้ให้บริการส่งบางค่า · บางค่าคำนวณโดย Nexora'
+    ? 'ผู้ให้บริการส่งบางค่า · บางค่าคำนวณโดย PortKheaw'
     : nexoraValued
-      ? 'คำนวณโดย Nexora จากราคาออปชันจริง'
+      ? 'คำนวณโดย PortKheaw จากราคาออปชันจริง'
       : providerValued
         ? 'ผู้ให้บริการส่ง IV/Greeks มาบางส่วน'
         : 'ผู้ให้บริการไม่ได้ส่ง IV/Greeks — แสดงเป็น —';

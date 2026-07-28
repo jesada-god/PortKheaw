@@ -1,13 +1,13 @@
 {
-  "name": "Nexora AI",
-  "short_name": "Nexora AI",
+  "name": "PortKheaw",
+  "short_name": "PortKheaw",
   "description": "Intelligent Investment Analytics",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0A0E17",
-  "theme_color": "#0A0E17",
+  "background_color": "#000000",
+  "theme_color": "#070A08",
   "categories": ["finance", "productivity"],
   "icons": [
     {
@@ -20,13 +20,19 @@
       "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

@@ -4,11 +4,11 @@ import { AuthMessage } from '@/src/components/auth/AuthMessage';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
 import { Button } from '@/src/components/ui/Button';
 import { Select } from '@/src/components/ui/Select';
-import { appConfig } from '@/src/config/app';
 import { createClient } from '@/src/lib/supabase/server';
 import { saveSettingsAction } from './actions';
 import { DevicePreferences } from '@/src/components/settings/DevicePreferences';
 import { PushPreferences } from '@/src/components/settings/PushPreferences';
+import { ThemeControls } from '@/src/themes/ThemeControls';
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
@@ -27,10 +27,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <Header title="การตั้งค่า (Settings)" subtitle="ปรับแต่งการแสดงผล" />
       <form action={saveSettingsAction} className="p-4 md:p-8 max-w-2xl mx-auto space-y-8">
         <AuthMessage error={error} message={message} />
-        <section className="space-y-4"><h2 className="text-lg font-semibold text-white">แสดงผล (Display)</h2><div className="bg-[#151B28] rounded-2xl border border-slate-800 p-5 sm:p-6 space-y-6">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><label htmlFor="baseCurrency" className="text-white font-medium">สกุลเงินหลัก</label><p className="text-xs text-slate-400">ใช้ในการแสดงมูลค่าพอร์ต</p></div><div className="w-full sm:w-36"><Select id="baseCurrency" name="baseCurrency" defaultValue={settings.base_currency}><option value="THB">THB (฿)</option><option value="USD">USD ($)</option></Select></div></div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label htmlFor="language" className="text-white font-medium">ภาษา</label><div className="w-full sm:w-36"><Select id="language" name="language" defaultValue={settings.language}><option value="th">ไทย</option><option value="en">English</option></Select></div></div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-white font-medium">ธีมสี</p><p className="text-xs text-slate-400">{appConfig.name} Technical Dark</p></div><div className="w-full sm:w-36"><Select disabled defaultValue="dark"><option value="dark">Dark/Neon</option></Select></div></div>
+        <section className="space-y-4"><h2 className="text-lg font-semibold text-[var(--text)]">แสดงผล (Display)</h2><div className="space-y-6 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow)] sm:p-6">
+          <ThemeControls />
+          <div className="space-y-6 border-t border-[var(--border)] pt-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><label htmlFor="baseCurrency" className="font-medium text-[var(--text)]">สกุลเงินหลัก</label><p className="text-xs text-[var(--text-muted)]">ใช้ในการแสดงมูลค่าพอร์ต</p></div><div className="w-full sm:w-36"><Select id="baseCurrency" name="baseCurrency" defaultValue={settings.base_currency}><option value="THB">THB (฿)</option><option value="USD">USD ($)</option></Select></div></div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label htmlFor="language" className="font-medium text-[var(--text)]">ภาษา</label><div className="w-full sm:w-36"><Select id="language" name="language" defaultValue={settings.language}><option value="th">ไทย</option><option value="en">English</option></Select></div></div>
+          </div>
         </div></section>
         <DevicePreferences />
         <section className="space-y-4"><h2 className="text-lg font-semibold text-white">การแจ้งเตือน</h2><div className="bg-[#151B28] rounded-2xl border border-slate-800 p-5 sm:p-6 space-y-4 text-slate-300 text-sm">

@@ -1,5 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Nexora AI">
-  <rect width="512" height="512" rx="112" fill="#0A0E17"/>
-  <path d="M118 382V130h58l160 166V130h58v252h-57L176 216v166z" fill="#D4FF00"/>
-  <circle cx="394" cy="118" r="22" fill="#A855F7"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PortKheaw">
+  <rect width="512" height="512" rx="112" fill="#000000"/>
+  <path d="M257 91c22-37 50-57 82-64-7 17-7 31 0 43 13 2 28-1 44-8-8 35-30 61-65 78l-11 40c72 20 123 81 123 152 0 87-78 142-174 142S82 419 82 332c0-75 58-139 137-154l14-51c5-17 13-29 24-36Z" fill="#B7E728" stroke="#6E9E16" stroke-width="14" stroke-linejoin="round"/>
+  <ellipse cx="185" cy="313" rx="30" ry="42" fill="#0B110D"/>
+  <ellipse cx="327" cy="313" rx="30" ry="42" fill="#0B110D"/>
+  <circle cx="175" cy="298" r="9" fill="#F4F7F5"/>
+  <circle cx="317" cy="298" r="9" fill="#F4F7F5"/>
+  <path d="M216 358c10 38 70 38 80 0-24 12-56 12-80 0Z" fill="#0B110D"/>
+  <circle cx="137" cy="359" r="18" fill="#F07F97" opacity=".88"/>
+  <circle cx="375" cy="359" r="18" fill="#F07F97" opacity=".88"/>
 </svg>

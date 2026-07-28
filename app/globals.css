@@ -1,31 +1,38 @@
 @import "tailwindcss";
+@import "../src/themes/portkheaw/dark.css";
+@import "../src/themes/portkheaw/light.css";
 
-@theme {
-  --color-primary: #D4FF00; /* Neon Lime Green */
-  --color-primary-dark: #649e0c;
-  --color-primary-light: #a4e83a;
+@theme inline {
+  --color-primary: var(--accent);
+  --color-primary-dark: var(--accent-active);
+  --color-primary-light: var(--accent-hover);
   
-  --color-bg-base: #0A0E17; /* Very dark navy/black */
-  --color-bg-card: #151B28; /* Dark grey/blue card background */
-  --color-bg-card-hover: #1e293b;
+  --color-bg-base: var(--bg);
+  --color-bg-card: var(--surface);
+  --color-bg-card-hover: var(--surface-hover);
   
-  --color-text-main: #FFFFFF;
-  --color-text-muted: #94a3b8; /* Grey blue text */
+  --color-text-main: var(--text);
+  --color-text-muted: var(--text-muted);
   
-  --color-positive: #10B981; /* Green */
-  --color-negative: #EF4444; /* Red */
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
   
-  --color-accent-purple: #A855F7;
-  --color-accent-blue: #3B82F6;
-  --color-accent-orange: #F97316;
+  --color-accent-purple: #8B5CF6;
+  --color-accent-blue: var(--info);
+  --color-accent-orange: var(--warning);
   
-  --color-border: #1e293b;
+  --color-border: var(--border);
 }
 
 @layer base {
+  html {
+    background-color: var(--bg);
+    color-scheme: dark;
+  }
+
   body {
-    background-color: var(--color-bg-base);
-    color: var(--color-text-main);
+    background-color: var(--bg);
+    color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -42,7 +49,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 3px;
   }
 
@@ -53,8 +60,199 @@
 
 @layer components {
   .form-input {
-    @apply min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-white placeholder:text-slate-500 focus:border-[#D4FF00] focus:outline-none;
+    min-height: 3rem;
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
+    padding-inline: 0.75rem;
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.5rem;
+    transition: border-color 180ms ease, background-color 180ms ease;
   }
+
+  .form-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .form-input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+}
+
+/*
+ * Transitional compatibility layer for the existing Tailwind-heavy UI. Core
+ * shell and controls use semantic tokens directly; these mappings let the rest
+ * of the app inherit PortKheaw light/dark without a risky whole-app rewrite.
+ * Market-direction colors remain semantic and are never replaced by brand lime.
+ */
+@layer utilities {
+  .text-white, .text-slate-100, .text-slate-200 { color: var(--text) !important; }
+  .text-slate-300, .text-slate-400 { color: var(--text-secondary) !important; }
+  .text-slate-500, .text-slate-600 { color: var(--text-muted) !important; }
+  .text-black, .text-slate-950 { color: var(--accent-fg) !important; }
+
+  .text-slate-700 { color: var(--text-muted) !important; }
+
+  .bg-slate-950 { background-color: var(--bg) !important; }
+  .bg-slate-900 { background-color: var(--surface-elevated) !important; }
+  .bg-slate-800 { background-color: var(--surface-hover) !important; }
+  .bg-slate-700 { background-color: var(--surface-selected) !important; }
+  .bg-slate-400 { background-color: var(--text-muted) !important; }
+  .bg-white { background-color: var(--surface) !important; }
+
+  .border-slate-600, .border-slate-700 { border-color: var(--border-strong) !important; }
+  .border-slate-800, .border-slate-900 { border-color: var(--border) !important; }
+  .divide-slate-800 > :not(:last-child) { border-color: var(--border) !important; }
+
+  .text-emerald-400, .text-emerald-500 { color: var(--positive) !important; }
+  .text-red-400, .text-red-500 { color: var(--negative) !important; }
+  .text-amber-400, .text-amber-500 { color: var(--warning) !important; }
+  .text-blue-400, .text-blue-500 { color: var(--info) !important; }
+
+  /*
+   * Status text in the 100-300 shades was picked to glow on a near-black
+   * surface; on the light surface the same pink/amber goes to roughly 2:1 and
+   * the label stops being readable. These are re-pointed at the semantic token
+   * for the SAME meaning — gain stays green, loss stays red, warning stays
+   * amber — never at the brand lime. Scoped to light so dark mode renders
+   * exactly as it does today.
+   */
+  html[data-appearance="light"] {
+    .text-emerald-100, .text-emerald-200, .text-emerald-300, .text-green-300,
+    [class~="text-emerald-300/80"] { color: var(--positive) !important; }
+
+    .text-red-200, .text-red-300, .text-rose-300, .text-rose-400,
+    [class~="text-rose-300/80"] { color: var(--negative) !important; }
+
+    .text-amber-100, .text-amber-200, .text-amber-300, .text-orange-200,
+    [class~="text-amber-100/80"],
+    [class~="text-amber-300/80"],
+    [class~="text-amber-300/90"] { color: var(--warning) !important; }
+
+    .text-sky-200, .text-sky-300, .text-blue-300 { color: var(--info) !important; }
+
+    /* Hues that carry their own category rather than a market direction keep a
+       distinct identity, just dark enough to read on the light surface. */
+    .text-violet-200, .text-violet-300, .text-purple-400 { color: #6D28D9 !important; }
+    .text-fuchsia-300 { color: #A21CAF !important; }
+    .text-lime-200 { color: var(--accent) !important; }
+  }
+
+  [class~="bg-[#0A0E17]"] { background-color: var(--bg) !important; }
+  [class~="bg-[#151B28]"],
+  [class~="bg-[#141722]"],
+  [class~="bg-[#0F1420]"],
+  [class~="bg-[#101725]"] { background-color: var(--surface) !important; }
+  [class~="bg-[#1e293b]"] { background-color: var(--surface-hover) !important; }
+
+  [class~="text-[#D4FF00]"] { color: var(--accent) !important; }
+  [class~="bg-[#D4FF00]"] { background-color: var(--accent) !important; }
+  [class~="border-[#D4FF00]"] { border-color: var(--accent) !important; }
+  [class~="accent-[#D4FF00]"] { accent-color: var(--accent) !important; }
+  [class~="bg-[#D4FF00]/5"],
+  [class~="bg-[#D4FF00]/10"],
+  [class~="bg-[#D4FF00]/15"],
+  [class~="bg-[#D4FF00]/20"],
+  [class~="bg-[#D4FF00]/[.06]"],
+  [class~="bg-[#D4FF00]/[.07]"] { background-color: var(--accent-soft) !important; }
+  [class~="border-[#D4FF00]/30"],
+  [class~="border-[#D4FF00]/40"],
+  [class~="border-[#D4FF00]/50"] { border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important; }
+  [class~="text-[#D4FF00]/80"] { color: color-mix(in srgb, var(--accent) 80%, transparent) !important; }
+
+  /*
+   * Translucent variants. Tailwind compiles `bg-x/70` to its own class, so the
+   * opaque mappings above never reach them — and an unmapped dark slate at 95%
+   * is exactly what leaves a navy strip across a light page. Translucency is
+   * preserved so sticky/blurred surfaces still read as overlays.
+   */
+  [class~="bg-[#0A0E17]/95"] { background-color: color-mix(in srgb, var(--bg) 95%, transparent) !important; }
+  [class~="bg-[#101621]/95"],
+  [class~="bg-[#0F1420]/95"] { background-color: color-mix(in srgb, var(--surface) 95%, transparent) !important; }
+  [class~="bg-[#151B28]/80"] { background-color: color-mix(in srgb, var(--surface) 80%, transparent) !important; }
+  [class~="bg-[#151B28]/70"] { background-color: color-mix(in srgb, var(--surface) 70%, transparent) !important; }
+  [class~="border-[#242733]"] { border-color: var(--border) !important; }
+  [class~="border-[#0A0E17]"] { border-color: var(--bg) !important; }
+  [class~="from-[#151B28]"][class~="to-[#0A0E17]"] {
+    background-image: linear-gradient(to bottom right, var(--surface), var(--bg)) !important;
+  }
+
+  /*
+   * `~=` matches one whitespace-delimited class, so a variant class such as
+   * `hover:bg-slate-800/70` is left alone and re-mapped on :hover below —
+   * a substring match would turn every hover state into a permanent one.
+   */
+  [class~="bg-slate-950/20"],
+  [class~="bg-slate-950/30"],
+  [class~="bg-slate-950/35"],
+  [class~="bg-slate-950/40"],
+  [class~="bg-slate-950/50"],
+  [class~="bg-slate-950/60"] { background-color: color-mix(in srgb, var(--bg) 45%, transparent) !important; }
+  [class~="bg-slate-950/95"] { background-color: color-mix(in srgb, var(--bg) 95%, transparent) !important; }
+  [class~="bg-slate-900/30"],
+  [class~="bg-slate-900/50"],
+  [class~="bg-slate-900/60"],
+  [class~="bg-slate-900/70"] { background-color: color-mix(in srgb, var(--surface-elevated) 60%, transparent) !important; }
+  [class~="bg-slate-800/20"],
+  [class~="bg-slate-800/50"],
+  [class~="bg-slate-800/60"],
+  [class~="bg-slate-800/70"],
+  [class~="bg-slate-800/80"],
+  [class~="bg-slate-700/60"] { background-color: color-mix(in srgb, var(--surface-hover) 65%, transparent) !important; }
+  [class~="hover:bg-slate-800/30"]:hover,
+  [class~="hover:bg-slate-800/50"]:hover,
+  [class~="hover:bg-slate-800/70"]:hover { background-color: color-mix(in srgb, var(--surface-hover) 65%, transparent) !important; }
+  [class~="bg-slate-500/5"],
+  [class~="bg-slate-500/10"],
+  [class~="bg-slate-500/15"] { background-color: color-mix(in srgb, var(--text-muted) 12%, transparent) !important; }
+  [class~="border-slate-800/50"],
+  [class~="border-slate-800/60"],
+  [class~="border-slate-800/70"],
+  [class~="border-slate-800/80"] { border-color: var(--border) !important; }
+  [class~="border-slate-600/40"],
+  [class~="border-slate-500/30"],
+  [class~="border-slate-500/40"] { border-color: var(--border-strong) !important; }
+  [class~="divide-slate-800/60"] > :not(:last-child) { border-color: var(--border) !important; }
+
+  /*
+   * Interaction variants. Left unmapped these are the light-mode failure the
+   * opaque rules cannot catch: `hover:text-white` turns a link invisible on a
+   * white surface, and neon lime hover text drops below AA.
+   */
+  [class~="hover:text-white"]:hover { color: var(--text) !important; }
+  [class~="hover:bg-slate-700"]:hover,
+  [class~="hover:bg-slate-800"]:hover,
+  [class~="hover:bg-slate-900"]:hover,
+  [class~="hover:bg-[#1e293b]"]:hover { background-color: var(--surface-hover) !important; }
+  [class~="hover:bg-white/5"]:hover { background-color: color-mix(in srgb, var(--text) 6%, transparent) !important; }
+  [class~="hover:border-slate-500"]:hover,
+  [class~="hover:border-slate-700"]:hover { border-color: var(--border-strong) !important; }
+  [class~="placeholder:text-slate-500"]::placeholder { color: var(--text-muted) !important; }
+  [class~="hover:text-[#D4FF00]"]:hover { color: var(--accent) !important; }
+  .group:hover [class~="group-hover:text-[#D4FF00]"] { color: var(--accent) !important; }
+  [class~="hover:bg-[#D4FF00]/10"]:hover { background-color: var(--accent-soft) !important; }
+  [class~="hover:border-[#D4FF00]/50"]:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important; }
+  [class~="focus:border-[#D4FF00]"]:focus { border-color: var(--accent) !important; }
+  [class~="focus:ring-[#D4FF00]/50"]:focus,
+  [class~="focus-visible:ring-[#D4FF00]"]:focus-visible { --tw-ring-color: var(--accent) !important; }
+  [class~="focus-visible:outline-[#D4FF00]"]:focus-visible { outline-color: var(--focus-ring) !important; }
+  [class~="md:border-slate-800"] { border-color: var(--border) !important; }
+
+  [class~="border-white/10"],
+  [class~="border-white/20"] { border-color: var(--border) !important; }
+  [class~="bg-black/50"],
+  [class~="bg-black/60"],
+  [class~="bg-black/70"] { background-color: var(--overlay) !important; }
+  [class~="bg-black/20"] { background-color: color-mix(in srgb, var(--overlay) 40%, transparent) !important; }
+
+  /* Market direction and status stay semantic in both appearances. */
+  [class~="text-[#F59E0B]"] { color: var(--warning) !important; }
+  [class~="text-[#EF4444]"] { color: var(--negative) !important; }
+  [class~="bg-[#F59E0B]"] { background-color: var(--warning) !important; }
+  [class~="bg-[#EF4444]"] { background-color: var(--negative) !important; }
 }
 
 /* Utilities for tabular numbers */
@@ -111,4 +309,9 @@ html[data-reduce-motion] *::after {
   .keyboard-safe-modal {
     max-height: 100svh;
   }
+}
+
+/* Scoped to its own breakpoint so the ATM tint stays a desktop-only affordance. */
+@media (min-width: 768px) {
+  [class~="md:bg-[#D4FF00]/[0.04]"] { background-color: var(--accent-soft) !important; }
 }

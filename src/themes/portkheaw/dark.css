@@ -1,0 +1,29 @@
+html[data-theme="portkheaw"][data-appearance="dark"] {
+  --bg: #070A08;
+  --surface: #0D120F;
+  --surface-elevated: #121A15;
+  --surface-hover: #172019;
+  --surface-selected: #1B261E;
+  --text: #F4F7F5;
+  --text-secondary: #B7C1BA;
+  --text-muted: #89958D;
+  --border: #223128;
+  --border-strong: #304438;
+  --accent: #D7FF00;
+  --accent-hover: #E2FF4D;
+  --accent-active: #C7EC00;
+  --accent-soft: rgba(215, 255, 0, 0.10);
+  --accent-fg: #101400;
+  --positive: #10B981;
+  --negative: #EF4444;
+  --warning: #F59E0B;
+  --info: #3B82F6;
+  --focus-ring: #D7FF00;
+  --input-bg: #0A0F0C;
+  --chart-bg: #0D120F;
+  --chart-grid: #223128;
+  --chart-axis: #89958D;
+  --brand-mark-bg: #000000;
+  --overlay: rgba(3, 7, 5, 0.76);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.30);
+}

@@ -1,0 +1,40 @@
+html[data-theme="portkheaw"][data-appearance="light"] {
+  --bg: #F4F7F3;
+  --surface: #FFFFFF;
+  --surface-elevated: #EDF2EC;
+  --surface-hover: #E8EEE7;
+  --surface-selected: #E1E9E0;
+  --text: #0B110D;
+  --text-secondary: #445048;
+  /* #68756D reads 4.25:1 on --surface-elevated, just under AA for the 12px
+     labels that use it (tab names, metric captions). Two steps darker clears
+     4.5:1 on every light surface without changing the grey. */
+  --text-muted: #626E66;
+  --border: #D5DED5;
+  --border-strong: #BAC8BC;
+  /*
+   * Darkened from #6F8700, which failed AA twice over: as link/label text on
+   * white it reads 4.08:1, and white-on-accent inside a filled button reads the
+   * same 4.08:1. #5F7300 is the same olive two steps toward --accent-hover and
+   * clears 4.5:1 in both directions, so one value fixes both cases.
+   */
+  --accent: #5F7300;
+  --accent-hover: #596D00;
+  --accent-active: #4B5C00;
+  --accent-soft: rgba(95, 115, 0, 0.10);
+  --accent-fg: #FFFFFF;
+  --positive: #087A55;
+  --negative: #C93636;
+  --warning: #9A5A00;
+  --info: #2563B8;
+  --focus-ring: #596D00;
+  --input-bg: #FFFFFF;
+  --chart-bg: #FFFFFF;
+  --chart-grid: #D5DED5;
+  --chart-axis: #68756D;
+  /* The mascot never recolors with appearance; it keeps one black plate so the
+     brand mark reads identically in light and dark. */
+  --brand-mark-bg: #000000;
+  --overlay: rgba(11, 17, 13, 0.48);
+  --shadow: 0 18px 45px rgba(24, 39, 29, 0.12);
+}

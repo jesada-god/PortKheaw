@@ -1,4 +1,4 @@
-# Nexora AI
+# PortKheaw
 
 ## Analytics providers
 
@@ -24,7 +24,7 @@ API keys never enter browser bundles. Finnhub uses the `X-Finnhub-Token` request
 
 Intelligent Investment Analytics — แพลตฟอร์มวิเคราะห์ ติดตามพอร์ต และจำลองการลงทุนด้วยข้อมูลและ AI
 
-Nexora AI เป็นเว็บแอป Next.js สำหรับติดตาม Watchlist, บันทึกข้อมูลพอร์ตด้วยตนเอง, ตั้ง Price Alert และใช้เครื่องมือ What-If กับ Monte Carlo โดยไม่มีระบบส่งคำสั่งซื้อขายจริง
+PortKheaw เป็นเว็บแอป Next.js สำหรับติดตาม Watchlist, บันทึกข้อมูลพอร์ตด้วยตนเอง, ตั้ง Price Alert และใช้เครื่องมือ What-If กับ Monte Carlo โดยไม่มีระบบส่งคำสั่งซื้อขายจริง
 
 ## เริ่มใช้งาน
 

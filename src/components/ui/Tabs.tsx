@@ -19,8 +19,8 @@ export function Tabs({ tabs, activeTab, onChange, className }: TabsProps) {
           className={cn(
             "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-colors border",
             activeTab === tab
-              ? "bg-[#D4FF00]/10 text-[#D4FF00] border-[#D4FF00]/30"
-              : "bg-slate-800/50 text-slate-400 border-transparent hover:text-white hover:border-slate-700"
+              ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+              : "border-transparent bg-[var(--surface-elevated)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
           )}
         >
           {tab}

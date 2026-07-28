@@ -77,7 +77,7 @@ function marketSource(contract: OptionContract): string {
 }
 
 function valuationSource(contract: OptionContract): string {
-  if (contract.valuationSource === 'nexora-derived') return 'คำนวณโดย Nexora';
+  if (contract.valuationSource === 'nexora-derived') return 'คำนวณโดย PortKheaw';
   if (contract.valuationSource === 'provider') return marketSource(contract);
   return 'Unavailable';
 }

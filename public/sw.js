@@ -1,4 +1,4 @@
-/* Nexora AI app-shell service worker.
+/* PortKheaw app-shell service worker.
  * Account, authentication, market data, and API responses are never cached here.
  */
 
@@ -149,7 +149,7 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.registration.showNotification(
-      payload.title || 'Nexora AI',
+      payload.title || 'PortKheaw',
       notificationOptions,
     ),
   );

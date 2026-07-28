@@ -17,7 +17,7 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="เมนูหลัก" className="lg:hidden fixed bottom-0 left-0 right-0 bg-[#0A0E17]/95 backdrop-blur-md border-t border-[#1e293b] pb-[env(safe-area-inset-bottom)] z-50">
+    <nav aria-label="เมนูหลัก" className="fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_94%,transparent)] pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden">
       <div className="flex justify-around items-center h-16">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -30,7 +30,7 @@ export default function BottomNav() {
               aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex flex-col items-center justify-center w-full h-full space-y-1',
-                isActive ? 'text-[#D4FF00]' : 'text-[#94a3b8] hover:text-white transition-colors'
+                isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)] transition-colors hover:text-[var(--text)]'
               )}
             >
               <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />

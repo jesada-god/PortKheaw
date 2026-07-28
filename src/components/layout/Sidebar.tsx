@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Home, Star, Search, PieChart, Wrench } from 'lucide-react';
 import { cn } from '@/src/utils/cn';
 import { appConfig } from '@/src/config/app';
+import { BrandMark } from '@/src/components/brand/BrandMark';
 
 const navItems = [
   { name: 'Home', href: '/', icon: Home },
@@ -18,13 +19,13 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden lg:flex shrink-0 flex-col w-64 bg-[#0F172A] border-r border-slate-800 h-dvh sticky top-0">
-      <div className="p-6 border-b border-slate-800">
+    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-colors duration-200 lg:flex">
+      <div className="border-b border-[var(--border)] p-5">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#D4FF00] flex items-center justify-center">
-            <span className="text-black font-bold text-xl">N</span>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-mark-bg)]">
+            <BrandMark priority className="h-9 w-9" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-white">{appConfig.name}</h1>
+          <h1 className="text-xl font-bold tracking-tight text-[var(--text)]">{appConfig.name}</h1>
         </div>
       </div>
       
@@ -40,8 +41,8 @@ export default function Sidebar() {
               className={cn(
                 'flex items-center gap-3 px-6 py-3 transition-colors',
                 isActive 
-                  ? 'text-[#D4FF00] bg-[#D4FF00]/10 border-r-4 border-[#D4FF00] font-medium' 
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  ? 'border-r-4 border-[var(--accent)] bg-[var(--accent-soft)] font-medium text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
               )}
             >
               <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
@@ -52,9 +53,9 @@ export default function Sidebar() {
       </nav>
 
       <div className="mt-auto p-6">
-        <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/30">
-          <p className="text-xs font-semibold text-purple-400 uppercase tracking-widest mb-1">Pro Analysis</p>
-          <p className="text-sm text-slate-300">What-If & Monte Carlo Ready</p>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-4">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">Pro Analysis</p>
+          <p className="text-sm text-[var(--text-secondary)]">What-If & Monte Carlo Ready</p>
         </div>
       </div>
     </aside>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { appConfig } from '@/src/config/app';
 import { useEffect, useState } from 'react';
+import { BrandMark } from '@/src/components/brand/BrandMark';
 
 interface HeaderProps {
   title: string;
@@ -24,13 +25,18 @@ export default function Header({ title, subtitle, status }: HeaderProps) {
   }, []);
 
   return (
-    <header className="min-h-16 border-b border-slate-800 flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 bg-[#0A0E17]/80 backdrop-blur-md sticky top-0 z-40">
+    <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_86%,transparent)] px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-md transition-colors duration-200 sm:px-6 lg:px-8">
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-        <div className="lg:hidden shrink-0 w-9 h-9 rounded-lg bg-[#D4FF00] text-black font-black flex items-center justify-center" aria-label={appConfig.name}>N</div>
-        <div>
-          <p className="lg:hidden text-xs leading-none text-[#D4FF00] font-semibold mb-1">{appConfig.name}</p>
-          <h2 className="text-base sm:text-lg font-semibold text-white truncate">{title}</h2>
-          {subtitle && <p className="hidden sm:block text-xs text-slate-400 truncate">{subtitle}</p>}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-mark-bg)] lg:hidden" aria-label={appConfig.name}>
+          <BrandMark priority className="h-9 w-9" />
+        </div>
+        {/* min-w-0: without it this flex item refuses to shrink and `truncate`
+            below never engages, so a long title runs under the header actions
+            at 320px instead of ellipsing. */}
+        <div className="min-w-0">
+          <p className="mb-1 truncate text-xs font-semibold leading-none text-[var(--accent)] lg:hidden">{appConfig.name}</p>
+          <h2 className="truncate text-base font-semibold text-[var(--text)] sm:text-lg">{title}</h2>
+          {subtitle && <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block">{subtitle}</p>}
         </div>
         
         {status && (
@@ -49,7 +55,7 @@ export default function Header({ title, subtitle, status }: HeaderProps) {
         )}
       </div>
       
-      <div className="flex items-center gap-4 md:gap-6">
+      <div className="flex shrink-0 items-center gap-4 md:gap-6">
         <div 
           className="hidden md:block relative cursor-text"
           onClick={() => router.push('/search')}
@@ -57,10 +63,10 @@ export default function Header({ title, subtitle, status }: HeaderProps) {
           <input 
             type="text" 
             placeholder="ค้นหาหุ้น... (Symbol, Name)" 
-            className="min-h-11 w-64 rounded-lg border border-slate-700 bg-[#151B28] px-4 py-2 text-xs focus:border-[#D4FF00] focus:outline-none pointer-events-none"
+            className="pointer-events-none min-h-11 w-64 rounded-lg border border-[var(--border-strong)] bg-[var(--input-bg)] px-4 py-2 text-xs text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
             readOnly
           />
-          <kbd className="absolute right-2 top-1.5 px-1.5 py-0.5 bg-slate-800 text-[10px] text-slate-500 border border-slate-700 rounded">⌘K</kbd>
+          <kbd className="absolute right-2 top-1.5 rounded border border-[var(--border)] bg-[var(--surface-hover)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">⌘K</kbd>
         </div>
         <div className="flex items-center gap-2 md:gap-3">
           <button 

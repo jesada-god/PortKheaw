@@ -16,7 +16,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   if (!user) redirect('/auth/sign-in?next=/profile');
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
   const metadataName = typeof user.user_metadata.full_name === 'string' ? user.user_metadata.full_name : null;
-  const fullName = profile?.full_name || metadataName || user.email?.split('@')[0] || 'Nexora User';
+  const fullName = profile?.full_name || metadataName || user.email?.split('@')[0] || 'PortKheaw User';
   const error = typeof params.error === 'string' ? params.error : undefined;
 
   return (

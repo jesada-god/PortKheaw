@@ -221,7 +221,7 @@ export function enrichOptionContracts(
   const derived = deriveValuation(merged, context);
   if (derived.warning) warnings.push(derived.warning);
   if (derived.derivedCount > 0) {
-    warnings.push(`Implied volatility and Greeks for ${derived.derivedCount} contracts were calculated by Nexora from the contract's own quoted mark, not supplied by the provider`);
+    warnings.push(`Implied volatility and Greeks for ${derived.derivedCount} contracts were calculated by PortKheaw from the contract's own quoted mark, not supplied by the provider`);
   }
 
   return {
