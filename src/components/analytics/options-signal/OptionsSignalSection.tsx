@@ -16,6 +16,7 @@ import type {
   OptionsSignalFactorScore,
   OptionsSignalResult,
 } from '@/src/lib/analytics/options-signal/types';
+import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import {
   DATA_STATE_LABEL,
@@ -310,10 +311,10 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
       <section>
         <h3 className="font-semibold text-white">2. TTM Squeeze และ RVOL</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
-          <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} />
+          <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} term="ttmSqueeze" />
           <Detail label="Squeeze Momentum" value={numberText(squeeze.momentum)} />
           <Detail label="Momentum ÷ ATR (normalize)" value={numberText(squeeze.normalizedMomentum)} />
-          <Detail label="RVOL 20 วัน" value={squeeze.relativeVolume === null ? '—' : `${squeeze.relativeVolume.toFixed(2)}×`} />
+          <Detail label="RVOL 20 วัน" value={squeeze.relativeVolume === null ? '—' : `${squeeze.relativeVolume.toFixed(2)}×`} term="relativeVolume" />
           <Detail label="ระดับการยืนยันจาก RVOL" value={squeeze.confirmation === null ? 'ไม่มีข้อมูล' : `${Math.round(squeeze.confirmation * 100)}%`} />
         </dl>
         <p className="mt-2 text-xs leading-5 text-slate-500">
@@ -343,7 +344,7 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
           <Detail label="IV ÷ ความผันผวนจริง" value={numberText(iv.ratio)} />
           <Detail label="ระดับความแพง" value={iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]} />
           <Detail label="สถานะข้อมูล IV" value={DATA_STATE_LABEL[iv.state]} />
-          <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} />
+          <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
       </section>
@@ -418,10 +419,18 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+/**
+ * One metric row. `term` attaches the SHARED glossary hint, whose 18px trigger
+ * carries its ≥44px tap target as an overlay, so adding one never widens the
+ * row or pushes the value column off a 320px screen.
+ */
+function Detail({ label, value, term }: { label: string; value: string; term?: GlossaryTermId }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 py-2">
-      <dt className="text-slate-500">{label}</dt>
+      <dt className="flex min-w-0 flex-wrap items-center gap-1.5 text-slate-500">
+        <span className="min-w-0">{label}</span>
+        {term && <InfoHint term={term} />}
+      </dt>
       <dd className="min-w-0 break-words text-right font-mono text-white [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );

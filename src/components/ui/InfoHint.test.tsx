@@ -109,6 +109,34 @@ describe('InfoHint — accessible glossary popover', () => {
     expect(document.activeElement).toBe(trigger());
   });
 
+  it('claims Escape while open so an enclosing dialog is not dismissed with it', () => {
+    // ResponsiveDialog/useDialogA11y closes on a BUBBLE-phase document keydown.
+    // An open hint must swallow Escape first, otherwise dismissing the hint would
+    // also tear down the panel the reader opened it from.
+    const enclosingDialogEscape = vi.fn();
+    document.addEventListener('keydown', enclosingDialogEscape);
+    try {
+      render(<InfoHint term="ivRank" />);
+      click(trigger());
+      expect(popover()).toBeTruthy();
+
+      act(() => {
+        trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+
+      expect(popover()).toBeNull();
+      expect(enclosingDialogEscape).not.toHaveBeenCalled();
+
+      // With no hint open the key must reach the dialog again.
+      act(() => {
+        trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      expect(enclosingDialogEscape).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener('keydown', enclosingDialogEscape);
+    }
+  });
+
   it('uses a content-height bottom sheet on mobile instead of the desktop popover', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({
       matches: true,

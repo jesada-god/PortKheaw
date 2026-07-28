@@ -140,6 +140,28 @@ describe('OptionsSignalSection', () => {
     expect(document.body.textContent).toContain('Confidence');
   });
 
+  it('explains every beginner-hostile metric it shows with the shared glossary hint', () => {
+    render(<OptionsSignalSection symbol="AAPL" context={context} acceptedPrice={110} active />);
+    // On the card itself.
+    for (const term of ['optionsSignalConfidence', 'ivRank', 'daysToEarnings']) {
+      expect(container.querySelector(`[data-testid="info-hint-${term}"]`), term).not.toBeNull();
+    }
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    act(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    // ...and on the rows inside the calculation breakdown.
+    for (const term of ['ttmSqueeze', 'relativeVolume', 'putCallRatio']) {
+      const hint = document.body.querySelector(`[data-testid="info-hint-${term}"]`);
+      expect(hint, term).not.toBeNull();
+      // Reachable by keyboard and labelled for screen readers, not a bare icon.
+      expect(hint!.tagName).toBe('BUTTON');
+      expect(hint!.getAttribute('aria-label')).toContain('คำอธิบาย');
+      expect(hint!.getAttribute('aria-expanded')).toBe('false');
+    }
+  });
+
   it('states plainly that no server context means no fabricated signal', () => {
     render(<OptionsSignalSection symbol="AAPL" context={null} acceptedPrice={110} active />);
     expect(container.textContent).toContain('ไม่แสดงผลลัพธ์ที่เดาขึ้นเอง');

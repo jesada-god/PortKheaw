@@ -68,14 +68,24 @@ export function InfoHint({
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    /*
+      Escape is claimed in the CAPTURE phase and stopped there. An enclosing
+      dialog (ResponsiveDialog/useDialogA11y) also closes on a document-level
+      Escape, so without this an open hint inside a dialog would dismiss both at
+      once — the reader would lose the panel they were reading about.
+    */
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      close();
+    };
     const onPointerDown = (event: PointerEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) close();
     };
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     document.addEventListener('pointerdown', onPointerDown);
     return () => {
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('pointerdown', onPointerDown);
     };
   }, [open, close]);
