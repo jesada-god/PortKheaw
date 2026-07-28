@@ -23,6 +23,7 @@ import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
 import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
 import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types';
+import type { OptionsSignalServerContext } from '@/src/lib/analytics/options-signal/assemble';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import { formatMarketCapitalization } from '@/src/lib/stock-detail/profile-presentation';
 import type { CompanyProfileLanguage } from '@/src/lib/stock-detail/profile-presentation';
@@ -69,6 +70,14 @@ const OptionsChainPanel = dynamic(
     loading: () => <div className="h-72 animate-pulse rounded-xl bg-slate-800/50" />,
   },
 );
+const OptionsSignalSection = dynamic(
+  () => import('@/src/components/analytics/options-signal/OptionsSignalSection')
+    .then((module) => module.OptionsSignalSection),
+  {
+    ssr: false,
+    loading: () => <div className="h-96 animate-pulse rounded-2xl bg-slate-800/50" />,
+  },
+);
 
 const tabs = ['Overview', 'Chart', 'Financials', 'News', 'Analysis'];
 
@@ -99,6 +108,8 @@ interface StockDetailClientProps {
   keyStatisticsEnabled: boolean;
   analystConsensusEnabled: boolean;
   marketSignal?: MarketSignalResult | null;
+  /** Server-computed candle/earnings inputs for the Options Signal Engine. */
+  optionsSignalContext?: OptionsSignalServerContext | null;
 }
 
 function MetricCard({
@@ -155,6 +166,7 @@ export function StockDetailClient({
   keyStatisticsEnabled,
   analystConsensusEnabled,
   marketSignal = null,
+  optionsSignalContext = null,
 }: StockDetailClientProps) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -544,6 +556,12 @@ export function StockDetailClient({
           )}
           {tab === 'Analysis' && (
             <div className="space-y-4">
+              <OptionsSignalSection
+                symbol={symbol}
+                context={optionsSignalContext}
+                acceptedPrice={analyticalSpotPrice}
+                active={tab === 'Analysis'}
+              />
               <OptionsChainPanel
                 symbol={symbol}
                 acceptedPrice={analyticalSpotPrice}
