@@ -7,7 +7,8 @@ import type {
   SeriesType,
   Time,
 } from 'lightweight-charts';
-import type { InstitutionalOverlaySpec } from '@/src/lib/analytics/institutional-sr/overlay-spec';
+import type { InstitutionalOverlaySpec, LineSpec } from '@/src/lib/analytics/institutional-sr/overlay-spec';
+import { layoutLabelColumn } from './chart-label-layout';
 
 interface BitmapScope {
   context: CanvasRenderingContext2D;
@@ -19,8 +20,22 @@ interface BitmapTarget {
   useBitmapCoordinateSpace(callback: (scope: BitmapScope) => void): void;
 }
 
-const LABEL_FONT = '11px system-ui, -apple-system, sans-serif';
-const LABEL_HEIGHT = 15;
+const LABEL_FONT_SIZE = 11;
+const LABEL_FONT_STACK = 'system-ui, -apple-system, sans-serif';
+const LABEL_HEIGHT = 18;
+/** Distance from the pane edge to the label chip. */
+const LABEL_INSET = 8;
+const LABEL_PADDING_X = 5;
+const LABEL_RADIUS = 3;
+/** How solid the chip behind a label is, so text stays readable over candles. */
+const LABEL_BACKGROUND_ALPHA = 0.82;
+
+/** Chart-surface colours the labels need; refreshed when the appearance changes. */
+export interface OverlayLabelTheme {
+  background: string;
+}
+
+const DEFAULT_LABEL_THEME: OverlayLabelTheme = { background: '#0D120F' };
 
 /**
  * A lightweight-charts series primitive that paints the institutional overlays:
@@ -31,6 +46,7 @@ const LABEL_HEIGHT = 15;
  */
 export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
   private spec: InstitutionalOverlaySpec = { bands: [], lines: [] };
+  private theme: OverlayLabelTheme = DEFAULT_LABEL_THEME;
   private series: ISeriesApi<SeriesType> | null = null;
   private requestUpdate: (() => void) | null = null;
   private readonly view: IPrimitivePaneView;
@@ -64,6 +80,16 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
 
   setSpec(spec: InstitutionalOverlaySpec): void {
     this.spec = spec;
+    this.requestUpdate?.();
+  }
+
+  /** Test seam and read-back for the host: the spec currently being painted. */
+  currentSpec(): InstitutionalOverlaySpec {
+    return this.spec;
+  }
+
+  setTheme(theme: OverlayLabelTheme): void {
+    this.theme = theme;
     this.requestUpdate?.();
   }
 
@@ -112,10 +138,89 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
     });
   }
 
+  /**
+   * One label chip: a rounded plate in the chart background so the text stays
+   * readable over candles, then the text in the line's own colour.
+   */
+  private drawLabelChip(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    color: string,
+    side: 'left' | 'right',
+    centerY: number,
+    paneWidth: number,
+    hr: number,
+    vr: number,
+  ): void {
+    const paddingX = LABEL_PADDING_X * hr;
+    const chipWidth = ctx.measureText(text).width + paddingX * 2;
+    const chipHeight = LABEL_HEIGHT * vr;
+    const inset = LABEL_INSET * hr;
+    const x = side === 'right'
+      ? Math.max(inset, paneWidth - inset - chipWidth)
+      : inset;
+    const top = centerY - chipHeight / 2;
+    ctx.save();
+    ctx.globalAlpha = LABEL_BACKGROUND_ALPHA;
+    ctx.fillStyle = this.theme.background;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, top, chipWidth, chipHeight, LABEL_RADIUS * hr);
+    else ctx.rect(x, top, chipWidth, chipHeight);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = color;
+    ctx.fillText(text, x + paddingX, centerY);
+  }
+
+  /**
+   * Lines are stroked at the coordinate their price maps to; only the labels go
+   * through the collision pass, and each side of the pane is laid out on its own
+   * so a left support label can never be pushed by a right EMA label.
+   */
+  private drawLines(ctx: CanvasRenderingContext2D, paneWidth: number, paneHeight: number, hr: number, vr: number): void {
+    const drawable: Array<{ line: LineSpec; y: number }> = [];
+    for (const line of this.spec.lines) {
+      const y = this.priceY(line.price, vr);
+      if (y == null) continue;
+      drawable.push({ line, y });
+      if (line.drawLine === false) continue;
+      ctx.strokeStyle = line.color;
+      ctx.lineWidth = Math.max(1, Math.round((line.width ?? 1) * vr));
+      ctx.setLineDash(line.dashed ? [6 * hr, 4 * hr] : []);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(paneWidth, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    for (const side of ['left', 'right'] as const) {
+      const column = drawable.filter(({ line }) => (line.side ?? 'left') === side);
+      const placements = layoutLabelColumn(
+        column.map(({ line, y }) => ({ id: line.id, y })),
+        { height: paneHeight, labelHeight: LABEL_HEIGHT * vr },
+      );
+      for (const placement of placements) {
+        const item = column[placement.index];
+        if (!item) continue;
+        this.drawLabelChip(
+          ctx,
+          item.line.label,
+          item.line.labelColor ?? item.line.color,
+          side,
+          placement.y,
+          paneWidth,
+          hr,
+          vr,
+        );
+      }
+    }
+  }
+
   private draw(target: BitmapTarget): void {
     if (!this.series) return;
     target.useBitmapCoordinateSpace((scope) => {
-      const { context: ctx, bitmapSize, verticalPixelRatio: vr } = scope;
+      const { context: ctx, bitmapSize, horizontalPixelRatio: hr, verticalPixelRatio: vr } = scope;
       const width = bitmapSize.width;
 
       for (const band of this.spec.bands) {
@@ -131,36 +236,16 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
         ctx.strokeRect(0, top, width, height);
       }
 
-      // Declutter line labels: keep a running list of used label y-slots.
-      const usedLabelYs: number[] = [];
-      ctx.font = `${LABEL_FONT.replace('11px', `${Math.round(11 * vr)}px`)}`;
+      ctx.font = `${Math.round(LABEL_FONT_SIZE * vr)}px ${LABEL_FONT_STACK}`;
       ctx.textBaseline = 'middle';
-      for (const line of this.spec.lines) {
-        const y = this.priceY(line.price, vr);
-        if (y == null) continue;
-        ctx.strokeStyle = line.color;
-        ctx.lineWidth = Math.max(1, vr);
-        if (line.dashed) ctx.setLineDash([6 * vr, 4 * vr]);
-        else ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        let labelY = y;
-        while (usedLabelYs.some((used) => Math.abs(used - labelY) < LABEL_HEIGHT * vr)) labelY += LABEL_HEIGHT * vr;
-        usedLabelYs.push(labelY);
-        ctx.fillStyle = line.color;
-        ctx.fillText(line.label, 6 * vr, labelY);
-      }
+      this.drawLines(ctx, width, bitmapSize.height, hr, vr);
 
       // Band labels at the band top edge.
       for (const band of this.spec.bands) {
         const yHigh = this.priceY(band.high, vr);
         if (yHigh == null) continue;
         ctx.fillStyle = band.labelColor;
-        ctx.fillText(band.label, 6 * vr, yHigh + LABEL_HEIGHT * 0.6 * vr);
+        ctx.fillText(band.label, LABEL_INSET * hr, yHigh + LABEL_HEIGHT * 0.6 * vr);
       }
     });
   }

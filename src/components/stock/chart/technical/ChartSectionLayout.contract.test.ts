@@ -70,6 +70,43 @@ describe('Responsive rules below the chart', () => {
   });
 });
 
+/**
+ * The crosshair readout and the in-pane labels compete for the same surface.
+ * Levels label the left edge of the price pane and the EMAs plus the accepted
+ * price label the right edge, so where the readout may sit is a hard rule rather
+ * than a preference — and one jsdom cannot measure, hence a source contract.
+ */
+describe('Crosshair readout placement', () => {
+  const readoutClasses = chart.match(/className="([^"]*)"[^>]*data-testid="chart-tooltip"/)?.[1] ?? '';
+
+  it('is positioned by the shared crosshair readout element', () => {
+    expect(readoutClasses).not.toBe('');
+    expect(readoutClasses).toContain('absolute');
+  });
+
+  it('docks below the price pane on phones, where no horizontal position can clear both label columns', () => {
+    // ~270px of readout against a 228–298px price pane: the only way out is down.
+    // Every label this chart draws lives on the price pane, so a readout anchored
+    // to the bottom of the chart cannot cover one at any price, zoom or viewport.
+    expect(readoutClasses).toContain('bottom-8');
+    expect(readoutClasses).not.toMatch(/(^|\s)top-\d/);
+    expect(readoutClasses).not.toMatch(/(^|\s)left-\d/);
+  });
+
+  it('keeps clear of the lightweight-charts attribution mark in the bottom-left corner', () => {
+    expect(readoutClasses).toContain('right-2');
+    expect(readoutClasses).toContain('max-w-[calc(100%-4rem)]');
+  });
+
+  it('returns to the top from sm up, inset past the left label column', () => {
+    expect(readoutClasses).toContain('sm:top-2');
+    expect(readoutClasses).toContain('sm:left-24');
+    // The phone anchors must be released, or the two placements fight.
+    expect(readoutClasses).toContain('sm:bottom-auto');
+    expect(readoutClasses).toContain('sm:right-auto');
+  });
+});
+
 describe('Production copy below the chart', () => {
   // The panels below the chart are pure presentation, so their whole source is
   // rendered copy. The candle panel also performs transport work (it reads a

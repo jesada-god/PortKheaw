@@ -17,12 +17,27 @@ export interface BandSpec {
   labelColor: string;
 }
 
+/** Pane edge a label hugs. The price scale sits on the right, so support and
+ *  resistance read on the left where nothing else competes for the space. */
+export type OverlayLabelSide = 'left' | 'right';
+
 export interface LineSpec {
   id: string;
   price: number;
   color: string;
   label: string;
   dashed: boolean;
+  /** Defaults to the left edge, which is what every overlay line has always used. */
+  side?: OverlayLabelSide;
+  /** Line thickness in CSS pixels; defaults to 1. */
+  width?: number;
+  /**
+   * False when the stroke belongs to something else — an EMA series, a
+   * lightweight-charts price line — and only the label is drawn from this spec.
+   */
+  drawLine?: boolean;
+  /** Text colour when the line is drawn translucent; defaults to `color`. */
+  labelColor?: string;
 }
 
 /** One horizontal VPVR bar: a price bin drawn as a right-anchored volume column. */

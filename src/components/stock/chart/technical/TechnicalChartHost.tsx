@@ -28,26 +28,12 @@ import {
   type PriceSeriesKind,
 } from './price-series';
 import { getChartThemeColors, subscribeToAppearanceChange } from '@/src/themes/chart-theme';
-import { formatPrice } from '@/src/utils/format';
+import { buildChartLabelLines, type ChartPriceLineSpec, type EmaLineSpec } from './chart-labels';
 
 /** A visible logical bar-index range, reported for viewport-scoped analytics. */
 export interface VisibleLogicalRange { from: number; to: number; }
 
-export interface ChartPriceLineSpec {
-  id: string;
-  price: number;
-  color: string;
-  title: string;
-  dashed?: boolean;
-  width?: 1 | 2 | 3 | 4;
-}
-
-export interface EmaLineSpec {
-  id: string;
-  label: string;
-  color: string;
-  points: readonly IndicatorPoint[];
-}
+export type { ChartPriceLineSpec, EmaLineSpec };
 
 const EMPTY_SPEC: InstitutionalOverlaySpec = { bands: [], lines: [] };
 const RSI_PANE = 2;
@@ -240,6 +226,9 @@ export function TechnicalChartHost({
     const unsubscribeAppearance = subscribeToAppearanceChange(window, () => {
       if (disposedRef.current || chartRef.current !== chart) return;
       chart.applyOptions(layout());
+      // The label chips are painted on the canvas, so they need the new surface
+      // colour too — the chart's own options never reach a primitive.
+      primitiveRef.current?.setTheme({ background: getChartThemeColors().background });
     });
 
     const candles = addPriceSeries(chart, initialSeriesKindRef.current, 0);
@@ -257,6 +246,7 @@ export function TechnicalChartHost({
 
     const primitive = new InstitutionalOverlayPrimitive();
     primitiveRef.current = primitive;
+    primitive.setTheme({ background: getChartThemeColors().background });
     try {
       candles.attachPrimitive(primitive);
       primitive.setSpec(overlaySpecRef.current ?? EMPTY_SPEC);
@@ -443,7 +433,9 @@ export function TechnicalChartHost({
       const series = chart.addSeries(LineSeries, {
         color: line.color,
         lineWidth: 2,
-        title: line.label,
+        // No built-in title: it can only print the name, never the value. The
+        // overlay label layer draws "EMA 20  85.42" on the right instead.
+        title: '',
         lastValueVisible: false,
         priceLineVisible: false,
         crosshairMarkerVisible: false,
@@ -523,13 +515,16 @@ export function TechnicalChartHost({
     priceLineRefs.current.forEach((line) => {
       try { candles.removePriceLine(line); } catch { /* already removed */ }
     });
+    // The stroke stays a lightweight-charts price line — it is pinned to the real
+    // price and follows zoom/pan by construction. Its title is deliberately empty:
+    // the label layer draws the text, on the edge each line asked for.
     priceLineRefs.current = priceLines.map((spec) => candles.createPriceLine({
       price: spec.price,
       color: spec.color,
       lineWidth: spec.width ?? 1,
       lineStyle: spec.dashed ? LineStyle.Dashed : LineStyle.Solid,
-      axisLabelVisible: true,
-      title: spec.title,
+      axisLabelVisible: spec.axisLabel ?? false,
+      title: '',
     }));
     return () => {
       priceLineRefs.current.forEach((line) => {
@@ -541,22 +536,22 @@ export function TechnicalChartHost({
     // when that series is replaced they must be created again on the new one.
   }, [ready, priceLines, seriesKind]);
 
-  useLayoutEffect(() => {
-    overlaySpecRef.current = overlaySpec;
-    if (!ready || disposedRef.current || !primitiveRef.current) return;
-    primitiveRef.current.setSpec(overlaySpec ?? EMPTY_SPEC);
-  }, [ready, overlaySpec]);
+  // EMA values, the accepted price and every level label are one layer: a single
+  // collision pass per pane edge, so nothing can print on top of anything else.
+  const labelLines = useMemo(
+    () => buildChartLabelLines({ emaLines, priceLines, pricePrecision }),
+    [emaLines, priceLines, pricePrecision],
+  );
+  const labelledSpec = useMemo<InstitutionalOverlaySpec>(() => ({
+    ...(overlaySpec ?? EMPTY_SPEC),
+    lines: [...(overlaySpec?.lines ?? []), ...labelLines],
+  }), [overlaySpec, labelLines]);
 
-  const emaLabels = emaLines.flatMap((line) => {
-    const latest = line.points.at(-1);
-    if (!latest || !Number.isFinite(latest.value)) return [];
-    return [{
-      id: line.id,
-      label: line.label,
-      color: line.color,
-      value: formatPrice(latest.value, { precision: pricePrecision }),
-    }];
-  });
+  useLayoutEffect(() => {
+    overlaySpecRef.current = labelledSpec;
+    if (!ready || disposedRef.current || !primitiveRef.current) return;
+    primitiveRef.current.setSpec(labelledSpec);
+  }, [ready, labelledSpec]);
 
   return (
     <div
@@ -565,20 +560,18 @@ export function TechnicalChartHost({
       aria-label="กราฟราคาพร้อมปริมาณการซื้อขายและอินดิเคเตอร์"
     >
       <div ref={containerRef} className="h-full w-full" />
-      {emaLabels.length > 0 && (
-        <div
-          className="pointer-events-none absolute left-2 right-12 top-2 z-10 flex max-w-full flex-wrap gap-x-3 gap-y-1 rounded-md bg-[var(--chart-bg)]/90 px-2 py-1 font-mono text-[10px] tabular-nums shadow-sm sm:right-auto sm:text-[11px]"
-          data-testid="ema-legend"
-          aria-label="ค่า EMA ล่าสุด"
-        >
-          {emaLabels.map((item) => (
-            <span key={item.id} className="whitespace-nowrap" data-testid={`ema-label-${item.id}`}>
-              <span style={{ color: item.color }}>{item.label}</span>{' '}
-              <span className="text-[var(--text-main)]">{item.value}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      {/*
+        The labels themselves are painted on the chart canvas, which no screen
+        reader and no DOM assertion can see. This mirrors them as text: same
+        strings, same edge, no second visual layer over the price pane.
+      */}
+      <div className="sr-only" data-testid="chart-label-layer" aria-label="ป้ายกำกับบนกราฟ">
+        {labelLines.map((line) => (
+          <span key={line.id} data-testid={`chart-label-${line.id}`} data-side={line.side ?? 'left'}>
+            {line.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

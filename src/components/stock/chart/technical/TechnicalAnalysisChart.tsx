@@ -35,7 +35,9 @@ import { mergeLiveCandleIntoBars } from '../../live-candle-bridge';
 import type { CanonicalLiveUpdateSink } from '../../useMarketSource';
 import type { OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels';
 import { useOptionsSupportResistance } from '../useOptionsSupportResistance';
+import { useChartThemeColors } from '../useChartThemeColors';
 import { levelsRequestKey, requestChartLevels } from './levels-client';
+import { buildPriceLineSpecs } from './level-lines';
 import { ChartToolbar, type ToolbarToggleKey } from './ChartToolbar';
 import { OptionsLevelsPanel } from './OptionsLevelsPanel';
 import { TechnicalChartHost, type ChartPriceLineSpec, type EmaLineSpec, type VisibleLogicalRange } from './TechnicalChartHost';
@@ -257,21 +259,15 @@ export function TechnicalAnalysisChart({
     };
   }, [visibleProfile, preferences.vpvr, optionsOverlay]);
 
-  const priceLines = useMemo<ChartPriceLineSpec[]>(() => {
-    const lines: ChartPriceLineSpec[] = [];
-    if (acceptedPrice != null) {
-      lines.push({ id: 'current', price: acceptedPrice, color: '#D4FF00', title: 'ราคาปัจจุบัน', dashed: true });
-    }
-    if (preferences.supportResistance && activeLevels) {
-      activeLevels.resistance.forEach((price, index) => lines.push({
-        id: `R${index + 1}`, price, color: ['#ff8a80', '#ff5c4d', '#ff3b30'][index], title: `R${index + 1}`, width: index === 0 ? 2 : 1,
-      }));
-      activeLevels.support.forEach((price, index) => lines.push({
-        id: `S${index + 1}`, price, color: ['#69f0ae', '#2ee08a', '#00c57f'][index], title: `S${index + 1}`, width: index === 0 ? 2 : 1,
-      }));
-    }
-    return lines;
-  }, [acceptedPrice, preferences.supportResistance, activeLevels]);
+  // Level and accepted-price colours come from the live appearance: the canvas
+  // needs literal values, and the light tokens are much darker than the dark ones.
+  const themeColors = useChartThemeColors();
+  const priceLines = useMemo<ChartPriceLineSpec[]>(() => buildPriceLineSpecs({
+    acceptedPrice,
+    levels: activeLevels,
+    showLevels: preferences.supportResistance,
+    colors: themeColors,
+  }), [acceptedPrice, preferences.supportResistance, activeLevels, themeColors]);
 
   // ── Live tick: candle and volume always move together ──────────────────────
   useEffect(() => {
@@ -375,8 +371,22 @@ export function TechnicalAnalysisChart({
           onCrosshairBar={onCrosshairBar}
           onReady={onReady}
         />
+        {/*
+          Where the crosshair readout may sit, now that the levels label the left
+          edge of the price pane and the EMAs plus the accepted price label the
+          right one.
+
+          From `sm` up there is room beside the left column, so it stays at the
+          top, inset past it. Below `sm` there is not: the readout is ~270px and
+          the price pane is 228–298px, so no horizontal position on that pane can
+          clear both columns. It moves out of the price pane entirely instead and
+          docks over the volume pane, above the time axis — every label this
+          chart draws belongs to the price pane, so nothing there can be covered
+          at any price, zoom or viewport. The width cap keeps it clear of the
+          lightweight-charts attribution mark in the bottom-left corner.
+        */}
         {tooltipBar && (
-          <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-lg border border-slate-700 bg-[#0F1420]/95 px-2.5 py-2 font-mono text-[11px] text-slate-200 shadow-xl" data-testid="chart-tooltip">
+          <div className="pointer-events-none absolute bottom-8 right-2 z-10 max-w-[calc(100%-4rem)] rounded-lg border border-slate-700 bg-[#0F1420]/95 px-2.5 py-2 font-mono text-[11px] text-slate-200 shadow-xl sm:bottom-auto sm:left-24 sm:right-auto sm:top-2 sm:max-w-[calc(100%-12rem)]" data-testid="chart-tooltip">
             <div className="text-slate-400">{new Date(tooltipBar.time * 1_000).toLocaleString('th-TH')}</div>
             {heikin && <div className="text-amber-300">Heikin-Ashi (ราคาแปลงแล้ว)</div>}
             <div>O {tooltipBar.open.toFixed(2)} · H {tooltipBar.high.toFixed(2)} · L {tooltipBar.low.toFixed(2)} · C {tooltipBar.close.toFixed(2)}</div>

@@ -10,6 +10,9 @@ describe('chart appearance bridge', () => {
       '--chart-axis': '#666',
       '--text-secondary': '#444',
       '--border-strong': '#bbb',
+      '--positive': ' #087A55 ',
+      '--negative': '#C93636',
+      '--accent': '#5F7300',
     };
     expect(readChartThemeColors((property) => values[property] ?? '')).toEqual({
       background: '#fff',
@@ -17,8 +20,18 @@ describe('chart appearance bridge', () => {
       axis: '#666',
       text: '#444',
       border: '#bbb',
+      positive: '#087A55',
+      negative: '#C93636',
+      accent: '#5F7300',
     });
     expect(readChartThemeColors(() => '').background).toBe('#0D120F');
+  });
+
+  it('falls back to the dark semantic colours when a token is missing', () => {
+    const colors = readChartThemeColors(() => '');
+    expect(colors.positive).toBe('#10B981');
+    expect(colors.negative).toBe('#EF4444');
+    expect(colors.accent).toBe('#D7FF00');
   });
 
   it('cleans up its runtime appearance listener', () => {
