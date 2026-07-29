@@ -81,29 +81,30 @@ describe('Crosshair readout placement', () => {
 
   it('is positioned by the shared crosshair readout element', () => {
     expect(readoutClasses).not.toBe('');
-    expect(readoutClasses).toContain('absolute');
+    expect(readoutClasses).toContain('relative');
   });
 
-  it('docks below the price pane on phones, where no horizontal position can clear both label columns', () => {
-    // ~270px of readout against a 228–298px price pane: the only way out is down.
-    // Every label this chart draws lives on the price pane, so a readout anchored
-    // to the bottom of the chart cannot cover one at any price, zoom or viewport.
-    expect(readoutClasses).toContain('bottom-8');
+  it('flows after the whole chart on phones, where no horizontal position can clear both label columns', () => {
+    // The readout follows the fixed-height chart host in normal flow. Unlike a
+    // bottom anchor, wrapping at 320px can only make the wrapper taller downward:
+    // its top edge can never intrude into the price pane.
+    expect(readoutClasses).toContain('mt-2');
+    expect(readoutClasses).toContain('mx-2');
+    expect(readoutClasses).toContain('w-[calc(100%-1rem)]');
+    expect(readoutClasses).not.toMatch(/(^|\s)absolute(\s|$)/);
+    expect(readoutClasses).not.toMatch(/(^|\s)bottom-\d/);
     expect(readoutClasses).not.toMatch(/(^|\s)top-\d/);
     expect(readoutClasses).not.toMatch(/(^|\s)left-\d/);
   });
 
-  it('keeps clear of the lightweight-charts attribution mark in the bottom-left corner', () => {
-    expect(readoutClasses).toContain('right-2');
-    expect(readoutClasses).toContain('max-w-[calc(100%-4rem)]');
-  });
-
   it('returns to the top from sm up, inset past the left label column', () => {
+    expect(readoutClasses).toContain('sm:absolute');
     expect(readoutClasses).toContain('sm:top-2');
     expect(readoutClasses).toContain('sm:left-24');
-    // The phone anchors must be released, or the two placements fight.
-    expect(readoutClasses).toContain('sm:bottom-auto');
-    expect(readoutClasses).toContain('sm:right-auto');
+    // Release the phone flow sizing/margins when the readout becomes an overlay.
+    expect(readoutClasses).toContain('sm:m-0');
+    expect(readoutClasses).toContain('sm:w-auto');
+    expect(readoutClasses).toContain('sm:max-w-[calc(100%-12rem)]');
   });
 });
 

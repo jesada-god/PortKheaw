@@ -379,14 +379,12 @@ export function TechnicalAnalysisChart({
           From `sm` up there is room beside the left column, so it stays at the
           top, inset past it. Below `sm` there is not: the readout is ~270px and
           the price pane is 228–298px, so no horizontal position on that pane can
-          clear both columns. It moves out of the price pane entirely instead and
-          docks over the volume pane, above the time axis — every label this
-          chart draws belongs to the price pane, so nothing there can be covered
-          at any price, zoom or viewport. The width cap keeps it clear of the
-          lightweight-charts attribution mark in the bottom-left corner.
+          clear both columns. Mobile therefore keeps the readout in document flow
+          after the chart host. Its top edge is always below every chart pane,
+          even when a narrow viewport wraps the OHLC row onto another line.
         */}
         {tooltipBar && (
-          <div className="pointer-events-none absolute bottom-8 right-2 z-10 max-w-[calc(100%-4rem)] rounded-lg border border-slate-700 bg-[#0F1420]/95 px-2.5 py-2 font-mono text-[11px] text-slate-200 shadow-xl sm:bottom-auto sm:left-24 sm:right-auto sm:top-2 sm:max-w-[calc(100%-12rem)]" data-testid="chart-tooltip">
+          <div className="pointer-events-none relative z-10 mx-2 mt-2 w-[calc(100%-1rem)] rounded-lg border border-slate-700 bg-[#0F1420]/95 px-2.5 py-2 font-mono text-[11px] text-slate-200 shadow-xl sm:absolute sm:left-24 sm:top-2 sm:m-0 sm:w-auto sm:max-w-[calc(100%-12rem)]" data-testid="chart-tooltip">
             <div className="text-slate-400">{new Date(tooltipBar.time * 1_000).toLocaleString('th-TH')}</div>
             {heikin && <div className="text-amber-300">Heikin-Ashi (ราคาแปลงแล้ว)</div>}
             <div>O {tooltipBar.open.toFixed(2)} · H {tooltipBar.high.toFixed(2)} · L {tooltipBar.low.toFixed(2)} · C {tooltipBar.close.toFixed(2)}</div>
