@@ -2,8 +2,6 @@
 
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DataProvenance } from '@/src/components/market-data/DataProvenance';
-import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { chartRequestKey, planChartRequest, shouldApplyResponse } from './chart-request';
 import { matchesLiveSelection, mergeLiveCandleIntoBars, shouldPollChart } from './live-candle-bridge';
 import { Skeleton } from '@/src/components/ui/Skeleton';
@@ -21,15 +19,21 @@ import { resolvePriceAdjustment } from '@/src/lib/analytics/price-adjustment';
 import { presentChartWarnings } from './chart-data-warnings';
 import type { ChartPreferences } from '@/src/lib/analytics/timeframe';
 import type { ToolbarToggleKey } from './chart/technical/ChartToolbar';
+import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 
 const TechnicalAnalysisChart = dynamic(
   () => import('./chart/technical/TechnicalAnalysisChart').then((module) => module.TechnicalAnalysisChart),
   { ssr: false, loading: () => <Skeleton className="h-[540px] w-full rounded-xl" /> },
 );
 
-type Envelope = { data: unknown; error?: { code?: string; message?: string; retryAfterSeconds?: number; reason?: string; retryable?: boolean } };
+type Envelope = {
+  data: unknown;
+  error?: { code?: string; message?: string; retryAfterSeconds?: number; reason?: string; retryable?: boolean };
+  meta?: { timestamp?: unknown };
+};
 type ChartResult = ReturnType<typeof normalizedCandleResultSchema.parse>;
-type KeyedChartResult = { requestKey: string; data: ChartResult };
+type ChartCacheEntry = { data: ChartResult; updatedAt: string };
+type KeyedChartResult = ChartCacheEntry & { requestKey: string };
 
 interface Props {
   symbol: string;
@@ -84,7 +88,7 @@ export function MarketCandleChartPanel(props: Props) {
   const [error, setError] = useState<{ code?: string; message: string; diagnostics?: string; retryable?: boolean } | null>(null);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(0);
-  const cache = useRef(new Map<string, ChartResult>());
+  const cache = useRef(new Map<string, ChartCacheEntry>());
   const inflight = useRef(new Map<string, Promise<void>>());
   const abort = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -111,7 +115,7 @@ export function MarketCandleChartPanel(props: Props) {
       cooldownUntil,
     });
     if (plan === 'serve-cache') {
-      setResultState({ requestKey, data: cache.current.get(requestKey)! });
+      setResultState({ requestKey, ...cache.current.get(requestKey)! });
       setError(null);
       return;
     }
@@ -144,9 +148,16 @@ export function MarketCandleChartPanel(props: Props) {
         }
         const parsed = normalizedCandleResultSchema.safeParse(payload.data);
         if (!parsed.success) throw Object.assign(new Error('ข้อมูลแท่งเทียนย้อนหลังไม่ผ่านการตรวจสอบ'), { code: 'invalid-provider-response' });
+        const responseTimestamp = typeof payload.meta?.timestamp === 'string'
+          ? new Date(payload.meta.timestamp)
+          : null;
+        if (!responseTimestamp || Number.isNaN(responseTimestamp.valueOf())) {
+          throw Object.assign(new Error('ข้อมูลเวลาอัปเดตย้อนหลังไม่ผ่านการตรวจสอบ'), { code: 'invalid-provider-response' });
+        }
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
-        cache.current.set(requestKey, parsed.data);
-        setResultState({ requestKey, data: parsed.data });
+        const entry = { data: parsed.data, updatedAt: responseTimestamp.toISOString() };
+        cache.current.set(requestKey, entry);
+        setResultState({ requestKey, ...entry });
         setCooldownUntil(0);
       } catch (cause) {
         if (!shouldApplyResponse(generation.current, requestGeneration, controller.signal.aborted)) return;
@@ -205,6 +216,9 @@ export function MarketCandleChartPanel(props: Props) {
     hasLiveCandle: Boolean(liveCandle),
     marketLabel,
   }) : null;
+  const successfulUpdateAt = provenance?.realtime
+    ? marketLabel?.receivedAt ?? null
+    : resultState?.requestKey === requestKey ? resultState.updatedAt : null;
   // The newest completed (non-partial) bar the chart currently displays, reported
   // up as a history-fallback price candidate — the exact bar shown, never a
   // fabricated one. It is the header's history candidate for Daily/Week/Month (or
@@ -251,28 +265,14 @@ export function MarketCandleChartPanel(props: Props) {
   const refreshLabel = !coveredByLiveSource && cooldown ? `รีเฟรชได้ใน ${cooldown}s` : 'รีเฟรช';
   const warningNotices = presentChartWarnings(result?.warnings ?? []);
   return <div className="space-y-3" data-testid="market-candle-chart-panel">
-    {/*
-      The bar count, exchange timezone and first/last covered session are
-      provenance, not headline copy: they live in the ⓘ detail so the primary
-      row stays readable and free of raw provider diagnostics.
-    */}
-    {/*
-      The live state is stated once, by the provenance row below: it already
-      carries the status, the provider and the delay. A second "LIVE · price"
-      chip here only repeated the header's price with a third badge, so it is
-      gone; the realtime source itself stays in the ⓘ detail.
-    */}
-    <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>
-    {result &&<DetailPopover triggerLabel="ดูรายละเอียดข้อมูลย้อนหลัง" title="ข้อมูลย้อนหลังที่กำลังแสดง" testId="chart-history-detail" align="start">
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
-        <dt className="text-slate-500">จำนวนแท่ง</dt><dd className="text-right font-mono text-slate-200">{displayPrices.length.toLocaleString()}</dd>
-        <dt className="text-slate-500">เขตเวลาตลาด</dt><dd className="text-right text-slate-200">{result.exchangeTimezone}</dd>
-        <dt className="text-slate-500">ช่วงข้อมูลจริง</dt><dd className="text-right text-slate-200">{result.actualStart ? new Date(result.actualStart * 1_000).toLocaleDateString('th-TH') : '—'} – {result.actualEnd ? new Date(result.actualEnd * 1_000).toLocaleDateString('th-TH') : '—'}</dd>
-        <dt className="text-slate-500">แหล่งข้อมูลย้อนหลัง</dt><dd className="text-right text-slate-200">{result.provider}</dd>
-        {provenance?.realtime && <><dt className="text-slate-500">แหล่งข้อมูลเรียลไทม์</dt><dd className="text-right text-slate-200">{provenance.provider ?? '—'} WebSocket</dd></>}
-      </dl>
-    </DetailPopover>}</div>
-    <DataProvenance status={provenance?.status ?? (error ? 'unavailable' : 'delayed')} provider={provenance?.provider} asOf={provenance?.asOf} delayedMinutes={provenance?.realtime ? 0 : result?.delayedByMinutes ?? undefined} reason={error?.message}/>
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" disabled={refreshDisabled} onClick={onRefresh} className="min-h-11 rounded-lg border border-slate-700 px-3 text-xs text-slate-300 disabled:opacity-40">{refreshLabel}</button>
+      {successfulUpdateAt && (
+        <p className="ml-auto text-xs text-slate-500" data-testid="chart-last-updated">
+          อัปเดตล่าสุด: {formatBangkokDateTime(successfulUpdateAt)}
+        </p>
+      )}
+    </div>
     {warningNotices.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="สถานะข้อมูลย้อนหลัง">
       {warningNotices.map((notice) => <span key={notice.kind} title={notice.message} className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1 text-[11px] text-slate-400">ⓘ {notice.message}</span>)}
     </div>}
@@ -289,6 +289,7 @@ export function MarketCandleChartPanel(props: Props) {
       priceProvenance={provenance ? `${provenance.provider ?? 'provider'} · ${provenance.status}` : null}
       priceAdjustment={priceAdjustment}
       currency={result.currency === 'USD' || result.currency == null ? '$' : `${result.currency} `}
+      pricePrecision={result.pricePrecision ?? 2}
       preferences={preferences}
       onSelectInterval={onSelectInterval}
       onSelectRange={onSelectRange}
@@ -299,7 +300,6 @@ export function MarketCandleChartPanel(props: Props) {
       liveUpdateSinkRef={liveUpdateSinkRef}
     />}
     {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">ไม่มีแท่งเทียนที่ผ่านการตรวจสอบสำหรับช่วงที่เลือก</p>}
-    {process.env.NODE_ENV === 'development' && result && <details className="rounded-xl border border-slate-800 p-3 text-xs text-slate-400"><summary>Development diagnostics</summary><dl className="mt-2 grid gap-1 sm:grid-cols-2"><div>Requested/provider symbol: {symbol} / {result.symbol}</div><div>Provider: {result.provider}</div><div>Timezone/currency: {result.exchangeTimezone} / {result.currency ?? '—'}</div><div>Interval/range: {interval} / {range}</div><div>Actual first/last: {result.actualStart ?? '—'} / {result.actualEnd ?? '—'}</div><div>Bars: {result.candles.length}</div><div>Status: {result.dataStatus}</div><div className="sm:col-span-2">Warnings: {result.warnings.join(' | ') || '—'}</div></dl></details>}
   </div>;
 }
 

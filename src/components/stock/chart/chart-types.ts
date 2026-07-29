@@ -8,11 +8,12 @@ export interface ChartBar {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  volume: number | null;
   rawOpen: number;
   rawHigh: number;
   rawLow: number;
   rawClose: number;
+  transformed: boolean;
   transactions?: number;
   vwap?: number;
   partial: boolean;
@@ -46,4 +47,3 @@ export interface ChartActions {
   fitContent(): void;
   reset(): void;
 }
-

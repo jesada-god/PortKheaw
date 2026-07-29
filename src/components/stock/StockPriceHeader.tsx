@@ -10,6 +10,7 @@ import {
   type CurrentMarketSession,
 } from '@/src/lib/market-data/current-session';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
+import { formatPrice } from '@/src/utils/format';
 import { stockDetailErrorMessage } from '@/src/lib/stock-detail/error-presentation';
 import {
   connectionStatusPresentation,
@@ -86,6 +87,12 @@ const numberFormatter = new Intl.NumberFormat('en-US', {
 
 function formatNumber(value: number | null): string {
   return value === null || !Number.isFinite(value) ? 'ไม่พบข้อมูล' : numberFormatter.format(value);
+}
+
+function formatMainPrice(value: number | null): string {
+  return value === null || !Number.isFinite(value)
+    ? 'ไม่พบข้อมูล'
+    : formatPrice(value, { mode: 'compact' });
 }
 
 function formatSigned(value: number | null): string {
@@ -301,7 +308,7 @@ export function StockPriceHeader({
       ? convertUsdForDisplay(price, selectedCurrency, fxRate)
       : price;
     const nextChange = calculatePriceChange(price, regular.previousClose);
-    if (priceDisplayRef.current) priceDisplayRef.current.textContent = formatNumber(nextDisplayPrice);
+    if (priceDisplayRef.current) priceDisplayRef.current.textContent = formatMainPrice(nextDisplayPrice);
     if (
       !nextChange
       || !changeRowRef.current
@@ -371,7 +378,7 @@ export function StockPriceHeader({
                 className={displayPrice === null
                   ? 'font-sans text-2xl font-bold leading-tight tracking-tight text-text-main sm:text-3xl'
                   : `whitespace-nowrap rounded-md px-1.5 -mx-1.5 text-[clamp(2.25rem,10vw,3.25rem)] font-bold leading-none tracking-tight text-text-main ${flashClass(priceFlash.direction)}`}>
-                {displayPrice === null ? 'ไม่พบราคาล่าสุด' : formatNumber(displayPrice)}
+                {displayPrice === null ? 'ไม่พบราคาล่าสุด' : formatMainPrice(displayPrice)}
               </span>
               <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-text-muted">{displayedCurrency}</span>
             </span>

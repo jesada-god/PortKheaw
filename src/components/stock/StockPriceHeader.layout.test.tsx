@@ -159,4 +159,12 @@ describe('StockPriceHeader price-line layout', () => {
     expect(currencyEl().textContent).toBe('USD');
     expect(priceEl().textContent).toContain('69.75');
   });
+
+  it('uses compact precision for the main price without changing the stored quote', () => {
+    const quote = { ...BASE_QUOTE, price: 10.0458 };
+    renderAt(375, baseProps(quote));
+    expect(priceEl().textContent).toBe('10.05');
+    expect(priceEl().textContent).not.toContain('10.0458');
+    expect(quote.price).toBe(10.0458);
+  });
 });

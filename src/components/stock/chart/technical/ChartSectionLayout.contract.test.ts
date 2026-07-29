@@ -88,9 +88,11 @@ describe('Production copy below the chart', () => {
     for (const token of ['Too Many Requests', 'Retry-After', 'cacheStatus', 'singleFlight', 'Discarded']) {
       expect(productionCopy, token).not.toContain(token);
     }
-    // actualStart/actualEnd and the bar count are provenance detail now, never
-    // headline text next to the refresh control.
-    expect(candleChart).toContain('chart-history-detail');
+    // The user-facing chart metadata is only the timestamp of the last
+    // successful data update; source/status details stay internal.
+    expect(candleChart).toContain('chart-last-updated');
+    expect(candleChart).not.toContain('chart-history-detail');
+    expect(candleChart).not.toContain('<DataProvenance');
     expect(candleChart).not.toContain('bars · ');
     expect(candleChart).not.toContain('History: ');
   });

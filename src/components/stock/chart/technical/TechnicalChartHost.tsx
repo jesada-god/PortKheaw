@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ColorType,
   HistogramSeries,
@@ -28,6 +28,7 @@ import {
   type PriceSeriesKind,
 } from './price-series';
 import { getChartThemeColors, subscribeToAppearanceChange } from '@/src/themes/chart-theme';
+import { formatPrice } from '@/src/utils/format';
 
 /** A visible logical bar-index range, reported for viewport-scoped analytics. */
 export interface VisibleLogicalRange { from: number; to: number; }
@@ -50,6 +51,36 @@ export interface EmaLineSpec {
 
 const EMPTY_SPEC: InstitutionalOverlaySpec = { bands: [], lines: [] };
 const RSI_PANE = 2;
+const VOLUME_PANE_HEIGHT = 96;
+const STUDY_PANE_HEIGHT = 110;
+const MIN_PRICE_PANE_HEIGHT = 200;
+
+interface PaneState {
+  rsi: boolean;
+  macd: boolean;
+}
+
+/**
+ * Assign every pane before data is made visible. Lightweight Charts otherwise
+ * redistributes empty/new panes internally, which can briefly give volume the
+ * price pane's geometry while an indicator pane is being added or removed.
+ */
+export function applyTechnicalPaneLayout(
+  chart: IChartApi,
+  containerHeight: number,
+  state: PaneState,
+): void {
+  const panes = chart.panes();
+  const studies = Number(state.rsi) + Number(state.macd);
+  const priceHeight = Math.max(
+    MIN_PRICE_PANE_HEIGHT,
+    Math.max(320, containerHeight) - VOLUME_PANE_HEIGHT - studies * STUDY_PANE_HEIGHT,
+  );
+  panes[0]?.setHeight(priceHeight);
+  panes[1]?.setHeight(VOLUME_PANE_HEIGHT);
+  if (state.rsi) panes[RSI_PANE]?.setHeight(STUDY_PANE_HEIGHT);
+  if (state.macd) panes[state.rsi ? RSI_PANE + 1 : RSI_PANE]?.setHeight(STUDY_PANE_HEIGHT);
+}
 
 function layout() {
   const colors = getChartThemeColors();
@@ -120,6 +151,8 @@ export interface TechnicalChartHostProps {
   overlaySpec: InstitutionalOverlaySpec;
   /** Changing this refits the viewport once; a live tick never does. */
   datasetKey: string;
+  /** Provider-declared symbol display precision, when available. */
+  pricePrecision?: number;
   onVisibleRangeChange?(range: VisibleLogicalRange | null): void;
   onCrosshairBar?(bar: DisplayBar | null): void;
   /** Receives an imperative reset handle for the toolbar. */
@@ -149,6 +182,7 @@ export function TechnicalChartHost({
   priceLines,
   overlaySpec,
   datasetKey,
+  pricePrecision = 2,
   onVisibleRangeChange,
   onCrosshairBar,
   onReady,
@@ -181,19 +215,23 @@ export function TechnicalChartHost({
   const rangeFrameRef = useRef<number | null>(null);
   const rangeHandlerRef = useRef(onVisibleRangeChange);
   const crosshairHandlerRef = useRef(onCrosshairBar);
+  const paneStateRef = useRef<PaneState>({ rsi: Boolean(rsi), macd: Boolean(macd) });
   const [ready, setReady] = useState(false);
 
   // Candles, volume, Heikin-Ashi and every tooltip value come from this one
   // derivation of the canonical bars — there is no second filtering path.
   const displayBars = useMemo(() => toDisplayBars(bars, chartType), [bars, chartType]);
-  useEffect(() => { barsRef.current = displayBars; }, [displayBars]);
-  useEffect(() => { rangeHandlerRef.current = onVisibleRangeChange; }, [onVisibleRangeChange]);
-  useEffect(() => { crosshairHandlerRef.current = onCrosshairBar; }, [onCrosshairBar]);
+  useLayoutEffect(() => { barsRef.current = displayBars; }, [displayBars]);
+  useLayoutEffect(() => { rangeHandlerRef.current = onVisibleRangeChange; }, [onVisibleRangeChange]);
+  useLayoutEffect(() => { crosshairHandlerRef.current = onCrosshairBar; }, [onCrosshairBar]);
 
   const paneCount = 2 + (rsi ? 1 : 0) + (macd ? 1 : 0);
   const macdPane = rsi ? RSI_PANE + 1 : RSI_PANE;
+  useLayoutEffect(() => {
+    paneStateRef.current = { rsi: Boolean(rsi), macd: Boolean(macd) };
+  }, [rsi, macd]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     disposedRef.current = false;
@@ -214,6 +252,8 @@ export function TechnicalChartHost({
     }, 1);
     candleRef.current = candles;
     volumeRef.current = volume;
+    // The first drawable frame already has separate price and volume geometry.
+    applyTechnicalPaneLayout(chart, container.clientHeight, paneStateRef.current);
 
     const primitive = new InstitutionalOverlayPrimitive();
     primitiveRef.current = primitive;
@@ -253,6 +293,7 @@ export function TechnicalChartHost({
           width: Math.max(1, container.clientWidth),
           height: Math.max(320, container.clientHeight),
         });
+        applyTechnicalPaneLayout(chart, container.clientHeight, paneStateRef.current);
       });
     };
     const observer = new ResizeObserver(resize);
@@ -290,7 +331,7 @@ export function TechnicalChartHost({
   // what hangs off it (the overlay primitive here; the S/R price lines in their
   // own effect, which also keys on the chart type). Panes, the time scale, the
   // volume histogram and every indicator series are untouched.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const chart = chartRef.current;
     if (!ready || !chart || disposedRef.current) return;
     if (activeKindRef.current === seriesKind) return;
@@ -347,14 +388,14 @@ export function TechnicalChartHost({
     if (!chartRef.current || disposedRef.current) return;
     try { chartRef.current.timeScale().fitContent(); } catch { /* mid-teardown */ }
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready) return;
     onReady?.({ reset, fit });
     return () => onReady?.(null);
   }, [ready, onReady, reset, fit]);
 
   // ── Candles + volume: one write path, always both together ─────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready || disposedRef.current) return;
     const candles = candleRef.current;
     const volume = volumeRef.current;
@@ -386,13 +427,13 @@ export function TechnicalChartHost({
     }
   }, [ready, displayBars, chartType, seriesKind, datasetKey, applyDefaultViewport]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready || disposedRef.current || !volumeRef.current) return;
     volumeRef.current.applyOptions({ visible: volumeVisible });
   }, [ready, volumeVisible]);
 
   // ── EMA overlays on the price pane ─────────────────────────────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     const chart = chartRef.current;
     if (!ready || !chart || disposedRef.current) return;
     emaRefs.current.forEach((series) => {
@@ -413,7 +454,7 @@ export function TechnicalChartHost({
   }, [ready, emaLines]);
 
   // ── RSI / MACD sub-panes ───────────────────────────────────────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     const chart = chartRef.current;
     if (!ready || !chart || disposedRef.current) return;
     [...rsiRefs.current, ...macdRefs.current].forEach((series) => {
@@ -430,6 +471,7 @@ export function TechnicalChartHost({
       const line = chart.addSeries(LineSeries, {
         color: '#2dd4bf', lineWidth: 2, title: 'RSI 14', lastValueVisible: true, priceLineVisible: false,
       }, RSI_PANE);
+      applyTechnicalPaneLayout(chart, containerRef.current?.clientHeight ?? 0, paneStateRef.current);
       line.setData(linePoints(rsi.points));
       [
         { value: 70, color: '#f87171' },
@@ -446,7 +488,6 @@ export function TechnicalChartHost({
         });
       });
       rsiRefs.current = [line];
-      try { chart.panes()[RSI_PANE]?.setHeight(110); } catch { /* pane not ready */ }
     }
 
     if (macd) {
@@ -456,6 +497,7 @@ export function TechnicalChartHost({
         lastValueVisible: false,
         priceLineVisible: false,
       }, macdPane);
+      applyTechnicalPaneLayout(chart, containerRef.current?.clientHeight ?? 0, paneStateRef.current);
       histogram.setData(macd.points.flatMap((point) => (point.histogram == null ? [] : [{
         time: point.time as UTCTimestamp as Time,
         value: point.histogram,
@@ -470,12 +512,12 @@ export function TechnicalChartHost({
       }, macdPane);
       signalLine.setData(linePoints(macd.points.flatMap((point) => (point.signal == null ? [] : [{ time: point.time, value: point.signal }]))));
       macdRefs.current = [histogram, macdLine, signalLine];
-      try { chart.panes()[macdPane]?.setHeight(110); } catch { /* pane not ready */ }
     }
+    applyTechnicalPaneLayout(chart, containerRef.current?.clientHeight ?? 0, paneStateRef.current);
   }, [ready, rsi, macd, paneCount, macdPane]);
 
   // ── S/R + accepted-price lines ─────────────────────────────────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     const candles = candleRef.current;
     if (!ready || !candles || disposedRef.current) return;
     priceLineRefs.current.forEach((line) => {
@@ -499,19 +541,45 @@ export function TechnicalChartHost({
     // when that series is replaced they must be created again on the new one.
   }, [ready, priceLines, seriesKind]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     overlaySpecRef.current = overlaySpec;
     if (!ready || disposedRef.current || !primitiveRef.current) return;
     primitiveRef.current.setSpec(overlaySpec ?? EMPTY_SPEC);
   }, [ready, overlaySpec]);
 
+  const emaLabels = emaLines.flatMap((line) => {
+    const latest = line.points.at(-1);
+    if (!latest || !Number.isFinite(latest.value)) return [];
+    return [{
+      id: line.id,
+      label: line.label,
+      color: line.color,
+      value: formatPrice(latest.value, { precision: pricePrecision }),
+    }];
+  });
+
   return (
     <div
-      ref={containerRef}
-      className={`w-full ${heightClassName}`}
+      className={`relative w-full ${heightClassName}`}
       data-testid="technical-chart-host"
       aria-label="กราฟราคาพร้อมปริมาณการซื้อขายและอินดิเคเตอร์"
-    />
+    >
+      <div ref={containerRef} className="h-full w-full" />
+      {emaLabels.length > 0 && (
+        <div
+          className="pointer-events-none absolute left-2 right-12 top-2 z-10 flex max-w-full flex-wrap gap-x-3 gap-y-1 rounded-md bg-[var(--chart-bg)]/90 px-2 py-1 font-mono text-[10px] tabular-nums shadow-sm sm:right-auto sm:text-[11px]"
+          data-testid="ema-legend"
+          aria-label="ค่า EMA ล่าสุด"
+        >
+          {emaLabels.map((item) => (
+            <span key={item.id} className="whitespace-nowrap" data-testid={`ema-label-${item.id}`}>
+              <span style={{ color: item.color }}>{item.label}</span>{' '}
+              <span className="text-[var(--text-main)]">{item.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

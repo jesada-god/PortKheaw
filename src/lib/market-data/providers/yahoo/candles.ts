@@ -23,6 +23,7 @@ const chartSchema = z.object({
       meta: z.object({
         symbol: z.string().optional(),
         currency: z.string().nullable().optional(),
+        priceHint: z.number().int().min(0).max(8).optional(),
         exchangeTimezoneName: z.string().optional(),
         exchangeDataDelayedBy: z.number().int().nonnegative().optional(),
         marketState: z.string().optional(),
@@ -421,6 +422,7 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         actualEnd: last.timestamp,
         exchangeTimezone: result.meta.exchangeTimezoneName ?? 'UTC',
         currency: result.meta.currency ?? null,
+        pricePrecision: result.meta.priceHint ?? null,
         dataStatus,
         delayedByMinutes,
         adjusted: Boolean(input.adjusted),

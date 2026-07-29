@@ -166,6 +166,11 @@ describe('TechnicalChartHost — one chart, one time scale', () => {
     const chart = lightweight.charts[0];
     expect(candlesOf(chart).paneIndex).toBe(0);
     expect(volumeOf(chart).paneIndex).toBe(1);
+    const panes = (chart.panes as () => Array<{ setHeight: ReturnType<typeof vi.fn> }>)();
+    expect(panes[0].setHeight).toHaveBeenCalledWith(224);
+    expect(panes[1].setHeight).toHaveBeenCalledWith(96);
+    expect(panes[1].setHeight.mock.invocationCallOrder[0])
+      .toBeLessThan(volumeOf(chart).setData.mock.invocationCallOrder[0]);
     await act(async () => root.unmount());
   });
 
@@ -280,6 +285,50 @@ describe('TechnicalChartHost — indicator panes never fetch', () => {
     const emaLine = (chart.series as SeriesStub[]).find((item) => item.definition === 'Line');
     expect(emaLine?.paneIndex).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it('shows the latest plotted EMA value at symbol precision and removes line and label together', async () => {
+    const points = [
+      { time: data[20].time, value: 10.1234 },
+      { time: data[21].time, value: 10.856 },
+    ];
+    const { host, root } = mount();
+    await act(async () => root.render(
+      <TechnicalChartHost
+        {...baseProps(data)}
+        pricePrecision={2}
+        emaLines={[{ id: 'ema20', label: 'EMA 20', color: '#f59e0b', points }]}
+      />,
+    ));
+    expect(host.querySelector('[data-testid="ema-label-ema20"]')?.textContent).toContain('EMA 20 10.86');
+
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(data)} emaLines={[]} />));
+    expect(host.querySelector('[data-testid="ema-legend"]')).toBeNull();
+    expect((lightweight.charts[0].series as SeriesStub[]).filter((item) => item.definition === 'Line')).toHaveLength(0);
+    await act(async () => root.unmount());
+  });
+
+  it('keeps pane and series ownership deterministic through rapid chart/indicator changes', async () => {
+    const { root } = mount();
+    const rsiPoints = data.map((bar) => ({ time: bar.time, value: 55 }));
+    const macdPoints = data.map((bar) => ({ time: bar.time, macd: 1, signal: 0.5, histogram: 0.5 }));
+    for (let index = 0; index < 10; index += 1) {
+      await act(async () => root.render(
+        <TechnicalChartHost
+          {...baseProps(data)}
+          chartType={index % 2 ? 'heikin-ashi' : 'candlestick'}
+          rsi={index % 3 === 0 ? { points: rsiPoints } : null}
+          macd={index % 4 === 0 ? { points: macdPoints } : null}
+        />,
+      ));
+    }
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(data)} rsi={null} macd={null} />));
+    const chart = lightweight.charts[0];
+    expect((chart.series as SeriesStub[]).filter((item) => item.paneIndex === 0)).toHaveLength(1);
+    expect((chart.series as SeriesStub[]).filter((item) => item.paneIndex === 1)).toHaveLength(1);
+    expect((chart.panes as () => unknown[])()).toHaveLength(2);
+    expect(lightweight.charts.filter((item) => item.removed === 0)).toHaveLength(1);
     await act(async () => root.unmount());
   });
 

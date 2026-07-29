@@ -261,4 +261,18 @@ describe('MarketCandleChartPanel request lifecycle', () => {
     expect(host.textContent).not.toContain('actualStart');
     await act(async () => root.unmount());
   });
+
+  it('shows only the successful update time in chart metadata', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response(yahooEnvelope('AAPL', '5m')));
+    vi.stubGlobal('fetch', fetchMock);
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
+    await act(async () => root.render(<MarketCandleChartPanel {...props()} />));
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="chart-last-updated"]')).not.toBeNull());
+    const metadata = host.querySelector('[data-testid="chart-last-updated"]')!;
+    expect(metadata.textContent).toContain('อัปเดตล่าสุด:');
+    expect(metadata.textContent).not.toMatch(/yahoo|provider|delayed|real-time|alpaca|IEX|Underlying/i);
+    expect(host.querySelector('[data-testid="data-provenance"]')).toBeNull();
+    expect(host.querySelector('[data-testid="chart-history-detail"]')).toBeNull();
+    await act(async () => root.unmount());
+  });
 });

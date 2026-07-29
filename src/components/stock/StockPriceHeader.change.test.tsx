@@ -118,7 +118,7 @@ describe('StockPriceHeader daily change display', () => {
     expect(transientPriceSinkRef.current).not.toBeNull();
     transientPriceSinkRef.current?.(70.1234);
 
-    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.1234');
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.12');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.3266');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('(-3.21%)');
   });

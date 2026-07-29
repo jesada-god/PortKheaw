@@ -73,7 +73,6 @@ function lastTouchLabel(statistics: LevelStatistics | null): string | null {
 export function SupportResistancePanel({
   rows,
   acceptedPrice,
-  priceLabel,
   basisLabel,
   nearest,
   statisticsReason,
@@ -99,7 +98,6 @@ export function SupportResistancePanel({
           <DetailPopover triggerLabel="ดูที่มาของแนวรับ–แนวต้าน" title="ที่มาของแนวรับ–แนวต้าน" testId="sr-provenance-trigger">
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
               <dt className="text-slate-500">อ้างอิงแท่ง</dt><dd className="text-right font-mono text-slate-200">{basisLabel}</dd>
-              <dt className="text-slate-500">ที่มาราคาปัจจุบัน</dt><dd className="text-right text-slate-200">{priceLabel ?? '—'}</dd>
             </dl>
             <p className="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-400">
               ระดับมาจากแท่ง {basisLabel} ที่ปิดสมบูรณ์แล้ว ส่วนสถิติ ชน/รับอยู่/หลุด วัดจากแท่งเทียนจริงที่กำลังแสดงอยู่บนกราฟ

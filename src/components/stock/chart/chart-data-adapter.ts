@@ -1,37 +1,37 @@
-import type { AreaData, BarData, CandlestickData, HistogramData, LineData, Time, UTCTimestamp } from 'lightweight-charts';
-import { heikinAshi } from '@/src/lib/analytics/chart-types/calculations';
+import type { AreaData, BarData, CandlestickData, HistogramData, LineData, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
 import type { AdvancedChartType } from '@/src/lib/analytics/chart-types/types';
-import { normalizeOhlcvTimeline, type OhlcvInputBar } from '@/src/lib/analytics/chart-data/timeline';
+import type { OhlcvInputBar } from '@/src/lib/analytics/chart-data/timeline';
+import { normalizeCanonicalBars, toDisplayBars, toEpochSeconds } from '@/src/lib/analytics/canonical-bars';
 import type { ChartBar } from './chart-types';
 
-function toTimestamp(value: string): UTCTimestamp {
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
-  return Math.floor(date.valueOf() / 1_000) as UTCTimestamp;
-}
-
 export function adaptChartBars(rows: readonly OhlcvInputBar[], chartType: AdvancedChartType): ChartBar[] {
-  const raw = normalizeOhlcvTimeline(rows);
-  const transformed = chartType === 'heikin-ashi'
-    ? heikinAshi(raw.map((bar) => ({ date: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume ?? 0 })))
-    : raw.map((bar) => ({ date: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close }));
-  return raw.map((bar, index) => {
-    const display = transformed[index];
-    const extra = rows[index] as OhlcvInputBar & { transactions?: number; vwap?: number; partial?: boolean };
+  const raw = normalizeCanonicalBars(rows);
+  const display = toDisplayBars(raw, chartType);
+  // Provider metadata follows the same canonical timestamp normalization and
+  // duplicate rule as OHLCV. It is never paired by array index after filtering.
+  const metadataByTime = new Map<number, OhlcvInputBar & { transactions?: number; vwap?: number; partial?: boolean }>();
+  rows.forEach((row) => {
+    const time = toEpochSeconds(row.time ?? row.date);
+    if (time != null) metadataByTime.set(time, row);
+  });
+  return display.map((bar) => {
+    const extra = metadataByTime.get(bar.time);
     return {
-      time: toTimestamp(bar.time),
-      sourceTime: bar.time,
-      open: display.open,
-      high: display.high,
-      low: display.low,
-      close: display.close,
-      volume: bar.volume ?? 0,
-      rawOpen: bar.open,
-      rawHigh: bar.high,
-      rawLow: bar.low,
-      rawClose: bar.close,
-      ...(Number.isFinite(extra.transactions) ? { transactions: extra.transactions } : {}),
-      ...(Number.isFinite(extra.vwap) ? { vwap: extra.vwap } : {}),
-      partial: Boolean(extra.partial),
+      time: bar.time as UTCTimestamp,
+      sourceTime: new Date(bar.time * 1_000).toISOString(),
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+      volume: bar.volume,
+      rawOpen: bar.rawOpen,
+      rawHigh: bar.rawHigh,
+      rawLow: bar.rawLow,
+      rawClose: bar.rawClose,
+      transformed: bar.transformed,
+      ...(extra && Number.isFinite(extra.transactions) ? { transactions: extra.transactions } : {}),
+      ...(extra && Number.isFinite(extra.vwap) ? { vwap: extra.vwap } : {}),
+      partial: bar.partial,
     };
   });
 }
@@ -52,12 +52,14 @@ export function areaData(bars: readonly ChartBar[]): AreaData<Time>[] {
   return bars.map(({ time, close: value }) => ({ time, value }));
 }
 
-export function volumeData(bars: readonly ChartBar[]): HistogramData<Time>[] {
-  return bars.map((bar) => ({
-    time: bar.time,
-    value: bar.volume,
-    color: bar.rawClose >= bar.rawOpen ? '#00c57f99' : '#ff3b3099',
-  }));
+export function volumeData(bars: readonly ChartBar[]): Array<HistogramData<Time> | WhitespaceData<Time>> {
+  return bars.map((bar) => bar.volume == null
+    ? { time: bar.time }
+    : {
+      time: bar.time,
+      value: bar.volume,
+      color: bar.rawClose >= bar.rawOpen ? '#00c57f99' : '#ff3b3099',
+    });
 }
 
 export function canUpdateLatest(previous: readonly ChartBar[], next: readonly ChartBar[]): boolean {

@@ -53,6 +53,8 @@ export const normalizedCandleResultSchema = z.object({
   actualEnd: z.number().int().positive().nullable(),
   exchangeTimezone: z.string().min(1),
   currency: z.string().nullable(),
+  /** Provider-declared display precision (Yahoo `priceHint`), when available. */
+  pricePrecision: z.number().int().min(0).max(8).nullable().optional(),
   dataStatus: candleDataStatusSchema,
   delayedByMinutes: z.number().int().nonnegative().nullable(),
   adjusted: z.boolean(),
@@ -113,4 +115,3 @@ export const candleQuerySchema = z.object({
     context.addIssue({ code: 'custom', path: ['period2'], message: 'period2 must be later than period1' });
   }
 });
-

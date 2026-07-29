@@ -13,7 +13,7 @@ const middleware = read('middleware.ts');
 
 describe('Phase 11 market UI production contract', () => {
   it('keeps candle requests isolated, cancellable, visibility-aware and independent of pan/zoom', () => {
-    expect(candleChart).toContain('new Map<string, ChartResult>()');
+    expect(candleChart).toContain('new Map<string, ChartCacheEntry>()');
     expect(candleChart).toContain('chartRequestKey({ symbol, interval, range, adjusted, session })');
     expect(candleChart).toContain('AbortController');
     expect(candleChart).toContain('generation.current');

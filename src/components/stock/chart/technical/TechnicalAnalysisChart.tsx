@@ -68,6 +68,7 @@ export interface TechnicalAnalysisChartProps {
   priceProvenance?: string | null;
   priceAdjustment: PriceAdjustmentMeta;
   currency: string;
+  pricePrecision?: number;
   preferences: ChartPreferences;
   onSelectInterval(interval: CandleInterval): void;
   onSelectRange(range: CandleRange): void;
@@ -115,6 +116,7 @@ export function TechnicalAnalysisChart({
   priceProvenance,
   priceAdjustment,
   currency,
+  pricePrecision = 2,
   preferences,
   onSelectInterval,
   onSelectRange,
@@ -368,6 +370,7 @@ export function TechnicalAnalysisChart({
           priceLines={priceLines}
           overlaySpec={overlaySpec}
           datasetKey={datasetKey}
+          pricePrecision={pricePrecision}
           onVisibleRangeChange={onVisibleRangeChange}
           onCrosshairBar={onCrosshairBar}
           onReady={onReady}
