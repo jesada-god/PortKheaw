@@ -1,6 +1,6 @@
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import { MarketDataError } from '../errors';
-import type { MarketDataProvider, OptionsChain, OptionsExpirations, ProviderResult } from '../types';
+import type { MarketDataProvider, OptionsChain, OptionsExpirations, ProviderResult, Quote } from '../types';
 import type { NormalizedOptionContracts, OptionContract } from './contracts';
 import { optionsChainSchema, optionsExpirationsSchema } from './contracts';
 import type { OptionsContractsProvider } from '../providers/alpha-vantage/options';
@@ -72,6 +72,12 @@ export class OptionsMarketDataService {
     private readonly cache = new SharedRequestCache(),
     private readonly now: () => number = Date.now,
     private readonly capability = new OptionsCapabilityCache(() => this.now()),
+    /**
+     * Secondary underlying-price source, used only when {@link quoteProvider}
+     * fails. Returning null means "no real price available" — the chain then
+     * fails rather than being priced against anything invented.
+     */
+    private readonly underlyingFallback?: (symbol: string) => Promise<ProviderResult<Quote> | null>,
   ) {
     this.providers = Array.isArray(provider) ? provider : [provider];
   }
@@ -185,6 +191,28 @@ export class OptionsMarketDataService {
     return { data, provider: data.provider, freshness: freshness(data.status, data.asOf) };
   }
 
+  /**
+   * The underlying spot the chain is priced against.
+   *
+   * The quote provider is primary. When it fails — most often because its daily
+   * allowance is spent — the chain is NOT discarded: a complete, entitled
+   * options chain must not be thrown away over a secondary lookup. The fallback
+   * is the last confirmed daily close from the candle pipeline the chart already
+   * uses: real, provider-supplied market data, never a fabricated or carried
+   * value, and always disclosed through `underlyingStatus`/`underlyingAsOf` plus
+   * an explicit warning. Both sides of the chain remain untouched.
+   */
+  private async resolveUnderlying(symbol: string): Promise<ProviderResult<Quote> & { fromFallback: boolean }> {
+    try {
+      return { ...(await this.quoteProvider.getQuote(symbol)), fromFallback: false };
+    } catch (cause) {
+      if (!this.underlyingFallback) throw cause;
+      const fallback = await this.underlyingFallback(symbol);
+      if (!fallback) throw cause;
+      return { ...fallback, fromFallback: true };
+    }
+  }
+
   async getChain(symbol: string, expiration: string): Promise<ProviderResult<OptionsChain>> {
     const full = this.fullSnapshots.get(symbol.toUpperCase());
     // Only a snapshot that genuinely holds a whole chain may be reused. A provider
@@ -204,7 +232,7 @@ export class OptionsMarketDataService {
     if (!contracts.length) {
       throw new MarketDataError('not-found', `No options chain was returned for ${symbol} on ${expiration}`);
     }
-    const quote = await this.quoteProvider.getQuote(symbol);
+    const quote = await this.resolveUnderlying(symbol);
     const spot = quote.data.price;
     if (!Number.isFinite(spot) || spot <= 0) {
       throw new MarketDataError('insufficient-data', 'A validated underlying spot price is required for the options chain');
@@ -212,6 +240,9 @@ export class OptionsMarketDataService {
     const warnings = [...snapshot.warnings];
     if (quote.freshness.status !== 'realtime') {
       warnings.push('Underlying spot is not realtime; underlying and options freshness are reported separately');
+    }
+    if (quote.fromFallback) {
+      warnings.push('Underlying spot came from the confirmed daily close after the quote provider failed');
     }
     // Merge market data onto the catalogue by exact contract symbol. This is the
     // step that turns a strike/OI-only chain into one carrying bid/ask, volume,

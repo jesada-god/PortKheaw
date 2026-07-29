@@ -12,6 +12,7 @@ export {
   fetchOptionsChainOutcome,
   fetchOptionsSr,
   type OptionsChainOutcome,
+  type OptionsChainStaleFallback,
   type ExpirationsOutcome,
   type FetchOptionsSrOptions,
 } from './client';
@@ -22,6 +23,7 @@ export {
   OPTIONS_CHAIN_FRESH_MS,
   OPTIONS_CHAIN_ERROR_COOLDOWN_MS,
   OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS,
+  OPTIONS_CHAIN_STALE_MAX_MS,
 } from './chain-coordinator';
 export {
   OptionsExpirationsCoordinator,

@@ -1,10 +1,12 @@
 import 'server-only';
 import { serverEnv } from '@/src/config/env/server';
 import { MarketDataError } from '../errors';
-import { AlphaVantageProvider } from '../providers/alpha-vantage/provider';
+import { getCandleMarketDataService } from '../candles';
+import { getMarketDataProvider } from '../index';
 import { AlphaVantageOptionsProvider, type OptionsContractsProvider } from '../providers/alpha-vantage/options';
 import { AlpacaOptionsProvider } from '../providers/alpaca/options';
 import { OptionsMarketDataService } from './service';
+import type { ProviderResult, Quote } from '../types';
 
 /**
  * Options provider precedence is capability-aware, not historical.
@@ -82,7 +84,67 @@ export function getOptionsMarketDataService(): OptionsMarketDataService {
   }
   if (!service || !sameCredentials(credentials, current)) {
     credentials = current;
-    service = new OptionsMarketDataService(providers, new AlphaVantageProvider(current.alphaVantage));
+    /*
+      The underlying spot comes from the SHARED, cached market-data provider —
+      the same `quote:<symbol>` entry the rest of the app already populates —
+      not from a bare Alpha Vantage client.
+
+      A raw client here made one uncached upstream quote per chain request. That
+      burned the daily Alpha Vantage allowance (starving the earnings calendar
+      too) and, once the allowance was gone, every chain failed on the spot
+      lookup — discarding a complete Alpaca chain that had answered HTTP 200 and
+      erasing Put/Call and IV. The cached provider single-flights that quote and
+      keeps a last-good value through a provider failure.
+    */
+    service = new OptionsMarketDataService(
+      providers,
+      getMarketDataProvider(),
+      undefined,
+      undefined,
+      undefined,
+      underlyingFromDailyClose,
+    );
   }
   return service;
+}
+
+/**
+ * Secondary underlying price: the last CONFIRMED daily close from the same
+ * candle pipeline the chart already uses.
+ *
+ * Open interest settles end-of-day, so a chain priced against a confirmed close
+ * is coherent with its own vintage. This runs only after the quote provider has
+ * already failed, and returns null — never a guess — when no real close exists.
+ */
+async function underlyingFromDailyClose(symbol: string): Promise<ProviderResult<Quote> | null> {
+  try {
+    const result = await getCandleMarketDataService().getCandles({
+      symbol, interval: '1D', range: '1m', adjusted: true, session: 'regular',
+    });
+    const finalized = result.data.candles.filter((candle) => candle.partial !== true);
+    const latest = finalized.at(-1);
+    if (!latest || !Number.isFinite(latest.close) || latest.close <= 0) return null;
+    const asOf = new Date(latest.timestamp * 1_000).toISOString();
+    const previousClose = finalized.at(-2)?.close ?? null;
+    return {
+      data: {
+        symbol: symbol.toUpperCase(),
+        price: latest.close,
+        change: previousClose === null ? null : latest.close - previousClose,
+        changePercent: previousClose ? ((latest.close - previousClose) / previousClose) * 100 : null,
+        previousClose,
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        volume: latest.volume,
+        latestTradingDay: asOf.slice(0, 10),
+        asOf,
+        provider: result.provider ?? result.data.provider,
+      } as Quote,
+      provider: result.provider ?? result.data.provider,
+      freshness: { status: 'end-of-day', asOf, maxAgeSeconds: null },
+    };
+  } catch {
+    return null;
+  }
 }

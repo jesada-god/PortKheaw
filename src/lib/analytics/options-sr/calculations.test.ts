@@ -269,3 +269,89 @@ describe('computeOptionsSupportResistance — truthfulness & numeric safety', ()
     }
   });
 });
+
+describe('computeOptionsSupportResistance — Put/Call open-interest integrity', () => {
+  const sixStrikes = (type: 'call' | 'put', base: number) => [0, 1, 2, 3, 4, 5]
+    .map((offset) => contract({ type, strike: base + offset, openInterest: 100 }));
+
+  it('divides real put OI by real call OI', () => {
+    const result = computeOptionsSupportResistance(
+      baseInput({
+        calls: [...sixStrikes('call', 50), contract({ type: 'call', strike: 70, openInterest: 400 })],
+        puts: [...sixStrikes('put', 50), contract({ type: 'put', strike: 30, openInterest: 200 })],
+      }),
+      { nowMs: NOW_MS, minStrikes: 4 },
+    );
+    if (result.status !== 'available') throw new Error(result.message);
+    expect(result.totalCallOI).toBe(600 + 400);
+    expect(result.totalPutOI).toBe(600 + 200);
+    expect(result.putCallOIRatio).toBeCloseTo(800 / 1000, 6);
+  });
+
+  it('SKIPS null, NaN and negative open interest instead of counting them as zero', () => {
+    const clean = computeOptionsSupportResistance(
+      baseInput({ calls: sixStrikes('call', 50), puts: sixStrikes('put', 50) }),
+      { nowMs: NOW_MS, minStrikes: 4, minOiCoverage: 0 },
+    );
+    const polluted = computeOptionsSupportResistance(
+      baseInput({
+        calls: [
+          ...sixStrikes('call', 50),
+          contract({ type: 'call', strike: 61, openInterest: null, contractSymbol: 'call-null' }),
+          contract({ type: 'call', strike: 62, openInterest: Number.NaN, contractSymbol: 'call-nan' }),
+          contract({ type: 'call', strike: 63, openInterest: -900, contractSymbol: 'call-negative' }),
+        ],
+        puts: sixStrikes('put', 50),
+      }),
+      { nowMs: NOW_MS, minStrikes: 4, minOiCoverage: 0 },
+    );
+    if (clean.status !== 'available' || polluted.status !== 'available') throw new Error('expected both to compute');
+    // The invalid rows contribute nothing at all — not 0, and never a negative.
+    expect(polluted.totalCallOI).toBe(clean.totalCallOI);
+    expect(Number.isFinite(polluted.totalCallOI)).toBe(true);
+    expect(polluted.putCallOIRatio).toBe(clean.putCallOIRatio);
+  });
+
+  it('never substitutes contract count for open interest', () => {
+    const result = computeOptionsSupportResistance(
+      baseInput({
+        // Six put contracts but only 10 total put OI, against 1 call contract with 1000 OI.
+        calls: [...sixStrikes('call', 50)],
+        puts: [0, 1, 2, 3, 4, 5].map((offset) => contract({ type: 'put', strike: 40 + offset, openInterest: 1 })),
+      }),
+      { nowMs: NOW_MS, minStrikes: 4 },
+    );
+    if (result.status !== 'available') throw new Error(result.message);
+    expect(result.totalPutOI).toBe(6);
+    expect(result.totalCallOI).toBe(600);
+    // A count-based ratio would be 1.0; the OI-based ratio is 0.01.
+    expect(result.putCallOIRatio).toBeCloseTo(0.01, 6);
+  });
+
+  it('returns a null ratio rather than dividing by a zero call side', () => {
+    const result = computeOptionsSupportResistance(
+      baseInput({
+        calls: [0, 1, 2, 3].map((offset) => contract({ type: 'call', strike: 60 + offset, openInterest: 0 })),
+        puts: sixStrikes('put', 50),
+      }),
+      { nowMs: NOW_MS, minStrikes: 4, minOiCoverage: 0 },
+    );
+    if (result.status !== 'available') throw new Error(result.message);
+    expect(result.totalCallOI).toBe(0);
+    expect(result.putCallOIRatio).toBeNull();
+  });
+
+  it('reports a typed unavailable reason when no side carries usable open interest', () => {
+    const result = computeOptionsSupportResistance(
+      baseInput({
+        calls: sixStrikes('call', 50).map((c) => ({ ...c, openInterest: null })),
+        puts: sixStrikes('put', 50).map((c) => ({ ...c, openInterest: null })),
+      }),
+      { nowMs: NOW_MS, minStrikes: 4 },
+    );
+    expect(result.status).toBe('unavailable');
+    if (result.status !== 'unavailable') return;
+    expect(result.reason).toBe('no-open-interest');
+    expect(result.message.length).toBeGreaterThan(0);
+  });
+});

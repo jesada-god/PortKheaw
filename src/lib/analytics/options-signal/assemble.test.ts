@@ -222,3 +222,84 @@ describe('assembleOptionsSignalInput', () => {
     expect(assembled.riskReward.status === 'available' && assembled.riskReward.value.price).toBe(102);
   });
 });
+
+describe('stale-if-error fallback (429/5xx keeps Put/Call and IV readable)', () => {
+  const FETCHED_AT = '2026-07-28T19:30:00.000Z';
+  const fallback = {
+    chain: chain(0.4),
+    result: availableSr,
+    fetchedAt: FETCHED_AT,
+    reason: 'rate-limited',
+  };
+
+  it('serves Put/Call from the last-good chain and marks it STALE with its real fetch time', () => {
+    const slot = buildSentimentSlot({ chain: null, optionsSr: null, staleFallback: fallback });
+    expect(slot.status).toBe('available');
+    if (slot.status !== 'available') return;
+    expect(slot.state).toBe('STALE');
+    expect(slot.value.putCallRatio).toBe(0.45);
+    expect(slot.value.basis).toBe('open-interest');
+    expect(slot.provider).toBe('alpaca');
+    // Disclosed as of the moment the data was really fetched, not "now".
+    expect(slot.asOf).toBe(FETCHED_AT);
+  });
+
+  it('serves IV from the last-good chain as STALE, still on the labelled realized basis', () => {
+    const slot = buildPricingSlot(
+      { chain: null, optionsSr: null, staleFallback: fallback },
+      { value: 0.3, observations: 250 },
+    );
+    expect(slot.status).toBe('available');
+    if (slot.status !== 'available') return;
+    expect(slot.state).toBe('STALE');
+    expect(slot.value.basis).toBe('iv-vs-realized');
+    expect(slot.asOf).toBe(FETCHED_AT);
+  });
+
+  it('prefers the live chain and ignores the fallback whenever one is present', () => {
+    const slot = buildSentimentSlot({
+      chain: chain(0.4),
+      optionsSr: availableSr,
+      staleFallback: { ...fallback, result: { ...availableSr, putCallOIRatio: 9.99 } },
+    });
+    expect(slot.status).toBe('available');
+    if (slot.status !== 'available') return;
+    expect(slot.state).toBe('DELAYED');
+    expect(slot.value.putCallRatio).toBe(0.45);
+  });
+
+  it('stays UNAVAILABLE with a reason when the failure had no last-good chain', () => {
+    const sentiment = buildSentimentSlot({ chain: null, optionsSr: null, staleFallback: null });
+    const pricing = buildPricingSlot({ chain: null, optionsSr: null, staleFallback: null }, { value: 0.3, observations: 250 });
+    for (const slot of [sentiment, pricing]) {
+      expect(slot.status).toBe('unavailable');
+      if (slot.status !== 'unavailable') continue;
+      expect(slot.state).toBe('UNAVAILABLE');
+      expect(slot.reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('carries the stale reading through the whole assembled input', () => {
+    const context: OptionsSignalServerContext = {
+      symbol: 'TEST',
+      timeframe: '1D',
+      calculatedAt: '2026-07-28T20:00:00.000Z',
+      latestCandleAt: '2026-07-27',
+      finalizedCandles: 250,
+      macro: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'n/a', provider: null, asOf: null },
+      trend: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'n/a', provider: null, asOf: null },
+      momentum: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'n/a', provider: null, asOf: null },
+      levels,
+      event: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'n/a', provider: null, asOf: null },
+      realizedVolatility: { value: 0.3, observations: 250 },
+    };
+    const input = assembleOptionsSignalInput(context, {
+      chain: null,
+      optionsSr: null,
+      staleFallback: fallback,
+      acceptedPrice: 100,
+    });
+    expect(input.sentiment.state).toBe('STALE');
+    expect(input.pricing.state).toBe('STALE');
+  });
+});

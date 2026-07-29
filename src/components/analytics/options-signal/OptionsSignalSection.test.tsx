@@ -11,17 +11,26 @@ import { OPTIONS_SIGNAL_PRESENTATION } from './presentation';
 
 // The card must never issue options requests of its own in a test environment;
 // the browser-wide coordinator is the single owner of that traffic.
+const hookCalls: Array<{ symbol: string; enabled: boolean; active: boolean }> = [];
+let hookState: {
+  result: unknown;
+  chain: unknown;
+  staleFallback: unknown;
+  loading: boolean;
+} = { result: null, chain: null, staleFallback: null, loading: false };
+
 vi.mock('@/src/components/stock/chart/useOptionsSupportResistance', () => ({
-  useOptionsSupportResistance: () => ({
-    result: null,
-    chain: null,
-    loading: false,
-    expirations: [],
-    selectedExpiration: null,
-    retryAt: null,
-    setExpiration: () => undefined,
-    refresh: () => undefined,
-  }),
+  useOptionsSupportResistance: (options: { symbol: string; enabled: boolean; active: boolean }) => {
+    hookCalls.push({ symbol: options.symbol, enabled: options.enabled, active: options.active });
+    return {
+      ...hookState,
+      expirations: [],
+      selectedExpiration: null,
+      retryAt: null,
+      setExpiration: () => undefined,
+      refresh: () => undefined,
+    };
+  },
 }));
 
 const { OptionsSignalSection } = await import('./OptionsSignalSection');
@@ -76,6 +85,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  hookCalls.length = 0;
+  hookState = { result: null, chain: null, staleFallback: null, loading: false };
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -171,5 +182,89 @@ describe('OptionsSignalSection', () => {
     render(<OptionsSignalSection symbol="AAPL" context={{ ...context, finalizedCandles: 10 }} acceptedPrice={110} active />);
     expect(container.querySelector('section')!.getAttribute('data-signal')).toBe('insufficient-data');
     expect(container.textContent).toContain('ข้อมูลไม่เพียงพอ');
+  });
+});
+
+describe('OptionsSignalSection — options data coverage', () => {
+  const staleChain = {
+    underlyingSymbol: 'AAPL',
+    spot: 210,
+    expiration: '2026-08-21',
+    expirations: ['2026-08-21'],
+    calls: [205, 210, 215].map((strike) => baseContract('call', strike)),
+    puts: [205, 210, 215].map((strike) => baseContract('put', strike)),
+    provider: 'alpaca',
+    asOf: '2026-07-28T19:30:00.000Z',
+    timestampKind: 'receipt',
+    status: 'delayed',
+    delayedMinutes: 15,
+    completeness: 1,
+    warnings: [],
+  };
+  const staleSr = {
+    status: 'available',
+    symbol: 'AAPL',
+    expiration: '2026-08-21',
+    acceptedPrice: 210,
+    callWall: null, putWall: null, maxPain: null,
+    totalCallOI: 10_000, totalPutOI: 4_500, putCallOIRatio: 0.45,
+    strikeCoverage: 12, contractCoverage: 1,
+    provider: 'alpaca', asOf: '2026-07-28T19:30:00.000Z',
+    dataMode: 'DELAYED', reliability: 'high', limitations: [],
+  };
+
+  function baseContract(type: 'call' | 'put', strike: number) {
+    return {
+      contractSymbol: `${type}-${strike}`, underlyingSymbol: 'AAPL', type,
+      expiration: '2026-08-21', strike,
+      bid: 1, ask: 1.2, last: null, mark: null, volume: 10, openInterest: 500,
+      impliedVolatility: 0.42,
+      delta: null, gamma: null, theta: null, vega: null, rho: null, inTheMoney: null,
+      multiplier: 100, currency: 'USD', provider: 'alpaca',
+      marketDataProvider: null, marketDataFeed: null, oiAsOf: null,
+      delayedMinutes: null, valuationSource: null,
+      asOf: '2026-07-28T19:30:00.000Z', timestampKind: 'receipt', status: 'delayed',
+    };
+  }
+
+  it('reads options data only through the shared coordinator hook, never a second request', () => {
+    render(<OptionsSignalSection symbol="AAPL" context={context} acceptedPrice={110} active />);
+    // Exactly one consumer of the shared hook, gated on the Analysis tab being open.
+    expect(hookCalls.length).toBeGreaterThan(0);
+    expect(new Set(hookCalls.map((call) => call.symbol))).toEqual(new Set(['AAPL']));
+    for (const call of hookCalls) {
+      expect(call.enabled).toBe(true);
+      expect(call.active).toBe(true);
+    }
+  });
+
+  it('recovers Put/Call and IV from the stale fallback after a rate limit, labelled STALE', () => {
+    hookState = { result: null, chain: null, staleFallback: {
+      chain: staleChain, result: staleSr, fetchedAt: '2026-07-28T19:30:00.000Z', reason: 'rate-limited',
+    }, loading: false };
+    render(<OptionsSignalSection symbol="AAPL" context={context} acceptedPrice={210} active />);
+
+    const text = container.textContent ?? '';
+    // Both dimensions are readable again rather than erased...
+    expect(text).not.toContain('—/ 10');
+    // ...and both are disclosed as stale, never as current.
+    expect(text.toLowerCase()).toContain('stale');
+  });
+
+  it('still reports UNAVAILABLE when a rate limit had no last-good chain to fall back on', () => {
+    hookState = { result: null, chain: null, staleFallback: null, loading: false };
+    render(<OptionsSignalSection symbol="AAPL" context={context} acceptedPrice={210} active />);
+    expect(container.textContent?.toLowerCase()).toContain('unavailable');
+  });
+
+  it('rebuilds from scratch on a symbol change so no signal can be carried over', () => {
+    render(<OptionsSignalSection symbol="AAPL" context={context} acceptedPrice={110} active />);
+    const first = container.querySelector('section')!.getAttribute('data-signal');
+    expect(first).toBeTruthy();
+
+    render(<OptionsSignalSection symbol="NVDA" context={{ ...context, symbol: 'NVDA', finalizedCandles: 10 }} acceptedPrice={110} active />);
+    // The short-history NVDA context must win immediately — no stale AAPL signal.
+    expect(container.querySelector('section')!.getAttribute('data-signal')).toBe('insufficient-data');
+    expect(hookCalls.some((call) => call.symbol === 'NVDA')).toBe(true);
   });
 });

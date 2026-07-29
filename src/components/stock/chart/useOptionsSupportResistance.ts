@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { optionsUnavailable, type OptionsSrResult } from '@/src/lib/analytics/options-sr';
 import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
+import type { OptionsChainStaleFallback } from '@/src/lib/stock-detail/options-source';
 import {
   optionsChainCoordinator,
   optionsExpirationsCoordinator,
@@ -21,6 +22,12 @@ export interface UseOptionsSupportResistanceOptions {
 export interface UseOptionsSupportResistanceResult {
   result: OptionsSrResult | null;
   chain: OptionsChain | null;
+  /**
+   * Last-good chain retained across a failed refresh. Consumers that can present
+   * an explicitly STALE reading (the Options Signal factors) use this; the chart
+   * overlay deliberately keeps using `result`/`chain` only.
+   */
+  staleFallback: OptionsChainStaleFallback | null;
   loading: boolean;
   expirations: string[];
   selectedExpiration: string | null;
@@ -40,6 +47,7 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const [result, setResult] = useState<OptionsSrResult | null>(null);
   const [chain, setChain] = useState<OptionsChain | null>(null);
+  const [staleFallback, setStaleFallback] = useState<OptionsChainStaleFallback | null>(null);
   const [expirationsLoading, setExpirationsLoading] = useState(false);
   const [chainLoading, setChainLoading] = useState(false);
   const [retryAt, setRetryAt] = useState<number | null>(null);
@@ -63,6 +71,8 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
       setSelectedExpiration(null);
       setResult(null);
       setChain(null);
+      // A previous symbol's stale chain must never survive into the next one.
+      setStaleFallback(null);
       setRetryAt(null);
       setExpirationsLoading(false);
       setChainLoading(false);
@@ -128,11 +138,13 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
         if (cancelled || chainGeneration.current !== requestGeneration) return;
         setResult(outcome.result);
         setChain(outcome.chain);
+        setStaleFallback(outcome.staleFallback ?? null);
         const cooldownMs = optionsChainCoordinator.cooldownRemainingMs(symbol, selectedExpiration);
         setRetryAt(Number.isFinite(cooldownMs) && cooldownMs > 0 ? Date.now() + cooldownMs : null);
       } catch (cause) {
         if (cancelled || chainGeneration.current !== requestGeneration) return;
         setChain(null);
+        setStaleFallback(null);
         setResult(optionsUnavailable(symbol, selectedExpiration, 'chain-unavailable', cause instanceof Error ? cause.message : 'Options chain request failed.'));
         setRetryAt(Date.now() + 30_000);
       } finally {
@@ -158,5 +170,5 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
     setRefreshToken((token) => token + 1);
   }, [retryAt, selectedExpiration, symbol]);
 
-  return { result, chain, loading: enabled && active && (expirationsLoading || chainLoading), expirations, selectedExpiration, retryAt, setExpiration, refresh };
+  return { result, chain, staleFallback, loading: enabled && active && (expirationsLoading || chainLoading), expirations, selectedExpiration, retryAt, setExpiration, refresh };
 }

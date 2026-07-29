@@ -69,6 +69,21 @@ export interface FetchOptionsSrOptions {
   config?: Partial<OptionsSrConfig>;
 }
 
+/**
+ * The last successful chain for this symbol+expiration, retained across a
+ * failure so a transient 429/5xx degrades analytics to a labelled STALE reading
+ * instead of erasing them. Always carries the provider and the exact time the
+ * data was fetched, so nothing stale can ever be presented as current.
+ */
+export interface OptionsChainStaleFallback {
+  chain: OptionsChain;
+  result: OptionsSrResult;
+  /** ISO timestamp of the successful fetch this fallback came from. */
+  fetchedAt: string;
+  /** Machine-readable reason the live request failed. */
+  reason: string;
+}
+
 export interface OptionsChainOutcome {
   ok: boolean;
   chain: OptionsChain | null;
@@ -76,6 +91,8 @@ export interface OptionsChainOutcome {
   provider: string | null;
   classification: OptionsFailureClassification | null;
   retryAfterSeconds: number | null;
+  /** Present only on a failure that had a usable last-good chain to fall back to. */
+  staleFallback?: OptionsChainStaleFallback | null;
 }
 
 /**

@@ -361,3 +361,52 @@ describe('calculateOptionsSignal', () => {
     expect(result.reasoning.some((reason) => reason.id === 'disclaimer')).toBe(true);
   });
 });
+
+describe('provenance on every degraded dimension', () => {
+  it('reports source and fetchedAt for IV and earnings so a STALE reading is auditable', () => {
+    const result = calculateOptionsSignal(input({
+      pricing: { status: 'available', state: 'STALE', value: cheapIv, provider: 'alpaca', asOf: '2026-07-28T19:30:00.000Z' },
+      event: { status: 'available', state: 'STALE', value: farEarnings, provider: 'financial-modeling-prep', asOf: '2026-07-28T06:00:00.000Z' },
+    }));
+    expect(result.diagnostics.iv.state).toBe('STALE');
+    expect(result.diagnostics.iv.source).toBe('alpaca');
+    expect(result.diagnostics.iv.fetchedAt).toBe('2026-07-28T19:30:00.000Z');
+    expect(result.diagnostics.event.state).toBe('STALE');
+    expect(result.diagnostics.event.source).toBe('financial-modeling-prep');
+    expect(result.diagnostics.event.fetchedAt).toBe('2026-07-28T06:00:00.000Z');
+  });
+
+  it('gives every unavailable dimension a reason instead of a bare blank', () => {
+    const result = calculateOptionsSignal(input({
+      pricing: missing<IvPricingInput>('ผู้ให้บริการไม่ได้ส่ง Implied Volatility'),
+      sentiment: missing<SentimentInput>('ไม่มี Open Interest'),
+      event: missing<EventRiskInput>('แพ็กเกจของผู้ให้บริการไม่รองรับปฏิทินงบการเงิน'),
+    }));
+    expect(result.diagnostics.iv.reason).toBeTruthy();
+    expect(result.diagnostics.event.reason).toBeTruthy();
+    expect(result.diagnostics.factors.sentiment.reason).toBeTruthy();
+    for (const dimension of [result.diagnostics.iv.state, result.diagnostics.event.state, result.diagnostics.factors.sentiment.state]) {
+      expect(dimension).toBe('UNAVAILABLE');
+    }
+  });
+
+  it('never turns a missing Put/Call, IV or earnings into a scored zero or a safe reading', () => {
+    const result = calculateOptionsSignal(input({
+      pricing: missing<IvPricingInput>('ไม่มี IV'),
+      sentiment: missing<SentimentInput>('ไม่มี OI'),
+      event: missing<EventRiskInput>('ไม่มีปฏิทิน'),
+    }));
+    // Missing sentiment must not contribute 0 points to the numerator...
+    expect(result.diagnostics.factors.sentiment.points).toBeNull();
+    // ...nor 10 points of weight to the denominator.
+    expect(result.diagnostics.availableWeight).toBe(OPTIONS_SIGNAL_TOTAL_WEIGHT - 10);
+    // Missing IV is not "cheap": no setup is offered and PRIME is withheld.
+    expect(result.diagnostics.iv.level).toBeNull();
+    expect(result.diagnostics.dataSufficiency.primeBlockers).toContain('iv-unavailable');
+    expect(result.signalType).not.toBe('PRIME_CALL');
+    expect(result.signalType).not.toBe('PRIME_PUT');
+    // Missing earnings is not "no event risk": it never earns an all-clear penalty of 0 risk.
+    expect(result.diagnostics.event.daysToEarnings).toBeNull();
+    expect(result.suggestedOptionsSetup.status).toBe('not-recommended');
+  });
+});

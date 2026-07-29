@@ -74,10 +74,16 @@ async function probe(symbol: string): Promise<boolean> {
     const factor = result.diagnostics.factors[id];
     console.log(`  ${id.padEnd(12)} ${String(factor.points ?? '—').padStart(4)} / ${factor.maxPoints}  [${factor.state}]  ${factor.detail}`);
   }
+  const sentiment = result.diagnostics.factors.sentiment;
+  const pcr = optionsSr?.status === 'available' ? optionsSr.putCallOIRatio : null;
+  console.log(`  pcr          ${pcr ?? '—'} (putOI=${optionsSr?.status === 'available' ? optionsSr.totalPutOI : '—'} callOI=${optionsSr?.status === 'available' ? optionsSr.totalCallOI : '—'}) [${sentiment.state}] provider=${sentiment.provider ?? 'none'} asOf=${sentiment.asOf ?? '—'}${sentiment.reason ? ` · ${sentiment.reason}` : ''}`);
   const iv = result.diagnostics.iv;
-  console.log(`  iv           basis=${iv.basis ?? 'none'} rank=${iv.ivRank ?? '—'} atm=${iv.impliedVolatility ?? '—'} realized=${iv.realizedVolatility ?? '—'} ratio=${iv.ratio ?? '—'} level=${iv.level ?? '—'} [${iv.state}]${iv.reason ? ` · ${iv.reason}` : ''}`);
+  console.log(`  iv           basis=${iv.basis ?? 'none'} rank=${iv.ivRank ?? '—'} atm=${iv.impliedVolatility ?? '—'} realized=${iv.realizedVolatility ?? '—'} ratio=${iv.ratio ?? '—'} level=${iv.level ?? '—'} [${iv.state}] source=${iv.source ?? 'none'} fetchedAt=${iv.fetchedAt ?? '—'}${iv.reason ? ` · ${iv.reason}` : ''}`);
   const event = result.diagnostics.event;
-  console.log(`  earnings     ${event.reportDate ?? '—'} · in ${event.daysToEarnings ?? '—'} days [${event.state}] provider=${context.event.provider ?? 'none'}${event.reason ? ` · ${event.reason}` : ''}`);
+  console.log(`  earnings     ${event.reportDate ?? '—'} · in ${event.daysToEarnings ?? '—'} days [${event.state}] source=${event.source ?? 'none'} fetchedAt=${event.fetchedAt ?? '—'}${event.reason ? ` · ${event.reason}` : ''}`);
+  const rr = result.diagnostics.riskReward;
+  console.log(`  s/r          support=${rr.support ?? '—'} price=${rr.price ?? '—'} resistance=${rr.resistance ?? '—'} callRR=${rr.callRewardRisk ?? '—'} putRR=${rr.putRewardRisk ?? '—'} [${rr.state}]`);
+  console.log(`  providers    candles=${context.trend.provider ?? 'none'} macro=${context.macro.provider ?? 'none'} options=${chain?.provider ?? 'none'} earnings=${context.event.provider ?? 'none'}`);
   console.log(`  setup        ${result.suggestedOptionsSetup.status === 'suggested'
     ? `${result.suggestedOptionsSetup.dteMin}-${result.suggestedOptionsSetup.dteMax} DTE · Delta ${result.suggestedOptionsSetup.deltaMin}-${result.suggestedOptionsSetup.deltaMax} · ${result.suggestedOptionsSetup.direction}`
     : `not-recommended · ${result.suggestedOptionsSetup.reason}`}`);

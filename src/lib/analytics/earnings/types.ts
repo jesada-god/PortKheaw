@@ -17,6 +17,8 @@ export type EarningsUnavailableReason =
   | 'no-scheduled-report'
   | 'entitlement-unavailable'
   | 'rate-limited'
+  /** The provider answered, but the payload could not be parsed as a calendar. */
+  | 'invalid-response'
   | 'provider-unavailable';
 
 export interface EarningsScheduleAvailable {

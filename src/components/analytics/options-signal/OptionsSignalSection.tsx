@@ -63,9 +63,11 @@ function OptionsSignalContent({ symbol, context, acceptedPrice, active }: Option
     return calculateOptionsSignal(assembleOptionsSignalInput(context, {
       chain: options.chain,
       optionsSr: options.result,
+      // Stale-if-error: a transient 429 keeps Put/Call and IV readable, labelled STALE.
+      staleFallback: options.staleFallback,
       acceptedPrice,
     }));
-  }, [context, options.chain, options.result, acceptedPrice]);
+  }, [context, options.chain, options.result, options.staleFallback, acceptedPrice]);
 
   if (!context || !result) {
     return (
@@ -344,6 +346,8 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
           <Detail label="IV ÷ ความผันผวนจริง" value={numberText(iv.ratio)} />
           <Detail label="ระดับความแพง" value={iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]} />
           <Detail label="สถานะข้อมูล IV" value={DATA_STATE_LABEL[iv.state]} />
+          <Detail label="แหล่งข้อมูล IV" value={iv.source ?? 'ไม่พร้อมใช้งาน'} />
+          <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTime(iv.fetchedAt) : '—'} />
           <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
@@ -356,6 +360,8 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
           <Detail label="เหลืออีก" value={event.daysToEarnings === null ? '—' : `${event.daysToEarnings} วัน`} />
           <Detail label="ช่วงเวลา" value={event.timeOfDay ?? '—'} />
           <Detail label="สถานะข้อมูล" value={DATA_STATE_LABEL[event.state]} />
+          <Detail label="แหล่งข้อมูล" value={event.source ?? 'ไม่พร้อมใช้งาน'} />
+          <Detail label="ดึงข้อมูลเมื่อ" value={event.fetchedAt ? formatBangkokDateTime(event.fetchedAt) : '—'} />
         </dl>
         {event.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{event.reason}</p>}
       </section>

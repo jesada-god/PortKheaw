@@ -406,10 +406,12 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       level: null, basis: null, ivRank: null, impliedVolatility: null, realizedVolatility: null,
       ratio: null, observations: null, state: input.pricing.state,
       reason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
+      source: input.pricing.provider, fetchedAt: input.pricing.asOf,
     },
     event: {
       reportDate: null, daysToEarnings: null, timeOfDay: null, state: input.event.state,
       reason: input.event.status === 'unavailable' ? input.event.reason : null,
+      source: input.event.provider, fetchedAt: input.event.asOf,
     },
     squeeze: { state: null, momentum: null, normalizedMomentum: null, relativeVolume: null, confirmation: null },
     macro: { benchmarks: [] },
@@ -632,6 +634,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       observations: pricing?.observations ?? null,
       state: input.pricing.state,
       reason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
+      source: input.pricing.provider,
+      fetchedAt: input.pricing.asOf,
     },
     event: {
       reportDate: input.event.status === 'available' ? input.event.value.reportDate : null,
@@ -639,6 +643,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       timeOfDay: input.event.status === 'available' ? input.event.value.timeOfDay : null,
       state: input.event.state,
       reason: input.event.status === 'unavailable' ? input.event.reason : null,
+      source: input.event.provider,
+      fetchedAt: input.event.asOf,
     },
     squeeze: {
       state: squeezeState,

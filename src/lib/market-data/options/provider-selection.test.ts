@@ -181,3 +181,53 @@ describe('capability-aware options provider selection', () => {
     expect(provider.getOptionsContracts).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('underlying spot resolution for the options chain', () => {
+  const quoteFailing = { getQuote: vi.fn(async () => {
+    throw new MarketDataError('rate-limited', 'Market data provider rate limit exceeded');
+  }) } as never;
+
+  const dailyClose = async () => ({
+    data: { price: 340.08 },
+    provider: 'yahoo-finance-chart',
+    freshness: { status: 'end-of-day' as const, asOf: '2026-07-28T13:30:00.000Z', maxAgeSeconds: null },
+  }) as never;
+
+  it('keeps an entitled chain when the quote provider is exhausted, disclosing the fallback', async () => {
+    const provider = fakeProvider('alpaca', async () => snapshot('alpaca'));
+    const service = new OptionsMarketDataService(
+      [provider], quoteFailing, undefined, undefined, undefined, dailyClose,
+    );
+
+    const chain = await service.getChain('AAPL', '2026-08-21');
+
+    // The complete chain survives a failure of the SECONDARY spot lookup...
+    expect(chain.data.calls.length + chain.data.puts.length).toBeGreaterThan(0);
+    expect(chain.data.spot).toBe(340.08);
+    // ...and the substitution is disclosed, never silent.
+    expect(chain.data.underlyingProvider).toBe('yahoo-finance-chart');
+    expect(chain.data.underlyingStatus).not.toBe('live');
+    expect(chain.data.warnings.some((w) => /confirmed daily close/i.test(w))).toBe(true);
+  });
+
+  it('prefers the quote provider and never calls the fallback when it succeeds', async () => {
+    const provider = fakeProvider('alpaca', async () => snapshot('alpaca'));
+    const fallback = vi.fn(dailyClose);
+    const service = new OptionsMarketDataService(
+      [provider], quote, undefined, undefined, undefined, fallback as never,
+    );
+
+    const chain = await service.getChain('AAPL', '2026-08-21');
+    expect(chain.data.spot).toBe(250);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(chain.data.warnings.some((w) => /confirmed daily close/i.test(w))).toBe(false);
+  });
+
+  it('fails rather than pricing a chain against an invented spot', async () => {
+    const provider = fakeProvider('alpaca', async () => snapshot('alpaca'));
+    const service = new OptionsMarketDataService(
+      [provider], quoteFailing, undefined, undefined, undefined, async () => null,
+    );
+    await expect(service.getChain('AAPL', '2026-08-21')).rejects.toThrow(/rate limit/i);
+  });
+});

@@ -43,6 +43,9 @@ function reasonFor(error: unknown): EarningsUnavailableReason {
   if (error instanceof MarketDataError) {
     if (error.code === 'forbidden' || error.code === 'provider-unauthorized') return 'entitlement-unavailable';
     if (error.code === 'rate-limited') return 'rate-limited';
+    // A parseable-but-wrong payload is a distinct fault from an outage: it must
+    // not be retried the same way, and it is never "no report scheduled".
+    if (error.code === 'invalid-provider-response') return 'invalid-response';
   }
   return 'provider-unavailable';
 }
@@ -52,6 +55,7 @@ const MESSAGES: Record<EarningsUnavailableReason, string> = {
   'no-scheduled-report': 'ผู้ให้บริการยังไม่ประกาศวันประกาศงบครั้งถัดไป',
   'entitlement-unavailable': 'แพ็กเกจของผู้ให้บริการไม่รองรับปฏิทินงบการเงิน',
   'rate-limited': 'ผู้ให้บริการจำกัดจำนวนคำขอชั่วคราว',
+  'invalid-response': 'ผู้ให้บริการส่งข้อมูลปฏิทินงบการเงินในรูปแบบที่อ่านไม่ได้',
   'provider-unavailable': 'ดึงวันประกาศงบจากผู้ให้บริการไม่สำเร็จ',
 };
 

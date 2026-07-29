@@ -230,6 +230,10 @@ export interface OptionsSignalDiagnostics {
     observations: number | null;
     state: OptionsSignalDataState;
     reason: string | null;
+    /** Provider that supplied the implied volatility. */
+    source: string | null;
+    /** When that measurement was taken — the disclosure that makes STALE meaningful. */
+    fetchedAt: string | null;
   };
   event: {
     reportDate: string | null;
@@ -237,6 +241,9 @@ export interface OptionsSignalDiagnostics {
     timeOfDay: EarningsTimeOfDay | null;
     state: OptionsSignalDataState;
     reason: string | null;
+    /** Earnings-calendar provider that answered. */
+    source: string | null;
+    fetchedAt: string | null;
   };
   squeeze: {
     state: SqueezeState | null;

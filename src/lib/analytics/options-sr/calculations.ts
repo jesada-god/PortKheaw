@@ -105,6 +105,27 @@ function isQualified(contract: OptionContract): boolean {
   return Number.isFinite(contract.strike) && contract.strike > 0 && contract.status !== 'stale';
 }
 
+/**
+ * Open interest that may legitimately enter a sum: present, finite and
+ * non-negative. Anything else — null, NaN, or negative — is SKIPPED, never
+ * coerced to 0, so a malformed row cannot silently deflate a side's total or
+ * poison it into NaN. Contract COUNT is never substituted for open interest.
+ */
+export function validOpenInterest(contract: OptionContract): number | null {
+  const openInterest = contract.openInterest;
+  return openInterest !== null && Number.isFinite(openInterest) && openInterest >= 0
+    ? openInterest
+    : null;
+}
+
+/** Σ of the valid open interest on one side. Invalid rows contribute nothing. */
+function sumOpenInterest(contracts: readonly OptionContract[]): number {
+  return contracts.reduce((sum, contract) => {
+    const openInterest = validOpenInterest(contract);
+    return openInterest === null ? sum : sum + openInterest;
+  }, 0);
+}
+
 interface StrikeAggregate {
   strike: number;
   oi: number;
@@ -120,8 +141,8 @@ interface StrikeAggregate {
 function aggregateByStrike(contracts: readonly OptionContract[]): StrikeAggregate[] {
   const byStrike = new Map<number, StrikeAggregate>();
   for (const contract of contracts) {
-    if (contract.openInterest === null || contract.openInterest < 0) continue;
-    const oi = contract.openInterest;
+    const oi = validOpenInterest(contract);
+    if (oi === null) continue;
     const hasGreeks = contract.delta !== null && Number.isFinite(contract.delta)
       && contract.gamma !== null && Number.isFinite(contract.gamma);
     const existing = byStrike.get(contract.strike);
@@ -335,10 +356,10 @@ export function computeOptionsSupportResistance(
   }
 
   const strikeCoverage = new Set(qualified.map((c) => c.strike)).size;
-  const withOi = qualified.filter((c) => c.openInterest !== null && c.openInterest >= 0);
+  const withOi = qualified.filter((c) => validOpenInterest(c) !== null);
   const contractCoverage = round(withOi.length / qualified.length, 4);
-  const totalCallOI = calls.reduce((sum, c) => sum + (c.openInterest ?? 0), 0);
-  const totalPutOI = puts.reduce((sum, c) => sum + (c.openInterest ?? 0), 0);
+  const totalCallOI = sumOpenInterest(calls);
+  const totalPutOI = sumOpenInterest(puts);
 
   if (totalCallOI + totalPutOI <= 0) {
     return fail('no-open-interest', 'The provider returned no usable open interest for this expiration.');
