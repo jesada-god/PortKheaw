@@ -39,27 +39,63 @@ export function freshnessFromMode(mode: MarketDataMode, asOf: string | null): Da
   };
 }
 
-/** Map a live {@link MarketUpdate} to a priced accepted-price candidate, or null. */
+/**
+ * The semantic domain a priced update belongs to — the decision that keeps an
+ * extended-hours print out of the main price row.
+ *
+ * Two kinds of value arrive here and they must NOT be judged the same way:
+ *
+ *  - **An executed print** (a stream trade, or an aggregate bar close). Its
+ *    meaning is defined by WHEN it traded, so its own exchange timestamp is the
+ *    authority. A stream that declares no session at all — Alpaca states none —
+ *    previously fell through to a `regular` default, which is how every
+ *    after-hours tick entered the regular domain and overwrote the official close.
+ *  - **A provider quote snapshot.** Its `price` field's meaning is defined by the
+ *    provider CONTRACT, not by the response's timestamp: Yahoo's
+ *    `regularMarketPrice` stays the regular close while it reports POST, stamped
+ *    at 16:00:01 ET. Classifying that by timestamp would file the official close
+ *    as an after-hours print — the mirror image of the same bug — so a snapshot
+ *    price that equals the quote's own `regularClose` is `regular` by definition,
+ *    and only a snapshot price that DIFFERS from it is judged by its timestamp.
+ *
+ * `null` means the domain could not be established (a print stamped outside all
+ * three windows, on a weekend, or with no timestamp at all). The caller drops it:
+ * an unclassifiable value is not a regular price, and admitting it as one is
+ * exactly how a stale tick reached the main row.
+ */
+function priceRoleOfUpdate(update: MarketUpdate): AcceptedPriceCandidate['priceRole'] | null {
+  if (
+    update.label.source === 'snapshot'
+    && positivePrice(update.quote?.regularClose)
+    && update.price === update.quote!.regularClose
+  ) {
+    return 'regular';
+  }
+  const classified = update.label.exchangeTimestamp
+    ? classifyUsEquitySession(update.label.exchangeTimestamp)
+    : null;
+  if (classified === 'premarket') return 'pre-market';
+  if (classified === 'afterhours') return 'after-hours';
+  if (classified === 'regular') return 'regular';
+  // No timestamp at all: fall back to a session the stream states explicitly.
+  if (!update.label.exchangeTimestamp) {
+    if (update.session === 'pre-market') return 'pre-market';
+    if (update.session === 'after-hours') return 'after-hours';
+    if (update.session === 'regular') return 'regular';
+  }
+  return null;
+}
+
+/**
+ * Map a live {@link MarketUpdate} to a priced accepted-price candidate, or null.
+ *
+ * Returns null when the price's semantic domain cannot be established, so an
+ * unclassifiable print is dropped rather than admitted as a regular price.
+ */
 export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidate | null {
   if (update.price === null || !update.label.source || update.label.source === 'history-fallback') return null;
-  const priceRole = update.label.source === 'snapshot'
-    ? 'regular' as const
-    : update.session === 'pre-market' || update.session === 'premarket'
-      ? 'pre-market' as const
-      : update.session === 'after-hours' || update.session === 'afterhours'
-        ? 'after-hours' as const
-        : update.session === 'regular'
-          ? 'regular' as const
-          : update.label.feed && update.label.exchangeTimestamp
-            ? (() => {
-                const classified = classifyUsEquitySession(update.label.exchangeTimestamp!);
-                return classified === 'premarket'
-                  ? 'pre-market' as const
-                  : classified === 'afterhours'
-                    ? 'after-hours' as const
-                    : 'regular' as const;
-              })()
-            : 'regular' as const;
+  const priceRole = priceRoleOfUpdate(update);
+  if (!priceRole) return null;
   return {
     price: update.price,
     source: update.label.source,
@@ -70,6 +106,27 @@ export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidat
     ...(update.label.realtime !== undefined ? { realtime: update.label.realtime } : {}),
     ...(update.label.feed !== undefined ? { feed: update.label.feed } : {}),
   };
+}
+
+/**
+ * The semantic domain of a completed history/aggregate bar the chart displays.
+ *
+ * A date-only stamp (`YYYY-MM-DD`) is a Daily/Week/Month bar, whose close IS the
+ * regular-session close by definition. An intraday bucket is classified by its own
+ * exchange timestamp, so a bar from the chart's `extended` session selection is
+ * never reported to the header as a regular price.
+ */
+export function historyBarPriceRole(
+  exchangeTimestamp: string | null,
+): AcceptedPriceCandidate['priceRole'] | null {
+  if (!exchangeTimestamp) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(exchangeTimestamp)) return 'regular';
+  switch (classifyUsEquitySession(exchangeTimestamp)) {
+    case 'premarket': return 'pre-market';
+    case 'afterhours': return 'after-hours';
+    case 'regular': return 'regular';
+    default: return null;
+  }
 }
 
 /**

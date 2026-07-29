@@ -1,6 +1,7 @@
 import { isTradeablePrice } from './candle-validation';
 import {
   LiveBucketStore,
+  classifyUsEquityTimestamp,
   isRealtimeInterval,
   parseServerFrame,
   MarketTracer,
@@ -61,6 +62,21 @@ const defaultScheduler = (callback: () => void, delayMs: number): (() => void) =
   return () => clearTimeout(handle);
 };
 
+/**
+ * The session an accepted price was executed in, from the price's OWN exchange
+ * timestamp in America/New_York.
+ *
+ * The provider's declared session is preferred when present (Finnhub states one),
+ * and the timestamp classification is the authority otherwise (Alpaca does not) —
+ * so this is never absent for a priced event, and never inherited from an unrelated
+ * bar, quote or request parameter.
+ */
+function sessionOfPrice(
+  priced: { timestampMs: number; session?: 'pre-market' | 'regular' | 'after-hours' | 'closed' },
+): MarketUpdate['session'] {
+  return priced.session ?? classifyUsEquityTimestamp(priced.timestampMs);
+}
+
 export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   readonly transport = 'websocket' as const;
 
@@ -116,7 +132,12 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   private quoteIso: string | null | undefined;
   private halted = false;
   private haltReason: string | null | undefined;
-  private marketSession: string | null = null;
+  /**
+   * The session the LAST ACCEPTED PRICE was executed in, from that price's own
+   * exchange timestamp. Only the accepted-price path writes it, so it can never
+   * describe a bar or a quote while the header reads it as the price's session.
+   */
+  private priceSession: MarketUpdate['session'] = null;
 
   constructor(options: WebSocketMarketSourceOptions) {
     this.symbol = options.symbol.toUpperCase();
@@ -237,7 +258,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.quoteIso = undefined;
     this.halted = false;
     this.haltReason = undefined;
-    this.marketSession = null;
+    this.priceSession = null;
     if (this.state === 'open') this.sendSubscribe();
     this.emit(false, 'lifecycle');
   }
@@ -341,7 +362,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         browserReceivedAtMs,
         acceptedAtMs,
       };
-      this.marketSession = snapshot.trade.session ?? this.marketSession;
+      this.priceSession = sessionOfPrice(snapshot.trade);
       this.tracer.trace({
         stage: 'price_header_updated', symbol: snapshot.symbol, price: snapshot.trade.price,
         ...this.lastObservation,
@@ -384,7 +405,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
             browserReceivedAtMs,
             acceptedAtMs,
           };
-          this.marketSession = event.session ?? this.marketSession;
+          this.priceSession = sessionOfPrice(event);
           // The header's Last Price is driven by trades; trace only the accepted
           // (newer-than-last) update so an out-of-order tick can't fake a change.
           this.tracer.trace({
@@ -410,7 +431,6 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         // An official/updated 1m bar is only emitted after the minute closes, so
         // it always finalizes that bucket — the chart may recompute heavy S/R.
         this.store.applyBar(event);
-        this.marketSession = event.session ?? this.marketSession;
         barFinalized = event.finalized !== false;
         break;
       }
@@ -525,7 +545,10 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       quoteTimestamp: this.quoteIso,
       halted: this.halted,
       haltReason: this.haltReason,
-      session: this.marketSession ?? this.selection.session,
+      // The session of the PRICE above, never `this.selection.session`: the chart
+      // selection is a request parameter, and using it here made every extended
+      // print look like a regular-session price to the header.
+      session: hasPrice ? this.priceSession : null,
       barFinalized,
       eventKind,
       // The socket lifecycle at emit time. The coordinator uses this to keep a

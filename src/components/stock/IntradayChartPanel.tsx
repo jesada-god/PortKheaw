@@ -12,7 +12,7 @@ import {
   type CandleRange as HistoricalRange,
   type CandleSession as MarketSessionMode,
 } from '@/src/lib/market-data/candles/contracts';
-import { historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCandle, type MarketDataLabel } from '@/src/lib/stock-detail/market-source';
+import { historyBarPriceRole, historyFallbackModeFromStatus, type AcceptedPriceCandidate, type LiveCandle, type MarketDataLabel } from '@/src/lib/stock-detail/market-source';
 import { resolveChartProvenance } from './chart-live-provenance';
 import type { CanonicalLiveUpdateSink } from './useMarketSource';
 import { resolvePriceAdjustment } from '@/src/lib/analytics/price-adjustment';
@@ -234,12 +234,18 @@ export function MarketCandleChartPanel(props: Props) {
       newestCompleted = priced; // displayPrices is ascending by time
     }
     if (!newestCompleted || !Number.isFinite(newestCompleted.close)) return null;
+    // The bar's own semantic domain. A bucket from the `extended` session selection
+    // must not reach the header as a regular price, so an unclassifiable bar is
+    // reported as no candidate at all rather than as a regular one.
+    const priceRole = historyBarPriceRole(newestCompleted.date);
+    if (!priceRole) return null;
     return {
       price: newestCompleted.close,
       source: 'history-fallback',
       exchangeTimestamp: newestCompleted.date,
       mode: historyFallbackModeFromStatus(result.dataStatus),
       provider: result.provider,
+      priceRole,
     };
   }, [result, displayPrices]);
   useEffect(() => { onHistoryFallbackChange?.(historyFallback); }, [historyFallback, onHistoryFallbackChange]);

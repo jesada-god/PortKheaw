@@ -87,6 +87,47 @@ describe('classifyAlpacaControl', () => {
   });
 });
 
+/**
+ * Session tagging on priced events — the origin of the Stock Price Header defect.
+ *
+ * Alpaca states no session on the wire. With the field absent, the browser source
+ * fell back to the CHART SELECTION's session (`regular`, a request parameter), so
+ * every after-hours print was labelled a regular-session price and could overwrite
+ * the official regular close in the main price row: NVTS showed 10.42 against a real
+ * close of 9.735. Each priced event now carries the session its own exchange
+ * timestamp falls in, in America/New_York.
+ */
+describe('normalizeAlpacaMessage session tagging', () => {
+  it.each([
+    // 2026-07-29 is a Wednesday. Times below are the ET equivalents.
+    ['2026-07-29T12:25:00Z', 'pre-market'], //  08:25 ET
+    ['2026-07-29T15:00:00Z', 'regular'], //     11:00 ET
+    ['2026-07-29T20:41:12Z', 'after-hours'], // 16:41 ET
+    ['2026-07-30T01:00:00Z', 'closed'], //      21:00 ET
+    ['2026-07-25T15:00:00Z', 'closed'], //      Saturday
+  ] as const)('tags a trade at %s as %s', (timestamp, session) => {
+    const event = normalizeAlpacaMessage({ T: 't', S: 'NVTS', p: 10.42, s: 100, t: timestamp });
+    expect(event?.kind).toBe('trade');
+    expect(event && 'session' in event ? event.session : null).toBe(session);
+  });
+
+  it('tags an official 1m bar by its bucket start', () => {
+    const event = normalizeAlpacaMessage({
+      T: 'b', S: 'NVTS', o: 10.4, h: 10.5, l: 10.3, c: 10.42, v: 1_000,
+      t: '2026-07-29T20:41:00Z',
+    });
+    expect(event?.kind).toBe('bar');
+    expect(event && 'session' in event ? event.session : null).toBe('after-hours');
+  });
+
+  it('never leaves a priced event without a session', () => {
+    for (const timestamp of ['2026-07-29T12:25:00Z', '2026-07-29T15:00:00Z', '2026-07-29T20:41:12Z']) {
+      const trade = normalizeAlpacaMessage({ T: 't', S: 'NVTS', p: 10.42, s: 100, t: timestamp });
+      expect(trade && 'session' in trade ? trade.session : undefined).toBeDefined();
+    }
+  });
+});
+
 describe('isHaltCode', () => {
   it('flags halt/pause codes and not resumption', () => {
     expect(isHaltCode('H')).toBe(true);

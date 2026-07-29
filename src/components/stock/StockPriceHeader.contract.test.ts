@@ -19,12 +19,21 @@ describe('StockPriceHeader integration contract', () => {
     expect(header).toContain('aria-haspopup="dialog"');
   });
 
-  it('shows provider disclosure and the previous-close comparison base', () => {
+  it('discloses the provider, the session and every value with its own source', () => {
     expect(header).toContain('<Detail label="Provider"');
     expect(header).toContain('<Detail label="สถานะตลาด"');
+    expect(header).toContain('<Detail label="Session Phase"');
     expect(header).toContain('<Detail label="ช่วงเวลาของราคา"');
     expect(header).toContain("label={quoteDate ? 'Trading date' : 'Timestamp'}");
-    expect(header).toContain("value={extendedQuote ? 'Official Regular Close' : 'Previous Close'}");
+    // Each canonical value is inspectable with the provider field it came from, so
+    // "which number is this and where is it from" is always answerable.
+    expect(header).toContain('<Detail label="Main Price Source"');
+    expect(header).toContain('label="Regular Close"');
+    expect(header).toContain('label="Previous Regular Close"');
+    expect(header).toContain('comparisonBaseLabel(main.comparisonBaseKind)');
+    expect(header).toContain('comparisonBaseLabel(secondary.comparisonBaseKind)');
+    // The validation outcomes: a rejected value never disappears silently.
+    expect(header).toContain('<Detail label="Data Validation"');
   });
 
   it('never uses a 1:1 FX fallback or a mock price', () => {
@@ -40,8 +49,9 @@ describe('StockPriceHeader integration contract', () => {
   });
 
   it('uses the compact Investing-style price hierarchy and session rows', () => {
-    expect(header).toContain('<CurrentSessionIcon session={currentSession}/>');
-    expect(header).toContain('<ExtendedSessionIcon session={extendedQuote.session}/>');
+    // Material Symbols glyphs from the shared component, coloured by session tone.
+    expect(header).toContain('<SessionIcon name={presentation.icon} tone={presentation.tone}');
+    expect(header).toContain('name={extendedSessionPresentation(secondary.session).icon}');
     expect(header).toContain('data-testid="extended-hours-row"');
     // The extended row always carries its own trading date, so a Friday
     // after-hours print read on a Sunday cannot be mistaken for today.
@@ -50,7 +60,10 @@ describe('StockPriceHeader integration contract', () => {
   });
 
   it('does not render fallback change placeholders or duplicate market errors', () => {
-    expect(header).toContain('{regularChange && <div');
+    expect(header).toContain('{mainChange && <div');
+    // The secondary row exists only when the snapshot resolved a real print, so no
+    // placeholder row and no fabricated 0.00% can be rendered.
+    expect(header).toContain('{secondary && <div data-testid="extended-hours-row"');
     expect(header).not.toContain("stockDetailErrorMessage(marketError");
   });
 
@@ -60,16 +73,34 @@ describe('StockPriceHeader integration contract', () => {
    * not re-derive one from a quote/candle/extended timestamp or a raw provider
    * status field.
    */
-  it('performs no market-session inference of its own', () => {
-    expect(header).toContain('currentSessionPresentation(currentSession)');
-    expect(header).toContain('const { currentSession, regular, extended: extendedQuote } = model;');
+  it('performs no market-session, row or comparison-base inference of its own', () => {
+    // Everything displayed is destructured from the ONE canonical snapshot model.
+    expect(header).toContain('const { session: phase, main, secondary, presentation, snapshot } = model;');
+    expect(header).toContain('presentation.icon');
     expect(header).not.toContain('deriveMarketSession');
     expect(header).not.toContain('currentStatus');
     expect(header).not.toContain('classifyUsEquityTimestamp');
+    // The status is precomputed by the model; the component never re-derives it.
+    expect(header).not.toContain('resolveDataStatus(');
+  });
+
+  /**
+   * The imperative hot path writes straight to the main price DOM node, which is the
+   * node the NVTS defect corrupted. Its gate must be the phase + the tick's own
+   * timestamp — never a provider-supplied session string, which Alpaca never sends.
+   */
+  it('gates the transient price sink on the phase and the tick timestamp', () => {
+    expect(header).toContain("if (phase !== 'REGULAR' || main.role !== 'regular') return;");
+    expect(header).toContain("if (!metadata?.asOf || classifyUsEquitySession(metadata.asOf) !== 'regular') return;");
+    // The old gate trusted `metadata.session`, which read `undefined` for Alpaca.
+    expect(header).not.toContain("metadata?.session === 'after-hours'");
   });
 
   it('resolves the current session once, from the dedicated resolver only', () => {
     expect(detail).toContain('resolveCurrentMarketSession({');
+    // And builds exactly ONE canonical snapshot, which the header renders from.
+    expect(detail).toContain('resolveCanonicalMarketSnapshot({');
+    expect(detail).toContain('snapshot: marketSnapshot');
     expect(detail).toContain('useExchangeClock(evaluatedAt)');
     expect(detail).toContain('applySymbolHalt(resolvedSession.session, halted)');
     // The defect: a live PRICE session (derived from a trade timestamp) was
@@ -87,8 +118,8 @@ describe('StockPriceHeader integration contract', () => {
   it('flashes the price on a live move without refetching, keyed on the source USD value', () => {
     // Flash is driven from the source USD price (regularPrice / extendedQuote.price),
     // so a USD/THB toggle never flashes — only a real tick does. No fetch is added.
-    expect(header).toContain('usePriceFlash(regularPrice)');
-    expect(header).toContain('usePriceFlash(extendedQuote?.price ?? null)');
+    expect(header).toContain('usePriceFlash(mainPrice)');
+    expect(header).toContain('usePriceFlash(secondary?.price ?? null)');
     expect(header).toContain('flashClass(priceFlash.direction)');
     expect(header).toContain('key={priceFlash.nonce}');
     expect(header).not.toContain('fetch(');

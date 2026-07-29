@@ -53,6 +53,20 @@ export type CurrentMarketSession =
   | 'HALTED'
   | 'UNKNOWN';
 
+/**
+ * The four phases the PRICE rules are written against.
+ *
+ * Deliberately coarser than {@link CurrentMarketSession}: a holiday, a weekend, an
+ * early close and an ordinary evening are all one price rule — "show the latest
+ * completed regular close" — and collapsing them here means that rule is written
+ * once. WHY the market is closed is carried separately as {@link MarketCloseReason},
+ * which is what the session icon and status text vary on.
+ */
+export type MarketSessionPhase = 'PRE' | 'REGULAR' | 'POST' | 'CLOSED';
+
+/** Why the market is closed. Null whenever it is not. */
+export type MarketCloseReason = 'NORMAL' | 'WEEKEND' | 'HOLIDAY' | 'EVENT' | 'EARLY_CLOSE';
+
 /** Where the resolved session came from — surfaced in the ⓘ provenance detail. */
 export type CurrentSessionSource =
   | 'market-status-provider'
@@ -97,6 +111,10 @@ export interface CurrentMarketSessionInput {
 
 export interface CurrentMarketSessionResult {
   session: CurrentMarketSession;
+  /** The coarse price-rule phase the session maps to. */
+  phase: MarketSessionPhase;
+  /** Why the market is closed, or null when it is open in some window. */
+  closeReason: MarketCloseReason | null;
   /** The instant the session was resolved at — NOT the price timestamp. */
   evaluatedAt: string;
   source: CurrentSessionSource;
@@ -120,19 +138,146 @@ const REGULAR_OPEN_MINUTE = 9 * 60 + 30;
 const REGULAR_CLOSE_MINUTE = 16 * 60;
 const AFTER_HOURS_CLOSE_MINUTE = 20 * 60;
 
-const CURRENT_SESSION_PRESENTATION: Record<
-  CurrentMarketSession,
-  { emoji: string; label: string; fullName: string }
-> = {
-  PREMARKET: { emoji: '🌅', label: 'ก่อนตลาดเปิด', fullName: 'Pre-market Session' },
-  REGULAR: { emoji: '☀️', label: 'ตลาดเปิด', fullName: 'Regular Market Session' },
-  AFTER_HOURS: { emoji: '🌙', label: 'หลังเวลาทำการ', fullName: 'After-hours Session' },
-  CLOSED: { emoji: '🌙', label: 'ตลาดปิด', fullName: 'Market Closed' },
-  HOLIDAY: { emoji: '🌙', label: 'ตลาดปิด · วันหยุดตลาด', fullName: 'Market Holiday' },
-  EARLY_CLOSE: { emoji: '⏱️', label: 'ตลาดปิดเร็ว', fullName: 'Early Close Session' },
-  HALTED: { emoji: '⏸️', label: 'หยุดซื้อขายชั่วคราว', fullName: 'Trading Halt' },
-  UNKNOWN: { emoji: '⚠️', label: 'ไม่ทราบสถานะตลาด', fullName: 'Unknown Market Session' },
+/**
+ * The Material Symbols glyph a session is shown with.
+ *
+ * `event` is reserved for a closure the calendar can EXPLAIN — a published holiday
+ * or an unscheduled exchange event — because that is the one closed state where the
+ * reason, not the hour, is the useful information. An ordinary evening and a
+ * weekend both get `bedtime`: to a reader they are the same fact.
+ */
+export type SessionIconName = 'wb_twilight' | 'sunny' | 'bedtime' | 'event';
+
+/** Semantic color slot for a session icon. Resolved to a theme token by the UI. */
+export type SessionTone = 'pre' | 'regular' | 'post' | 'closed' | 'event';
+
+export interface SessionPresentation {
+  icon: SessionIconName;
+  tone: SessionTone;
+  /** Short Thai status text shown beside the icon. */
+  label: string;
+  /** Thai accessible name / tooltip; always says what the icon means. */
+  description: string;
+  /** English session name, for the ⓘ provenance detail. */
+  fullName: string;
+}
+
+const CURRENT_SESSION_PRESENTATION: Record<CurrentMarketSession, { label: string; fullName: string }> = {
+  PREMARKET: { label: 'ก่อนเปิดตลาด', fullName: 'Pre-market Session' },
+  REGULAR: { label: 'ตลาดเปิด', fullName: 'Regular Market Session' },
+  AFTER_HOURS: { label: 'หลังปิดตลาด', fullName: 'After-hours Session' },
+  CLOSED: { label: 'ปิดตลาด', fullName: 'Market Closed' },
+  HOLIDAY: { label: 'ตลาดปิด (วันหยุด)', fullName: 'Market Holiday' },
+  EARLY_CLOSE: { label: 'ปิดตลาด (ปิดเร็วกว่าปกติ)', fullName: 'Early Close Session' },
+  HALTED: { label: 'หยุดซื้อขายชั่วคราว', fullName: 'Trading Halt' },
+  UNKNOWN: { label: 'ไม่ทราบสถานะตลาด', fullName: 'Unknown Market Session' },
 };
+
+/** Thai status text for a closed market, by the reason it is closed. */
+const CLOSED_PRESENTATION: Record<MarketCloseReason, { label: string; description: string; fullName: string }> = {
+  NORMAL: {
+    label: 'ปิดตลาด',
+    description: 'ปิดตลาด — จบช่วงซื้อขายของวันแล้ว ราคาหลักคือราคาปิดจริงของวันซื้อขายล่าสุด',
+    fullName: 'Market Closed',
+  },
+  WEEKEND: {
+    label: 'ปิดตลาด (วันหยุดสุดสัปดาห์)',
+    description: 'ปิดตลาด — วันหยุดสุดสัปดาห์ ราคาหลักคือราคาปิดจริงของวันซื้อขายล่าสุด',
+    fullName: 'Market Closed · Weekend',
+  },
+  HOLIDAY: {
+    label: 'ตลาดปิด (วันหยุด)',
+    description: 'ตลาดปิด — วันหยุดตามปฏิทินตลาด ราคาหลักคือราคาปิดจริงของวันซื้อขายล่าสุด',
+    fullName: 'Market Holiday',
+  },
+  EVENT: {
+    label: 'ตลาดปิด (เหตุการณ์พิเศษ)',
+    description: 'ตลาดปิด — เหตุการณ์พิเศษนอกปฏิทินปกติ ราคาหลักคือราคาปิดจริงของวันซื้อขายล่าสุด',
+    fullName: 'Market Closed · Exchange Event',
+  },
+  EARLY_CLOSE: {
+    label: 'ปิดตลาด (ปิดเร็วกว่าปกติ)',
+    description: 'ปิดตลาด — วันนี้ตลาดปิดเร็วกว่าปกติ ราคาหลักคือราคาปิดจริงของวันนั้น',
+    fullName: 'Market Closed · Early Close',
+  },
+};
+
+/**
+ * Icon, color tone and Thai status text for a resolved session.
+ *
+ * Keyed on the PHASE plus the close REASON, never on the raw session label, so the
+ * icon/text pair is decided by the same two facts the price rules use. The only
+ * closed states that get the `event` glyph and tone are the ones the calendar can
+ * explain (holiday / exchange event); an evening, a weekend and an early close all
+ * read as "the day is over" and share the `bedtime` glyph.
+ */
+export function sessionPresentation(
+  phase: MarketSessionPhase,
+  closeReason: MarketCloseReason | null,
+  sessionLabel?: CurrentMarketSession,
+): SessionPresentation {
+  // A symbol halt keeps the REGULAR phase — the market as a whole IS open, and
+  // downgrading the phase would swap the live price for a completed close — but the
+  // status text must still say the symbol is paused, so both facts are stated. The
+  // muted tone carries "nothing is trading right now" without borrowing loss red.
+  if (sessionLabel === 'HALTED') {
+    return {
+      icon: 'sunny',
+      tone: 'closed',
+      label: 'ตลาดเปิด · หยุดซื้อขายชั่วคราว',
+      description: 'ตลาดเปิดอยู่ แต่หุ้นตัวนี้ถูกพักการซื้อขายชั่วคราว (Trading Halt)',
+      fullName: 'Regular Market Session · Trading Halt',
+    };
+  }
+  // An unresolved session applies the CLOSED price rules, but saying "ปิดตลาด" would
+  // claim a fact we could not establish. The glyph reflects the rule in force; the
+  // text states the uncertainty and what the displayed price therefore is.
+  if (sessionLabel === 'UNKNOWN') {
+    return {
+      icon: 'bedtime',
+      tone: 'closed',
+      label: 'ไม่ทราบสถานะตลาด',
+      description: 'ยังตรวจสอบสถานะตลาดไม่ได้ จึงแสดงราคาปิดจริงของวันซื้อขายล่าสุดไว้ก่อน',
+      fullName: 'Unknown Market Session',
+    };
+  }
+  switch (phase) {
+    case 'PRE':
+      return {
+        icon: 'wb_twilight',
+        tone: 'pre',
+        label: 'ก่อนเปิดตลาด',
+        description: 'ก่อนเปิดตลาด — ช่วงซื้อขายก่อนตลาดเปิดทำการ (Pre-market)',
+        fullName: 'Pre-market Session',
+      };
+    case 'REGULAR':
+      return {
+        icon: 'sunny',
+        tone: 'regular',
+        label: 'ตลาดเปิด',
+        description: 'ตลาดเปิด — อยู่ในช่วงเวลาซื้อขายปกติ (Regular Session)',
+        fullName: 'Regular Market Session',
+      };
+    case 'POST':
+      return {
+        icon: 'bedtime',
+        tone: 'post',
+        label: 'หลังปิดตลาด',
+        description: 'หลังปิดตลาด — ช่วงซื้อขายหลังตลาดปิดทำการ (After-hours) ราคาหลักคือราคาปิดจริงของวันนี้',
+        fullName: 'After-hours Session',
+      };
+    case 'CLOSED': {
+      const reason = closeReason ?? 'NORMAL';
+      const copy = CLOSED_PRESENTATION[reason];
+      const calendarClosure = reason === 'HOLIDAY' || reason === 'EVENT';
+      return {
+        icon: calendarClosure ? 'event' : 'bedtime',
+        tone: calendarClosure ? 'event' : 'closed',
+        ...copy,
+      };
+    }
+  }
+}
 
 const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -179,29 +324,35 @@ function calendarSession(
   instant: Date,
   timeZone: string,
   holidays: ReadonlySet<string>,
-): { session: CurrentMarketSession; tradingDay: boolean } {
+): { session: CurrentMarketSession; tradingDay: boolean; weekend: boolean; pastEarlyClose: boolean } {
   const { weekday, minute } = exchangeClock(instant, timeZone);
-  if (weekday === 'Sat' || weekday === 'Sun') return { session: 'CLOSED', tradingDay: false };
+  if (weekday === 'Sat' || weekday === 'Sun') {
+    return { session: 'CLOSED', tradingDay: false, weekend: true, pastEarlyClose: false };
+  }
   const date = exchangeSessionDate(instant.toISOString(), timeZone);
   const usCalendar = timeZone === US_EQUITY_TIMEZONE;
-  if (date && (holidays.has(date) || (usCalendar && usMarketHolidays(Number(date.slice(0, 4))).has(date)))) {
-    return { session: 'HOLIDAY', tradingDay: false };
-  }
   const earlyClose = usCalendar && date !== null && isUsMarketEarlyClose(date);
+  // Only an early close that has already HAPPENED is one: at 03:00 ET on a half-day
+  // morning the session has not opened, let alone closed early.
+  const pastEarlyClose = earlyClose && minute >= EARLY_CLOSE_MINUTE;
+  const base = { weekend: false, pastEarlyClose } as const;
+  if (date && (holidays.has(date) || (usCalendar && usMarketHolidays(Number(date.slice(0, 4))).has(date)))) {
+    return { session: 'HOLIDAY', tradingDay: false, ...base };
+  }
   const regularCloseMinute = earlyClose ? EARLY_CLOSE_MINUTE : REGULAR_CLOSE_MINUTE;
   const afterHoursCloseMinute = earlyClose
     ? EARLY_CLOSE_MINUTE + (AFTER_HOURS_CLOSE_MINUTE - REGULAR_CLOSE_MINUTE)
     : AFTER_HOURS_CLOSE_MINUTE;
   if (minute >= REGULAR_OPEN_MINUTE && minute < regularCloseMinute) {
-    return { session: 'REGULAR', tradingDay: true };
+    return { session: 'REGULAR', tradingDay: true, ...base };
   }
   if (minute >= PREMARKET_OPEN_MINUTE && minute < REGULAR_OPEN_MINUTE) {
-    return { session: 'PREMARKET', tradingDay: true };
+    return { session: 'PREMARKET', tradingDay: true, ...base };
   }
   if (minute >= regularCloseMinute && minute < afterHoursCloseMinute) {
-    return { session: 'AFTER_HOURS', tradingDay: true };
+    return { session: 'AFTER_HOURS', tradingDay: true, ...base };
   }
-  return { session: 'CLOSED', tradingDay: true };
+  return { session: 'CLOSED', tradingDay: true, ...base };
 }
 
 /**
@@ -230,6 +381,64 @@ export function canonicalRegularTradingDateAt(now: Date | string): string | null
     if (exchangeClock(instant, US_EQUITY_TIMEZONE).minute >= closeMinute) return date;
   }
   return previousUsTradingDate(date);
+}
+
+/**
+ * Map a resolved session to the phase its PRICE rule is written against.
+ *
+ * `HALTED` maps to REGULAR because the market as a whole is still in its regular
+ * session — the halt is a symbol-level fact shown separately, and downgrading the
+ * phase would swap the live regular price for a completed close.
+ *
+ * `UNKNOWN` maps to CLOSED deliberately. With no established session the only safe
+ * main price is the latest COMPLETED regular close: a live or extended value would
+ * be a claim about a session we cannot prove we are in.
+ */
+export function sessionPhaseOf(session: CurrentMarketSession): MarketSessionPhase {
+  switch (session) {
+    case 'PREMARKET': return 'PRE';
+    case 'REGULAR':
+    case 'HALTED': return 'REGULAR';
+    case 'AFTER_HOURS': return 'POST';
+    case 'CLOSED':
+    case 'HOLIDAY':
+    case 'EARLY_CLOSE':
+    case 'UNKNOWN': return 'CLOSED';
+  }
+}
+
+/**
+ * Why the market is closed, for the session icon and status text.
+ *
+ * `HOLIDAY` vs `EVENT` is the distinction that decides whether the header shows a
+ * calendar closure or an unscheduled one, so it is drawn from real evidence rather
+ * than a label: a date the published exchange calendar (or a caller-supplied
+ * verified closure set) lists is a `HOLIDAY`; a closure asserted for a day the
+ * calendar considers a normal trading day is an `EVENT`. Weekends win over both,
+ * because a provider reporting "holiday" on a Sunday is describing a weekend.
+ */
+function resolveCloseReason(input: {
+  session: CurrentMarketSession;
+  weekend: boolean;
+  pastEarlyClose: boolean;
+  exchangeDate: string | null;
+  timeZone: string;
+  holidays: ReadonlySet<string>;
+}): MarketCloseReason | null {
+  const { session, weekend, pastEarlyClose, exchangeDate, timeZone, holidays } = input;
+  if (sessionPhaseOf(session) !== 'CLOSED') return null;
+  if (weekend) return 'WEEKEND';
+  const scheduledHoliday = exchangeDate !== null && (
+    holidays.has(exchangeDate)
+    || (timeZone === US_EQUITY_TIMEZONE && usMarketHolidays(Number(exchangeDate.slice(0, 4))).has(exchangeDate))
+  );
+  if (session === 'HOLIDAY') return scheduledHoliday ? 'HOLIDAY' : 'EVENT';
+  if (session === 'EARLY_CLOSE') return 'EARLY_CLOSE';
+  if (scheduledHoliday) return 'HOLIDAY';
+  // A published half-day whose session has already ended is an early close, not an
+  // ordinary evening — the distinction the icon and status text depend on.
+  if (pastEarlyClose) return 'EARLY_CLOSE';
+  return 'NORMAL';
 }
 
 function providerSession(status: MarketStatusReport['status']): CurrentMarketSession | null {
@@ -288,6 +497,8 @@ export function resolveCurrentMarketSession(
   if (Number.isNaN(instant.valueOf())) {
     return {
       session: 'UNKNOWN',
+      phase: 'CLOSED',
+      closeReason: null,
       evaluatedAt: typeof input.now === 'string' ? input.now : '',
       source: 'unresolved',
       exchangeDate: null,
@@ -339,6 +550,15 @@ export function resolveCurrentMarketSession(
 
   return {
     session,
+    phase: sessionPhaseOf(session),
+    closeReason: resolveCloseReason({
+      session,
+      weekend: calendar.weekend,
+      pastEarlyClose: calendar.pastEarlyClose,
+      exchangeDate,
+      timeZone,
+      holidays,
+    }),
     evaluatedAt,
     source,
     exchangeDate,
@@ -366,16 +586,11 @@ export function applySymbolHalt(
   return halted && session === 'REGULAR' ? 'HALTED' : session;
 }
 
+/**
+ * English/Thai naming for a raw session label, used in the ⓘ provenance detail
+ * where the exact resolved session (including HALTED and UNKNOWN, which have no
+ * phase of their own) must stay inspectable.
+ */
 export function currentSessionPresentation(session: CurrentMarketSession) {
   return CURRENT_SESSION_PRESENTATION[session];
-}
-
-/** The one session in which the header shows a live regular price and no extended row. */
-export function isRegularSession(session: CurrentMarketSession): boolean {
-  return session === 'REGULAR';
-}
-
-/** Sessions whose primary row is the latest COMPLETED regular close. */
-export function usesLatestRegularClose(session: CurrentMarketSession): boolean {
-  return session !== 'REGULAR' && session !== 'HALTED';
 }

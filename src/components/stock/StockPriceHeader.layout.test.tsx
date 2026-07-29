@@ -21,6 +21,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
+import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
@@ -29,19 +30,25 @@ vi.stubGlobal('React', React);
 
 const FRESHNESS: DataFreshness = { status: 'delayed', asOf: '2026-07-23T14:30:00.000Z', maxAgeSeconds: 900 };
 
+const EVALUATED_AT = '2026-07-23T14:31:00.000Z';
+
 const BASE_QUOTE: Quote = {
   symbol: 'RKLB', currency: 'USD', price: 69.75, open: 70.49, high: 72.94, low: 69.25,
-  previousClose: 69.12, change: 0.63, changePercent: 0.9115, volume: 21_031_353, latestTradingDay: '2026-07-22',
+  previousClose: 69.12, regularClose: 69.75, previousRegularClose: 69.12,
+  change: 0.63, changePercent: 0.9115, volume: 21_031_353, latestTradingDay: '2026-07-23',
+  quoteTimestamp: '2026-07-23T14:30:00.000Z',
 };
 
 function baseProps(quote: Quote | null, extra: Record<string, unknown> = {}) {
   return {
     symbol: 'RKLB', exchange: 'NASDAQ', sourceCurrency: 'USD',
     model: buildStockPriceHeaderModel({
-      data: { quote, freshness: FRESHNESS, provider: 'polygon', fallbackLabel: null, extendedQuote: null },
-      currentSession: 'REGULAR',
-      currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
-      currentSessionSource: 'exchange-calendar',
+      snapshot: snapshotOf({
+        symbol: 'RKLB',
+        session: sessionResult('REGULAR', { evaluatedAt: EVALUATED_AT, exchangeDate: '2026-07-23' }),
+        quote: quoteResource(quote, FRESHNESS),
+      }),
+      evaluatedAt: EVALUATED_AT,
     }),
     providerConfigured: true,
     quoteError: null, quoteLoading: false, quoteRetryAt: 0, onRetryQuote: () => {},
@@ -153,18 +160,35 @@ describe('StockPriceHeader price-line layout', () => {
   it('keeps the currency beside the price even when there is no change to show', () => {
     // The previous-close fallback with a single close: price + currency only, no
     // change block — the currency must still sit in the group beside the price.
-    renderAt(320, baseProps({ ...BASE_QUOTE, previousClose: null, change: null, changePercent: null }));
+    renderAt(320, baseProps({ ...BASE_QUOTE, previousClose: null, previousRegularClose: null, change: null, changePercent: null }));
     expect(changeRow()).toBeNull();
     expect(priceCurrencyGroup().contains(currencyEl())).toBe(true);
     expect(currencyEl().textContent).toBe('USD');
     expect(priceEl().textContent).toContain('69.75');
   });
 
-  it('uses compact precision for the main price without changing the stored quote', () => {
-    const quote = { ...BASE_QUOTE, price: 10.0458 };
+  /**
+   * The headline shows the price at the precision the exchange printed it, capped at
+   * four decimals and with trailing zeros dropped.
+   *
+   * This is deliberately not 2-decimal rounding. NVTS's official regular close is
+   * 9.735, and a headline reading 9.74 is exactly the "the main price does not match
+   * the real close" complaint. The stored quote is never altered either way.
+   */
+  it('shows the exchange precision in the main price without changing the stored quote', () => {
+    const quote = { ...BASE_QUOTE, price: 9.735, regularClose: 9.735 };
     renderAt(375, baseProps(quote));
-    expect(priceEl().textContent).toBe('10.05');
-    expect(priceEl().textContent).not.toContain('10.0458');
-    expect(quote.price).toBe(10.0458);
+    expect(priceEl().textContent).toBe('9.735');
+    expect(quote.price).toBe(9.735);
+  });
+
+  it('keeps an ordinary two-decimal close unchanged', () => {
+    renderAt(375, baseProps({ ...BASE_QUOTE, price: 206.87, regularClose: 206.87 }));
+    expect(priceEl().textContent).toBe('206.87');
+  });
+
+  it('caps a noisy value at four decimals rather than printing full float precision', () => {
+    renderAt(375, baseProps({ ...BASE_QUOTE, price: 10.045_812_3, regularClose: 10.045_812_3 }));
+    expect(priceEl().textContent).toBe('10.0458');
   });
 });

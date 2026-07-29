@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { quoteEnvelopeSchema } from '@/src/lib/stock-detail/api-schemas';
 import type { DataFreshness } from '@/src/lib/market-data/types';
+import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
@@ -51,6 +52,9 @@ const RKLB_API_BODY = {
     freshness: { status: 'end-of-day', asOf: '2026-07-22T20:00:00.000Z', maxAgeSeconds: 86_400 },
   },
 } as const;
+
+/** 21:00 ET on Wednesday 2026-07-22 — after that session's after-hours window. */
+const CLOSED_AT = '2026-07-23T01:00:00.000Z';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -86,16 +90,15 @@ describe('StockPriceHeader — RKLB previous-close fallback integration', () => 
         exchange: 'NASDAQ',
         sourceCurrency: quote!.currency ?? 'USD',
         model: buildStockPriceHeaderModel({
-          data: {
-            quote: quote!,
-            freshness,
-            provider: parsed.data.meta.provider,
-            fallbackLabel: null,
-            extendedQuote: null,
-          },
-          currentSession: 'CLOSED',
-          currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
-          currentSessionSource: 'exchange-calendar',
+          snapshot: snapshotOf({
+            symbol: 'RKLB',
+            // 2026-07-23 01:00Z = 21:00 ET on Wednesday the 22nd: the market is
+            // closed and the 22nd's session is the latest completed one.
+            session: sessionResult('CLOSED', { evaluatedAt: CLOSED_AT, exchangeDate: '2026-07-22' }),
+            quote: quoteResource(quote!, freshness, parsed.data.meta.provider),
+            now: CLOSED_AT,
+          }),
+          evaluatedAt: CLOSED_AT,
         }),
         providerConfigured: true,
         quoteError: null,
@@ -103,7 +106,7 @@ describe('StockPriceHeader — RKLB previous-close fallback integration', () => 
         quoteRetryAt: 0,
         onRetryQuote: () => {},
         fxQuote: null,
-        evaluatedAt: '2026-07-23T14:31:00.000Z',
+        evaluatedAt: CLOSED_AT,
         connectionState: null,
       } as never));
     });

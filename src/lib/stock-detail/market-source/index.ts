@@ -55,7 +55,9 @@ export {
   buildAcceptedResource,
   candidateFromUpdate,
   freshnessFromMode,
+  historyBarPriceRole,
   labelFromAccepted,
+  regularComparisonClose,
   AGGREGATE_FALLBACK_LABEL,
   HISTORY_FALLBACK_LABEL,
 } from './accepted-quote';

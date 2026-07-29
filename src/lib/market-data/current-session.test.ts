@@ -3,9 +3,8 @@ import {
   applySymbolHalt,
   canonicalRegularTradingDateAt,
   currentSessionPresentation,
-  isRegularSession,
   resolveCurrentMarketSession,
-  usesLatestRegularClose,
+  sessionPhaseOf,
   type CurrentMarketSession,
   type MarketStatusReport,
 } from './current-session';
@@ -208,34 +207,109 @@ describe('current market session — invariants', () => {
 
 describe('current market session — presentation', () => {
   it.each([
-    ['PREMARKET', '🌅', 'ก่อนตลาดเปิด'],
-    ['REGULAR', '☀️', 'ตลาดเปิด'],
-    ['AFTER_HOURS', '🌙', 'หลังเวลาทำการ'],
-    ['CLOSED', '🌙', 'ตลาดปิด'],
-    ['HOLIDAY', '🌙', 'ตลาดปิด · วันหยุดตลาด'],
-    ['EARLY_CLOSE', '⏱️', 'ตลาดปิดเร็ว'],
-    ['HALTED', '⏸️', 'หยุดซื้อขายชั่วคราว'],
-    ['UNKNOWN', '⚠️', 'ไม่ทราบสถานะตลาด'],
-  ] as const)('maps %s to a stable emoji and Thai label', (session, emoji, label) => {
-    expect(currentSessionPresentation(session)).toEqual(expect.objectContaining({ emoji, label }));
+    ['PREMARKET', 'ก่อนเปิดตลาด', 'Pre-market Session'],
+    ['REGULAR', 'ตลาดเปิด', 'Regular Market Session'],
+    ['AFTER_HOURS', 'หลังปิดตลาด', 'After-hours Session'],
+    ['CLOSED', 'ปิดตลาด', 'Market Closed'],
+    ['HOLIDAY', 'ตลาดปิด (วันหยุด)', 'Market Holiday'],
+    ['EARLY_CLOSE', 'ปิดตลาด (ปิดเร็วกว่าปกติ)', 'Early Close Session'],
+    ['HALTED', 'หยุดซื้อขายชั่วคราว', 'Trading Halt'],
+    ['UNKNOWN', 'ไม่ทราบสถานะตลาด', 'Unknown Market Session'],
+  ] as const)('names %s in Thai and English for the provenance detail', (session, label, fullName) => {
+    expect(currentSessionPresentation(session)).toEqual({ label, fullName });
   });
 
-  it('A: only REGULAR is ever labelled ตลาดเปิด', () => {
+  it('carries no emoji: session icons are Material Symbols glyphs, not text', () => {
+    const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u;
+    const sessions: CurrentMarketSession[] = [
+      'PREMARKET', 'REGULAR', 'AFTER_HOURS', 'CLOSED', 'HOLIDAY', 'EARLY_CLOSE', 'HALTED', 'UNKNOWN',
+    ];
+    for (const session of sessions) {
+      expect(currentSessionPresentation(session).label).not.toMatch(emoji);
+    }
+  });
+
+  it('A: only REGULAR is ever labelled exactly ตลาดเปิด', () => {
     const sessions: CurrentMarketSession[] = [
       'PREMARKET', 'REGULAR', 'AFTER_HOURS', 'CLOSED', 'HOLIDAY', 'EARLY_CLOSE', 'HALTED', 'UNKNOWN',
     ];
     for (const session of sessions) {
       expect(currentSessionPresentation(session).label === 'ตลาดเปิด').toBe(session === 'REGULAR');
-      expect(isRegularSession(session)).toBe(session === 'REGULAR');
+    }
+  });
+});
+
+/**
+ * The phase is what every PRICE rule is written against, so which sessions collapse
+ * into which phase is a load-bearing contract, not a naming detail.
+ */
+describe('session phase mapping', () => {
+  it('shows a live regular price only in REGULAR and HALTED', () => {
+    expect(sessionPhaseOf('REGULAR')).toBe('REGULAR');
+    // A halt is symbol-level: the market is still in its regular session, and
+    // downgrading the phase would swap the live price for a completed close.
+    expect(sessionPhaseOf('HALTED')).toBe('REGULAR');
+  });
+
+  it('uses the latest completed regular close in every other phase', () => {
+    expect(sessionPhaseOf('PREMARKET')).toBe('PRE');
+    expect(sessionPhaseOf('AFTER_HOURS')).toBe('POST');
+    expect(sessionPhaseOf('CLOSED')).toBe('CLOSED');
+    expect(sessionPhaseOf('HOLIDAY')).toBe('CLOSED');
+    expect(sessionPhaseOf('EARLY_CLOSE')).toBe('CLOSED');
+  });
+
+  it('treats an unresolved session as CLOSED, the only safe default', () => {
+    // With no established session, a live or extended value would be a claim about
+    // a session we cannot prove we are in.
+    expect(sessionPhaseOf('UNKNOWN')).toBe('CLOSED');
+  });
+});
+
+describe('close reason', () => {
+  it('is null whenever the market is open in some window', () => {
+    // Wednesday 2026-07-29: 11:00 ET, 08:30 ET and 16:30 ET.
+    for (const now of ['2026-07-29T15:00:00.000Z', '2026-07-29T12:30:00.000Z', '2026-07-29T20:30:00.000Z']) {
+      expect(resolveCurrentMarketSession({ now }).closeReason).toBeNull();
     }
   });
 
-  it('uses the latest completed regular close outside REGULAR and HALTED', () => {
-    expect(usesLatestRegularClose('REGULAR')).toBe(false);
-    expect(usesLatestRegularClose('HALTED')).toBe(false);
-    expect(usesLatestRegularClose('PREMARKET')).toBe(true);
-    expect(usesLatestRegularClose('AFTER_HOURS')).toBe(true);
-    expect(usesLatestRegularClose('CLOSED')).toBe(true);
-    expect(usesLatestRegularClose('HOLIDAY')).toBe(true);
+  it('reports WEEKEND on a Saturday and a Sunday', () => {
+    expect(resolveCurrentMarketSession({ now: '2026-07-25T17:00:00.000Z' }).closeReason).toBe('WEEKEND');
+    expect(resolveCurrentMarketSession({ now: '2026-07-26T17:00:00.000Z' }).closeReason).toBe('WEEKEND');
+  });
+
+  it('reports NORMAL after a full trading day has ended', () => {
+    // Wednesday 2026-07-29, 21:00 ET — past the after-hours window.
+    const resolved = resolveCurrentMarketSession({ now: '2026-07-30T01:00:00.000Z' });
+    expect(resolved.session).toBe('CLOSED');
+    expect(resolved.closeReason).toBe('NORMAL');
+  });
+
+  it('reports HOLIDAY for a published exchange holiday', () => {
+    // Independence Day 2026 falls on a Saturday and is observed Friday the 3rd.
+    const resolved = resolveCurrentMarketSession({ now: '2026-07-03T17:00:00.000Z' });
+    expect(resolved.session).toBe('HOLIDAY');
+    expect(resolved.closeReason).toBe('HOLIDAY');
+  });
+
+  it('reports EVENT for a closure the calendar does not know about', () => {
+    const resolved = resolveCurrentMarketSession({
+      now: '2026-07-29T17:00:00.000Z',
+      marketStatus: {
+        status: 'holiday', asOf: '2026-07-29T17:00:00.000Z',
+        source: 'polygon-market-status', stale: false, maxAgeSeconds: 30,
+      },
+    });
+    expect(resolved.session).toBe('HOLIDAY');
+    expect(resolved.closeReason).toBe('EVENT');
+  });
+
+  it('reports EARLY_CLOSE only once a published half-day has actually ended', () => {
+    // 2026-11-27, the Friday after Thanksgiving: a published 13:00 ET half-day.
+    // 17:30 ET, past the shifted after-hours window.
+    expect(resolveCurrentMarketSession({ now: '2026-11-27T22:30:00.000Z' }).closeReason).toBe('EARLY_CLOSE');
+    // 03:00 ET the same morning: the session has not opened, let alone closed early.
+    expect(resolveCurrentMarketSession({ now: '2026-11-27T08:00:00.000Z' }).closeReason).toBe('NORMAL');
   });
 });

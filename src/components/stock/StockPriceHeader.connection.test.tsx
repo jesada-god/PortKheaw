@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
+import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
@@ -35,11 +36,16 @@ const QUOTE: Quote = {
   high: 188,
   low: 184,
   previousClose: 186,
+  regularClose: 187.42,
+  previousRegularClose: 186,
   change: 1.42,
   changePercent: 0.76,
   volume: 1_000_000,
-  latestTradingDay: null,
+  latestTradingDay: '2026-07-23',
+  quoteTimestamp: '2026-07-23T14:30:00.000Z',
 };
+
+const EVALUATED_AT = '2026-07-23T14:31:00.000Z';
 
 const FRESHNESS: DataFreshness = {
   status: 'delayed',
@@ -53,10 +59,12 @@ function baseProps(connectionState: ConnectionStatus | null) {
     exchange: 'NASDAQ',
     sourceCurrency: 'USD',
     model: buildStockPriceHeaderModel({
-      data: { quote: QUOTE, freshness: FRESHNESS, provider: 'alpaca', fallbackLabel: null, extendedQuote: null },
-      currentSession: 'REGULAR',
-      currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
-      currentSessionSource: 'exchange-calendar',
+      snapshot: snapshotOf({
+        symbol: 'AAPL',
+        session: sessionResult('REGULAR', { evaluatedAt: EVALUATED_AT, exchangeDate: '2026-07-23' }),
+        quote: quoteResource(QUOTE, FRESHNESS, 'alpaca'),
+      }),
+      evaluatedAt: EVALUATED_AT,
     }),
     providerConfigured: true,
     quoteError: null,

@@ -1,33 +1,50 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import type { Quote } from '@/src/lib/market-data/types';
-import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
+import type { SnapshotExtendedInput } from '@/src/lib/market-data/market-snapshot';
+import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import {
   calculatePriceChange,
+  comparisonBaseLabel,
   connectionStatusPresentation,
   convertUsdForDisplay,
   dataStatusPresentation,
   extendedSessionPresentation,
+  mainPriceRoleLabel,
   priceDirectionPresentation,
   priceFlashDirection,
   preserveLastKnownExtendedQuote,
   resolvePriceChange,
   resolvePriceCurrency,
   resolveDataStatus,
-  resolvePriceHeaderData,
   buildStockPriceHeaderModel,
   formatSessionDateLabel,
   priceSessionLabel,
   type PriceHeaderExtendedQuote,
 } from './price-header';
 
+/**
+ * Presentation-layer tests for the header.
+ *
+ * The PRICE and SESSION rules themselves live in `market-snapshot.test.ts`, against
+ * the one resolver that decides them. What is verified here is the PROJECTION: that
+ * the header model copies the snapshot's answers without re-deciding any of them,
+ * plus the pure formatting and labelling helpers.
+ */
+
 describe('stock price header extended-row session labels', () => {
   it.each([
-    ['premarket', '🌅', 'ก่อนตลาดเปิด'],
-    // Not the 🌙 of "ตลาดปิด": both are on screen whenever a completed
-    // after-hours row is shown while the market is closed.
-    ['after-hours', '🌇', 'หลังเวลาทำการ'],
-  ] as const)('maps %s to a stable emoji and Thai label', (session, emoji, label) => {
-    expect(extendedSessionPresentation(session)).toEqual(expect.objectContaining({ emoji, label }));
+    ['premarket', 'wb_twilight', 'pre', 'ก่อนเปิดตลาด'],
+    // `bedtime`, matching the POST session icon: an after-hours row and the
+    // after-hours session are the same fact seen from two places.
+    ['after-hours', 'bedtime', 'post', 'หลังปิดตลาด'],
+  ] as const)('maps %s to a Material Symbols glyph, a tone and a Thai label', (session, icon, tone, label) => {
+    expect(extendedSessionPresentation(session)).toEqual(expect.objectContaining({ icon, tone, label }));
+  });
+
+  it('describes every extended row in Thai, for its tooltip and accessible name', () => {
+    for (const session of ['premarket', 'after-hours'] as const) {
+      expect(extendedSessionPresentation(session).description.length).toBeGreaterThan(10);
+    }
   });
 });
 
@@ -37,6 +54,7 @@ describe('stock price header data status mapping', () => {
     ['delayed', '⏱️', 'ราคาล่าช้า'],
     ['cached', '💾', 'ข้อมูลที่บันทึกไว้'],
     ['stale', '🕒', 'ข้อมูลอาจล่าช้า'],
+    ['closed', null, 'ราคาปิดทางการ'],
     ['unavailable', '⚠️', 'ไม่มีข้อมูล'],
   ] as const)('maps %s independently from market session', (status, emoji, label) => {
     expect(dataStatusPresentation(status)).toEqual(expect.objectContaining({ emoji, label }));
@@ -55,6 +73,21 @@ describe('stock price header data status mapping', () => {
   });
 });
 
+describe('comparison-base and main-price labels', () => {
+  it('names what each change is measured against', () => {
+    expect(comparisonBaseLabel('previous-regular-close')).toContain('วันซื้อขายก่อนหน้า');
+    expect(comparisonBaseLabel('regular-close')).toContain('ราคาปิดจริง');
+    expect(comparisonBaseLabel(null)).toContain('ไม่มีฐานเปรียบเทียบ');
+  });
+
+  it('names what the main price IS, so a close is never read as a live price', () => {
+    expect(mainPriceRoleLabel('regular')).toContain('เวลาทำการปกติ');
+    expect(mainPriceRoleLabel('regular-close')).toContain('ราคาปิดจริง');
+    expect(mainPriceRoleLabel('premarket')).toContain('ก่อนเปิดตลาด');
+    expect(mainPriceRoleLabel(null)).toContain('ไม่พบราคา');
+  });
+});
+
 const HEADER_QUOTE: Quote = {
   symbol: 'RKLB',
   currency: 'USD',
@@ -63,143 +96,14 @@ const HEADER_QUOTE: Quote = {
   high: 102,
   low: 98,
   previousClose: 98,
+  previousRegularClose: 98,
+  regularClose: 100,
   change: 2,
   changePercent: (2 / 98) * 100,
   volume: 1_000,
-  latestTradingDay: null,
+  latestTradingDay: '2026-07-20',
+  quoteTimestamp: '2026-07-20T14:00:00.000Z',
 };
-
-function quoteResource(
-  quote: Quote,
-  asOf: string,
-  maxAgeSeconds = 900,
-): StockDetailQuoteResource {
-  return {
-    data: quote,
-    freshness: { status: 'realtime', asOf, maxAgeSeconds },
-    provider: 'polygon',
-    reason: null,
-    error: null,
-    fallbackLabel: null,
-  };
-}
-
-describe('stock price header accepted quote partition', () => {
-  it('keeps a regular-market accepted price in the main row', () => {
-    const current = quoteResource(HEADER_QUOTE, '2026-07-20T14:00:00.000Z');
-    const result = resolvePriceHeaderData({
-      current,
-      initial: current,
-      currentSession: 'REGULAR',
-      evaluatedAt: '2026-07-20T14:00:10.000Z',
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('uses the accepted pre-market price only in the secondary row and compares from the real regular close', () => {
-    const current = quoteResource(
-      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
-      '2026-07-20T12:30:00.000Z',
-    );
-    const result = resolvePriceHeaderData({
-      current,
-      initial: current,
-      currentSession: 'PREMARKET',
-      evaluatedAt: '2026-07-20T12:30:10.000Z',
-    });
-    expect(result.quote?.price).toBe(100);
-    expect(result.quote?.change).toBe(0);
-    expect(result.extendedQuote).toMatchObject({ session: 'premarket', price: 101 });
-  });
-
-  it('keeps the last accepted regular quote primary during after-hours', () => {
-    const initial = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
-    const current = quoteResource(
-      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
-      '2026-07-20T21:00:00.000Z',
-    );
-    const result = resolvePriceHeaderData({
-      current,
-      initial,
-      currentSession: 'AFTER_HOURS',
-      evaluatedAt: '2026-07-20T21:00:10.000Z',
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
-  });
-
-  it('keeps a real-time extended trade separate from the regular close after hours', () => {
-    const initial = quoteResource(HEADER_QUOTE, '2026-07-23T20:00:00.000Z');
-    const current = {
-      ...quoteResource(
-        { ...HEADER_QUOTE, price: 206.87, previousClose: 208.76 },
-        '2026-07-24T20:26:14.801Z',
-      ),
-      provider: 'alpaca:iex',
-    };
-    const result = resolvePriceHeaderData({
-      current,
-      initial,
-      currentSession: 'AFTER_HOURS',
-      evaluatedAt: '2026-07-24T20:26:15.000Z',
-    });
-    expect(result.quote?.price).toBe(208.76);
-    expect(result.provider).toBe('alpaca:iex');
-    expect(result.fallbackLabel).toBeNull();
-    expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 206.87 });
-  });
-
-  it('uses the explicit latest regular close instead of the older previous close after hours', () => {
-    const initial = quoteResource({
-      ...HEADER_QUOTE,
-      price: 206.87,
-      regularClose: 206.87,
-      previousClose: 208.76,
-      previousRegularClose: 208.76,
-    }, '2026-07-24T20:00:00.000Z');
-    const current = quoteResource({ ...initial.data!, price: 207.42 }, '2026-07-24T23:58:31.000Z');
-    const result = resolvePriceHeaderData({
-      current,
-      initial,
-      currentSession: 'AFTER_HOURS',
-      evaluatedAt: '2026-07-24T23:58:32.000Z',
-    });
-    expect(result.quote?.price).toBe(206.87);
-    expect(result.quote?.previousRegularClose).toBe(208.76);
-    expect(result.extendedQuote?.price).toBe(207.42);
-  });
-
-  it('shows a closed regular quote without an extended row when no extended quote was accepted', () => {
-    const current = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
-    const result = resolvePriceHeaderData({
-      current,
-      initial: current,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-20T20:00:10.000Z',
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('keeps a stale extended quote in the secondary row without promoting it to current', () => {
-    const initial = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
-    const current = quoteResource(
-      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
-      '2026-07-20T21:00:00.000Z',
-      60,
-    );
-    const result = resolvePriceHeaderData({
-      current,
-      initial,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-20T21:02:00.000Z',
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote?.price).toBe(101);
-    expect(resolveDataStatus(result.extendedQuote!.freshness, Date.parse('2026-07-20T21:02:00.000Z'))).toBe('stale');
-  });
-});
 
 describe('last-known extended quote persistence', () => {
   const afterHours: PriceHeaderExtendedQuote = {
@@ -234,184 +138,8 @@ describe('last-known extended quote persistence', () => {
     };
     expect(preserveLastKnownExtendedQuote(afterHours, cached)).toBe(cached);
   });
-
-  it('reuses the persisted quote after a regular snapshot replaces the canonical price', () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-20T23:59:00.000Z',
-      serverExtendedQuote: preserveLastKnownExtendedQuote(null, afterHours),
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote).toEqual(afterHours);
-  });
-
-  it('does not let a later regular-close snapshot overwrite the persisted extended price', () => {
-    const regularSnapshot = quoteResource(
-      { ...HEADER_QUOTE, price: 100, regularClose: 100 },
-      '2026-07-20T23:58:00.000Z',
-    );
-    const result = resolvePriceHeaderData({
-      current: regularSnapshot,
-      initial: quoteResource(HEADER_QUOTE, '2026-07-20T19:59:00.000Z'),
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-20T23:59:00.000Z',
-      serverExtendedQuote: afterHours,
-    });
-    expect(result.quote?.price).toBe(100);
-    expect(result.extendedQuote).toBe(afterHours);
-  });
-
-  /**
-   * A pre-market print belongs to the session that has NOT traded yet, so it is
-   * always dated after the completed regular close beside it. It must survive the
-   * current session flipping to CLOSED — the row is dropped only by a newer real
-   * price, never by the clock.
-   */
-  it('preserves pre-market provenance after the session becomes closed', () => {
-    const premarket: PriceHeaderExtendedQuote = {
-      ...afterHours,
-      session: 'premarket',
-      price: 99.5,
-      asOf: '2026-07-27T12:45:00.000Z',
-      tradingDate: '2026-07-27',
-      freshness: { status: 'cached', asOf: '2026-07-27T12:45:00.000Z', maxAgeSeconds: null },
-    };
-    // Friday's close is still the primary row; Monday has not opened.
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-27T13:10:00.000Z',
-      serverExtendedQuote: premarket,
-    });
-    expect(result.extendedQuote?.session).toBe('premarket');
-    expect(result.extendedQuote?.price).toBe(99.5);
-  });
-
-  /**
-   * The other half of the same policy: once the regular session has traded PAST a
-   * pre-market print, the primary row carries the newer price and the morning's
-   * print is history, not "ก่อนตลาดเปิด".
-   */
-  it('drops a pre-market print the regular session has already traded past', () => {
-    const premarket: PriceHeaderExtendedQuote = {
-      ...afterHours,
-      session: 'premarket',
-      price: 99.5,
-      asOf: '2026-07-27T12:45:00.000Z',
-      tradingDate: '2026-07-27',
-      freshness: { status: 'cached', asOf: '2026-07-27T12:45:00.000Z', maxAgeSeconds: null },
-    };
-    // Monday 15:59 ET — the same day's regular session is already under way.
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-27T19:59:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-27T20:01:00.000Z',
-      serverExtendedQuote: premarket,
-    });
-    expect(result.extendedQuote).toBeNull();
-  });
 });
 
-/**
- * Weekend behaviour. Absent PRE/AFTER rows on a Sunday are correct, not a bug:
- * there is no extended session to report. What must never happen is the inverse —
- * Friday's after-hours print resurfacing on Sunday as if it were current.
- */
-describe('stock price header weekend and session-date integrity', () => {
-  // 2026-07-24 is a Friday; 20:30Z is 16:30 ET, inside Friday's after-hours window.
-  const FRIDAY_AFTER_HOURS = '2026-07-24T20:30:00.000Z';
-  // 2026-07-26 is a Sunday.
-  const SUNDAY = '2026-07-26T17:00:00.000Z';
-
-  it('shows the latest regular close and no extended row on a weekend', () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: SUNDAY,
-    });
-    expect(result.quote).toBe(HEADER_QUOTE);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it("does not resurface Friday's after-hours print as Sunday's extended quote", () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
-    const fridayExtended = quoteResource(
-      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
-      FRIDAY_AFTER_HOURS,
-      900,
-    );
-    const result = resolvePriceHeaderData({
-      current: fridayExtended,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: SUNDAY,
-    });
-    expect(result.extendedQuote).toBeNull();
-    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
-  });
-
-  it('rejects a weekend-stale extended quote even when the provider declares no max age', () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
-    // An end-of-day feed with maxAgeSeconds: null cannot be aged out by the
-    // freshness threshold, so the session gate is the only thing standing between
-    // a two-day-old print and the "current price" slot.
-    const noMaxAge: StockDetailQuoteResource = {
-      ...quoteResource({ ...HEADER_QUOTE, price: 101 }, FRIDAY_AFTER_HOURS),
-      freshness: { status: 'end-of-day', asOf: FRIDAY_AFTER_HOURS, maxAgeSeconds: null },
-    };
-    const result = resolvePriceHeaderData({
-      current: noMaxAge,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: SUNDAY,
-    });
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('still accepts a genuine same-session after-hours print', () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-24T19:59:00.000Z');
-    const live = quoteResource(
-      { ...HEADER_QUOTE, price: 101, previousClose: 100, change: 1, changePercent: 1 },
-      FRIDAY_AFTER_HOURS,
-      900,
-    );
-    const result = resolvePriceHeaderData({
-      current: live,
-      initial: regular,
-      currentSession: 'AFTER_HOURS',
-      evaluatedAt: '2026-07-24T20:31:00.000Z',
-    });
-    expect(result.extendedQuote).toMatchObject({ session: 'after-hours', price: 101 });
-    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
-  });
-
-  it('accepts a genuine pre-market print and compares it to the prior regular close', () => {
-    const regular = quoteResource(HEADER_QUOTE, '2026-07-23T19:59:00.000Z');
-    // 2026-07-24T12:00Z is 08:00 ET on a Friday: inside the pre-market window.
-    const pre = quoteResource(
-      { ...HEADER_QUOTE, price: 99, previousClose: 100, change: -1, changePercent: -1 },
-      '2026-07-24T12:00:00.000Z',
-      900,
-    );
-    const result = resolvePriceHeaderData({
-      current: pre,
-      initial: regular,
-      currentSession: 'PREMARKET',
-      evaluatedAt: '2026-07-24T12:01:00.000Z',
-    });
-    expect(result.extendedQuote).toMatchObject({ session: 'premarket', price: 99 });
-    expect(result.quote?.price).toBe(HEADER_QUOTE.price);
-  });
-});
 
 describe('stock price header calculations', () => {
   it.each([
@@ -665,254 +393,22 @@ describe('stock price header session date labels', () => {
   });
 });
 
-describe('stock price header server-resolved extended quote', () => {
-  const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
-  const SUNDAY = '2026-07-26T17:00:00.000Z';
-
-  function serverExtended(overrides: Partial<PriceHeaderExtendedQuote> = {}): PriceHeaderExtendedQuote {
-    return {
-      session: 'after-hours',
-      price: 206.6,
-      asOf: '2026-07-24T23:55:00.000Z',
-      tradingDate: '2026-07-24',
-      freshness: { status: 'delayed', asOf: '2026-07-24T23:55:00.000Z', maxAgeSeconds: null },
-      provider: 'yahoo-finance-chart',
-      ...overrides,
-    };
-  }
-
-  // Production shape: Polygon stamps the close at exactly 20:00:00Z (16:00 ET),
-  // which the session classifier treats as an after-hours instant, and supplies
-  // `regularClose` separately. That pairing is what keeps the regular close in
-  // the primary row instead of falling back to the previous close.
-  const regularClose: Quote = {
-    ...HEADER_QUOTE, price: 206.87, regularClose: 206.87,
-    previousClose: 208.76, previousRegularClose: 208.76,
-  };
-
-  it("shows the latest session's after-hours row on a Sunday, with its own date", () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: SUNDAY,
-      serverExtendedQuote: serverExtended(),
-    });
-
-    // The primary row is untouched: the extended print never overwrites it.
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote).not.toBeNull();
-    expect(result.extendedQuote!.session).toBe('after-hours');
-    expect(result.extendedQuote!.price).toBe(206.6);
-    expect(result.extendedQuote!.tradingDate).toBe('2026-07-24');
-    // Never claimed as live.
-    expect(result.extendedQuote!.freshness.status).toBe('delayed');
-  });
-
-  it('rejects an extended print from an older session than the primary row', () => {
-    const regular = quoteResource(regularClose, '2026-07-27T20:00:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: '2026-07-27T22:00:00.000Z',
-      // Friday's print beside Monday's close: stale, must not render.
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  /**
-   * The production shape of the reported defect: Monday's pre-market print beside
-   * Friday's close. A pre-market print NEVER shares the trading date of the
-   * regular close above it, so requiring one date deleted this row every morning.
-   */
-  it('shows a pre-market row beside the latest completed regular close', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'PREMARKET',
-      evaluatedAt: '2026-07-27T12:00:00.000Z',
-      serverExtendedQuote: serverExtended({
-        session: 'premarket', price: 208.1,
-        asOf: '2026-07-27T11:45:00.000Z', tradingDate: '2026-07-27',
-      }),
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote!.session).toBe('premarket');
-    expect(result.extendedQuote!.price).toBe(208.1);
-  });
-
-  it('prefers an accepted pipeline extended print over the server one', () => {
-    // 2026-07-24 20:30Z is 16:30 ET — inside Friday's after-hours window.
-    const accepted = quoteResource({ ...HEADER_QUOTE, price: 207.4, regularClose: 206.87 }, '2026-07-24T20:30:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: accepted,
-      initial: accepted,
-      currentSession: 'AFTER_HOURS',
-      evaluatedAt: '2026-07-24T20:35:00.000Z',
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.extendedQuote!.price).toBe(207.4);
-    expect(result.extendedQuote!.provider).toBe('polygon');
-    // The regular close still holds the primary row.
-    expect(result.quote!.price).toBe(206.87);
-  });
-
-  it('hides the extended row during the regular session', () => {
-    const regular = quoteResource(regularClose, '2026-07-24T15:00:00.000Z');
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'REGULAR',
-      evaluatedAt: '2026-07-24T15:01:00.000Z',
-      // Even if one were supplied, its trading date matches, but the caller
-      // resolves none mid-session; passing null must keep the row hidden.
-      serverExtendedQuote: null,
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('stays backwards compatible when no server extended quote is supplied', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'CLOSED',
-      evaluatedAt: SUNDAY,
-    });
-
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  /**
-   * The production defect, reproduced at the partition layer: a stale/derived
-   * "open" session with a valid same-date after-hours print produced the
-   * contradictory "☀️ ตลาดเปิด" + "🌙 หลังเวลาทำการ" pair. The row must be
-   * dropped by the session, not by the print's own validity.
-   */
-  it('B: drops a perfectly valid extended print while the session is REGULAR', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'REGULAR',
-      evaluatedAt: '2026-07-24T17:00:00.000Z',
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('B: drops the extended row while a symbol is halted mid-session', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'HALTED',
-      evaluatedAt: '2026-07-24T17:00:00.000Z',
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.extendedQuote).toBeNull();
-  });
-
-  it('keeps the dated after-hours row on a market holiday', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'HOLIDAY',
-      evaluatedAt: '2026-07-27T17:00:00.000Z',
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote!.tradingDate).toBe('2026-07-24');
-  });
-
-  /**
-   * §3 persistence at the resolver: the SAME inputs, evaluated once inside the
-   * after-hours window and once after it ended. Only the clock moved, so only
-   * the freshness LABEL may move with it — the row itself must survive.
-   */
-  it('keeps the after-hours row when the session ends and the market goes closed', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const inputs = { current: regular, initial: regular, serverExtendedQuote: serverExtended() };
-
-    const duringSession = resolvePriceHeaderData({
-      ...inputs, currentSession: 'AFTER_HOURS', evaluatedAt: '2026-07-24T23:56:00.000Z',
-    });
-    const afterSession = resolvePriceHeaderData({
-      ...inputs, currentSession: 'CLOSED', evaluatedAt: '2026-07-25T02:00:00.000Z',
-    });
-
-    expect(duringSession.extendedQuote!.price).toBe(206.6);
-    expect(afterSession.extendedQuote!.price).toBe(206.6);
-    expect(afterSession.extendedQuote!.session).toBe('after-hours');
-    expect(afterSession.extendedQuote!.tradingDate).toBe('2026-07-24');
-    // And the primary row is still the regular close, never the extended print.
-    expect(afterSession.quote!.price).toBe(206.87);
-  });
-
-  /**
-   * §3 again, against the refresh that actually erased the row in production: a
-   * regular snapshot re-received on a LATER date must not delete a pre-market
-   * print, because a pre-market print is always dated after the close beside it.
-   */
-  it('survives a snapshot refresh that advances the regular timestamp', () => {
-    const premarket = serverExtended({
-      session: 'premarket', price: 208.1,
-      asOf: '2026-07-27T11:45:00.000Z', tradingDate: '2026-07-27',
-    });
-    const stale = quoteResource(regularClose, FRIDAY_CLOSE);
-    const refreshed = quoteResource(regularClose, '2026-07-27T11:50:00.000Z');
-
-    for (const current of [stale, refreshed]) {
-      const result = resolvePriceHeaderData({
-        current, initial: stale, currentSession: 'PREMARKET',
-        evaluatedAt: '2026-07-27T12:00:00.000Z', serverExtendedQuote: premarket,
-      });
-      expect(result.extendedQuote!.price).toBe(208.1);
-    }
-  });
-
-  it('shows no extended row when the current session could not be resolved', () => {
-    const regular = quoteResource(regularClose, FRIDAY_CLOSE);
-    const result = resolvePriceHeaderData({
-      current: regular,
-      initial: regular,
-      currentSession: 'UNKNOWN',
-      evaluatedAt: SUNDAY,
-      serverExtendedQuote: serverExtended(),
-    });
-
-    expect(result.quote!.price).toBe(206.87);
-    expect(result.extendedQuote).toBeNull();
-  });
-});
 
 /**
- * The final model the header renders. Its job is to carry the resolved session
- * through untouched and to fix the comparison base of each row (§5/§6/§11).
+ * The model is a PROJECTION of the snapshot. These tests assert exactly that: each
+ * displayed field traces to a snapshot field, and the only arithmetic performed is
+ * the two changes, each against the base the snapshot named.
  */
 describe('stock price header final model', () => {
   const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
+  const SUNDAY = '2026-07-26T17:00:00.000Z';
   const regularClose: Quote = {
     ...HEADER_QUOTE, price: 206.87, regularClose: 206.87,
     previousClose: 208.76, previousRegularClose: 208.76,
     change: -1.89, changePercent: -0.91,
+    latestTradingDay: '2026-07-24', quoteTimestamp: FRIDAY_CLOSE,
   };
-  const afterHoursRow: PriceHeaderExtendedQuote = {
+  const afterHoursRow: SnapshotExtendedInput = {
     session: 'after-hours',
     price: 206.7995,
     asOf: '2026-07-24T23:55:00.000Z',
@@ -921,102 +417,106 @@ describe('stock price header final model', () => {
     provider: 'yahoo-finance-chart',
   };
 
-  function model(currentSession: Parameters<typeof buildStockPriceHeaderModel>[0]['currentSession'], extended: PriceHeaderExtendedQuote | null) {
+  function model(
+    session: Parameters<typeof sessionResult>[0],
+    extended: SnapshotExtendedInput | null,
+    options: { now?: string; exchangeDate?: string; quote?: Quote } = {},
+  ) {
+    const now = options.now ?? SUNDAY;
+    const quote = options.quote ?? regularClose;
     return buildStockPriceHeaderModel({
-      data: {
-        quote: regularClose,
-        freshness: { status: 'end-of-day', asOf: FRIDAY_CLOSE, maxAgeSeconds: null },
-        provider: 'polygon',
-        fallbackLabel: null,
-        extendedQuote: extended,
-      },
-      currentSession,
-      currentSessionEvaluatedAt: '2026-07-26T17:00:00.000Z',
-      currentSessionSource: 'exchange-calendar',
+      snapshot: snapshotOf({
+        symbol: 'AAPL',
+        session: sessionResult(session, {
+          evaluatedAt: now,
+          exchangeDate: options.exchangeDate ?? now.slice(0, 10),
+        }),
+        quote: quoteResource(quote, {
+          status: 'end-of-day', asOf: quote.quoteTimestamp ?? FRIDAY_CLOSE, maxAgeSeconds: null,
+        }),
+        extended,
+        now,
+      }),
+      evaluatedAt: now,
     });
   }
 
   it('carries the resolved session and its evaluation instant through untouched', () => {
     const result = model('CLOSED', afterHoursRow);
-    expect(result.currentSession).toBe('CLOSED');
-    expect(result.currentSessionEvaluatedAt).toBe('2026-07-26T17:00:00.000Z');
+    expect(result.session).toBe('CLOSED');
+    expect(result.sessionLabel).toBe('CLOSED');
+    expect(result.currentSessionEvaluatedAt).toBe(SUNDAY);
     // The DATA timestamp is a separate field and is two days older — proving the
     // two are not the same value and neither is derived from the other.
-    expect(result.regular.asOf).toBe(FRIDAY_CLOSE);
-    expect(result.extended!.asOf).toBe('2026-07-24T23:55:00.000Z');
+    expect(result.main.asOf).toBe(FRIDAY_CLOSE);
+    expect(result.secondary!.asOf).toBe('2026-07-24T23:55:00.000Z');
   });
 
   it('C: computes the after-hours change against the regular close beside it', () => {
     const result = model('CLOSED', afterHoursRow);
-    // 206.7995 − 206.87 = −0.0705 (−0.03%), the exact production figures.
-    expect(result.extended!.change!.amount).toBeCloseTo(-0.0705, 4);
-    expect(result.extended!.change!.percent).toBeCloseTo(-0.0341, 3);
-    expect(result.extended!.change!.direction).toBe('down');
+    // 206.7995 - 206.87 = -0.0705 (-0.03%), the exact production figures.
+    expect(result.secondary!.comparisonBaseKind).toBe('regular-close');
+    expect(result.secondary!.comparisonBase).toBe(206.87);
+    expect(result.secondary!.change!.amount).toBeCloseTo(-0.0705, 4);
+    expect(result.secondary!.change!.percent).toBeCloseTo(-0.0341, 3);
+    expect(result.secondary!.change!.direction).toBe('down');
   });
 
-  it('D: computes the pre-market change against the previous regular close in the main row', () => {
-    const result = model('PREMARKET', {
-      ...afterHoursRow, session: 'premarket', price: 208.1, asOf: '2026-07-27T12:45:00.000Z',
-    });
-    expect(result.extended!.change!.amount).toBeCloseTo(208.1 - 206.87, 4);
-    expect(result.extended!.change!.direction).toBe('up');
-  });
-
-  it('keeps the provider daily change on the primary row', () => {
+  it('computes the main change against the previous regular close', () => {
     const result = model('CLOSED', null);
-    expect(result.regular.price).toBe(206.87);
-    expect(result.regular.previousClose).toBe(208.76);
-    expect(result.regular.change!.amount).toBeCloseTo(-1.89, 2);
-    expect(result.regular.change!.percent).toBeCloseTo(-0.91, 2);
+    expect(result.main.price).toBe(206.87);
+    expect(result.main.role).toBe('regular-close');
+    expect(result.main.comparisonBase).toBe(208.76);
+    expect(result.main.comparisonBaseKind).toBe('previous-regular-close');
+    expect(result.main.change!.amount).toBeCloseTo(-1.89, 2);
+    expect(result.main.change!.percent).toBeCloseTo(-0.91, 2);
   });
 
-  it('B: refuses to carry an extended row while the market is REGULAR', () => {
-    expect(model('REGULAR', afterHoursRow).extended).toBeNull();
-    expect(model('HALTED', afterHoursRow).extended).toBeNull();
+  it('reports a finalized close as an official close rather than ageing it into stale', () => {
+    expect(model('CLOSED', null).main.status).toBe('closed');
+  });
+
+  it('B: refuses to carry a secondary row while the market is REGULAR', () => {
+    const now = '2026-07-24T17:00:00.000Z'; // Friday 13:00 ET
+    const quote: Quote = { ...regularClose, quoteTimestamp: now, latestTradingDay: '2026-07-24' };
+    expect(model('REGULAR', afterHoursRow, { now, exchangeDate: '2026-07-24', quote }).secondary).toBeNull();
+    expect(model('HALTED', afterHoursRow, { now, exchangeDate: '2026-07-24', quote }).secondary).toBeNull();
+  });
+
+  it('hides the secondary row entirely rather than showing a fabricated 0.00%', () => {
+    const result = model('CLOSED', null);
+    expect(result.secondary).toBeNull();
+    expect(result.snapshot.extendedPrice).toBeNull();
   });
 
   it('matches the NVTS regular/after-hours arithmetic contract exactly', () => {
-    const result = buildStockPriceHeaderModel({
-      data: {
-        quote: {
-          ...regularClose,
-          price: 11.41,
-          regularClose: 11.41,
-          previousClose: 10.92,
-          previousRegularClose: 10.92,
-          latestTradingDay: '2026-07-27',
-          quoteTimestamp: '2026-07-27T20:00:01.000Z',
-        },
-        freshness: {
-          status: 'delayed',
-          asOf: '2026-07-27T20:00:01.000Z',
-          maxAgeSeconds: 60,
-        },
-        provider: 'yahoo-finance-chart',
-        fallbackLabel: null,
-        extendedQuote: {
-          session: 'after-hours',
-          price: 11.08,
-          asOf: '2026-07-27T21:05:00.000Z',
-          tradingDate: '2026-07-27',
-          freshness: {
-            status: 'delayed',
-            asOf: '2026-07-27T21:05:00.000Z',
-            maxAgeSeconds: 900,
-          },
-          provider: 'yahoo-finance-chart',
-        },
+    const now = '2026-07-27T21:05:01.000Z'; // Monday 17:05 ET
+    const result = model('AFTER_HOURS', {
+      session: 'after-hours',
+      price: 11.08,
+      asOf: '2026-07-27T21:05:00.000Z',
+      tradingDate: '2026-07-27',
+      freshness: { status: 'delayed', asOf: '2026-07-27T21:05:00.000Z', maxAgeSeconds: 900 },
+      provider: 'yahoo-finance-chart',
+    }, {
+      now,
+      exchangeDate: '2026-07-27',
+      quote: {
+        ...regularClose,
+        price: 11.41,
+        regularClose: 11.41,
+        previousClose: 10.92,
+        previousRegularClose: 10.92,
+        latestTradingDay: '2026-07-27',
+        quoteTimestamp: '2026-07-27T20:00:01.000Z',
       },
-      currentSession: 'AFTER_HOURS',
-      currentSessionEvaluatedAt: '2026-07-27T21:05:01.000Z',
-      currentSessionSource: 'exchange-calendar',
     });
 
-    expect(result.regular.price).toBe(11.41);
-    expect(result.regular.change?.amount).toBeCloseTo(0.49);
-    expect(result.regular.change?.percent).toBeCloseTo(4.487179);
-    expect(result.extended?.price).toBe(11.08);
-    expect(result.extended?.change?.amount).toBeCloseTo(-0.33);
-    expect(result.extended?.change?.percent).toBeCloseTo(-2.8922);
+    expect(result.main.price).toBe(11.41);
+    expect(result.main.change?.amount).toBeCloseTo(0.49);
+    expect(result.main.change?.percent).toBeCloseTo(4.487179);
+    expect(result.secondary?.price).toBe(11.08);
+    expect(result.secondary?.change?.amount).toBeCloseTo(-0.33);
+    expect(result.secondary?.change?.percent).toBeCloseTo(-2.8922);
   });
 });

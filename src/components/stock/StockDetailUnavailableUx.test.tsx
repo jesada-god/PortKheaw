@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, MarketDataApiError, Quote } from '@/src/lib/market-data/types';
+import { sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import { CompanyProfileCard } from './CompanyProfileCard';
 import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
@@ -241,21 +242,27 @@ describe('Stock Detail unavailable UX', () => {
         exchange="NASDAQ"
         sourceCurrency="USD"
         model={buildStockPriceHeaderModel({
-          data: {
-            quote,
-            freshness: {
-              status: 'end-of-day',
-              asOf: '2026-07-17T00:00:00.000Z',
-              maxAgeSeconds: 86_400,
+          snapshot: snapshotOf({
+            symbol: 'RKLB',
+            // The market-status provider could not be verified at all, so the
+            // resolver falls back to the CLOSED price rules.
+            session: sessionResult('UNKNOWN', {
+              evaluatedAt: '2026-07-18T00:00:00.000Z',
+              exchangeDate: '2026-07-17',
+            }),
+            quote: {
+              data: quote,
+              freshness: {
+                status: 'end-of-day',
+                asOf: '2026-07-17T00:00:00.000Z',
+                maxAgeSeconds: 86_400,
+              },
+              provider: 'nasdaq',
             },
-            provider: 'nasdaq',
-            fallbackLabel: 'Previous trading day',
-            extendedQuote: null,
-          },
-          // The market-status provider could not be verified at all.
-          currentSession: 'UNKNOWN',
-          currentSessionEvaluatedAt: '2026-07-18T00:00:00.000Z',
-          currentSessionSource: 'unresolved',
+            now: '2026-07-18T00:00:00.000Z',
+          }),
+          evaluatedAt: '2026-07-18T00:00:00.000Z',
+          fallbackLabel: 'Previous trading day',
         })}
         providerConfigured
         quoteError={{
@@ -273,9 +280,15 @@ describe('Stock Detail unavailable UX', () => {
 
     expect(html).toContain('42.00');
     expect(html).toContain('USD');
-    // The trading date is exchange-local: 2026-07-17T00:00Z is still 16 July in
-    // New York, and the session label must name the session, not the reader's day.
-    expect(html).toContain('16/07');
+    /**
+     * The row is dated by the session the PROVIDER assigned it — `latestTradingDay:
+     * '2026-07-17'` — not by classifying its timestamp.
+     *
+     * An end-of-day row is routinely stamped `2026-07-17T00:00:00Z`, which is
+     * midnight UTC and therefore 20:00 ET on the SIXTEENTH. Classifying that instant
+     * answers a question about the wrong day and labelled the 17th's close "16/07".
+     */
+    expect(html).toContain('17/07');
     expect(html).not.toContain('rate-limited');
     expect(html).not.toContain('Quote quota exceeded');
     expect(html).not.toContain('Unavailable');

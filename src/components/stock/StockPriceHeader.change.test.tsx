@@ -15,13 +15,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import type { CurrentMarketSession } from '@/src/lib/market-data/current-session';
-import { buildStockPriceHeaderModel, type PriceHeaderExtendedQuote } from './price-header';
+import type { SnapshotExtendedInput } from '@/src/lib/market-data/market-snapshot';
+import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.stubGlobal('React', React);
 
+// 14:30Z is 10:30 ET on Thursday 2026-07-23 — inside the regular session, so a quote
+// stamped here is a genuine live regular price rather than an extended print.
 const FRESHNESS: DataFreshness = { status: 'delayed', asOf: '2026-07-23T14:30:00.000Z', maxAgeSeconds: 900 };
+const EVALUATED_AT = '2026-07-23T14:31:00.000Z';
 
 const BASE_QUOTE: Quote = {
   symbol: 'RKLB',
@@ -31,35 +36,54 @@ const BASE_QUOTE: Quote = {
   high: 72,
   low: 69,
   previousClose: 72.45,
+  regularClose: 69.75,
+  previousRegularClose: 72.45,
   change: -2.7,
   changePercent: -3.73,
   volume: 1_000_000,
-  latestTradingDay: null,
+  latestTradingDay: '2026-07-23',
+  quoteTimestamp: '2026-07-23T14:30:00.000Z',
 };
 
 /**
- * Builds the resolved model the header renders. The session is supplied
- * explicitly — the component itself never infers one, which is the whole point
- * of the model boundary.
+ * A plausible evaluation instant for each session on Thursday 2026-07-23 ET.
+ *
+ * The resolver validates a print against `now`, so a fixture claiming CLOSED while
+ * evaluating at 10:31 ET would have every after-hours print rejected as
+ * future-dated — correctly. Tests therefore evaluate inside the session they claim.
+ */
+const NOW_BY_SESSION: Partial<Record<CurrentMarketSession, string>> = {
+  PREMARKET: '2026-07-23T12:30:00.000Z', // 08:30 ET
+  REGULAR: EVALUATED_AT, //               10:31 ET
+  HALTED: EVALUATED_AT,
+  AFTER_HOURS: '2026-07-23T20:30:00.000Z', // 16:30 ET
+  CLOSED: '2026-07-24T01:00:00.000Z', //     21:00 ET on the 23rd
+  HOLIDAY: '2026-07-24T01:00:00.000Z',
+};
+
+/**
+ * Builds the model the header renders, by driving the REAL canonical resolver.
+ * The session is supplied explicitly — the component never infers one, which is
+ * the whole point of the model boundary.
  */
 function headerModel(
   quote: Quote | null,
   options: {
     currentSession?: CurrentMarketSession;
-    extendedQuote?: PriceHeaderExtendedQuote | null;
+    extendedQuote?: SnapshotExtendedInput | null;
   } = {},
 ) {
+  const session = options.currentSession ?? 'REGULAR';
+  const now = NOW_BY_SESSION[session] ?? EVALUATED_AT;
   return buildStockPriceHeaderModel({
-    data: {
-      quote,
-      freshness: FRESHNESS,
-      provider: 'polygon',
-      fallbackLabel: null,
-      extendedQuote: options.extendedQuote ?? null,
-    },
-    currentSession: options.currentSession ?? 'REGULAR',
-    currentSessionEvaluatedAt: '2026-07-23T14:31:00.000Z',
-    currentSessionSource: 'exchange-calendar',
+    snapshot: snapshotOf({
+      symbol: 'RKLB',
+      session: sessionResult(session, { evaluatedAt: now, exchangeDate: '2026-07-23' }),
+      quote: quoteResource(quote, FRESHNESS),
+      extended: options.extendedQuote ?? null,
+      now,
+    }),
+    evaluatedAt: now,
   });
 }
 
@@ -116,22 +140,38 @@ describe('StockPriceHeader daily change display', () => {
     render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
 
     expect(transientPriceSinkRef.current).not.toBeNull();
-    transientPriceSinkRef.current?.(70.1234);
+    // 14:32Z = 10:32 ET, inside the regular session the model is in.
+    transientPriceSinkRef.current?.(70.1234, { asOf: '2026-07-23T14:32:00.000Z', feed: 'iex' });
 
-    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.12');
+    // The headline shows the tick's real precision, capped at four decimals.
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.1234');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.3266');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('(-3.21%)');
+  });
+
+  /**
+   * A tick with no exchange timestamp cannot be proved to belong to the regular
+   * session, so the hot path refuses it rather than assuming. Assuming was the
+   * defect: it is how an unlabelled Alpaca after-hours print reached this node.
+   */
+  it('refuses a transient tick that carries no exchange timestamp', () => {
+    const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
+    render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
+
+    transientPriceSinkRef.current?.(70.1234);
+
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
   });
 
   it('does not let an unrelated React render overwrite the latest transient price', () => {
     const transientPriceSinkRef: { current: TransientPriceSink | null } = { current: null };
     render(baseProps(BASE_QUOTE, { transientPriceSinkRef }));
     transientPriceSinkRef.current?.(206.87, {
-      asOf: '2026-07-24T20:26:14.801Z',
+      asOf: '2026-07-23T14:33:00.000Z',
       feed: 'iex',
     });
 
-    render(baseProps({ ...BASE_QUOTE, price: 212.06 }, {
+    render(baseProps({ ...BASE_QUOTE, price: 212.06, regularClose: 212.06 }, {
       transientPriceSinkRef,
       connectionState: 'connected',
     }));
@@ -161,7 +201,7 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('hides provider change when the canonical previous close is missing', () => {
-    render(baseProps({ ...BASE_QUOTE, previousClose: null }));
+    render(baseProps({ ...BASE_QUOTE, previousClose: null, previousRegularClose: null }));
     expect(container.textContent).toContain('69.75');
     expect(container.textContent).not.toContain('(-3.73%)');
     expect(changeRow()).toBeNull();
@@ -175,7 +215,7 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('uses a positive tone and an up arrow for a gain', () => {
-    render(baseProps({ ...BASE_QUOTE, price: 74.2, change: 1.75, changePercent: 2.42 }));
+    render(baseProps({ ...BASE_QUOTE, price: 74.2, regularClose: 74.2, change: 1.75, changePercent: 2.42 }));
     const row = container.querySelector('.text-positive');
     expect(row).not.toBeNull();
     expect(row?.textContent).toContain('+1.75');
@@ -184,7 +224,7 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('shows a neutral grey zero change with no arrow', () => {
-    render(baseProps({ ...BASE_QUOTE, price: 72.45, change: 0, changePercent: 0 }));
+    render(baseProps({ ...BASE_QUOTE, price: 72.45, regularClose: 72.45, change: 0, changePercent: 0 }));
     const row = changeRow();
     expect(row?.className).toContain('text-text-muted');
     expect(row?.textContent).toContain('0.00');
@@ -194,7 +234,7 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('hides the change when no real base exists', () => {
-    render(baseProps({ ...BASE_QUOTE, previousClose: null, change: null, changePercent: null }));
+    render(baseProps({ ...BASE_QUOTE, previousClose: null, previousRegularClose: null, change: null, changePercent: null }));
     expect(container.textContent).toContain('69.75');
     expect(container.textContent).not.toContain('(-3.73%)');
     expect(changeRow()).toBeNull();
@@ -233,7 +273,13 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.textContent).toContain('+1.00');
   });
 
-  it('renders a pre-market accepted quote in the labelled secondary row', () => {
+  /**
+   * PRE promotes the pre-market print to the MAIN line — that IS the current price
+   * before the bell, and showing yesterday's close there instead is what made the
+   * header look frozen every morning. Because the print is the main line it is not
+   * also duplicated into a secondary row.
+   */
+  it('makes the latest pre-market print the main price during PRE', () => {
     render(baseProps(BASE_QUOTE, {}, {
       currentSession: 'PREMARKET',
       extendedQuote: {
@@ -245,10 +291,13 @@ describe('StockPriceHeader daily change display', () => {
         provider: 'polygon',
       },
     }));
-    const row = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(container.textContent).toContain('ก่อนตลาดเปิด');
-    expect(row?.textContent).toContain('70.25');
-    expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.25');
+    expect(container.textContent).toContain('ก่อนเปิดตลาด');
+    // Compared against the previous regular close (72.45), not against 69.75.
+    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.20');
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="current-session-label"] [data-session-icon]')
+      ?.getAttribute('data-session-icon')).toBe('wb_twilight');
   });
 
   it('keeps the main status closed while showing the latest after-hours row', () => {
@@ -264,11 +313,11 @@ describe('StockPriceHeader daily change display', () => {
       },
     }));
     const row = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(container.textContent).toContain('ตลาดปิด');
+    expect(container.textContent).toContain('ปิดตลาด');
     expect(container.textContent).not.toContain('ตลาดเปิด');
-    expect(row?.textContent).toContain('หลังเวลาทำการ');
+    expect(row?.textContent).toContain('หลังปิดตลาด');
     expect(row?.textContent).toContain('+1.00');
-    expect(row?.querySelector('svg.text-accent-blue')).not.toBeNull();
+    expect(row?.querySelector('[data-session-icon]')).not.toBeNull();
     expect(container.textContent).not.toContain('Real-time · IEX');
   });
 
@@ -312,7 +361,7 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   it('keeps the extended row through reconnect and an unrelated React rerender', () => {
-    const extendedQuote: PriceHeaderExtendedQuote = {
+    const extendedQuote: SnapshotExtendedInput = {
       session: 'after-hours',
       price: 70.75,
       asOf: '2026-07-23T20:05:45.000Z',
@@ -333,7 +382,7 @@ describe('StockPriceHeader daily change display', () => {
 
   it('cleanly hides the secondary row when closed without an extended quote', () => {
     render(baseProps(BASE_QUOTE, {}, { currentSession: 'CLOSED' }));
-    expect(container.textContent).toContain('ตลาดปิด');
+    expect(container.textContent).toContain('ปิดตลาด');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
   });
 
@@ -356,13 +405,13 @@ describe('StockPriceHeader daily change display', () => {
     }));
     expect(container.textContent).toContain('ตลาดเปิด');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
-    expect(container.textContent).not.toContain('หลังเวลาทำการ');
+    expect(container.textContent).not.toContain('หลังปิดตลาด');
   });
 
-  it('F: a connected socket on a closed market still reads ตลาดปิด', () => {
+  it('F: a connected socket on a closed market still reads ปิดตลาด', () => {
     render(baseProps(BASE_QUOTE, { connectionState: 'awaiting-data' }, { currentSession: 'CLOSED' }));
     expect(container.textContent).toContain('เชื่อมต่อแล้ว · รอข้อมูลสด');
-    expect(container.textContent).toContain('ตลาดปิด');
+    expect(container.textContent).toContain('ปิดตลาด');
     expect(container.querySelector('[data-testid="current-session-label"]')?.textContent)
       .not.toContain('ตลาดเปิด');
   });

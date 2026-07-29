@@ -14,21 +14,22 @@
  * from the clock and a verified market-status report.
  *
  * These tests drive the real chain — `resolveCurrentMarketSession` →
- * `resolvePriceHeaderData` → `buildStockPriceHeaderModel` → `StockPriceHeader` —
- * so a regression anywhere along it fails here.
+ * `resolveCanonicalMarketSnapshot` → `buildStockPriceHeaderModel` →
+ * `StockPriceHeader` — so a regression anywhere along it fails here.
  */
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveCurrentMarketSession, applySymbolHalt } from '@/src/lib/market-data/current-session';
+import {
+  applySymbolHalt,
+  resolveCurrentMarketSession,
+  sessionPhaseOf,
+} from '@/src/lib/market-data/current-session';
 import type { Quote } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
-import {
-  buildStockPriceHeaderModel,
-  resolvePriceHeaderData,
-  type PriceHeaderExtendedQuote,
-} from './price-header';
+import { resolveCanonicalMarketSnapshot, type SnapshotExtendedInput } from '@/src/lib/market-data/market-snapshot';
+import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -59,7 +60,7 @@ const FRIDAY_QUOTE: Quote = {
   latestTradingDay: '2026-07-24',
 };
 
-const FRIDAY_EXTENDED: PriceHeaderExtendedQuote = {
+const FRIDAY_EXTENDED: SnapshotExtendedInput = {
   session: 'after-hours',
   price: 206.7995,
   asOf: FRIDAY_AFTER_HOURS,
@@ -85,7 +86,7 @@ function renderChain(options: {
   providerStatus?: Parameters<typeof resolveCurrentMarketSession>[0]['marketStatus'];
   holidays?: ReadonlySet<string>;
   halted?: boolean;
-  serverExtendedQuote?: PriceHeaderExtendedQuote | null;
+  serverExtendedQuote?: SnapshotExtendedInput | null;
   connectionState?: 'connected' | 'awaiting-data' | null;
 }) {
   const resolved = resolveCurrentMarketSession({
@@ -95,19 +96,15 @@ function renderChain(options: {
   });
   const currentSession = applySymbolHalt(resolved.session, options.halted ?? false);
   const current = quoteResource(FRIDAY_CLOSE);
-  const data = resolvePriceHeaderData({
-    current,
-    initial: current,
-    currentSession,
-    evaluatedAt: options.now,
-    serverExtendedQuote: options.serverExtendedQuote ?? null,
+  const snapshot = resolveCanonicalMarketSnapshot({
+    symbol: 'AAPL',
+    session: { ...resolved, session: currentSession, phase: sessionPhaseOf(currentSession) },
+    quote: current,
+    initialQuote: current,
+    extended: options.serverExtendedQuote ?? null,
+    now: options.now,
   });
-  const model = buildStockPriceHeaderModel({
-    data,
-    currentSession,
-    currentSessionEvaluatedAt: resolved.evaluatedAt,
-    currentSessionSource: resolved.source,
-  });
+  const model = buildStockPriceHeaderModel({ snapshot, evaluatedAt: options.now });
   act(() => {
     root.render(React.createElement(StockPriceHeader, {
       symbol: 'AAPL',
@@ -124,7 +121,7 @@ function renderChain(options: {
       connectionState: options.connectionState ?? null,
     } as never));
   });
-  return { resolved, currentSession, model };
+  return { resolved, currentSession, model, snapshot };
 }
 
 let container: HTMLDivElement;
@@ -146,7 +143,7 @@ function sessionLabel(): string {
 }
 
 describe('Stock price header — current market session integrity', () => {
-  it('reproduces the production screenshot correctly: ตลาดปิด with a dated after-hours row', () => {
+  it('reproduces the production screenshot correctly: ปิดตลาด with a dated after-hours row', () => {
     const { currentSession } = renderChain({
       now: SUNDAY,
       // The exact stale evidence that produced the bug: Friday's "open".
@@ -161,14 +158,14 @@ describe('Stock price header — current market session integrity', () => {
     });
 
     expect(currentSession).toBe('CLOSED');
-    expect(sessionLabel()).toContain('ตลาดปิด');
+    expect(sessionLabel()).toContain('ปิดตลาด');
     expect(sessionLabel()).not.toContain('ตลาดเปิด');
     // The primary row stays the latest completed regular close…
     expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-1.89');
     // …and the after-hours row is allowed, carrying its own trading date.
     const extended = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(extended?.textContent).toContain('หลังเวลาทำการ');
+    expect(extended?.textContent).toContain('หลังปิดตลาด');
     expect(extended?.textContent).toContain('206.7995');
     expect(extended?.textContent).toContain('-0.0705');
     expect(container.querySelector('[data-testid="extended-hours-date"]')?.textContent).toBe('24/07');
@@ -185,7 +182,7 @@ describe('Stock price header — current market session integrity', () => {
   it('F: a connected socket on a weekend does not imply an open market', () => {
     renderChain({ now: SUNDAY, connectionState: 'awaiting-data' });
     expect(container.textContent).toContain('เชื่อมต่อแล้ว · รอข้อมูลสด');
-    expect(sessionLabel()).toContain('ตลาดปิด');
+    expect(sessionLabel()).toContain('ปิดตลาด');
   });
 
   it('H: a cached "open" cannot override a verified holiday', () => {
@@ -201,7 +198,7 @@ describe('Stock price header — current market session integrity', () => {
       },
     });
     expect(currentSession).toBe('HOLIDAY');
-    expect(sessionLabel()).toContain('วันหยุดตลาด');
+    expect(sessionLabel()).toContain('วันหยุด');
     expect(sessionLabel()).not.toContain('ตลาดเปิด');
   });
 
@@ -223,7 +220,7 @@ describe('Stock price header — current market session integrity', () => {
     expect(currentSession).toBe('REGULAR');
     expect(sessionLabel()).toContain('ตลาดเปิด');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
-    expect(container.textContent).not.toContain('หลังเวลาทำการ');
+    expect(container.textContent).not.toContain('หลังปิดตลาด');
   });
 
   it('shows a halt without downgrading an open market to closed', () => {
@@ -240,15 +237,21 @@ describe('Stock price header — current market session integrity', () => {
     });
     expect(currentSession).toBe('HALTED');
     expect(sessionLabel()).toContain('หยุดซื้อขายชั่วคราว');
-    expect(sessionLabel()).not.toContain('ตลาดปิด');
+    expect(sessionLabel()).not.toContain('ปิดตลาด');
   });
 
-  it('shows the pre-market row beside the previous regular close before the open', () => {
-    const { currentSession } = renderChain({
+  /**
+   * Before the bell the pre-market print IS the current price, so it takes the main
+   * line and is compared against the previous regular close. Showing Friday's close
+   * there instead — which the old partitioning did — made the header look frozen
+   * every morning while the stock was visibly trading.
+   */
+  it('makes the pre-market print the main price before the open', () => {
+    const { currentSession, snapshot } = renderChain({
       // Monday 2026-07-27, 08:00 ET.
       now: '2026-07-27T12:00:00.000Z',
       // Monday's OWN pre-market print, 07:45 ET. It follows Friday's close, so
-      // it never shares a trading date with the primary row beside it.
+      // it never shares a trading date with that close.
       serverExtendedQuote: {
         ...FRIDAY_EXTENDED,
         session: 'premarket',
@@ -258,9 +261,14 @@ describe('Stock price header — current market session integrity', () => {
       },
     });
     expect(currentSession).toBe('PREMARKET');
-    expect(sessionLabel()).toContain('ก่อนตลาดเปิด');
-    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
-    expect(container.querySelector('[data-testid="extended-hours-row"]')?.textContent).toContain('208.10');
+    expect(sessionLabel()).toContain('ก่อนเปิดตลาด');
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('208.10');
+    expect(snapshot.mainPriceRole).toBe('premarket');
+    // Compared against the previous regular close (208.76), never against 206.87.
+    expect(snapshot.comparisonBase).toBe(208.76);
+    expect(snapshot.comparisonBaseKind).toBe('previous-regular-close');
+    // The print is the main line, so it is not duplicated into a secondary row.
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
   });
 
   it('keeps no raw provider status or debug wording in the primary UI', () => {

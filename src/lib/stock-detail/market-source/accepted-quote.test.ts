@@ -215,10 +215,15 @@ describe('buildAcceptedResource — the header and chart price line share one va
 });
 
 describe('candidateFromUpdate', () => {
-  function update(price: number | null, source: MarketUpdate['label']['source']): MarketUpdate {
+  function update(
+    price: number | null,
+    source: MarketUpdate['label']['source'],
+    // 15:00Z is 11:00 ET, inside the regular session.
+    exchangeTimestamp: string | null = '2026-07-21T15:00:00.000Z',
+  ): MarketUpdate {
     return {
       symbol: 'AAPL', price, quote: null, candle: null,
-      label: { mode: 'DELAYED', provider: 'polygon', source, exchangeTimestamp: '2026-07-21T15:00:00.000Z', receivedAt: '2026-07-21T15:00:01.000Z', delayAgeSeconds: 1, fallbackNote: null },
+      label: { mode: 'DELAYED', provider: 'polygon', source, exchangeTimestamp, receivedAt: '2026-07-21T15:00:01.000Z', delayAgeSeconds: 1, fallbackNote: null },
       error: null,
     };
   }
@@ -229,18 +234,70 @@ describe('candidateFromUpdate', () => {
     expect(candidateFromUpdate(update(10, 'history-fallback'))).toBeNull();
   });
 
-  it('assigns live PRE/AFTER trades to an extended domain while REST snapshots stay regular', () => {
+  /**
+   * Every priced update is filed by the domain its OWN exchange timestamp puts it
+   * in. This is the fix for the production defect: Alpaca sends no session on the
+   * wire, so the previous code fell through to a `regular` default and filed every
+   * after-hours print as a regular price — which then took the main price row.
+   */
+  it('files a live trade by the session its exchange timestamp falls in', () => {
+    // 20:05Z = 16:05 ET, after-hours.
+    expect(candidateFromUpdate(
+      update(11.05, 'aggregate-fallback', '2026-07-21T20:05:00.000Z'),
+    )?.priceRole).toBe('after-hours');
+    // 12:25Z = 08:25 ET, pre-market.
+    expect(candidateFromUpdate(
+      update(11.08, 'aggregate-fallback', '2026-07-21T12:25:00.000Z'),
+    )?.priceRole).toBe('pre-market');
+    // 15:00Z = 11:00 ET, regular.
+    expect(candidateFromUpdate(
+      update(11.41, 'aggregate-fallback', '2026-07-21T15:00:00.000Z'),
+    )?.priceRole).toBe('regular');
+  });
+
+  it('files an unlabelled Alpaca after-hours trade as extended, not regular', () => {
+    // The exact production shape: no `session` field at all on the update.
+    const candidate = candidateFromUpdate(update(10.42, 'aggregate-fallback', '2026-07-29T20:41:12.000Z'));
+    expect(candidate?.priceRole).toBe('after-hours');
+    expect(candidate?.priceRole).not.toBe('regular');
+  });
+
+  it('lets the timestamp override a declared session that contradicts it', () => {
+    // A stream (or a stale request parameter) claiming after-hours for a print
+    // executed at 11:00 ET is not evidence; the timestamp is.
     expect(candidateFromUpdate({
-      ...update(11.05, 'aggregate-fallback'),
-      session: 'after-hours',
-    })?.priceRole).toBe('after-hours');
-    expect(candidateFromUpdate({
-      ...update(11.08, 'aggregate-fallback'),
-      session: 'pre-market',
-    })?.priceRole).toBe('pre-market');
-    expect(candidateFromUpdate({
-      ...update(11.41, 'snapshot'),
+      ...update(11.41, 'aggregate-fallback', '2026-07-21T15:00:00.000Z'),
       session: 'after-hours',
     })?.priceRole).toBe('regular');
+  });
+
+  /**
+   * A REST snapshot is the exception, and only when its `price` demonstrably IS the
+   * quote's own `regularClose`: Yahoo's `regularMarketPrice` stays the official close
+   * while the provider reports POST, stamped at 16:00:01 ET. Judging that by its
+   * timestamp would file the official close as an after-hours print.
+   */
+  it('keeps a snapshot price that equals its own regularClose in the regular domain', () => {
+    const quote = { ...baseQuote, price: 11.41, regularClose: 11.41 };
+    expect(candidateFromUpdate({
+      ...update(11.41, 'snapshot', '2026-07-21T20:00:01.000Z'),
+      quote,
+    })?.priceRole).toBe('regular');
+  });
+
+  it('files a snapshot price that differs from its regularClose by its timestamp', () => {
+    // A genuine extended print carried inside a snapshot response.
+    const quote = { ...baseQuote, price: 11.08, regularClose: 11.41 };
+    expect(candidateFromUpdate({
+      ...update(11.08, 'snapshot', '2026-07-21T20:41:00.000Z'),
+      quote,
+    })?.priceRole).toBe('after-hours');
+  });
+
+  it('drops a print whose domain cannot be established rather than calling it regular', () => {
+    // 2026-07-25 is a Saturday: no session, so no domain.
+    expect(candidateFromUpdate(update(11.41, 'aggregate-fallback', '2026-07-25T15:00:00.000Z'))).toBeNull();
+    // 00:30Z = 20:30 ET, past the after-hours window.
+    expect(candidateFromUpdate(update(11.41, 'aggregate-fallback', '2026-07-22T00:30:00.000Z'))).toBeNull();
   });
 });

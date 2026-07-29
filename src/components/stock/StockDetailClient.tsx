@@ -10,7 +10,12 @@ import { useToast } from '@/src/components/ui/Toast';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { useAppVisible } from '@/src/hooks/useAppVisible';
 import { useExchangeClock } from '@/src/hooks/useExchangeClock';
-import { applySymbolHalt, resolveCurrentMarketSession } from '@/src/lib/market-data/current-session';
+import {
+  applySymbolHalt,
+  resolveCurrentMarketSession,
+  sessionPhaseOf,
+} from '@/src/lib/market-data/current-session';
+import { resolveCanonicalMarketSnapshot } from '@/src/lib/market-data/market-snapshot';
 import { useMarketSource, type CanonicalLiveUpdateSink } from './useMarketSource';
 import {
   freshnessFromMode,
@@ -43,7 +48,6 @@ import {
   buildStockPriceHeaderModel,
   preserveLastKnownExtendedQuote,
   resolvePriceCurrency,
-  resolvePriceHeaderData,
   type PriceHeaderExtendedQuote,
 } from './price-header';
 import { requestCompanyProfile } from './profile-retry';
@@ -334,12 +338,27 @@ export function StockDetailClient({
     lastKnownExtended.symbol === symbol ? lastKnownExtended.quote : null,
     incomingExtendedQuote,
   );
-  const priceHeaderData = resolvePriceHeaderData({
-    current: quoteResource,
-    initial: initialQuoteResource,
-    currentSession,
-    evaluatedAt: exchangeNow,
-    serverExtendedQuote: persistedExtendedQuote,
+  /**
+   * THE canonical market price snapshot — the single source of truth this header
+   * renders from. A symbol halt is applied first so the phase it resolves against
+   * is the one the header actually shows.
+   */
+  const marketSnapshot = resolveCanonicalMarketSnapshot({
+    symbol,
+    session: {
+      ...resolvedSession,
+      session: currentSession,
+      phase: sessionPhaseOf(currentSession),
+    },
+    sessionSourceLabel: resolvedSession.provider.accepted
+      ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
+      : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
+    quote: quoteResource,
+    // The server-rendered quote's `regularClose` was verified against the canonical
+    // trading date server-side, so it backs the live pipeline's own close.
+    initialQuote: initialQuoteResource,
+    extended: persistedExtendedQuote,
+    now: exchangeNow,
   });
   // Canonical/regular snapshots often omit extended fields. Capture each real
   // pre/post print independently so omission, reconnect and rerender cannot be
@@ -348,24 +367,27 @@ export function StockDetailClient({
   // derived-state update settles after at most one render.
   const nextLastKnownExtended = preserveLastKnownExtendedQuote(
     persistedExtendedQuote,
-    priceHeaderData.extendedQuote,
+    incomingExtendedQuote,
   );
   if (lastKnownExtended.symbol !== symbol || nextLastKnownExtended !== lastKnownExtended.quote) {
     setLastKnownExtended({ symbol, quote: nextLastKnownExtended });
   }
   const priceHeaderModel = buildStockPriceHeaderModel({
-    data: priceHeaderData,
-    currentSession,
-    currentSessionEvaluatedAt: resolvedSession.evaluatedAt,
-    currentSessionSource: resolvedSession.provider.accepted
-      ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
-      : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
+    snapshot: marketSnapshot,
+    evaluatedAt: exchangeNow,
+    fallbackLabel: quoteResource.fallbackLabel,
   });
-  const analyticalSpotPrice = currentSession === 'REGULAR' || currentSession === 'HALTED'
-    ? priceState.regularPrice
-    : currentSession === 'PREMARKET' || currentSession === 'AFTER_HOURS'
-      ? priceState.extendedPrice ?? priceState.regularPrice
-      : priceState.regularPrice;
+  /**
+   * The price the analytics panels mark against (S/R distance, options underlying).
+   *
+   * Read from the canonical snapshot so it can never disagree with the header:
+   * inside REGULAR that is the live regular price, and once the market is closed it
+   * is the official close, with a real extended print preferred during PRE/POST
+   * because that IS the most recent traded price for a marking purpose.
+   */
+  const analyticalSpotPrice = marketSnapshot.session === 'REGULAR'
+    ? marketSnapshot.mainPrice
+    : marketSnapshot.extendedPrice ?? marketSnapshot.mainPrice;
 
   const toggleWatch = () => {
     if (!isOnline) {

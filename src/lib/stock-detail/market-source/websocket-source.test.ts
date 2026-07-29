@@ -353,3 +353,78 @@ describe('WebSocketMarketSource tracing', () => {
     expect(after).toBe(1); // the stale trade did not update the header
   });
 });
+
+/**
+ * The emitted `session` describes the PRICE, and only the price.
+ *
+ * It used to fall back to `this.selection.session` — the chart's REQUEST parameter,
+ * which is `regular` by default. That made every after-hours print look like a
+ * regular-session price to the header, and is how NVTS's 16:41 ET print at 10.42
+ * replaced the official 9.735 close in the main row.
+ */
+describe('WebSocketMarketSource price session', () => {
+  const AFTER_HOURS = '2026-07-29T20:41:12.000Z'; // 16:41 ET Wednesday
+  const REGULAR = '2026-07-29T15:00:00.000Z'; //     11:00 ET
+  const PRE_MARKET = '2026-07-29T12:25:00.000Z'; //  08:25 ET
+
+  it('reports the session of the trade, not the chart selection', () => {
+    // The source is configured with a `regular` selection throughout.
+    const { source, sockets, updates, connect, tradeAt } = setup();
+    source.start();
+    connect(sockets[0]);
+
+    sockets[0].emit(tradeAt(AFTER_HOURS, 10.42));
+    expect(updates[updates.length - 1].session).toBe('after-hours');
+
+    sockets[0].emit(tradeAt(PRE_MARKET, 10.15));
+    // Older than the accepted price, so the accepted price and its session both hold.
+    expect(updates[updates.length - 1].session).toBe('after-hours');
+  });
+
+  it.each([
+    [REGULAR, 'regular'],
+    [PRE_MARKET, 'pre-market'],
+    [AFTER_HOURS, 'after-hours'],
+  ] as const)('classifies a trade at %s as %s', (timestamp, session) => {
+    const { source, sockets, updates, connect, tradeAt } = setup();
+    source.start();
+    connect(sockets[0]);
+    sockets[0].emit(tradeAt(timestamp, 10.42));
+    expect(updates[updates.length - 1].session).toBe(session);
+  });
+
+  it('prefers a provider-declared session when the feed states one', () => {
+    const { source, sockets, updates, connect } = setup();
+    source.start();
+    connect(sockets[0]);
+    sockets[0].emit({
+      type: 'event',
+      event: {
+        kind: 'trade', symbol: 'AAPL', price: 10.42, size: 10,
+        timestampMs: Date.parse(AFTER_HOURS), session: 'after-hours', provider: 'finnhub',
+      },
+    });
+    expect(updates[updates.length - 1].session).toBe('after-hours');
+  });
+
+  it('reports no session at all while there is no priced value', () => {
+    const { source, sockets, updates, connect } = setup();
+    source.start();
+    connect(sockets[0]);
+    // A lifecycle emission before the first trade must not claim `regular`.
+    expect(updates[updates.length - 1].price).toBeNull();
+    expect(updates[updates.length - 1].session).toBeNull();
+  });
+
+  it('clears the price session on a symbol switch', () => {
+    const { source, sockets, updates, connect, tradeAt } = setup();
+    source.start();
+    connect(sockets[0]);
+    sockets[0].emit(tradeAt(AFTER_HOURS, 10.42));
+    expect(updates[updates.length - 1].session).toBe('after-hours');
+
+    source.setSymbol('MSFT');
+    // The previous instrument's session can never describe the new one.
+    expect(updates[updates.length - 1].session).toBeNull();
+  });
+});

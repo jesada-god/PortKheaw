@@ -27,6 +27,17 @@ html[data-theme="portkheaw"][data-appearance="light"] {
   --negative: #C93636;
   --warning: #9A5A00;
   --info: #2563B8;
+  /*
+   * Market-session icon tones, same five meanings as dark, darkened to clear AA on
+   * every light surface. The dark values (#93A5FF and friends) read barely 2:1 on
+   * white, which is how a session icon becomes invisible in light mode. Kept clear
+   * of --positive/--negative so the icon never reads as a price direction.
+   */
+  --session-pre: #4B4FC4;
+  --session-regular: #8A5A00;
+  --session-post: #2F5AAE;
+  --session-closed: #5A6A75;
+  --session-event: #9C5A1A;
   --focus-ring: #596D00;
   --input-bg: #FFFFFF;
   --chart-bg: #FFFFFF;

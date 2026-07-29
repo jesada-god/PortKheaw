@@ -20,7 +20,15 @@
   --color-accent-purple: #8B5CF6;
   --color-accent-blue: var(--info);
   --color-accent-orange: var(--warning);
-  
+
+  /* Market-session icon tones. One token per session meaning, defined once per
+     appearance in the theme files — never a hex repeated at a call site. */
+  --color-session-pre: var(--session-pre);
+  --color-session-regular: var(--session-regular);
+  --color-session-post: var(--session-post);
+  --color-session-closed: var(--session-closed);
+  --color-session-event: var(--session-event);
+
   --color-border: var(--border);
 }
 

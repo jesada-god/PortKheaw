@@ -18,6 +18,17 @@ html[data-theme="portkheaw"][data-appearance="dark"] {
   --negative: #EF4444;
   --warning: #F59E0B;
   --info: #3B82F6;
+  /*
+   * Market-session icon tones. Kept clear of --positive/--negative on purpose: a
+   * green "market open" icon beside a red price reads as a second, contradictory
+   * price signal. --session-event is a warm amber-red, never the error red, because
+   * a scheduled holiday is not a fault.
+   */
+  --session-pre: #93A5FF;
+  --session-regular: #F5C451;
+  --session-post: #9BB6F5;
+  --session-closed: #93A3AE;
+  --session-event: #F5A85C;
   --focus-ring: #D7FF00;
   --input-bg: #0A0F0C;
   --chart-bg: #0D120F;

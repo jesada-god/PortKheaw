@@ -1,33 +1,31 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
-import { ChevronDown, Clock3, Info, Moon, Sunrise, Sunset } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { Modal } from '@/src/components/ui/Modal';
+import { SessionIcon } from '@/src/components/ui/SessionIcon';
 import type { MarketDataApiError } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
-import {
-  currentSessionPresentation,
-  type CurrentMarketSession,
-} from '@/src/lib/market-data/current-session';
+import { currentSessionPresentation } from '@/src/lib/market-data/current-session';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
-import { formatPrice } from '@/src/utils/format';
 import { stockDetailErrorMessage } from '@/src/lib/stock-detail/error-presentation';
 import {
   connectionStatusPresentation,
   calculatePriceChange,
+  comparisonBaseLabel,
   convertUsdForDisplay,
   dataStatusPresentation,
   extendedSessionPresentation,
   formatSessionDateLabel,
+  mainPriceRoleLabel,
   priceDirectionPresentation,
   priceFlashDirection,
   priceSessionLabel,
-  resolveDataStatus,
-  type ExtendedRowSession,
   type PriceDirection,
   type PriceDisplayCurrency,
   type StockPriceHeaderModel,
 } from './price-header';
+import { classifyUsEquitySession } from '@/src/lib/market-data/session';
 import type { ConnectionStatus } from '@/src/lib/stock-detail/market-source';
 
 interface TransientPriceMetadata {
@@ -89,10 +87,19 @@ function formatNumber(value: number | null): string {
   return value === null || !Number.isFinite(value) ? 'ไม่พบข้อมูล' : numberFormatter.format(value);
 }
 
+/**
+ * The headline price, at the precision the exchange actually printed.
+ *
+ * Deliberately NOT the 2-decimal `compact` mode. US closes are quoted to 2–4
+ * decimals — NVTS's official regular close is 9.735 — and rounding the headline to
+ * 9.74 reproduces the very complaint this work exists to fix: the big number not
+ * matching the official close. Trailing zeros are still dropped, so an ordinary
+ * 206.87 close is unchanged and only real sub-cent precision is shown.
+ */
 function formatMainPrice(value: number | null): string {
   return value === null || !Number.isFinite(value)
     ? 'ไม่พบข้อมูล'
-    : formatPrice(value, { mode: 'compact' });
+    : numberFormatter.format(value);
 }
 
 function formatSigned(value: number | null): string {
@@ -155,31 +162,6 @@ function StatusEmoji({ value }: { value: string }) {
   return <span aria-hidden="true" className="shrink-0">{value}</span>;
 }
 
-function CurrentSessionIcon({ session }: { session: CurrentMarketSession }) {
-  const className = session === 'PREMARKET' || session === 'AFTER_HOURS'
-    ? 'text-accent-blue'
-    : session === 'REGULAR'
-      ? 'text-positive'
-      : 'text-negative';
-  if (session === 'PREMARKET') {
-    return <Sunrise aria-hidden="true" className={`shrink-0 ${className}`} size={15}/>;
-  }
-  if (session === 'AFTER_HOURS' || session === 'CLOSED' || session === 'HOLIDAY') {
-    return <Moon aria-hidden="true" className={`shrink-0 ${className}`} size={15}/>;
-  }
-  return <Clock3 aria-hidden="true" className={`shrink-0 ${className}`} size={14}/>;
-}
-
-/**
- * Sunset, not the Moon used for "ตลาดปิด": a completed after-hours row is
- * routinely shown while the market is closed, so the two rows must not carry the
- * same glyph.
- */
-function ExtendedSessionIcon({ session }: { session: ExtendedRowSession }) {
-  return session === 'premarket'
-    ? <Sunrise aria-hidden="true" className="shrink-0 text-accent-blue" size={15}/>
-    : <Sunset aria-hidden="true" className="shrink-0 text-accent-blue" size={15}/>;
-}
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div className="grid gap-1 border-b border-border py-3 last:border-b-0 sm:grid-cols-[9rem_1fr]"><dt className="text-text-muted">{label}</dt><dd className="min-w-0 break-words text-text-main">{value}</dd></div>;
@@ -222,92 +204,102 @@ export function StockPriceHeader({
   const fxRate = fxQuote ? Number(fxQuote.rate) : null;
   const selectedCurrency = verifiedUsdSource ? currency : 'USD';
   const displayedCurrency = verifiedUsdSource ? selectedCurrency : normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน';
-  // Everything below reads the already-resolved model. No session, row or
-  // comparison base is decided here.
-  const { currentSession, regular, extended: extendedQuote } = model;
-  const freshness = regular.freshness;
-  const provider = regular.provider;
-  const fallbackLabel = regular.fallbackLabel;
-  const regularPrice = regular.price;
-  const regularChange = regular.change;
-  const displayPrice = regularPrice !== null
+  // Everything below reads the already-resolved model, which is a projection of the
+  // ONE canonical snapshot. No session, row, comparison base or data status is
+  // decided here.
+  const { session: phase, main, secondary, presentation, snapshot } = model;
+  const freshness = main.freshness;
+  const provider = main.provider;
+  const fallbackLabel = main.fallbackLabel;
+  const mainPrice = main.price;
+  const mainChange = main.change;
+  const displayPrice = mainPrice !== null
     ? verifiedUsdSource
-      ? convertUsdForDisplay(regularPrice, selectedCurrency, fxRate)
-      : regularPrice
+      ? convertUsdForDisplay(mainPrice, selectedCurrency, fxRate)
+      : mainPrice
     : null;
-  const displayChange = regularChange
+  const displayChange = mainChange
     ? verifiedUsdSource
-      ? convertUsdForDisplay(regularChange.amount, selectedCurrency, fxRate)
-      : regularChange.amount
+      ? convertUsdForDisplay(mainChange.amount, selectedCurrency, fxRate)
+      : mainChange.amount
     : null;
-  const extendedChange = extendedQuote?.change ?? null;
-  const displayExtendedPrice = extendedQuote
+  const extendedChange = secondary?.change ?? null;
+  const displayExtendedPrice = secondary
     ? verifiedUsdSource
-      ? convertUsdForDisplay(extendedQuote.price, selectedCurrency, fxRate)
-      : extendedQuote.price
+      ? convertUsdForDisplay(secondary.price, selectedCurrency, fxRate)
+      : secondary.price
     : null;
   const displayExtendedChange = extendedChange
     ? verifiedUsdSource
       ? convertUsdForDisplay(extendedChange.amount, selectedCurrency, fxRate)
       : extendedChange.amount
     : null;
-  const sessionView = currentSessionPresentation(currentSession);
-  const dataStatus = regularPrice === null ? 'unavailable' : resolveDataStatus(freshness, Date.parse(evaluatedAt));
-  const dataStatusView = dataStatusPresentation(dataStatus);
-  const extendedDataStatusView = extendedQuote
-    ? dataStatusPresentation(resolveDataStatus(extendedQuote.freshness, Date.parse(evaluatedAt)))
-    : null;
-  const hasValidExtendedPrice = extendedQuote !== null
-    && Number.isFinite(extendedQuote.price)
-    && extendedQuote.price > 0;
-  const renderedExtendedPrice = displayExtendedPrice ?? (
-    hasValidExtendedPrice ? extendedQuote?.price ?? null : null
-  );
-  const changeDirection = regularChange?.direction ?? null;
+  const dataStatusView = dataStatusPresentation(main.status);
+  const extendedDataStatusView = secondary ? dataStatusPresentation(secondary.status) : null;
+  const renderedExtendedPrice = displayExtendedPrice ?? secondary?.price ?? null;
+  const changeDirection = mainChange?.direction ?? null;
   const extendedDirection = extendedChange?.direction ?? null;
   // Flash the price on a real move only (keyed on the source USD value, so a
   // USD/THB toggle never flashes). Reduced motion is handled by global CSS.
-  const priceFlash = usePriceFlash(regularPrice);
-  const extendedFlash = usePriceFlash(extendedQuote?.price ?? null);
+  const priceFlash = usePriceFlash(mainPrice);
+  const extendedFlash = usePriceFlash(secondary?.price ?? null);
   const thbUnavailable = !verifiedUsdSource || fxRate === null || !Number.isFinite(fxRate) || fxRate <= 0;
   const quoteCoolingDown = quoteRetryAt > 0;
-  const quoteDate = freshness.asOf ? null : regular.asOf;
-  const displayedQuoteAsOf = regular.asOf;
-  const combinedStatus = sessionView.label;
-  // Exchange-local DD/MM for the trading date the primary PRICE belongs to. It is
-  // a DATA date, never evidence about the current session — so outside REGULAR it
-  // is prefixed "ข้อมูลล่าสุด" to make that impossible to misread.
-  const priceDateLabel = formatSessionDateLabel(displayedQuoteAsOf);
+  const quoteDate = freshness?.asOf ? null : main.asOf;
+  const displayedQuoteAsOf = main.asOf;
+  const combinedStatus = presentation.label;
+  // Exchange-local DD/MM for the trading date the MAIN price belongs to. It is a
+  // DATA date, never evidence about the current session — so outside REGULAR it is
+  // prefixed "ข้อมูลล่าสุด" to make that impossible to misread.
+  const priceDateLabel = formatSessionDateLabel(main.tradingDate ?? displayedQuoteAsOf);
   const sessionDateLabel = priceDateLabel === null
     ? null
-    : currentSession === 'REGULAR'
+    : phase === 'REGULAR'
       ? priceDateLabel
       : `ข้อมูลล่าสุด ${priceDateLabel}`;
-  const extendedDateLabel = formatSessionDateLabel(extendedQuote?.tradingDate ?? extendedQuote?.asOf);
-  // Real-time badge is gated on the truthful `realtime` flag (a genuine live
-  // feed), never on the data-status heuristic alone.
+  const extendedDateLabel = formatSessionDateLabel(secondary?.tradingDate ?? secondary?.asOf);
+  // Real-time badge is gated on the truthful `realtime` flag (a genuine live feed)
+  // AND on the main row actually showing a live regular price. A finalized close is
+  // never "real-time", however healthy the socket is.
   const feedLabel = feed ? feed.toUpperCase() : null;
-  const showRealtime = realtime && extendedQuote === null && regularPrice !== null && feedLabel !== null;
+  const showRealtime = realtime
+    && main.role === 'regular'
+    && mainPrice !== null
+    && feedLabel !== null;
   // Status-only view of the live socket. Never derives price/freshness — it is
   // rendered ALONGSIDE the existing status, never replacing it.
   const connectionView = connectionStatusPresentation(connectionState);
 
+  /**
+   * The imperative hot path: a live trade tick writes the price/change group
+   * directly, without a React render.
+   *
+   * It is gated by the SAME phase rule the resolver applies, and gated FIRST. This
+   * is the exact node the NVTS defect wrote to: the main price element showed an
+   * after-hours print of 10.42 while the official close was 9.735, because the old
+   * gate trusted a provider-supplied session string that Alpaca never sends — so it
+   * read `undefined`, never matched, and every extended tick was let through.
+   *
+   * Two independent conditions now have to hold, and neither depends on a provider
+   * label. The market must be in a phase whose main line IS a live regular price
+   * (REGULAR only — during PRE/POST/CLOSED the main line is a completed close and no
+   * tick may touch it), and the tick's own exchange timestamp must fall inside the
+   * regular session. A tick with no usable timestamp is refused rather than assumed.
+   */
   const applyTransientPrice = useCallback<TransientPriceSink>((price, metadata) => {
     if (!Number.isFinite(price) || price <= 0) return;
-    // PRE/AFTER trades belong exclusively in the secondary row. The accepted
-    // React path partitions them with their regular-close comparison base; the
-    // imperative hot path must never overwrite the main regular price first.
-    if (metadata?.session === 'pre-market' || metadata?.session === 'after-hours') return;
+    if (phase !== 'REGULAR' || main.role !== 'regular') return;
+    if (!metadata?.asOf || classifyUsEquitySession(metadata.asOf) !== 'regular') return;
     lastTransientUsdPriceRef.current = {
       symbol,
       price,
-      asOf: metadata?.asOf ?? null,
+      asOf: metadata.asOf,
       feed: metadata?.feed ?? null,
     };
     const nextDisplayPrice = verifiedUsdSource
       ? convertUsdForDisplay(price, selectedCurrency, fxRate)
       : price;
-    const nextChange = calculatePriceChange(price, regular.previousClose);
+    const nextChange = calculatePriceChange(price, main.comparisonBase);
     if (priceDisplayRef.current) priceDisplayRef.current.textContent = formatMainPrice(nextDisplayPrice);
     if (
       !nextChange
@@ -335,7 +327,7 @@ export function StockPriceHeader({
     } else {
       changeDirectionRef.current.removeAttribute('aria-label');
     }
-  }, [fxRate, regular.previousClose, selectedCurrency, symbol, verifiedUsdSource]);
+  }, [fxRate, main.comparisonBase, main.role, phase, selectedCurrency, symbol, verifiedUsdSource]);
 
   useEffect(() => {
     if (!transientPriceSinkRef) return;
@@ -386,9 +378,9 @@ export function StockPriceHeader({
                 below the price group at every width, giving the fixed reading
                 order price → change → session that the header specifies, while
                 remaining a sibling so no numeric token can ever split. */}
-            {regularChange && <div ref={changeRowRef} data-testid="regular-change" className={`inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
+            {mainChange && <div ref={changeRowRef} data-testid="regular-change" title={comparisonBaseLabel(main.comparisonBaseKind)} className={`inline-flex basis-full shrink-0 items-center gap-x-2 whitespace-nowrap text-base font-semibold sm:text-xl ${directionClass(changeDirection)}`}>
               <span ref={changeAmountRef} className="whitespace-nowrap">{formatSigned(displayChange)}</span>
-              <span ref={changePercentRef} className="whitespace-nowrap">{formatPercent(regularChange.percent)}</span>
+              <span ref={changePercentRef} className="whitespace-nowrap">{formatPercent(mainChange.percent)}</span>
               <span
                 ref={changeDirectionRef}
                 className={`text-[0.7em] ${directionMark(changeDirection) ? '' : 'hidden'}`}
@@ -403,8 +395,19 @@ export function StockPriceHeader({
               and any fallback reason live behind the ⓘ control — they are
               provenance, not headline. */}
           <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-muted" data-testid="session-line">
-            <span className="inline-flex min-w-0 items-center gap-1.5 font-medium" data-testid="current-session-label">
-              <CurrentSessionIcon session={currentSession}/>
+            {/* Session status: one Material Symbols glyph + Thai text, both driven by
+                the snapshot's phase and close reason. The icon carries the Thai
+                description as its accessible name and tooltip; `role="status"` is
+                deliberately NOT used here — this is a label, not a live region, and
+                the connection pills below own that role. */}
+            <span
+              className="inline-flex min-w-0 items-center gap-1.5 font-medium"
+              data-testid="current-session-label"
+              data-session-phase={phase}
+              data-close-reason={model.closeReason ?? ''}
+              title={presentation.description}
+            >
+              <SessionIcon name={presentation.icon} tone={presentation.tone} title={presentation.description}/>
               <span>{combinedStatus}</span>
             </span>
             {sessionDateLabel && <>
@@ -509,18 +512,31 @@ export function StockPriceHeader({
 
       {currency === 'THB' && thbUnavailable && <p className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-300">ไม่มีอัตรา USD/THB จริงที่ตรวจสอบได้</p>}
 
-      {/* Extended-hours row. A valid price is the render condition; freshness and
-          a missing comparison base may change its metadata, never erase it. */}
-      {hasValidExtendedPrice && extendedQuote && <div data-testid="extended-hours-row" className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-border/70 bg-bg-base/40 px-3 py-2 font-mono text-sm tabular-nums">
-        <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans text-xs font-semibold text-text-muted">
-          <ExtendedSessionIcon session={extendedQuote.session}/>
-          {extendedSessionPresentation(extendedQuote.session).label}
+      {/* Extended-hours row. It renders only when the snapshot resolved a REAL
+          extended print — never as an empty placeholder, and never with a 0.00%
+          that a reader cannot tell apart from a genuinely flat session. */}
+      {secondary && <div data-testid="extended-hours-row" data-extended-session={secondary.session} className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-border/70 bg-bg-base/40 px-3 py-2 font-mono text-sm tabular-nums">
+        <span
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-sans text-xs font-semibold text-text-muted"
+          title={extendedSessionPresentation(secondary.session).description}
+          aria-label={extendedSessionPresentation(secondary.session).description}
+        >
+          <SessionIcon
+            name={extendedSessionPresentation(secondary.session).icon}
+            tone={extendedSessionPresentation(secondary.session).tone}
+            title={extendedSessionPresentation(secondary.session).description}
+          />
+          {extendedSessionPresentation(secondary.session).label}
         </span>
         <span key={extendedFlash.nonce} data-testid="extended-hours-price" className={`shrink-0 whitespace-nowrap rounded px-1 -mx-1 text-base font-bold text-text-main ${flashClass(extendedFlash.direction)}`}>
           {formatNumber(renderedExtendedPrice)}
           {displayExtendedPrice === null && normalizedSourceCurrency ? ` ${normalizedSourceCurrency}` : ''}
         </span>
-        {extendedChange && displayExtendedChange !== null && <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}>
+        {extendedChange && displayExtendedChange !== null && <span
+          data-testid="extended-hours-change"
+          title={comparisonBaseLabel(secondary.comparisonBaseKind)}
+          className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold ${directionClass(extendedDirection)}`}
+        >
           <span>{formatSigned(displayExtendedChange)}</span>
           <span>{formatPercent(extendedChange.percent)}</span>
           {directionMark(extendedDirection) && <span className="text-[0.7em]" aria-label={extendedDirection === 'up' ? 'ราคาเพิ่มขึ้น' : 'ราคาลดลง'}>{directionMark(extendedDirection)}</span>}
@@ -528,12 +544,12 @@ export function StockPriceHeader({
         {extendedDateLabel && <span data-testid="extended-hours-date" className="ml-auto shrink-0 whitespace-nowrap text-xs text-text-muted">{extendedDateLabel}</span>}
         {extendedDataStatusView && <span data-testid="extended-hours-status" className="basis-full font-sans text-[11px] text-text-muted">
           {extendedDataStatusView.label}
-          {extendedQuote.provider ? ` · ${extendedQuote.provider}` : ''}
-          {extendedQuote.asOf ? ` · ${formatProviderTimestamp(extendedQuote.asOf)}` : ''}
+          {secondary.provider ? ` · ${secondary.provider}` : ''}
+          {` · ${formatProviderTimestamp(secondary.asOf)}`}
         </span>}
       </div>}
 
-      {regularPrice === null && <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-bg-base/60 p-3 text-sm text-amber-300"><p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{stockDetailErrorMessage(quoteError, 'quote', providerConfigured)}</p><button type="button" disabled={quoteLoading || quoteCoolingDown} onClick={onRetryQuote} className="min-h-11 shrink-0 rounded-lg border border-amber-400/30 px-3 text-xs disabled:opacity-50">{quoteLoading ? 'กำลังโหลด…' : quoteCoolingDown ? 'รอตามระยะเวลาที่กำหนดแล้วลองอีกครั้ง' : 'ลองโหลดราคาอีกครั้ง'}</button></div>}
+      {mainPrice === null && <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-bg-base/60 p-3 text-sm text-amber-300"><p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{stockDetailErrorMessage(quoteError, 'quote', providerConfigured)}</p><button type="button" disabled={quoteLoading || quoteCoolingDown} onClick={onRetryQuote} className="min-h-11 shrink-0 rounded-lg border border-amber-400/30 px-3 text-xs disabled:opacity-50">{quoteLoading ? 'กำลังโหลด…' : quoteCoolingDown ? 'รอตามระยะเวลาที่กำหนดแล้วลองอีกครั้ง' : 'ลองโหลดราคาอีกครั้ง'}</button></div>}
     </section>
 
     <Modal isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="รายละเอียดราคา">
@@ -541,32 +557,50 @@ export function StockPriceHeader({
         <Detail label="Provider" value={provider ?? 'ไม่พบข้อมูล'}/>
         <Detail label="Symbol" value={symbol}/>
         <Detail label="Exchange" value={exchange ?? 'ไม่พบข้อมูล'}/>
-        {/* Market Session provenance: WHICH session, resolved from WHAT, and WHEN
-            it was evaluated. Kept strictly separate from the price timestamps
-            below so the two can never be read as the same fact. */}
-        <Detail label="สถานะตลาด" value={`${combinedStatus} (${sessionView.fullName})`}/>
+        {/* Market Session provenance: WHICH session, WHY it is closed, resolved from
+            WHAT, and WHEN it was evaluated. Kept strictly separate from the price
+            timestamps below so the two can never be read as the same fact. */}
+        <Detail label="สถานะตลาด" value={`${combinedStatus} (${presentation.fullName})`}/>
+        <Detail label="Session Phase" value={`${phase}${model.closeReason ? ` · ${model.closeReason}` : ''} (${currentSessionPresentation(model.sessionLabel).fullName})`}/>
         <Detail label="Market Session Source" value={model.currentSessionSource}/>
         <Detail
           label="Session Evaluated At"
           value={`${model.currentSessionEvaluatedAt} (${formatProviderTimestamp(model.currentSessionEvaluatedAt)})`}
         />
+        {/* The canonical snapshot's own answers, each with the field it came from —
+            so "which value is this, and where is it from" is always inspectable. */}
+        <Detail label="ราคาหลักคืออะไร" value={mainPriceRoleLabel(main.role)}/>
+        <Detail label="Main Price" value={`${formatNumber(mainPrice)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>
+        <Detail label="Main Price Source" value={main.source ?? 'ไม่พบข้อมูล'}/>
         <Detail label="ช่วงเวลาของราคา" value={priceSessionLabel(displayedQuoteAsOf)}/>
-        <Detail label="Regular Price" value={`${formatNumber(regularPrice)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>
-        {!fallbackLabel && <Detail label="Previous Close" value={`${formatNumber(regular.previousClose)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'}`}/>}
-        {extendedQuote && <Detail
+        <Detail
+          label="Regular Close"
+          value={`${formatNumber(snapshot.regularClose)} ${normalizedSourceCurrency ?? ''} · ${snapshot.regularCloseSource ?? 'ไม่พบแหล่งข้อมูล'}`}
+        />
+        <Detail
+          label="Previous Regular Close"
+          value={`${formatNumber(snapshot.previousRegularClose)} ${normalizedSourceCurrency ?? ''} · ${snapshot.previousRegularCloseSource ?? 'ไม่พบแหล่งข้อมูล'}`}
+        />
+        <Detail label="Comparison Base" value={`${formatNumber(main.comparisonBase)} · ${comparisonBaseLabel(main.comparisonBaseKind)}`}/>
+        {secondary && <Detail
           label="Extended Price"
-          value={`${formatNumber(extendedQuote.price)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'} · ${extendedSessionPresentation(extendedQuote.session).label} · ${extendedQuote.tradingDate ?? 'ไม่ทราบวันซื้อขาย'}`}
+          value={`${formatNumber(secondary.price)} ${normalizedSourceCurrency ?? 'ไม่ทราบสกุลเงิน'} · ${extendedSessionPresentation(secondary.session).label} · ${secondary.tradingDate ?? 'ไม่ทราบวันซื้อขาย'}`}
         />}
-        {extendedQuote && <Detail label="Extended Source" value={`${extendedQuote.provider ?? 'ไม่พบข้อมูล'} · ${formatProviderTimestamp(extendedQuote.asOf)}`}/>}
-        {extendedQuote && extendedDataStatusView && <Detail label="Extended Data Status" value={extendedDataStatusView.label}/>}
-        {!fallbackLabel && <Detail label="Comparison Base" value={extendedQuote ? 'Official Regular Close' : 'Previous Close'}/>}
+        {secondary && <Detail label="Extended Source" value={`${secondary.source ?? 'ไม่พบข้อมูล'} · ${formatProviderTimestamp(secondary.asOf)}`}/>}
+        {secondary && <Detail label="Extended Comparison Base" value={`${formatNumber(secondary.comparisonBase)} · ${comparisonBaseLabel(secondary.comparisonBaseKind)}`}/>}
+        {secondary && extendedDataStatusView && <Detail label="Extended Data Status" value={extendedDataStatusView.label}/>}
+        {!secondary && <Detail label="Extended Price" value="ไม่มีการซื้อขายนอกเวลาทำการที่ตรวจสอบได้"/>}
         <Detail label="Display Currency" value={displayedCurrency}/>
         <Detail
           label={quoteDate ? 'Trading date' : 'Timestamp'}
           value={`${displayedQuoteAsOf ?? 'ไม่พบข้อมูล'} (${formatProviderTimestamp(displayedQuoteAsOf, Boolean(quoteDate))})`}
         />
+        <Detail label="Trading Date" value={snapshot.tradingDate ?? 'ไม่พบข้อมูล'}/>
         <Detail label="Display Timezone" value="Asia/Bangkok; วันซื้อขายอ้างอิงเวลาตลาด (America/New_York)"/>
         <Detail label="Data Status" value={dataStatusView.label}/>
+        {/* Validation outcomes. A rejected value never silently disappears: the flag
+            that rejected it is listed here. */}
+        {snapshot.flags.length > 0 && <Detail label="Data Validation" value={snapshot.flags.join(', ')}/>}
         {/* Fallback provenance moved out of the primary row: it is a technical
             explanation of WHERE the price came from, not part of the price. */}
         {fallbackLabel && <Detail
@@ -578,9 +612,13 @@ export function StockPriceHeader({
         <Detail label="Delay Duration" value="Provider ไม่ได้ระบุ"/>
         {selectedCurrency === 'THB' && <Detail label="FX" value={fxQuote ? `1 USD = ${fxQuote.rate} THB · ${fxQuote.source} · ณ ${fxQuote.asOf}${fxQuote.stale ? ' · ข้อมูลเก่า' : fxQuote.cached ? ' · ข้อมูลแคช' : ''}` : 'ไม่พบข้อมูล'}/>}
       </dl>
+      {/* Plain-language explanation for a beginner: what the big number means in
+          THIS session, and what each change is measured against. */}
       <div className="mt-4 space-y-2 rounded-xl border border-border bg-bg-base/60 p-3 text-xs leading-5 text-text-muted">
-        <p>Previous Close ยังใช้เป็นฐานคำนวณ Daily Change แม้ไม่ได้แสดงในการ์ด Overview</p>
-        {extendedQuote && <p>ราคาช่วง Extended Hours เปรียบเทียบกับราคาปิดของ Regular Session ล่าสุด</p>}
+        <p>{mainPriceRoleLabel(main.role)} · {comparisonBaseLabel(main.comparisonBaseKind)}</p>
+        {(phase === 'POST' || phase === 'CLOSED') && <p>เมื่อตลาดปิดแล้ว ราคาหลักจะเป็นราคาปิดจริงของวันซื้อขายล่าสุดเท่านั้น ราคาที่ซื้อขายนอกเวลาทำการจะแสดงเป็นแถวรองด้านล่าง</p>}
+        {secondary && <p>ราคานอกเวลาทำการ (Extended Hours) {comparisonBaseLabel(secondary.comparisonBaseKind)}</p>}
+        {!secondary && phase !== 'REGULAR' && <p>ยังไม่มีการซื้อขายนอกเวลาทำการที่ตรวจสอบได้ จึงไม่แสดงแถวรอง</p>}
       </div>
     </Modal>
   </>;

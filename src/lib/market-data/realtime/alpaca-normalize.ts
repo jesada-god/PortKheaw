@@ -5,6 +5,7 @@ import {
   normalizedTradingStatusSchema,
   type NormalizedMarketEvent,
 } from './events';
+import { classifyUsEquityTimestamp } from './session';
 
 /**
  * Pure mappers from Alpaca's IEX/SIP wire messages to normalized events.
@@ -63,6 +64,15 @@ function str(value: unknown): string | null {
  * Map a single Alpaca wire message to a normalized event, or null when it is not
  * market data (control frames), is missing required fields, or fails the
  * normalized schema (which rejects non-positive prices and bad timestamps).
+ *
+ * Every priced event carries the trading session its OWN exchange timestamp falls
+ * in, exactly as the Finnhub adapter already does. Alpaca does not state a session
+ * on the wire, and leaving the field absent was the origin of the header defect
+ * this tagging closes: with no session on the event, the browser source fell back
+ * to the CHART SELECTION's session (`regular` — a request parameter, not market
+ * truth), so every after-hours print was labelled a regular-session price and
+ * could overwrite the official regular close in the main price row. The session is
+ * derived from the provider timestamp in America/New_York; no local clock is used.
  */
 export function normalizeAlpacaMessage(message: unknown): NormalizedMarketEvent | null {
   if (typeof message !== 'object' || message === null) return null;
@@ -86,6 +96,7 @@ export function normalizeAlpacaMessage(message: unknown): NormalizedMarketEvent 
         price,
         size,
         timestampMs,
+        session: classifyUsEquityTimestamp(timestampMs),
         ...(Array.isArray(msg.c) ? { conditions: msg.c.filter((c): c is string => typeof c === 'string') } : {}),
         ...(str(msg.z) ? { tape: str(msg.z)! } : {}),
       });
@@ -134,6 +145,9 @@ export function normalizeAlpacaMessage(message: unknown): NormalizedMarketEvent 
         volume,
         timestampMs,
         updated: type === 'u',
+        // A 1m bar's timestamp is its bucket START, which is the minute the bar's
+        // trading actually happened in — so the same classification applies.
+        session: classifyUsEquityTimestamp(timestampMs),
       });
       return parsed.success ? parsed.data : null;
     }

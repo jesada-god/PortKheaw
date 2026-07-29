@@ -137,8 +137,18 @@ export interface MarketUpdate {
   /** Per-symbol halt state, tracked independently of the market-wide session. */
   halted?: boolean;
   haltReason?: string | null;
-  /** Regular/pre/post/closed session hint for the value, when the stream knows it. */
-  session?: string | null;
+  /**
+   * The trading session THIS UPDATE'S PRICE was executed in, resolved from the
+   * price's own exchange timestamp in America/New_York.
+   *
+   * It describes the price and nothing else. It is never a request parameter (the
+   * chart selection's `session` is one, and using it here was the origin of the
+   * header defect where an after-hours print overwrote the official regular
+   * close), and never a claim about which session the market is in now — that is
+   * `resolveCurrentMarketSession`'s exclusive job. `null` means "no priced value,
+   * or its session could not be established", never "regular".
+   */
+  session?: 'pre-market' | 'regular' | 'after-hours' | 'closed' | null;
   /**
    * True when this update finalized the previously-active bucket (a new bucket
    * opened, or an official/updated bar closed one). The chart uses this to gate

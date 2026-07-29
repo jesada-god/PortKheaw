@@ -28,18 +28,46 @@ function contrast(foreground: string, background: string): number {
   return Number(((lighter + 0.05) / (darker + 0.05)).toFixed(2));
 }
 
+/** Hue in degrees. Used to prove a session tone is not a market-direction colour. */
+function hueOf(hex: string): number {
+  const [red, green, blue] = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const max = Math.max(red, green, blue);
+  const delta = max - Math.min(red, green, blue);
+  if (delta === 0) return 0;
+  const hue = max === red
+    ? 60 * ((((green - blue) / delta) % 6 + 6) % 6)
+    : max === green
+      ? 60 * ((blue - red) / delta + 2)
+      : 60 * ((red - green) / delta + 4);
+  return Math.round((hue + 360) % 360);
+}
+
+/** Shortest angular distance between two hues, 0°–180°. */
+function hueSeparation(left: string, right: string): number {
+  const delta = Math.abs(hueOf(left) - hueOf(right)) % 360;
+  return Math.min(delta, 360 - delta);
+}
+
 const SURFACES = ['--bg', '--surface', '--surface-elevated', '--surface-hover'] as const;
 /** Every foreground that carries words, against every surface it can land on. */
 const TEXT_ON_SURFACES = ['--text', '--text-secondary', '--text-muted', '--accent'] as const;
 /** Market meaning must stay legible in both appearances, never traded for lime. */
 const STATUS = ['--positive', '--negative', '--warning', '--info'] as const;
+/** Market-session icon tones. Meaningful graphics, so the 3:1 bar applies. */
+const SESSION_TONES = [
+  '--session-pre',
+  '--session-regular',
+  '--session-post',
+  '--session-closed',
+  '--session-event',
+] as const;
 
 describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) => {
   const palette = tokens(appearance);
 
   it('has every token the checks below need', () => {
     expect(Object.keys(palette).length).toBeGreaterThan(15);
-    for (const name of [...SURFACES, ...TEXT_ON_SURFACES, ...STATUS, '--accent-fg', '--border-strong']) {
+    for (const name of [...SURFACES, ...TEXT_ON_SURFACES, ...STATUS, ...SESSION_TONES, '--accent-fg', '--border-strong']) {
       expect(`${name}=${palette[name] ?? 'MISSING'}`).toMatch(/#[0-9A-Fa-f]{6}$/);
     }
   });
@@ -73,5 +101,59 @@ describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) 
   // edit from making a card edge vanish into its own surface.
   it('keeps a strong border visible against its surface', () => {
     expect(contrast(palette['--border-strong'], palette['--surface'])).toBeGreaterThanOrEqual(1.4);
+  });
+
+  /**
+   * Market-session icon tones.
+   *
+   * 3:1 is the WCAG bar for a non-text graphic that carries meaning, and these do:
+   * the glyph tells a reader which session the price belongs to. The light
+   * appearance is where this bites — the dark tones read barely 2:1 on white, which
+   * is exactly how a session icon becomes invisible in light mode.
+   */
+  it('keeps every session icon tone at the 3:1 graphic bar on every surface', () => {
+    const failures: string[] = [];
+    for (const tone of SESSION_TONES) {
+      for (const surface of SURFACES) {
+        const ratio = contrast(palette[tone], palette[surface]);
+        if (ratio < 3) failures.push(`${tone} on ${surface} = ${ratio}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  /**
+   * A session icon must never be mistakable for a price direction.
+   *
+   * The separation that matters here is HUE, not luminance: gain green and loss red
+   * are read as hues, and a session tone at the same hue would say "up"/"down"
+   * whatever its brightness. 25° is comfortably outside the just-noticeable range at
+   * icon size, and every tone clears it — including the deliberately warm closure
+   * tone, which sits at orange rather than red for exactly this reason.
+   */
+  it('keeps every session tone at least 25° of hue from gain and loss', () => {
+    const failures: string[] = [];
+    for (const tone of SESSION_TONES) {
+      for (const direction of ['--positive', '--negative'] as const) {
+        expect(palette[tone]).not.toBe(palette[direction]);
+        const separation = hueSeparation(palette[tone], palette[direction]);
+        if (separation < 25) failures.push(`${tone} vs ${direction} = ${separation}°`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  /**
+   * A holiday is not a fault, so the closure tone must not read as an error. It is
+   * required to be a warm ORANGE — measurably off the red axis — rather than the
+   * error red at a different brightness.
+   */
+  it('keeps the calendar-closure tone a warm orange, not an error red', () => {
+    expect(palette['--session-event']).not.toBe(palette['--negative']);
+    expect(hueSeparation(palette['--session-event'], palette['--negative'])).toBeGreaterThanOrEqual(25);
+    // Orange, not yellow and not red: 15°–50° on the wheel.
+    const hue = hueOf(palette['--session-event']);
+    expect(hue).toBeGreaterThanOrEqual(15);
+    expect(hue).toBeLessThanOrEqual(50);
   });
 });

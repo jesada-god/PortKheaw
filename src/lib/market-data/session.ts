@@ -123,6 +123,33 @@ export function classifyUsEquitySession(timestamp: string, timeZone = US_EQUITY_
   return null;
 }
 
+/**
+ * Whether an instant is the moment a regular session ENDED, rather than a print
+ * from the after-hours window that follows it.
+ *
+ * The two are impossible to separate by {@link classifyUsEquitySession} alone,
+ * because the regular window is half-open at 16:00 and the closing print is not:
+ * Yahoo stamps NVTS's official close at 16:00:01 ET, and Polygon's end-of-day row
+ * at exactly 16:00:00. Both classify as `afterhours`, so a resolver that required
+ * `regular` to recognise a close rejected every real one — and then fell back to
+ * something that was not the close at all.
+ *
+ * The rule is the CLOSING MINUTE, not a tolerance window: `16:00:00`–`16:00:59` on
+ * a normal day, `13:00:00`–`13:00:59` on a published half-day. A trade at 16:01 is
+ * an after-hours trade and stays one.
+ */
+export function isRegularSessionCloseInstant(
+  timestamp: string,
+  closeMinuteOfDay = REGULAR_SESSION_CLOSE_MINUTE,
+  timeZone = US_EQUITY_TIMEZONE,
+): boolean {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.valueOf())) return false;
+  const parts = zonedParts(parsed, timeZone);
+  if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return false;
+  return parts.hour * 60 + parts.minute === closeMinuteOfDay;
+}
+
 function dateOnly(parts: Pick<ZonedParts, 'year' | 'month' | 'day'>): string {
   return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
