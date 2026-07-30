@@ -1,59 +1,60 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import nextConfig from '@/next.config';
+import { AUTH_ENTRY_PATHS, getSafeReturnPath } from '@/src/lib/auth/paths';
 
 /**
  * `/auth/login` and `/auth/register` are the spellings people type; the forms
- * live at `/auth/sign-in` and `/auth/sign-up`. A 404 on the typed spelling is
- * indistinguishable from a broken sign-in page, so both aliases forward.
- *
- * `redirect` throws in Next.js, so it is replaced with a recorder here — the
- * assertion is about the destination that gets built, including the fact that
- * the alias sanitises `next` instead of passing it through.
+ * live at `/auth/sign-in` and `/auth/sign-up`. A 404 on the typed spelling
+ * looks exactly like a sign-in page that lost its Google button, which is the
+ * confusion these aliases exist to remove.
  */
-const redirect = vi.fn();
-vi.mock('next/navigation', () => ({ redirect: (url: string) => redirect(url) }));
-
-const { default: LoginAlias } = await import('./login/page');
-const { default: RegisterAlias } = await import('./register/page');
-
-async function destinationOf(
-  page: (args: { searchParams: Promise<Record<string, string | string[] | undefined>> }) => Promise<unknown>,
-  params: Record<string, string | string[] | undefined> = {},
-): Promise<string> {
-  redirect.mockClear();
-  await page({ searchParams: Promise.resolve(params) });
-  return redirect.mock.calls[0][0] as string;
+async function rules() {
+  if (!nextConfig.redirects) throw new Error('no redirects configured');
+  return nextConfig.redirects();
 }
 
-describe('/auth/login', () => {
-  it('forwards to the real sign-in page', async () => {
-    expect(await destinationOf(LoginAlias)).toBe('/auth/sign-in?next=%2F');
+describe('auth route aliases', () => {
+  it('forwards /auth/login to the real sign-in page', async () => {
+    const rule = (await rules()).find((entry) => entry.source === '/auth/login');
+    expect(rule?.destination).toBe('/auth/sign-in');
   });
 
-  it('carries a legitimate destination through to the form', async () => {
-    const destination = await destinationOf(LoginAlias, { next: '/portfolio' });
-    expect(new URL(destination, 'https://portkheaw.app').searchParams.get('next')).toBe('/portfolio');
+  it('forwards /auth/register to the real sign-up page', async () => {
+    const rule = (await rules()).find((entry) => entry.source === '/auth/register');
+    expect(rule?.destination).toBe('/auth/sign-up');
   });
 
-  it('cannot be used to bounce a visitor off this origin', async () => {
-    for (const hostile of ['https://evil.example', '//evil.example', '/\\evil.example']) {
-      const destination = await destinationOf(LoginAlias, { next: hostile });
-      expect(new URL(destination, 'https://portkheaw.app').searchParams.get('next')).toBe('/');
+  /**
+   * A 308 is cached by browsers more or less forever. If these paths ever grow
+   * into real pages, a permanent redirect would keep sending returning visitors
+   * away from them with no way to take it back.
+   */
+  it('keeps the aliases reversible rather than permanently cached', async () => {
+    for (const rule of await rules()) {
+      expect(rule.permanent).toBe(false);
     }
   });
 
-  it('cannot be pointed back at itself', async () => {
-    const destination = await destinationOf(LoginAlias, { next: '/auth/login' });
-    expect(new URL(destination, 'https://portkheaw.app').searchParams.get('next')).toBe('/');
-  });
-});
-
-describe('/auth/register', () => {
-  it('forwards to the real sign-up page', async () => {
-    expect(await destinationOf(RegisterAlias)).toBe('/auth/sign-up?next=%2F');
+  it('only ever points at destinations on this origin', async () => {
+    for (const rule of await rules()) {
+      expect(rule.destination.startsWith('/')).toBe(true);
+      expect(rule.destination.startsWith('//')).toBe(false);
+    }
   });
 
-  it('sanitises its destination the same way the login alias does', async () => {
-    const destination = await destinationOf(RegisterAlias, { next: '//evil.example' });
-    expect(new URL(destination, 'https://portkheaw.app').searchParams.get('next')).toBe('/');
+  /**
+   * The alias hands its query string to the destination untouched, so the alias
+   * itself must not be usable as a return path — otherwise `?next=/auth/login`
+   * would bounce a visitor between the two forever.
+   */
+  it('cannot be used as a return path, so the alias cannot build a loop', () => {
+    expect(getSafeReturnPath('/auth/login')).toBe('/');
+    expect(getSafeReturnPath('/auth/register')).toBe('/');
+  });
+
+  it('lists every alias as an auth entry path', async () => {
+    for (const rule of await rules()) {
+      expect(AUTH_ENTRY_PATHS).toContain(rule.source);
+    }
   });
 });

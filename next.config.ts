@@ -23,6 +23,29 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [],
   },
+  /*
+   * `/auth/login` and `/auth/register` are the spellings people type, bookmark
+   * and link to; the forms themselves live at `/auth/sign-in` and
+   * `/auth/sign-up`. Answering the common spelling with a 404 is, from the
+   * outside, indistinguishable from a broken sign-in page.
+   *
+   * These are declared here rather than as redirecting pages so the browser is
+   * answered with a real 307 before anything renders. A page calling
+   * `redirect()` cannot: the shell has already been flushed by the time it
+   * runs, so Next falls back to a client-side hop that needs JavaScript and
+   * shows a blank frame first.
+   *
+   * `permanent: false` keeps this reversible — a 308 would be cached by
+   * browsers indefinitely and is very hard to take back. Any `next` query
+   * carries through untouched and is sanitised by the destination page's own
+   * `getSafeReturnPath`, which is the only place that decision belongs.
+   */
+  async redirects() {
+    return [
+      { source: '/auth/login', destination: '/auth/sign-in', permanent: false },
+      { source: '/auth/register', destination: '/auth/sign-up', permanent: false },
+    ];
+  },
   output: 'standalone',
   transpilePackages: ['motion'],
   webpack: (config, {dev}) => {
