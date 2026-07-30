@@ -5,6 +5,10 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { portfolioTransactionSchema } from '@/src/lib/portfolio/validation';
 import { getInstrumentStatus } from '@/src/lib/instruments/status';
+import {
+  preparePortfolioTransactionForCreate,
+  preparePortfolioTransactionForUpdate,
+} from '@/src/lib/portfolio/transaction-preparation';
 
 export type PortfolioActionResult = { ok: true } | { ok: false; code: string; message: string; fields?: Record<string, string> };
 
@@ -47,7 +51,7 @@ export async function createPortfolioTransactionAction(raw: unknown): Promise<Po
         return { ok: false, code: 'delisted', message: 'ไม่สามารถเปิดสถานะใหม่ของ Symbol ที่ delisted แล้ว' };
       }
     }
-    await repo.create(input);
+    await repo.create(await preparePortfolioTransactionForCreate(input));
     revalidatePath('/portfolio');
     return { ok: true };
   } catch (error) {
@@ -62,7 +66,9 @@ export async function updatePortfolioTransactionAction(id: string, raw: unknown)
   const repo = await repository();
   if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
   try {
-    await repo.update(id, input);
+    const existing = await repo.getTransaction(id);
+    if (!existing) return { ok: false, code: 'unauthorized', message: 'ไม่พบรายการที่ต้องการแก้ไข' };
+    await repo.update(id, await preparePortfolioTransactionForUpdate(input, existing));
     revalidatePath('/portfolio');
     return { ok: true };
   } catch (error) {

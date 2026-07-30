@@ -28,6 +28,37 @@ describe('portfolio responsive and accessibility contract', () => {
     expect(options).toContain('min-h-11');
   });
 
+  it('keeps the option modal compact without hidden user-input fields or horizontal overflow', () => {
+    expect(options).toContain('data-testid="option-transaction-form"');
+    expect(options).toContain('className="max-w-2xl overflow-x-hidden"');
+    expect(options).toContain('className="min-w-0 space-y-4"');
+    expect(options).toContain('grid min-w-0 gap-4 sm:grid-cols-2');
+    expect(options).not.toContain('<Field label="Contract symbol"');
+    expect(options).not.toContain('<Field label="โบรกเกอร์"');
+    expect(portfolio).not.toContain('<Field label="โบรกเกอร์');
+  });
+
+  it('orders beginner option fields and keeps multiplier editable with a default of 100', () => {
+    const labels = [
+      'ประเภทรายการ (Action)',
+      'หุ้นแม่ (Underlying)',
+      'ประเภทออปชัน (Call / Put)',
+      'ราคาใช้สิทธิ (Strike)',
+      'วันหมดอายุ (Expiration)',
+      'จำนวนสัญญา (Contracts)',
+      'ราคาต่อหุ้น (Premium',
+      'ตัวคูณต่อสัญญา (Multiplier)',
+      'ค่าธรรมเนียม (Fee',
+      'วันและเวลารายการ (Date)',
+      'หมายเหตุ (Note',
+    ];
+    const positions = labels.map((label) => options.indexOf(label));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(options).toContain("multiplier: '100'");
+    expect(options).toContain("onChange={(value) => onChange('multiplier', value)}");
+  });
+
   it('exposes expanded state and complete mobile option information', () => {
     expect(portfolio).toContain('aria-expanded={expanded}');
     expect(options).toContain('aria-expanded={expanded}');

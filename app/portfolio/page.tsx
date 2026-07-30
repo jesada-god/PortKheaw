@@ -63,10 +63,8 @@ export default async function PortfolioPage() {
       const result = await optionService.getChain(underlying, expiration);
       const contracts = [...result.data.calls, ...result.data.puts];
       for (const position of positions) {
-        const contract = contracts.find((item) => item.contractSymbol === position.contractSymbol)
-          ?? contracts.find((item) =>
-            item.type === position.optionKind
-            && Math.abs(item.strike - position.strikePrice) < 0.00000001);
+        const contract = contracts.find((item) =>
+          item.contractSymbol.toUpperCase() === position.contractSymbol.toUpperCase());
         if (!contract) {
           optionQuotes[position.key] = null;
           continue;

@@ -40,4 +40,20 @@ describe('portfolio transaction validation', () => {
     expect(portfolioTransactionSchema.safeParse({ ...option, fxRateAtTransaction: '' }).success).toBe(false);
     expect(portfolioTransactionSchema.safeParse({ ...option, contractSymbol: 'bad symbol' }).success).toBe(false);
   });
+
+  it('accepts Buy to Open without user-entered contract symbol or broker', () => {
+    expect(portfolioTransactionSchema.safeParse({
+      ...base,
+      type: 'buy_to_open',
+      underlyingSymbol: 'NVDA',
+      optionKind: 'call',
+      strikePrice: '120',
+      expirationDate: '2026-08-21',
+      quantity: '1',
+      multiplier: '100',
+      price: '2',
+      fee: '0',
+      originalCurrency: 'USD',
+    }).success).toBe(true);
+  });
 });

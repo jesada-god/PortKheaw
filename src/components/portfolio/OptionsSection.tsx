@@ -9,6 +9,7 @@ import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculateOptionTarget } from '@/src/lib/portfolio/options/calculations';
+import { isUnresolvedOptionContractSymbol } from '@/src/lib/portfolio/options/contract-symbol-status';
 import type { OptionPositionSummary, OptionTarget, OptionTargetMode } from '@/src/lib/portfolio/options/types';
 import type { PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
@@ -348,7 +349,7 @@ function OptionDesktopRows(props: OptionViewProps) {
   const { position, expanded, showBalances, money, signed, onToggle } = props;
   return <>
     <tr className="border-b border-slate-800/60 hover:bg-slate-800/30">
-      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><span className="block max-w-48 truncate font-mono text-[10px] text-slate-500" title={position.contractSymbol}>{position.contractSymbol}</span></span></button></td>
+      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong>{isUnresolvedOptionContractSymbol(position.contractSymbol) ? <span className="block text-[10px] font-semibold text-amber-300">ยังไม่พบสัญญาจริง (Unresolved)</span> : <span className="block max-w-48 truncate font-mono text-[10px] text-slate-500" title={position.contractSymbol}>{position.contractSymbol}</span>}</span></button></td>
       <td className="px-3 py-3"><SideBadge side={position.side} /></td>
       <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : '••'}</td>
       <td className="px-3 py-3 text-right font-mono">${position.averagePremium.toFixed(2)}</td>
@@ -367,7 +368,7 @@ function OptionMobileCard(props: OptionViewProps) {
   const { position, expanded, showBalances, money, signed, onToggle } = props;
   return <article className="min-w-0 p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-start justify-between gap-3 text-left">
-      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span><span className="mt-1 block break-all font-mono text-[10px] text-slate-500">{position.contractSymbol}</span></span>
+      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span>{isUnresolvedOptionContractSymbol(position.contractSymbol) ? <span className="mt-1 block text-[10px] font-semibold text-amber-300">ยังไม่พบสัญญาจริง (Unresolved)</span> : <span className="mt-1 block break-all font-mono text-[10px] text-slate-500">{position.contractSymbol}</span>}</span>
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>
     <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
@@ -405,12 +406,12 @@ function OptionDetails({ position, target, money, signed, onAction, onEdit, onDe
     <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h4 className="flex items-center gap-2 text-sm font-bold text-white"><Target size={16} className="text-[#D4FF00]" /> เป้าหมายขาย</h4><p className="mt-1 text-xs text-slate-500">ติดตามในแอปเท่านั้น ไม่ส่ง Order</p></div>
-        {position.status === 'open' && <Button size="sm" variant="outline" onClick={onTarget}>{target ? 'แก้ไขเป้าหมาย' : 'เพิ่มเป้าหมาย'}</Button>}
+        {position.status === 'open' && !isUnresolvedOptionContractSymbol(position.contractSymbol) && <Button size="sm" variant="outline" onClick={onTarget}>{target ? 'แก้ไขเป้าหมาย' : 'เพิ่มเป้าหมาย'}</Button>}
       </div>
       {target ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-900/60 p-3 text-xs">
         <p><strong className="text-slate-200">{target.mode === 'premium' ? `Target premium $${target.targetValue.toFixed(2)}` : `Target profit ${target.targetValue.toFixed(2)}%`}</strong><span className="mt-1 block text-slate-500">Premium ที่ใช้ติดตาม ${target.targetPremium.toFixed(2)} · fee ${money(target.estimatedFee)}{target.triggeredAt ? ` · ถึงเป้าหมาย ${displayTime(target.triggeredAt)}` : ''}</span></p>
         <button type="button" aria-label="ลบเป้าหมายขาย" onClick={() => onDeleteTarget(target)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
-      </div> : <p className="mt-3 text-xs text-slate-500">ยังไม่ได้ตั้งเป้าหมาย</p>}
+      </div> : <p className="mt-3 text-xs text-slate-500">{isUnresolvedOptionContractSymbol(position.contractSymbol) ? 'ตั้งเป้าหมายได้เมื่อพบสัญญาจริงแล้ว' : 'ยังไม่ได้ตั้งเป้าหมาย'}</p>}
     </section>
     <section>
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Transaction history</h4>
@@ -435,33 +436,38 @@ function OptionTransactionModal({ open, editing, form, errors, pending, onChange
 }) {
   const firstRef = useRef<HTMLSelectElement>(null);
   const noPremium = form.type === 'exercise' || form.type === 'assignment' || form.type === 'expired';
-  return <Modal isOpen={open} onClose={onClose} initialFocusRef={firstRef} title={editing ? 'แก้ไขรายการออปชัน' : 'เพิ่มรายการออปชัน'} className="max-w-2xl">
-    <form className="space-y-4" onSubmit={onSubmit}>
+  return <Modal isOpen={open} onClose={onClose} initialFocusRef={firstRef} title={editing ? 'แก้ไขรายการออปชัน' : 'เพิ่มรายการออปชัน'} className="max-w-2xl overflow-x-hidden">
+    <form className="min-w-0 space-y-4" data-testid="option-transaction-form" onSubmit={onSubmit}>
       <p className="rounded-lg bg-slate-950/50 p-3 text-xs text-slate-400">บันทึกรายการที่เกิดขึ้นแล้วเท่านั้น ไม่มีการส่งคำสั่งซื้อขายไปยังโบรกเกอร์</p>
-      <Field label="Action" error={errors.type}><select ref={firstRef} className="form-input" value={form.type} onChange={(event) => onChange('type', event.target.value)}>{optionActions.map((type) => <option key={type} value={type}>{transactionLabels[type]}</option>)}</select></Field>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+        <div className={form.type === 'expired' ? undefined : 'sm:col-span-2'}>
+          <Field label="ประเภทรายการ (Action)" error={errors.type}><select ref={firstRef} className="form-input" value={form.type} onChange={(event) => onChange('type', event.target.value)}>{optionActions.map((type) => <option key={type} value={type}>{transactionLabels[type]}</option>)}</select></Field>
+        </div>
+        {form.type === 'expired' && <Field label="ฝั่งสัญญา (Long / Short)" error={errors.optionSide}><select className="form-input" value={form.optionSide} onChange={(event) => onChange('optionSide', event.target.value)}><option value="long">Long</option><option value="short">Short</option></select></Field>}
         <SymbolPreview label="หุ้นแม่ (Underlying)" value={form.underlyingSymbol} onChange={(value) => onChange('underlyingSymbol', value)} error={errors.underlyingSymbol} />
-        <Field label="Contract symbol" error={errors.contractSymbol}><input className="form-input font-mono uppercase" value={form.contractSymbol} onChange={(event) => onChange('contractSymbol', event.target.value.toUpperCase())} maxLength={80} /></Field>
-        <Field label="ประเภท" error={errors.optionKind}><select className="form-input" value={form.optionKind} onChange={(event) => onChange('optionKind', event.target.value)}><option value="call">Call</option><option value="put">Put</option></select></Field>
-        {form.type === 'expired' && <Field label="ฝั่งสัญญา" error={errors.optionSide}><select className="form-input" value={form.optionSide} onChange={(event) => onChange('optionSide', event.target.value)}><option value="long">Long</option><option value="short">Short</option></select></Field>}
-        <Field label="Strike" error={errors.strikePrice}><DecimalInput value={form.strikePrice} onChange={(value) => onChange('strikePrice', value)} /></Field>
-        <Field label="วันหมดอายุ" error={errors.expirationDate}><input type="date" className="form-input" value={form.expirationDate} onChange={(event) => onChange('expirationDate', event.target.value)} /></Field>
-        <Field label="จำนวนสัญญา" error={errors.quantity}><DecimalInput value={form.quantity} onChange={(value) => onChange('quantity', value)} /></Field>
-        <Field label="Multiplier" error={errors.multiplier}><DecimalInput value={form.multiplier} onChange={(value) => onChange('multiplier', value)} /></Field>
-        <Field label={`Premium ต่อหุ้น (${form.originalCurrency})`} error={errors.price} helper={noPremium ? 'Exercise / Assignment / Expired ใช้ 0' : undefined}><DecimalInput value={form.price} onChange={(value) => onChange('price', value)} /></Field>
-        <Field label={`ค่าธรรมเนียม (${form.originalCurrency})`} error={errors.fee}><DecimalInput value={form.fee} onChange={(value) => onChange('fee', value)} /></Field>
+        <Field label="ประเภทออปชัน (Call / Put)" error={errors.optionKind}><select className="form-input" value={form.optionKind} onChange={(event) => onChange('optionKind', event.target.value)}><option value="call">Call</option><option value="put">Put</option></select></Field>
+        <Field label="ราคาใช้สิทธิ (Strike)" error={errors.strikePrice}><DecimalInput value={form.strikePrice} onChange={(value) => onChange('strikePrice', value)} /></Field>
+        <Field label="วันหมดอายุ (Expiration)" error={errors.expirationDate}><input type="date" className="form-input" value={form.expirationDate} onChange={(event) => onChange('expirationDate', event.target.value)} /></Field>
+        <Field label="จำนวนสัญญา (Contracts)" error={errors.quantity}><DecimalInput value={form.quantity} onChange={(value) => onChange('quantity', value)} /></Field>
+        <Field label={`ราคาต่อหุ้น (Premium · ${form.originalCurrency})`} error={errors.price} helper={noPremium ? 'Exercise / Assignment / Expired ใช้ 0' : undefined}><DecimalInput value={form.price} onChange={(value) => onChange('price', value)} /></Field>
+        <Field label="ตัวคูณต่อสัญญา (Multiplier)" error={errors.multiplier} helper="ค่าเริ่มต้น 100 และแก้ไขได้"><DecimalInput value={form.multiplier} onChange={(value) => onChange('multiplier', value)} /></Field>
+        <Field label={`ค่าธรรมเนียม (Fee · ${form.originalCurrency})`} error={errors.fee}><DecimalInput value={form.fee} onChange={(value) => onChange('fee', value)} /></Field>
         <Field label="สกุลเงินต้นฉบับ" error={errors.originalCurrency}><select className="form-input" value={form.originalCurrency} onChange={(event) => onChange('originalCurrency', event.target.value)}><option value="USD">USD ($)</option><option value="THB">THB (฿)</option></select></Field>
         {form.originalCurrency === 'THB' && <Field label="USD/THB ณ เวลารายการ" error={errors.fxRateAtTransaction}><DecimalInput value={form.fxRateAtTransaction} onChange={(value) => onChange('fxRateAtTransaction', value)} /></Field>}
-        <Field label="วันและเวลารายการ" error={errors.occurredAt}><input type="datetime-local" className="form-input" value={form.occurredAt.slice(0, 16)} max={localNow()} onChange={(event) => onChange('occurredAt', event.target.value)} /></Field>
-        <Field label="โบรกเกอร์" error={errors.broker}><input className="form-input" value={form.broker} maxLength={100} onChange={(event) => onChange('broker', event.target.value)} /></Field>
+        <div className={form.originalCurrency === 'THB' ? 'sm:col-span-2' : undefined}>
+          <Field label="วันและเวลารายการ (Date)" error={errors.occurredAt}><input type="datetime-local" className="form-input" value={form.occurredAt.slice(0, 16)} max={localNow()} onChange={(event) => onChange('occurredAt', event.target.value)} /></Field>
+        </div>
       </div>
-      <Field label="หมายเหตุ" error={errors.note}><textarea className="form-input h-auto py-3" rows={3} maxLength={500} value={form.note} onChange={(event) => onChange('note', event.target.value)} /></Field>
+      <Field label="หมายเหตุ (Note · ไม่บังคับ)" error={errors.note}><textarea className="form-input h-auto py-3" rows={3} maxLength={500} value={form.note} onChange={(event) => onChange('note', event.target.value)} /></Field>
       <div className="sticky bottom-0 flex gap-2 bg-[#151B28] py-2"><Button type="button" variant="outline" className="flex-1" onClick={onClose}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending}>{pending ? 'กำลังบันทึก…' : 'บันทึกรายการ'}</Button></div>
     </form>
   </Modal>;
 }
 
 function QuoteMeta({ position }: { position: OptionPositionSummary }) {
+  if (isUnresolvedOptionContractSymbol(position.contractSymbol)) {
+    return <span className="mt-1 block text-[10px] text-amber-300">ยังไม่พบสัญญาจริง (Unresolved) · ราคา unavailable</span>;
+  }
   if (position.quoteFreshness === 'missing') return <span className="mt-1 block text-[10px] text-amber-300">ไม่มีราคา · แสดง —</span>;
   return <span className={`mt-1 block text-[10px] ${position.quoteFreshness === 'stale' ? 'text-amber-300' : 'text-slate-500'}`}>
     {position.quoteFreshness === 'stale' ? 'ราคาเก่า (Stale)' : position.quoteFreshness} · {position.quoteSource ?? 'ไม่ทราบแหล่ง'}{position.quoteAsOf ? ` · ${displayTime(position.quoteAsOf)}` : ''}

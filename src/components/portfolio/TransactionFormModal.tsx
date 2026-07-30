@@ -120,12 +120,11 @@ export function TransactionFormModal({ open, editing, form, errors, pending, onC
         {form.originalCurrency === 'THB' && <Field label="อัตรา USD/THB ณ เวลารายการ" error={errors.fxRateAtTransaction} helper="จำนวน THB ต่อ 1 USD เก็บไว้กับรายการต้นฉบับ">
           <DecimalInput value={form.fxRateAtTransaction} onChange={(value) => onChange('fxRateAtTransaction', value)} />
         </Field>}
-        <Field label="วันและเวลาที่เกิดรายการ" error={errors.occurredAt}>
+        <div className={form.originalCurrency === 'THB' ? 'sm:col-span-2' : undefined}>
+          <Field label="วันและเวลาที่เกิดรายการ" error={errors.occurredAt}>
           <input type="datetime-local" value={form.occurredAt.slice(0, 16)} max={new Date().toISOString().slice(0, 16)} onChange={(event) => onChange('occurredAt', event.target.value)} className="form-input" />
-        </Field>
-        <Field label="โบรกเกอร์ (ไม่บังคับ)" error={errors.broker}>
-          <input value={form.broker} onChange={(event) => onChange('broker', event.target.value)} maxLength={100} className="form-input" />
-        </Field>
+          </Field>
+        </div>
       </div>
       <Field label="หมายเหตุ (ไม่บังคับ)" error={errors.note}>
         <textarea value={form.note} onChange={(event) => onChange('note', event.target.value)} maxLength={500} rows={3} className="form-input h-auto py-3" />

@@ -10,8 +10,8 @@ const nonnegativeDecimal = z.string().trim().refine(
 const signedDecimal = z.string().trim().regex(/^-?\d+(?:\.\d{1,8})?$/, 'กรอกจำนวนบวกหรือลบได้ไม่เกิน 8 ตำแหน่ง')
   .refine((value) => Number(value) !== 0 && Number.isFinite(Number(value)), 'ค่าปรับยอดต้องไม่เป็น 0');
 const symbol = z.string().trim().toUpperCase().regex(/^(\^[A-Z0-9]+|[A-Z0-9][A-Z0-9.-]{0,19})$/, 'Symbol ไม่ถูกต้อง');
-const contractSymbol = z.string().trim().toUpperCase()
-  .regex(/^[A-Z0-9][A-Z0-9._:-]{2,79}$/, 'Contract symbol ไม่ถูกต้อง');
+export const portfolioContractSymbolSchema = z.string().trim().toUpperCase()
+  .regex(/^[A-Z0-9][A-Z0-9._:-]{2,79}$/, 'รหัสออปชันภายในไม่ถูกต้อง');
 const occurredAt = z.string().trim().refine((value) => {
   if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(value)) return false;
   const instant = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00+07:00` : value;
@@ -60,7 +60,7 @@ export const portfolioTransactionSchema = z.object({
   }
   if (optionType) {
     issue('underlyingSymbol', symbol.safeParse(value.underlyingSymbol));
-    issue('contractSymbol', contractSymbol.safeParse(value.contractSymbol));
+    if (value.contractSymbol !== '') issue('form', portfolioContractSymbolSchema.safeParse(value.contractSymbol));
     issue('quantity', z.string().regex(/^\d+$/, 'จำนวนสัญญาต้องเป็นจำนวนเต็ม').refine((item) => Number(item) > 0 && Number(item) <= 1_000_000, 'จำนวนสัญญาไม่ถูกต้อง').safeParse(value.quantity));
     issue('strikePrice', positiveDecimal.safeParse(value.strikePrice));
     issue('multiplier', positiveDecimal.safeParse(value.multiplier));

@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
 import type { PortfolioRecord, PortfolioTransaction } from './types';
 import type { TransactionInput } from './validation';
+import { optionContractSymbolStatus } from './options/contract-symbol-status';
 
 type TransactionRow = Database['public']['Tables']['portfolio_transactions']['Row'];
 
@@ -65,6 +66,19 @@ function rpcInput(input: TransactionInput) {
 export class PortfolioRepository {
   constructor(private readonly client: SupabaseClient<Database>) {}
 
+  private async canonicalizeResolvedOption(input: TransactionInput): Promise<void> {
+    const contractSymbol = input.contractSymbol?.trim().toUpperCase() ?? '';
+    if (!contractSymbol || optionContractSymbolStatus(contractSymbol) !== 'official') return;
+    const { error } = await this.client.from('portfolio_transactions')
+      .update({ contract_symbol: contractSymbol, updated_at: new Date().toISOString() })
+      .eq('underlying_symbol', input.underlyingSymbol!.trim().toUpperCase())
+      .eq('option_kind', input.optionKind!)
+      .eq('strike_price', input.strikePrice!)
+      .eq('expiration_date', input.expirationDate!)
+      .like('contract_symbol', 'UNRESOLVED-%');
+    if (error) throw error;
+  }
+
   async ensureDefault(): Promise<string> {
     const { data, error } = await this.client.rpc('get_or_create_default_portfolio');
     if (error || !data) throw error ?? new Error('Default portfolio was not created');
@@ -83,13 +97,21 @@ export class PortfolioRepository {
     return { id: portfolio.id, name: portfolio.name, baseCurrency: portfolio.base_currency, transactions: (rows ?? []).map(mapTransaction) };
   }
 
+  async getTransaction(id: string): Promise<PortfolioTransaction | null> {
+    const { data, error } = await this.client.from('portfolio_transactions').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapTransaction(data) : null;
+  }
+
   async create(input: TransactionInput): Promise<string> {
+    await this.canonicalizeResolvedOption(input);
     const { data, error } = await this.client.rpc('create_portfolio_ledger_transaction', { ...rpcInput(input), input_idempotency_key: input.idempotencyKey });
     if (error || !data) throw error ?? new Error('Transaction was not created');
     return data;
   }
 
   async update(id: string, input: TransactionInput): Promise<void> {
+    await this.canonicalizeResolvedOption(input);
     const { error } = await this.client.rpc('update_portfolio_ledger_transaction', { transaction_id: id, ...rpcInput(input) });
     if (error) throw error;
   }
