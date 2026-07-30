@@ -221,6 +221,7 @@ export function calculateOptionLedger(
       key: state.key,
       underlyingSymbol: state.underlyingSymbol,
       contractSymbol: state.contractSymbol,
+      marketContractSymbol: quote?.contractSymbol ?? null,
       optionKind: state.optionKind,
       side: state.side,
       strikePrice: fixedToNumber(state.strikePrice),

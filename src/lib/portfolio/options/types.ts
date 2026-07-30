@@ -5,6 +5,7 @@ export type { OptionKind, OptionSide };
 export type OptionQuoteFreshness = 'live' | 'delayed' | 'cached' | 'stale' | 'missing';
 
 export interface OptionQuoteInput {
+  contractSymbol?: string | null;
   bid: number | null;
   ask: number | null;
   mark: number | null;
@@ -22,6 +23,7 @@ export interface OptionPositionSummary {
   key: string;
   underlyingSymbol: string;
   contractSymbol: string;
+  marketContractSymbol: string | null;
   optionKind: OptionKind;
   side: OptionSide;
   strikePrice: number;

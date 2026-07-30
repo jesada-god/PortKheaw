@@ -38,9 +38,13 @@ export async function preparePortfolioTransactionForCreate(
 ): Promise<TransactionInput> {
   const prepared = { ...input, broker: '' };
   if (!isOptionInput(prepared)) return prepared;
+  // A hidden symbol is supplied only by a follow-up action from an existing
+  // position. Preserve that ledger identity so closes and targets stay attached;
+  // canonical market resolution happens independently in the read pipeline.
+  if (prepared.contractSymbol?.trim()) return prepared;
   const resolution = await resolvePortfolioOptionContractSymbol(
     optionIdentity(prepared),
-    prepared.contractSymbol,
+    undefined,
     loadChain,
   );
   return { ...prepared, contractSymbol: resolution.contractSymbol };
@@ -53,12 +57,12 @@ export async function preparePortfolioTransactionForUpdate(
 ): Promise<TransactionInput> {
   const prepared = { ...input, broker: existing.broker ?? '' };
   if (!isOptionInput(prepared)) return prepared;
-  const currentContractSymbol = sameOptionIdentity(prepared, existing)
-    ? existing.contractSymbol
-    : undefined;
+  if (sameOptionIdentity(prepared, existing) && existing.contractSymbol) {
+    return { ...prepared, contractSymbol: existing.contractSymbol };
+  }
   const resolution = await resolvePortfolioOptionContractSymbol(
     optionIdentity(prepared),
-    currentContractSymbol,
+    undefined,
     loadChain,
   );
   return { ...prepared, contractSymbol: resolution.contractSymbol };

@@ -3,6 +3,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
 import type { OptionSide, OptionTarget, OptionTargetMode } from './types';
+import { optionContractSymbolStatus } from './contract-symbol-status';
 
 type Row = Database['public']['Tables']['portfolio_option_targets']['Row'];
 
@@ -60,12 +61,21 @@ export class OptionTargetRepository {
     if (error) throw error;
   }
 
-  async evaluate(target: OptionTarget, observedPremium: number, observedAt: string): Promise<string | null> {
+  async evaluate(
+    target: OptionTarget,
+    observedPremium: number,
+    observedAt: string,
+    displayName?: string,
+  ): Promise<string | null> {
+    const safeName = displayName?.trim()
+      || (optionContractSymbolStatus(target.contractSymbol) === 'official'
+        ? target.contractSymbol
+        : 'สัญญาออปชัน');
     const { data, error } = await this.client.rpc('evaluate_portfolio_option_target', {
       target_id: target.id,
       observed_premium: observedPremium,
       observed_at: observedAt,
-      notification_title: `ออปชัน ${target.contractSymbol} ถึงเป้าหมายแล้ว`,
+      notification_title: `ออปชัน ${safeName} ถึงเป้าหมายแล้ว`,
       notification_message: `ราคาประเมิน ${observedPremium.toFixed(2)} ถึงเป้าหมาย ${target.targetPremium.toFixed(2)} ที่ตั้งไว้ในพอร์ต`,
     });
     if (error) throw error;

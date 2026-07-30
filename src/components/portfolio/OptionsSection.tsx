@@ -9,7 +9,13 @@ import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculateOptionTarget } from '@/src/lib/portfolio/options/calculations';
-import { isUnresolvedOptionContractSymbol } from '@/src/lib/portfolio/options/contract-symbol-status';
+import { isInternalOptionContractSymbol } from '@/src/lib/portfolio/options/contract-symbol-status';
+import {
+  UNMATCHED_OPTION_MESSAGE,
+  optionPositionDescription,
+  optionPositionMarketSymbol,
+  optionPositionTitle,
+} from '@/src/lib/portfolio/options/presentation';
 import type { OptionPositionSummary, OptionTarget, OptionTargetMode } from '@/src/lib/portfolio/options/types';
 import type { PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
@@ -90,6 +96,9 @@ export function OptionsSection({ positions, targets, currency, usdThbRate, showB
   const [targetError, setTargetError] = useState('');
   const money = (value: number | null) => value === null ? '—' : formatPortfolioMoney(value, currency, usdThbRate, showBalances);
   const signed = (value: number | null) => value === null ? '—' : signedMoney(value, currency, usdThbRate, showBalances);
+  const targetDeletingPosition = targetDeleting
+    ? positions.find((position) => position.contractSymbol === targetDeleting.contractSymbol) ?? null
+    : null;
 
   function change(name: keyof TransactionFormState, value: string) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -298,7 +307,7 @@ export function OptionsSection({ positions, targets, currency, usdThbRate, showB
       <p className="text-sm text-slate-300">การลบจะคำนวณเงินสด จำนวนสัญญา ต้นทุน และ P&amp;L ใหม่จาก Ledger ทั้งหมด และอาจถูกปฏิเสธหากทำให้รายการปิดภายหลังเกินจำนวนที่มี</p>
       <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmDelete}>ยืนยันการลบ</Button></div>
     </Modal>
-    <Modal isOpen={Boolean(targetPosition)} onClose={() => !pending && setTargetPosition(null)} title={`เป้าหมายขาย ${targetPosition?.contractSymbol ?? ''}`}>
+    <Modal isOpen={Boolean(targetPosition)} onClose={() => !pending && setTargetPosition(null)} title={`เป้าหมายขาย ${targetPosition ? optionPositionTitle(targetPosition) : ''}`}>
       <form className="space-y-4" onSubmit={submitTarget}>
         <Field label="ตั้งเป้าหมายจาก">
           <select className="form-input" value={targetMode} onChange={(event) => setTargetMode(event.target.value as OptionTargetMode)}>
@@ -324,7 +333,7 @@ export function OptionsSection({ positions, targets, currency, usdThbRate, showB
       </form>
     </Modal>
     <Modal isOpen={Boolean(targetDeleting)} onClose={() => !pending && setTargetDeleting(null)} title="ลบเป้าหมายขายหรือไม่">
-      <p className="text-sm text-slate-300">ระบบจะหยุดติดตามเป้าหมายของ {targetDeleting?.contractSymbol}</p>
+      <p className="text-sm text-slate-300">ระบบจะหยุดติดตามเป้าหมายของ {targetDeletingPosition ? optionPositionTitle(targetDeletingPosition) : 'สัญญาออปชันนี้'}</p>
       <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setTargetDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmTargetDelete}>ยืนยันการลบ</Button></div>
     </Modal>
   </section>;
@@ -347,9 +356,10 @@ interface OptionViewProps {
 
 function OptionDesktopRows(props: OptionViewProps) {
   const { position, expanded, showBalances, money, signed, onToggle } = props;
+  const marketSymbol = optionPositionMarketSymbol(position);
   return <>
     <tr className="border-b border-slate-800/60 hover:bg-slate-800/30">
-      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong>{isUnresolvedOptionContractSymbol(position.contractSymbol) ? <span className="block text-[10px] font-semibold text-amber-300">ยังไม่พบสัญญาจริง (Unresolved)</span> : <span className="block max-w-48 truncate font-mono text-[10px] text-slate-500" title={position.contractSymbol}>{position.contractSymbol}</span>}</span></button></td>
+      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{optionPositionTitle(position)}</strong><span className="block text-[10px] text-slate-400">{optionPositionDescription(position)}</span>{marketSymbol && <span className="block max-w-48 truncate font-mono text-[10px] text-slate-500" title={marketSymbol}>{marketSymbol}</span>}</span></button></td>
       <td className="px-3 py-3"><SideBadge side={position.side} /></td>
       <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : '••'}</td>
       <td className="px-3 py-3 text-right font-mono">${position.averagePremium.toFixed(2)}</td>
@@ -366,9 +376,10 @@ function OptionDesktopRows(props: OptionViewProps) {
 
 function OptionMobileCard(props: OptionViewProps) {
   const { position, expanded, showBalances, money, signed, onToggle } = props;
+  const marketSymbol = optionPositionMarketSymbol(position);
   return <article className="min-w-0 p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-start justify-between gap-3 text-left">
-      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span>{isUnresolvedOptionContractSymbol(position.contractSymbol) ? <span className="mt-1 block text-[10px] font-semibold text-amber-300">ยังไม่พบสัญญาจริง (Unresolved)</span> : <span className="mt-1 block break-all font-mono text-[10px] text-slate-500">{position.contractSymbol}</span>}</span>
+      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{optionPositionTitle(position)}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span><span className="mt-1 block text-[10px] text-slate-400">{optionPositionDescription(position)}</span>{marketSymbol && <span className="mt-1 block break-all font-mono text-[10px] text-slate-500">{marketSymbol}</span>}</span>
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>
     <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
@@ -406,12 +417,12 @@ function OptionDetails({ position, target, money, signed, onAction, onEdit, onDe
     <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h4 className="flex items-center gap-2 text-sm font-bold text-white"><Target size={16} className="text-[#D4FF00]" /> เป้าหมายขาย</h4><p className="mt-1 text-xs text-slate-500">ติดตามในแอปเท่านั้น ไม่ส่ง Order</p></div>
-        {position.status === 'open' && !isUnresolvedOptionContractSymbol(position.contractSymbol) && <Button size="sm" variant="outline" onClick={onTarget}>{target ? 'แก้ไขเป้าหมาย' : 'เพิ่มเป้าหมาย'}</Button>}
+        {position.status === 'open' && optionPositionMarketSymbol(position) && <Button size="sm" variant="outline" onClick={onTarget}>{target ? 'แก้ไขเป้าหมาย' : 'เพิ่มเป้าหมาย'}</Button>}
       </div>
       {target ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-900/60 p-3 text-xs">
         <p><strong className="text-slate-200">{target.mode === 'premium' ? `Target premium $${target.targetValue.toFixed(2)}` : `Target profit ${target.targetValue.toFixed(2)}%`}</strong><span className="mt-1 block text-slate-500">Premium ที่ใช้ติดตาม ${target.targetPremium.toFixed(2)} · fee ${money(target.estimatedFee)}{target.triggeredAt ? ` · ถึงเป้าหมาย ${displayTime(target.triggeredAt)}` : ''}</span></p>
         <button type="button" aria-label="ลบเป้าหมายขาย" onClick={() => onDeleteTarget(target)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
-      </div> : <p className="mt-3 text-xs text-slate-500">{isUnresolvedOptionContractSymbol(position.contractSymbol) ? 'ตั้งเป้าหมายได้เมื่อพบสัญญาจริงแล้ว' : 'ยังไม่ได้ตั้งเป้าหมาย'}</p>}
+      </div> : <p className="mt-3 text-xs text-slate-500">{isInternalOptionContractSymbol(position.contractSymbol) && !optionPositionMarketSymbol(position) ? 'ตั้งเป้าหมายได้เมื่อจับคู่สัญญากับข้อมูลตลาดแล้ว' : 'ยังไม่ได้ตั้งเป้าหมาย'}</p>}
     </section>
     <section>
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Transaction history</h4>
@@ -465,8 +476,8 @@ function OptionTransactionModal({ open, editing, form, errors, pending, onChange
 }
 
 function QuoteMeta({ position }: { position: OptionPositionSummary }) {
-  if (isUnresolvedOptionContractSymbol(position.contractSymbol)) {
-    return <span className="mt-1 block text-[10px] text-amber-300">ยังไม่พบสัญญาจริง (Unresolved) · ราคา unavailable</span>;
+  if (isInternalOptionContractSymbol(position.contractSymbol) && position.quoteFreshness === 'missing') {
+    return <span className="mt-1 block text-[10px] text-amber-300">{UNMATCHED_OPTION_MESSAGE}</span>;
   }
   if (position.quoteFreshness === 'missing') return <span className="mt-1 block text-[10px] text-amber-300">ไม่มีราคา · แสดง —</span>;
   return <span className={`mt-1 block text-[10px] ${position.quoteFreshness === 'stale' ? 'text-amber-300' : 'text-slate-500'}`}>

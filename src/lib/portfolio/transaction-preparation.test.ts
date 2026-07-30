@@ -59,6 +59,17 @@ describe('portfolio transaction preparation', () => {
     expect(prepared.contractSymbol).toMatch(/^UNRESOLVED-[A-F0-9]{32}$/);
   });
 
+  it('keeps an internal ledger identity for a follow-up transaction', async () => {
+    const loader = vi.fn<() => Promise<OptionsChain>>();
+    const prepared = await preparePortfolioTransactionForCreate(
+      { ...input, type: 'sell_to_close', contractSymbol: 'LEGACY-123' },
+      loader,
+    );
+
+    expect(prepared.contractSymbol).toBe('LEGACY-123');
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it('keeps a legacy contract symbol and broker when editing an existing transaction', async () => {
     const loader = vi.fn<() => Promise<OptionsChain>>();
     const prepared = await preparePortfolioTransactionForUpdate(

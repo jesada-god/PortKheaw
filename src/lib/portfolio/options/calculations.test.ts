@@ -66,6 +66,39 @@ describe('option transaction-ledger calculations', () => {
     expect(result).toMatchObject({ cashFlow: -251.5, remainingCost: 251.5, marketValue: 250, unrealizedGain: -1.5 });
   });
 
+  it('values the legacy NVTS ledger position from a real Mark without changing its identity', () => {
+    const legacy = 'LEGACY-C307F481-B34C-4FE3-97';
+    const result = calculateOptionLedger([
+      option('buy_to_open', {
+        underlyingSymbol: 'NVTS',
+        contractSymbol: legacy,
+        optionKind: 'put',
+        strikePrice: '12',
+        price: '2',
+        normalizedPriceUsd: '2',
+        expirationDate: '2026-08-21',
+      }),
+    ], {
+      [legacy]: quote({
+        contractSymbol: 'NVTS260821P00012000',
+        mark: 1.93,
+      }),
+    }, '2026-07-31');
+
+    expect(result).toMatchObject({
+      cashFlow: -200,
+      remainingCost: 200,
+      marketValue: 193,
+      unrealizedGain: -7,
+    });
+    expect(result.positions[0]).toMatchObject({
+      contractSymbol: legacy,
+      marketContractSymbol: 'NVTS260821P00012000',
+      marketValue: 193,
+      unrealizedGain: -7,
+    });
+  });
+
   it('uses Bid for a long close estimate and Ask for a short buyback liability', () => {
     const long = calculateOptionLedger([option('buy_to_open')], { AAPL260821C00200000: quote() }, '2026-07-30').positions[0];
     expect(long).toMatchObject({ mark: 2.5, marketValue: 250, estimatedClosePrice: 2, estimatedCloseValue: 200 });

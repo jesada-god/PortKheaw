@@ -153,6 +153,37 @@ describe('portfolio transaction-ledger accounting', () => {
     expect(result.optionPositions[0]).toMatchObject({ remainingCost: 200, unrealizedGain: 0 });
   });
 
+  it('restores the legacy NVTS portfolio totals from Mark 1.93', () => {
+    const legacy = 'LEGACY-C307F481-B34C-4FE3-97';
+    const ledger = [
+      tx('deposit', { amount: '74.04', normalizedAmountUsd: '74.04' }),
+      option('buy_to_open', { contractSymbol: legacy }),
+    ];
+    const result = calculatePortfolio(ledger, {}, {
+      [legacy]: optionQuote({
+        contractSymbol: 'NVTS260821P00012000',
+        bid: 1.88,
+        ask: 2,
+        mark: 1.93,
+      }),
+    }, '2026-07-31');
+
+    expect(result).toMatchObject({
+      netDepositedCapital: 74.04,
+      cashBalance: -125.96,
+      optionsMarketValue: 193,
+      totalValue: 67.04,
+      optionRemainingCost: 200,
+      unrealizedGain: -7,
+      totalGain: -7,
+    });
+    expect(result.optionPositions[0]).toMatchObject({
+      contractSymbol: legacy,
+      marketContractSymbol: 'NVTS260821P00012000',
+      estimatedClosePrice: 1.88,
+    });
+  });
+
   it('settles exercise and assignment into underlying stock through ledger events', () => {
     const exercised = calculatePortfolio([
       tx('deposit', { amount: '20200', normalizedAmountUsd: '20200' }),

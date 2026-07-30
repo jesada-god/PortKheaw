@@ -13,3 +13,7 @@ export function optionContractSymbolStatus(contractSymbol: string): OptionContra
 export function isUnresolvedOptionContractSymbol(contractSymbol: string): boolean {
   return optionContractSymbolStatus(contractSymbol) === 'unresolved';
 }
+
+export function isInternalOptionContractSymbol(contractSymbol: string): boolean {
+  return optionContractSymbolStatus(contractSymbol) !== 'official';
+}

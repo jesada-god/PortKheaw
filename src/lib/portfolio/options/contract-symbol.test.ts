@@ -6,6 +6,7 @@ vi.mock('server-only', () => ({}));
 
 const {
   deterministicUnresolvedOptionContractSymbol,
+  occOptionContractCandidate,
   resolvePortfolioOptionContractSymbol,
 } = await import('./contract-symbol');
 
@@ -111,11 +112,58 @@ describe('portfolio option contract symbol resolution', () => {
     });
   });
 
-  it('preserves legacy identifiers without treating them as provider-resolved symbols', async () => {
-    const loader = vi.fn();
-    const result = await resolvePortfolioOptionContractSymbol(identity, 'LEGACY-123', loader);
+  it('exact-matches the legacy NVTS contract to the canonical provider symbol', async () => {
+    const nvtsIdentity = {
+      underlyingSymbol: 'NVTS',
+      optionKind: 'put' as const,
+      strikePrice: '12',
+      expirationDate: '2026-08-21',
+    };
+    const loader = vi.fn(async () => chain([
+      contract({
+        contractSymbol: 'NVTS260821P00012000',
+        underlyingSymbol: 'NVTS',
+        strike: 12,
+      }),
+    ]));
+    const result = await resolvePortfolioOptionContractSymbol(
+      nvtsIdentity,
+      'LEGACY-C307F481-B34C-4FE3-97',
+      loader,
+    );
 
-    expect(result).toEqual({ contractSymbol: 'LEGACY-123', status: 'legacy' });
+    expect(occOptionContractCandidate(nvtsIdentity)).toBe('NVTS260821P00012000');
+    expect(result).toEqual({
+      contractSymbol: 'NVTS260821P00012000',
+      status: 'official',
+    });
+    expect(loader).toHaveBeenCalledWith('NVTS', '2026-08-21');
+  });
+
+  it('requires exact underlying, expiration, option kind, and strike matches', async () => {
+    const legacy = 'LEGACY-C307F481-B34C-4FE3-97';
+    const result = await resolvePortfolioOptionContractSymbol(identity, legacy, async () => chain([
+      contract({ underlyingSymbol: 'AAPL' }),
+      contract({ expiration: '2026-09-18' }),
+      contract({ type: 'call' }),
+      contract({ strike: 101 }),
+    ]));
+
+    expect(result).toEqual({ contractSymbol: legacy, status: 'legacy' });
+  });
+
+  it('leaves an existing canonical symbol unchanged without provider resolution', async () => {
+    const loader = vi.fn();
+    const result = await resolvePortfolioOptionContractSymbol(
+      identity,
+      'NVDA260821P00100000',
+      loader,
+    );
+
+    expect(result).toEqual({
+      contractSymbol: 'NVDA260821P00100000',
+      status: 'official',
+    });
     expect(loader).not.toHaveBeenCalled();
   });
 });

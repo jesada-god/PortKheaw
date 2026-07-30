@@ -66,4 +66,13 @@ describe('portfolio responsive and accessibility contract', () => {
       expect(options).toContain(label);
     }
   });
+
+  it('keeps internal option identifiers out of every user-facing label', () => {
+    expect(options).toContain('optionPositionTitle(position)');
+    expect(options).toContain('optionPositionDescription(position)');
+    expect(options).toContain('UNMATCHED_OPTION_MESSAGE');
+    expect(options).not.toContain('targetPosition?.contractSymbol');
+    expect(options).not.toContain('targetDeleting?.contractSymbol');
+    expect(options).not.toContain('>{position.contractSymbol}</span>');
+  });
 });
