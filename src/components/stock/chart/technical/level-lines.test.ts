@@ -47,6 +47,14 @@ describe('buildPriceLineSpecs', () => {
     const lines = build().filter((line) => line.id !== 'current');
     expect(lines.map((line) => line.id)).toEqual(['R1', 'R2', 'R3', 'S1', 'S2', 'S3']);
     expect(lines.map((line) => line.price)).toEqual([343.45, 346.81, 350.74, 336.16, 332.23, 328.87]);
+    expect(lines.map((line) => line.title)).toEqual([
+      'R1 แนวต้านที่ 1',
+      'R2 แนวต้านที่ 2',
+      'R3 แนวต้านที่ 3',
+      'S1 แนวรับที่ 1',
+      'S2 แนวรับที่ 2',
+      'S3 แนวรับที่ 3',
+    ]);
   });
 
   it('draws the accepted price after the levels so a coincident level cannot bury it', () => {
@@ -84,10 +92,10 @@ describe('buildPriceLineSpecs', () => {
     expect(lines.find((line) => line.id === 'S1')?.color).toBe(SUPPORT_COLOR);
   });
 
-  it('labels every level on the left and only the accepted price on the right', () => {
+  it('labels every level and the accepted price on the right collision column', () => {
     const sides = Object.fromEntries(build().map((line) => [line.id, line.labelSide]));
     expect(sides).toEqual({
-      current: 'right', R1: 'left', R2: 'left', R3: 'left', S1: 'left', S2: 'left', S3: 'left',
+      current: 'right', R1: 'right', R2: 'right', R3: 'right', S1: 'right', S2: 'right', S3: 'right',
     });
   });
 

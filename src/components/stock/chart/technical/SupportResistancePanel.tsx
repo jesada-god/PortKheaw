@@ -4,6 +4,7 @@ import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import type { LevelStatistics } from '@/src/lib/analytics/level-statistics';
 import type { VisibleRangeVolumeProfile } from '@/src/lib/analytics/institutional-sr/visible-range-profile';
+import { formatSupportResistanceLevelLabel } from './level-label';
 
 export interface SupportResistanceRow {
   id: string;
@@ -81,6 +82,7 @@ export function SupportResistancePanel({
 }: SupportResistancePanelProps) {
   const resistance = rows.filter((row) => row.side === 'resistance');
   const support = rows.filter((row) => row.side === 'support');
+  const nearestLabel = nearest ? formatSupportResistanceLevelLabel(nearest.label) : null;
 
   return (
     <section
@@ -119,7 +121,7 @@ export function SupportResistancePanel({
           title={nearest.label.startsWith('S') ? 'แนวรับที่ใกล้ราคาปัจจุบันที่สุด' : 'แนวต้านที่ใกล้ราคาปัจจุบันที่สุด'}
           className="mb-1.5 rounded-md border border-amber-400/20 bg-amber-400/[.07] px-2 py-1 text-[11px] text-amber-200"
         >
-          🔔 {nearest.label} {money(nearest.price, currency)} · ห่าง {Math.abs(nearest.distancePercent).toFixed(2)}%
+          🔔 {nearestLabel} {money(nearest.price, currency)} · ห่าง {Math.abs(nearest.distancePercent).toFixed(2)}%
         </p>
       )}
 
@@ -150,10 +152,11 @@ export function SupportResistancePanel({
 function LevelRow({ row, currency, basisLabel }: { row: SupportResistanceRow; currency: string; basisLabel: string }) {
   const tone = row.side === 'resistance' ? 'text-rose-300' : 'text-emerald-300';
   const lastTouch = lastTouchLabel(row.statistics);
+  const levelLabel = formatSupportResistanceLevelLabel(row.label);
   return (
     <li className={`relative rounded-md border-l-2 bg-slate-950/35 px-2 py-1 ${row.side === 'resistance' ? 'border-l-rose-400/70' : 'border-l-emerald-400/70'}`} data-testid={`sr-level-${row.id}`}>
-      <div className="grid grid-cols-[minmax(1.75rem,auto)_1fr_auto_1.25rem] items-center gap-x-2">
-        <b className={`text-xs ${tone}`}>{row.label}</b>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_1.25rem] items-center gap-x-2">
+        <b className={`min-w-0 text-xs leading-tight ${tone}`}>{levelLabel}</b>
         <span className="whitespace-nowrap font-mono text-sm tabular-nums text-slate-100">{money(row.price, currency)}</span>
         <span className={`whitespace-nowrap text-right font-mono text-[11px] tabular-nums ${row.distancePercent != null && row.distancePercent > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
           {signedPercent(row.distancePercent)}
@@ -177,16 +180,16 @@ function LevelDetails({ row, currency, basisLabel, lastTouch }: {
   basisLabel: string;
   lastTouch: string | null;
 }) {
-  const title = row.side === 'support' ? 'แนวรับ' : 'แนวต้าน';
+  const levelLabel = formatSupportResistanceLevelLabel(row.label);
   const hold = row.side === 'support' ? 'รับอยู่' : 'ต้านอยู่';
   const failure = row.side === 'support' ? 'หลุด' : 'ทะลุ';
   const statistics = row.statistics;
 
   return (
     <DetailPopover
-      triggerLabel={`ดูรายละเอียด${title} ${row.label}`}
-      dialogLabel={`รายละเอียด${title} ${row.label}`}
-      title={<span className={row.side === 'support' ? 'text-emerald-300' : 'text-rose-300'}>{title} {row.label} <span className="font-mono tabular-nums">{money(row.price, currency)}</span></span>}
+      triggerLabel={`ดูรายละเอียด ${levelLabel}`}
+      dialogLabel={`รายละเอียด ${levelLabel}`}
+      title={<span className={row.side === 'support' ? 'text-emerald-300' : 'text-rose-300'}>{levelLabel} <span className="font-mono tabular-nums">{money(row.price, currency)}</span></span>}
     >
       <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
         <dt className="text-slate-500">ชนทั้งหมด</dt><dd className="text-right font-mono tabular-nums text-slate-200">{statistics?.touches ?? '—'}</dd>

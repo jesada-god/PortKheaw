@@ -45,6 +45,24 @@ describe('layoutLabelColumn', () => {
     expect(placements.map((placement) => placement.anchorY)).toEqual([40, 41, 42, 43, 44, 45]);
   });
 
+  it('fits six levels, current price and four EMAs in the minimum mobile price pane', () => {
+    const mobile = { height: 200, labelHeight: 18 };
+    const placements = layoutLabelColumn(
+      ['R1', 'R2', 'R3', 'current', 'S1', 'S2', 'S3', 'ema20', 'ema50', 'ema100', 'ema200']
+        .map((id, index) => ({ id, y: 90 + index })),
+      mobile,
+    );
+    expect(placements).toHaveLength(11);
+    const sorted = [...placements].sort((left, right) => left.y - right.y);
+    sorted.forEach((placement, index) => {
+      expect(placement.y).toBeGreaterThanOrEqual(mobile.labelHeight / 2);
+      expect(placement.y).toBeLessThanOrEqual(mobile.height - mobile.labelHeight / 2);
+      if (index > 0) {
+        expect(placement.y - sorted[index - 1].y).toBeGreaterThanOrEqual(mobile.labelHeight);
+      }
+    });
+  });
+
   it('pulls a cluster at the bottom edge back inside instead of drawing it off-pane', () => {
     const placements = layoutLabelColumn(
       [{ id: 'S1', y: 396 }, { id: 'S2', y: 398 }, { id: 'S3', y: 400 }],

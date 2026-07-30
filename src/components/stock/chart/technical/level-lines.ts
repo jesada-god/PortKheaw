@@ -11,6 +11,7 @@
 
 import type { OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels';
 import type { ChartPriceLineSpec } from './chart-labels';
+import { formatSupportResistanceLevelLabel } from './level-label';
 
 /**
  * All three levels share one 2px stroke; the ranking is carried by opacity, which
@@ -52,18 +53,18 @@ export function buildPriceLineSpecs(input: LevelLineInput): ChartPriceLineSpec[]
       price,
       color: withAlpha(input.colors.negative, index),
       labelColor: input.colors.negative,
-      title: `R${index + 1}`,
+      title: formatSupportResistanceLevelLabel(`R${index + 1}`),
       width: LEVEL_LINE_WIDTH,
-      labelSide: 'left',
+      labelSide: 'right',
     }));
     input.levels.support.forEach((price, index) => lines.push({
       id: `S${index + 1}`,
       price,
       color: withAlpha(input.colors.positive, index),
       labelColor: input.colors.positive,
-      title: `S${index + 1}`,
+      title: formatSupportResistanceLevelLabel(`S${index + 1}`),
       width: LEVEL_LINE_WIDTH,
-      labelSide: 'left',
+      labelSide: 'right',
     }));
   }
   if (input.acceptedPrice != null && Number.isFinite(input.acceptedPrice)) {

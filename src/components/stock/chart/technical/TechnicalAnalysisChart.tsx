@@ -372,16 +372,14 @@ export function TechnicalAnalysisChart({
           onReady={onReady}
         />
         {/*
-          Where the crosshair readout may sit, now that the levels label the left
-          edge of the price pane and the EMAs plus the accepted price label the
-          right one.
+          Where the crosshair readout may sit, now that the levels, EMAs and the
+          accepted price share the right-edge collision column.
 
-          From `sm` up there is room beside the left column, so it stays at the
-          top, inset past it. Below `sm` there is not: the readout is ~270px and
-          the price pane is 228–298px, so no horizontal position on that pane can
-          clear both columns. Mobile therefore keeps the readout in document flow
-          after the chart host. Its top edge is always below every chart pane,
-          even when a narrow viewport wraps the OHLC row onto another line.
+          From `sm` up it stays at the top with a capped width that leaves room
+          for the right label column. Below `sm` the readout is ~270px while the
+          price pane is 228–298px, so mobile keeps it in document flow after the
+          chart host. Its top edge is always below every chart pane, even when a
+          narrow viewport wraps the OHLC row onto another line.
         */}
         {tooltipBar && (
           <div className="pointer-events-none relative z-10 mx-2 mt-2 w-[calc(100%-1rem)] rounded-lg border border-slate-700 bg-[#0F1420]/95 px-2.5 py-2 font-mono text-[11px] text-slate-200 shadow-xl sm:absolute sm:left-24 sm:top-2 sm:m-0 sm:w-auto sm:max-w-[calc(100%-12rem)]" data-testid="chart-tooltip">

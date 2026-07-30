@@ -174,8 +174,8 @@ export class InstitutionalOverlayPrimitive implements ISeriesPrimitive<Time> {
 
   /**
    * Lines are stroked at the coordinate their price maps to; only the labels go
-   * through the collision pass, and each side of the pane is laid out on its own
-   * so a left support label can never be pushed by a right EMA label.
+   * through the collision pass, and each side of the pane is laid out on its own.
+   * Labels assigned to one edge share that edge's collision column.
    */
   private drawLines(ctx: CanvasRenderingContext2D, paneWidth: number, paneHeight: number, hr: number, vr: number): void {
     const drawable: Array<{ line: LineSpec; y: number }> = [];

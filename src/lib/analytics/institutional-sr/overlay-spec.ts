@@ -17,8 +17,7 @@ export interface BandSpec {
   labelColor: string;
 }
 
-/** Pane edge a label hugs. The price scale sits on the right, so support and
- *  resistance read on the left where nothing else competes for the space. */
+/** Pane edge a label hugs. Callers choose the side for their collision column. */
 export type OverlayLabelSide = 'left' | 'right';
 
 export interface LineSpec {

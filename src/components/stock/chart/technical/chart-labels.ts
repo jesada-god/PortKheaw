@@ -28,7 +28,7 @@ export interface ChartPriceLineSpec {
   title: string;
   dashed?: boolean;
   width?: 1 | 2 | 3 | 4;
-  /** Pane edge this line's label hugs. Levels go left, the accepted price right. */
+  /** Pane edge this line's label hugs. */
   labelSide?: OverlayLabelSide;
   /** Text colour, when the stroke itself is drawn translucent. */
   labelColor?: string;

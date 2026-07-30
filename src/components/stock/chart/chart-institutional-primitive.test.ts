@@ -61,7 +61,7 @@ function fakeSeries(): ISeriesApi<SeriesType> {
   } as unknown as ISeriesApi<SeriesType>;
 }
 
-function render(spec: InstitutionalOverlaySpec) {
+function render(spec: InstitutionalOverlaySpec, paneWidth = PANE_WIDTH) {
   const primitive = new InstitutionalOverlayPrimitive();
   primitive.attached({
     chart: {} as never,
@@ -74,7 +74,7 @@ function render(spec: InstitutionalOverlaySpec) {
   const target = {
     useBitmapCoordinateSpace: (callback: (scope: unknown) => void) => callback({
       context: painted.context,
-      bitmapSize: { width: PANE_WIDTH, height: PANE_HEIGHT },
+      bitmapSize: { width: paneWidth, height: PANE_HEIGHT },
       horizontalPixelRatio: 1,
       verticalPixelRatio: 1,
     }),
@@ -127,31 +127,29 @@ describe('InstitutionalOverlayPrimitive — level lines', () => {
 });
 
 describe('InstitutionalOverlayPrimitive — label placement', () => {
-  it('hugs the left edge for levels and the right edge for the price and EMAs', () => {
+  it('keeps S/R and current-price chips inside the right pane edge before the price axis', () => {
     const { texts, chips } = render({
       bands: [],
       lines: [
-        line({ id: 'R1', price: 300, label: 'R1  300.00', side: 'left', drawLine: false }),
+        line({ id: 'R1', price: 300, label: 'R1 แนวต้านที่ 1  300.00', side: 'right', drawLine: false }),
         line({ id: 'current', price: 100, label: 'ราคาปัจจุบัน  100.00', side: 'right', drawLine: false }),
       ],
     });
-    const left = texts.find((item) => item.text.startsWith('R1'))!;
-    const right = texts.find((item) => item.text.startsWith('ราคา'))!;
-    expect(left.x).toBeLessThan(PANE_WIDTH / 2);
-    expect(right.x).toBeGreaterThan(PANE_WIDTH / 2);
-    // Both chips stay inside the pane, so nothing is clipped by an edge.
+    expect(texts.every((item) => item.x > PANE_WIDTH / 2)).toBe(true);
+    // The price scale begins after the pane boundary. Every chip remains inset
+    // before that boundary, so it cannot overlap an axis label or be clipped.
     chips.forEach((chip) => {
       expect(chip.x).toBeGreaterThanOrEqual(0);
       expect(chip.x + chip.width).toBeLessThanOrEqual(PANE_WIDTH);
     });
   });
 
-  it('offsets labels that collide while leaving both lines on their real prices', () => {
+  it('offsets a right-side level away from current price while leaving both lines on their real prices', () => {
     const { strokes, texts } = render({
       bands: [],
       lines: [
-        line({ id: 'R1', price: 200, label: 'R1  200.00', width: 2 }),
-        line({ id: 'R2', price: 201, label: 'R2  201.00', width: 2 }),
+        line({ id: 'R1', price: 200, label: 'R1 แนวต้านที่ 1  200.00', width: 2, side: 'right' }),
+        line({ id: 'current', price: 201, label: 'ราคาปัจจุบัน  201.00', width: 2, side: 'right' }),
       ],
     });
     // Lines: exactly where the prices map to.
@@ -161,7 +159,26 @@ describe('InstitutionalOverlayPrimitive — label placement', () => {
     expect(Math.abs(first.y - second.y)).toBeGreaterThanOrEqual(16);
   });
 
-  it('lays each edge out on its own, so a left level cannot push a right EMA label', () => {
+  it('keeps the full novice-friendly right label inside a narrow mobile pane', () => {
+    const paneWidth = 228;
+    const { texts, chips } = render({
+      bands: [],
+      lines: [
+        line({ id: 'R3', price: 300, label: 'R3 แนวต้านที่ 3  300.00', side: 'right', drawLine: false }),
+        line({ id: 'S3', price: 100, label: 'S3 แนวรับที่ 3  100.00', side: 'right', drawLine: false }),
+      ],
+    }, paneWidth);
+    expect(texts.map((item) => item.text)).toEqual([
+      'R3 แนวต้านที่ 3  300.00',
+      'S3 แนวรับที่ 3  100.00',
+    ]);
+    chips.forEach((chip) => {
+      expect(chip.x).toBeGreaterThanOrEqual(0);
+      expect(chip.x + chip.width).toBeLessThanOrEqual(paneWidth);
+    });
+  });
+
+  it('lays each edge out on its own, so a left overlay cannot push a right EMA label', () => {
     const solo = render({
       bands: [],
       lines: [line({ id: 'ema20', price: 200, label: 'EMA 20  200.00', side: 'right', drawLine: false })],

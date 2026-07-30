@@ -45,6 +45,11 @@ describe('Responsive rules below the chart', () => {
     }
   });
 
+  it('lets the longer novice-friendly S/R name column shrink and wrap on mobile', () => {
+    expect(sr).toContain('grid-cols-[minmax(0,1fr)_auto_auto_1.25rem]');
+    expect(sr).toContain('min-w-0 text-xs leading-tight');
+  });
+
   it('stacks the three Options summary cards before squeezing them', () => {
     expect(options).toContain('grid-cols-1 gap-2 sm:grid-cols-3');
   });
@@ -72,9 +77,9 @@ describe('Responsive rules below the chart', () => {
 
 /**
  * The crosshair readout and the in-pane labels compete for the same surface.
- * Levels label the left edge of the price pane and the EMAs plus the accepted
- * price label the right edge, so where the readout may sit is a hard rule rather
- * than a preference — and one jsdom cannot measure, hence a source contract.
+ * Levels, EMAs and the accepted price share the right edge, so the readout needs
+ * to leave that collision column clear — a rule jsdom cannot measure, hence a
+ * source contract.
  */
 describe('Crosshair readout placement', () => {
   const readoutClasses = chart.match(/className="([^"]*)"[^>]*data-testid="chart-tooltip"/)?.[1] ?? '';
@@ -97,7 +102,7 @@ describe('Crosshair readout placement', () => {
     expect(readoutClasses).not.toMatch(/(^|\s)left-\d/);
   });
 
-  it('returns to the top from sm up, inset past the left label column', () => {
+  it('returns to the top from sm up with a capped width that leaves the right label column clear', () => {
     expect(readoutClasses).toContain('sm:absolute');
     expect(readoutClasses).toContain('sm:top-2');
     expect(readoutClasses).toContain('sm:left-24');

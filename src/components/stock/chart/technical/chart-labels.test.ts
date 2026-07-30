@@ -12,9 +12,9 @@ const ema = (id: string, label: string, values: readonly number[]): EmaLineSpec 
 
 const levels: ChartPriceLineSpec[] = [
   { id: 'current', price: 60.64, color: '#D4FF00', title: 'ราคาปัจจุบัน', dashed: true, width: 2, labelSide: 'right', axisLabel: true },
-  { id: 'R1', price: 70.23, color: '#ff3b30', title: 'R1', width: 2, labelSide: 'left' },
-  { id: 'R2', price: 76.56, color: '#ff3b30d9', labelColor: '#ff3b30', title: 'R2', width: 2, labelSide: 'left' },
-  { id: 'S1', price: 60.29, color: '#00c57f', title: 'S1', width: 2, labelSide: 'left' },
+  { id: 'R1', price: 70.23, color: '#ff3b30', title: 'R1 แนวต้านที่ 1', width: 2, labelSide: 'right' },
+  { id: 'R2', price: 76.56, color: '#ff3b30d9', labelColor: '#ff3b30', title: 'R2 แนวต้านที่ 2', width: 2, labelSide: 'right' },
+  { id: 'S1', price: 60.29, color: '#00c57f', title: 'S1 แนวรับที่ 1', width: 2, labelSide: 'right' },
 ];
 
 describe('EMA labels', () => {
@@ -75,11 +75,16 @@ describe('EMA labels', () => {
 });
 
 describe('price-line labels', () => {
-  it('puts R and S labels on the left with their real price', () => {
+  it('puts R and S labels on the right with the shared novice-friendly name and real price', () => {
     const lines = priceLineLabels(levels, 2);
-    const left = lines.filter((line) => line.side === 'left');
-    expect(left.map((line) => line.label)).toEqual(['R1  70.23', 'R2  76.56', 'S1  60.29']);
-    expect(left.map((line) => line.price)).toEqual([70.23, 76.56, 60.29]);
+    const sr = lines.filter((line) => line.id !== 'current');
+    expect(sr.map((line) => line.label)).toEqual([
+      'R1 แนวต้านที่ 1  70.23',
+      'R2 แนวต้านที่ 2  76.56',
+      'S1 แนวรับที่ 1  60.29',
+    ]);
+    expect(sr.map((line) => line.price)).toEqual([70.23, 76.56, 60.29]);
+    expect(sr.every((line) => line.side === 'right')).toBe(true);
   });
 
   it('keeps the accepted price label on the right', () => {
@@ -104,7 +109,7 @@ describe('price-line labels', () => {
 });
 
 describe('the combined label layer', () => {
-  it('keeps every level on the left and the price plus every EMA on the right', () => {
+  it('keeps every level, the price and every EMA on the shared right collision column', () => {
     const lines = buildChartLabelLines({
       emaLines: [ema('ema20', 'EMA 20', [85.42]), ema('ema50', 'EMA 50', [73.18])],
       priceLines: levels,
@@ -112,7 +117,7 @@ describe('the combined label layer', () => {
     });
     const side = Object.fromEntries(lines.map((line) => [line.id, line.side]));
     expect(side).toEqual({
-      current: 'right', R1: 'left', R2: 'left', S1: 'left', ema20: 'right', ema50: 'right',
+      current: 'right', R1: 'right', R2: 'right', S1: 'right', ema20: 'right', ema50: 'right',
     });
   });
 

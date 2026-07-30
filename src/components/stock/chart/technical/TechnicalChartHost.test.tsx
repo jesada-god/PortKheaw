@@ -479,7 +479,7 @@ describe('TechnicalChartHost — indicator panes never fetch', () => {
 
   it('re-creates the S/R price lines on the new series after a chart-type swap', async () => {
     const short = bars(20);
-    const priceLines = [{ id: 'S1', price: 100, color: '#0f0', title: 'S1' }];
+    const priceLines = [{ id: 'S1', price: 100, color: '#0f0', title: 'S1 แนวรับที่ 1', labelSide: 'right' as const }];
     const { root } = mount();
     await act(async () => root.render(<TechnicalChartHost {...baseProps(short)} priceLines={priceLines} />));
     const chart = lightweight.charts[0];
@@ -529,12 +529,12 @@ describe('TechnicalChartHost — level lines and the accepted-price line', () =>
   const ACCEPTED = 60.64;
   const priceLines = [
     { id: 'current', price: ACCEPTED, color: '#D4FF00', title: 'ราคาปัจจุบัน', dashed: true, width: 2 as const, labelSide: 'right' as const, axisLabel: true },
-    { id: 'R1', price: 70.23, color: '#ff3b30', labelColor: '#ff3b30', title: 'R1', width: 2 as const, labelSide: 'left' as const },
-    { id: 'R2', price: 76.56, color: '#ff3b30d9', labelColor: '#ff3b30', title: 'R2', width: 2 as const, labelSide: 'left' as const },
-    { id: 'R3', price: 80.17, color: '#ff3b30b3', labelColor: '#ff3b30', title: 'R3', width: 2 as const, labelSide: 'left' as const },
-    { id: 'S1', price: 60.29, color: '#00c57f', labelColor: '#00c57f', title: 'S1', width: 2 as const, labelSide: 'left' as const },
-    { id: 'S2', price: 56.68, color: '#00c57fd9', labelColor: '#00c57f', title: 'S2', width: 2 as const, labelSide: 'left' as const },
-    { id: 'S3', price: 50.35, color: '#00c57fb3', labelColor: '#00c57f', title: 'S3', width: 2 as const, labelSide: 'left' as const },
+    { id: 'R1', price: 70.23, color: '#ff3b30', labelColor: '#ff3b30', title: 'R1 แนวต้านที่ 1', width: 2 as const, labelSide: 'right' as const },
+    { id: 'R2', price: 76.56, color: '#ff3b30d9', labelColor: '#ff3b30', title: 'R2 แนวต้านที่ 2', width: 2 as const, labelSide: 'right' as const },
+    { id: 'R3', price: 80.17, color: '#ff3b30b3', labelColor: '#ff3b30', title: 'R3 แนวต้านที่ 3', width: 2 as const, labelSide: 'right' as const },
+    { id: 'S1', price: 60.29, color: '#00c57f', labelColor: '#00c57f', title: 'S1 แนวรับที่ 1', width: 2 as const, labelSide: 'right' as const },
+    { id: 'S2', price: 56.68, color: '#00c57fd9', labelColor: '#00c57f', title: 'S2 แนวรับที่ 2', width: 2 as const, labelSide: 'right' as const },
+    { id: 'S3', price: 50.35, color: '#00c57fb3', labelColor: '#00c57f', title: 'S3 แนวรับที่ 3', width: 2 as const, labelSide: 'right' as const },
   ];
   const emaLines = [
     { id: 'ema20', label: 'EMA 20', color: '#f59e0b', points: [{ time: data[30].time, value: 85.42 }] },
@@ -549,23 +549,41 @@ describe('TechnicalChartHost — level lines and the accepted-price line', () =>
   const currentLineOf = (chart: Record<string, unknown>) => attachedLines(chart)
     .find((line) => line.options.price === ACCEPTED);
 
-  it('labels R1–R3 and S1–S3 on the left edge, with the level price', async () => {
+  it('labels R1–R3 and S1–S3 only on the right edge, with the shared name and level price', async () => {
     const { host, root } = mount();
     await act(async () => root.render(withLevels()));
-    ['R1  70.23', 'R2  76.56', 'R3  80.17', 'S1  60.29', 'S2  56.68', 'S3  50.35'].forEach((text) => {
+    [
+      'R1 แนวต้านที่ 1  70.23',
+      'R2 แนวต้านที่ 2  76.56',
+      'R3 แนวต้านที่ 3  80.17',
+      'S1 แนวรับที่ 1  60.29',
+      'S2 แนวรับที่ 2  56.68',
+      'S3 แนวรับที่ 3  50.35',
+    ].forEach((text) => {
       const id = text.slice(0, 2);
       const node = host.querySelector(`[data-testid="chart-label-${id}"]`);
       expect(node?.textContent).toBe(text);
-      expect(node?.getAttribute('data-side')).toBe('left');
+      expect(node?.getAttribute('data-side')).toBe('right');
     });
+    expect(host.querySelectorAll('[data-side="left"]')).toHaveLength(0);
     await act(async () => root.unmount());
   });
 
-  it('keeps the accepted price and every EMA label on the right edge', async () => {
+  it('keeps the accepted price, every level and every EMA in one right-edge collision column', async () => {
     const { host, root } = mount();
     await act(async () => root.render(withLevels()));
     const right = [...host.querySelectorAll('[data-side="right"]')].map((node) => node.textContent);
-    expect(right).toEqual(['ราคาปัจจุบัน  60.64', 'EMA 20  85.42', 'EMA 50  73.18']);
+    expect(right).toEqual([
+      'ราคาปัจจุบัน  60.64',
+      'R1 แนวต้านที่ 1  70.23',
+      'R2 แนวต้านที่ 2  76.56',
+      'R3 แนวต้านที่ 3  80.17',
+      'S1 แนวรับที่ 1  60.29',
+      'S2 แนวรับที่ 2  56.68',
+      'S3 แนวรับที่ 3  50.35',
+      'EMA 20  85.42',
+      'EMA 50  73.18',
+    ]);
     await act(async () => root.unmount());
   });
 
