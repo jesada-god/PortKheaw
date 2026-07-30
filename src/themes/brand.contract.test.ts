@@ -12,12 +12,21 @@ describe('PortKheaw brand and Display contracts', () => {
       icons: Array<{ src: string; purpose?: string }>;
     };
 
-    const authCard = readFileSync(resolve('src/components/auth/AuthCard.tsx'), 'utf8');
+    // The auth pages carry Kheaw as the mascot itself rather than the small
+    // header mark, and it comes from the same committed artwork.
+    const mascot = readFileSync(resolve('src/components/auth/KheawMascot.tsx'), 'utf8');
+    const welcome = readFileSync(resolve('app/auth/welcome/page.tsx'), 'utf8');
 
     expect(sidebar).toContain('<BrandMark');
     expect(header).toContain('<BrandMark');
-    expect(authCard).toContain('<BrandMark');
-    expect(authCard).not.toContain('>N<');
+    expect(mascot).toContain('/brand/kheaw-mark.png');
+    expect(welcome).toContain('<KheawMascot');
+    for (const source of [mascot, welcome]) {
+      expect(source).not.toContain('>N<');
+      // The mascot is never recoloured or re-drawn to match a page.
+      expect(source).not.toContain('filter:');
+      expect(source).not.toContain('hue-rotate');
+    }
     expect(icon).toContain('aria-label="PortKheaw"');
     expect(manifest.name).toBe('PortKheaw');
     expect(manifest.icons.some(({ purpose }) => purpose === 'maskable')).toBe(true);

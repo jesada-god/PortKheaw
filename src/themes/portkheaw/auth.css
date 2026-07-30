@@ -1,0 +1,106 @@
+/*
+ * Tokens for the standalone authentication shell.
+ *
+ * Scoped to [data-auth-shell] on purpose: the app runs on the lime --accent,
+ * and repointing that global token to reach the green sign-in artwork would
+ * repaint every chart legend and button in the product. These names exist only
+ * inside the auth pages, and every one of them is contrast-checked against the
+ * surface it lands on in auth.contrast.test.ts.
+ *
+ * Both appearances get a full set. Light matches the reference artwork — an
+ * ivory card floating on a deep green field. Dark keeps the same green field
+ * and swaps the card for the product's own dark surface, so switching the
+ * system theme never produces a white flash in the middle of a dark app.
+ */
+[data-auth-shell] {
+  --auth-field-top: #0B3D20;
+  --auth-field-mid: #12592F;
+  /* The lightest stop of the gradient is where white-ish text is closest to
+     failing. #1C7A41 — the obvious brand green — put --auth-on-field-muted at
+     4.31:1, so the field bottom stops two steps darker instead. */
+  --auth-field-bottom: #166634;
+  --auth-decor: #7FD08A;
+  --auth-on-field: #FFFFFF;
+  --auth-on-field-muted: #D3EDD6;
+
+  --auth-card: #FFFFFF;
+  --auth-card-soft: #F3F8F1;
+  --auth-card-border: #D8E6D6;
+  --auth-text: #0B110D;
+  --auth-text-secondary: #414F45;
+  --auth-text-muted: #5C6A61;
+
+  --auth-input-bg: #F7FAF6;
+  --auth-input-border: #C3D4C2;
+  --auth-input-text: #0B110D;
+
+  --auth-primary: #23702F;
+  --auth-primary-hover: #1C5E27;
+  --auth-primary-fg: #FFFFFF;
+
+  --auth-focus: #165423;
+  --auth-success: #10692F;
+  --auth-danger: #B02525;
+  --auth-danger-surface: #FCEDED;
+  --auth-info-surface: #EDF6EC;
+
+  --auth-card-radius: 28px;
+  --auth-card-shadow: 0 24px 60px rgba(6, 32, 16, 0.28);
+}
+
+html[data-appearance="dark"] [data-auth-shell] {
+  --auth-field-top: #04150B;
+  --auth-field-mid: #072715;
+  --auth-field-bottom: #0C3F21;
+  --auth-decor: #3F8A54;
+  --auth-on-field: #F1F8F1;
+  --auth-on-field-muted: #AFC9B4;
+
+  --auth-card: #0E1712;
+  --auth-card-soft: #14201A;
+  --auth-card-border: #27392E;
+  --auth-text: #F4F7F5;
+  --auth-text-secondary: #C0CCC3;
+  --auth-text-muted: #96A29A;
+
+  --auth-input-bg: #0A120D;
+  --auth-input-border: #33493A;
+  --auth-input-text: #F4F7F5;
+
+  --auth-primary: #57C46B;
+  --auth-primary-hover: #6BD37E;
+  --auth-primary-fg: #05170B;
+
+  --auth-focus: #7FD08A;
+  --auth-success: #55C46B;
+  --auth-danger: #FF8080;
+  --auth-danger-surface: rgba(255, 128, 128, 0.12);
+  --auth-info-surface: rgba(127, 208, 138, 0.10);
+
+  --auth-card-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+/*
+ * The decorative candlestick field drifts by a few pixels so the page does not
+ * read as a flat screenshot. It animates transform/opacity only, and stops
+ * entirely for anyone who has asked for reduced motion.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  [data-auth-decor-drift] {
+    animation: auth-decor-drift 18s ease-in-out infinite alternate;
+  }
+
+  [data-auth-rise] {
+    animation: auth-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes auth-decor-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -10px, 0); }
+}
+
+@keyframes auth-rise {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}

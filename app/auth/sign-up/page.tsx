@@ -1,32 +1,63 @@
-import Link from 'next/link';
-import { AuthCard } from '@/src/components/auth/AuthCard';
-import { AuthMessage } from '@/src/components/auth/AuthMessage';
+import type { Metadata } from 'next';
+import dynamic from 'next/dynamic';
+import { AuthCard, AuthHeader, AuthShell, AuthTitle } from '@/src/components/auth/AuthShell';
+import { KheawMascot } from '@/src/components/auth/KheawMascot';
+import { AuthDivider, AuthLink } from '@/src/components/auth/AuthControls';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
-import { Input } from '@/src/components/ui/Input';
-import { Button } from '@/src/components/ui/Button';
+import { SignUpForm } from '@/src/components/auth/SignUpForm';
 import { isSupabaseConfigured } from '@/src/config/env/client';
 import { getSafeReturnPath } from '@/src/lib/auth/paths';
-import { signUpAction } from '../actions';
+import { getEnabledAuthProviders } from '@/src/lib/auth/providers';
 
-export default async function SignUpPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+
+/*
+ * Loaded as its own chunk, and only requested when the provider is actually
+ * enabled — so the Supabase browser client never ships to visitors who are
+ * only ever shown the email form.
+ */
+const GoogleAuthButton = dynamic(() => import('@/src/components/auth/GoogleAuthButton').then((module) => module.GoogleAuthButton));
+
+export const metadata: Metadata = { title: 'สร้างบัญชีใหม่' };
+
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const params = await searchParams;
   const next = getSafeReturnPath(typeof params.next === 'string' ? params.next : null);
-  const error = typeof params.error === 'string' ? params.error : undefined;
+  const providers = isSupabaseConfigured ? await getEnabledAuthProviders() : { google: false };
+
   return (
-    <AuthCard title="สร้างบัญชี" description="ข้อมูลบัญชีแยกจากผู้ใช้อื่นด้วย Row Level Security">
-      {!isSupabaseConfigured ? <ConfigurationRequired /> : (
-        <>
-          <AuthMessage error={error} />
-          <form action={signUpAction} className="space-y-4">
-            <input type="hidden" name="next" value={next} />
-            <div><label htmlFor="fullName" className="mb-1.5 block text-sm text-slate-300">ชื่อที่แสดง</label><Input id="fullName" name="fullName" autoComplete="name" maxLength={100} required /></div>
-            <div><label htmlFor="email" className="mb-1.5 block text-sm text-slate-300">อีเมล</label><Input id="email" name="email" type="email" autoComplete="email" required /></div>
-            <div><label htmlFor="password" className="mb-1.5 block text-sm text-slate-300">รหัสผ่าน</label><Input id="password" name="password" type="password" autoComplete="new-password" minLength={8} required /><p className="mt-1 text-xs text-slate-500">อย่างน้อย 8 ตัวอักษร</p></div>
-            <Button type="submit" size="lg" className="w-full">สมัครสมาชิก</Button>
-          </form>
-          <p className="mt-5 text-center text-sm text-slate-400">มีบัญชีแล้ว? <Link href={`/auth/sign-in?next=${encodeURIComponent(next)}`} className="font-semibold text-[#D4FF00]">เข้าสู่ระบบ</Link></p>
-        </>
-      )}
-    </AuthCard>
+    <AuthShell>
+      <AuthHeader compact />
+      <AuthCard>
+        <AuthTitle title="สร้างบัญชีใหม่" description="สร้างบัญชีเพื่อเริ่มจัดการพอร์ตของคุณ" />
+        {!isSupabaseConfigured ? <ConfigurationRequired /> : (
+          <>
+            <SignUpForm next={next} />
+            {providers.google ? (
+              <>
+                <AuthDivider />
+                <GoogleAuthButton next={next} label="สร้างบัญชีด้วย Google" />
+              </>
+            ) : null}
+            <p className="mt-5 flex flex-wrap items-center justify-center gap-1 text-sm" style={{ color: 'var(--auth-text-secondary)' }}>
+              <span>มีบัญชีอยู่แล้ว?</span>
+              <AuthLink href={`/auth/sign-in?next=${encodeURIComponent(next)}`}>เข้าสู่ระบบ</AuthLink>
+            </p>
+          </>
+        )}
+      </AuthCard>
+      <div className="mt-5 flex items-center justify-center gap-3">
+        <KheawMascot size="sm" />
+        <p
+          className="max-w-[15rem] rounded-2xl px-3.5 py-2 text-xs leading-5"
+          style={{ background: 'rgba(255,255,255,0.12)', color: 'var(--auth-on-field)' }}
+        >
+          ยินดีต้อนรับ เริ่มจากเข้าใจพอร์ตของคุณ
+        </p>
+      </div>
+    </AuthShell>
   );
 }

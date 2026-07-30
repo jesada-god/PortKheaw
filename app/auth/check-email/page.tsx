@@ -1,15 +1,42 @@
-import Link from 'next/link';
-import { MailCheck } from 'lucide-react';
-import { AuthCard } from '@/src/components/auth/AuthCard';
+import type { Metadata } from 'next';
+import { AuthCard, AuthHeader, AuthShell } from '@/src/components/auth/AuthShell';
+import { AuthLink, AuthMailSentPanel } from '@/src/components/auth/AuthControls';
+import { NEUTRAL_RECOVERY_MESSAGE } from '@/src/components/auth/ForgotPasswordForm';
 
-export default async function CheckEmailPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+export const metadata: Metadata = { title: 'ตรวจสอบอีเมล' };
+
+/**
+ * Kept as a route because older confirmation mails and bookmarks point at it.
+ * The sign-up and recovery flows now show this state inline instead, which
+ * keeps the address out of the URL bar and browser history.
+ */
+export default async function CheckEmailPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const params = await searchParams;
-  const email = typeof params.email === 'string' ? params.email : 'อีเมลของคุณ';
+  const email = typeof params.email === 'string' ? params.email : undefined;
   const isReset = params.reset === '1';
+
   return (
-    <AuthCard title="ตรวจสอบอีเมล" description={isReset ? 'หากอีเมลนี้มีบัญชีอยู่ เราได้ส่งลิงก์ตั้งรหัสผ่านใหม่แล้ว' : 'ส่งลิงก์ยืนยันการสมัครแล้ว'}>
-      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-center"><MailCheck aria-hidden="true" className="mx-auto text-emerald-400" size={32} /><p className="mt-3 break-all text-sm text-emerald-100">{email}</p></div>
-      <Link href="/auth/sign-in" className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-md border border-slate-700 text-sm font-semibold text-white">กลับหน้าเข้าสู่ระบบ</Link>
-    </AuthCard>
+    <AuthShell>
+      <AuthHeader compact />
+      <AuthCard>
+        <AuthMailSentPanel
+          title="ตรวจสอบอีเมลของคุณ"
+          // This panel is the whole page here, so it carries the page heading.
+          headingLevel="h1"
+          email={email}
+          description={isReset
+            ? NEUTRAL_RECOVERY_MESSAGE
+            : 'เราส่งลิงก์ยืนยันไปยังอีเมลของคุณแล้ว กรุณากดลิงก์ในอีเมลเพื่อเปิดใช้งานบัญชี'}
+        >
+          <div className="mt-5">
+            <AuthLink href="/auth/sign-in">กลับไปหน้าเข้าสู่ระบบ</AuthLink>
+          </div>
+        </AuthMailSentPanel>
+      </AuthCard>
+    </AuthShell>
   );
 }

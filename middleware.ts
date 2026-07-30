@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { isSupabaseConfigured, clientEnv } from '@/src/config/env/client';
-import { isProtectedPath } from '@/src/lib/auth/paths';
+import { getSafeReturnPath, isAuthFormPath, isProtectedPath } from '@/src/lib/auth/paths';
 import type { Database } from '@/src/types/database';
 
 function supabaseConnectSources(): string[] {
@@ -96,14 +96,33 @@ export async function middleware(request: NextRequest) {
   const hadSessionCookie = request.cookies.getAll().some(({ name }) => name.startsWith('sb-'));
   const { data: { user } } = await supabase.auth.getUser();
 
+  function redirectCarryingSession(url: URL): NextResponse {
+    const redirectResponse = NextResponse.redirect(url);
+    // Carry any refreshed auth cookies onto the redirect, or the refresh is lost
+    // and the next request starts the same round trip again.
+    response.cookies.getAll().forEach(({ name, value }) => redirectResponse.cookies.set(name, value));
+    return withSecurityHeaders(redirectResponse);
+  }
+
   if (protectedRoute && !user) {
     const url = request.nextUrl.clone();
     url.pathname = '/auth/sign-in';
     url.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
     if (hadSessionCookie) url.searchParams.set('reason', 'session_expired');
-    const redirectResponse = NextResponse.redirect(url);
-    response.cookies.getAll().forEach(({ name, value }) => redirectResponse.cookies.set(name, value));
-    return withSecurityHeaders(redirectResponse);
+    return redirectCarryingSession(url);
+  }
+
+  /*
+   * A signed-in visitor has no business sitting on a sign-in form, so the entry
+   * pages send them on to where they were heading (or to the dashboard).
+   * `/auth/reset-password` is not an entry page and is never bounced: recovery
+   * runs on a real session, and redirecting it away would make the password
+   * reset link impossible to complete. `getSafeReturnPath` refuses to return an
+   * entry path, which is what stops this rule from redirecting into itself.
+   */
+  if (user && isAuthFormPath(pathname)) {
+    const target = getSafeReturnPath(request.nextUrl.searchParams.get('next'));
+    return redirectCarryingSession(new URL(target, request.url));
   }
 
   return withSecurityHeaders(response);

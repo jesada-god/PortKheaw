@@ -46,6 +46,39 @@ npm run build
 
 ข้อมูลตลาด ข่าว ผลวิเคราะห์ พอร์ต และการแจ้งเตือนในเวอร์ชันนี้เป็นข้อมูลจำลองและยังไม่ได้เชื่อมต่อ backend หรือ market-data API จริง
 
+## Authentication
+
+หน้า `/auth/*` ทั้งหมด (welcome, sign-in, sign-up, forgot-password, reset-password, callback) ใช้ shell ของตัวเองโดยไม่มี sidebar/bottom nav และใช้ token ชุด `--auth-*` ใน `src/themes/portkheaw/auth.css` แยกจาก accent ของแอป
+
+### เข้าสู่ระบบด้วย Google
+
+ปุ่ม Google จะแสดง **ก็ต่อเมื่อโปรเจกต์ Supabase เปิด provider นี้จริง** โดยอ่านจาก `GET /auth/v1/settings` ของโปรเจกต์เอง (`src/lib/auth/providers.ts`, cache 5 นาที) ถ้าอ่านไม่ได้หรือปิดอยู่ ปุ่มจะไม่ถูก render และ chunk ของ Supabase browser client จะไม่ถูกดาวน์โหลด จึงไม่มีปุ่มที่กดแล้วพาไปหน้า error ของ provider
+
+ขั้นตอนเปิดใช้งาน — ไม่ต้องแก้โค้ดและไม่ต้อง redeploy:
+
+1. Supabase Dashboard → Authentication → Providers → Google → เปิดใช้งาน แล้วใส่ Client ID/Secret จาก Google Cloud Console
+2. ใน Google Cloud Console ตั้ง Authorized redirect URI เป็น `https://<project-ref>.supabase.co/auth/v1/callback`
+3. Supabase Dashboard → Authentication → URL Configuration → เพิ่ม Redirect URL ให้ครบทุก environment ที่ใช้จริง:
+   - `http://localhost:3000/auth/callback`
+   - `https://<production-domain>/auth/callback`
+   - URL ของ preview deployment ถ้าต้องทดสอบบน preview
+
+`redirectTo` ถูกสร้างจาก origin ของ request เสมอ ไม่เคยรับมาจาก query parameter และ `next` ถูกกรองด้วย `getSafeReturnPath` ทั้งตอนสร้างลิงก์และตอนกลับเข้า callback
+
+### รหัสผ่านและการตั้งรหัสผ่านใหม่
+
+เงื่อนไขรหัสผ่านมีที่มาที่เดียวคือ `PASSWORD_RULES` ใน `src/lib/auth/password-policy.ts` ซึ่ง checklist บนหน้าจอและ schema ฝั่ง server ใช้ร่วมกัน จึงไม่มีทางที่ checklist จะขึ้นเขียวแต่ server ปฏิเสธ
+
+หน้า `/auth/reset-password` จะแสดงฟอร์มเฉพาะเมื่อ session ปัจจุบันเกิดจากการกดลิงก์ในอีเมลจริง (ตรวจจาก `amr` ของ access token ที่ผ่านการ verify แล้ว) และบัญชีนั้นมี password identity อยู่จริง บัญชีที่สมัครด้วย Google อย่างเดียวจึงตั้งรหัสผ่านผ่านเส้นทางนี้ไม่ได้ แม้จะถือลิงก์ recovery ที่ถูกต้อง
+
+พฤติกรรมที่ gate เหล่านี้อ้างอิงวัดจากโปรเจกต์จริงด้วย:
+
+```bash
+npm run probe:auth-recovery
+```
+
+สคริปต์สร้าง user ชั่วคราวบนโดเมน `.invalid` อ่านค่า `amr`/`identities` แล้วลบ user ทิ้งใน `finally` ไม่มีการส่งอีเมลและไม่แตะบัญชีที่มีอยู่
+
 ## Phase 9: Background alerts และ Web Push
 
 ระบบใช้ HTTP scheduler เรียก `GET /api/cron/alerts` แทน in-process timer จึงใช้ได้กับ deployment แบบ Next.js `standalone`, container และ serverless ปัจจุบัน ตั้ง schedule เริ่มต้นเป็นวันละครั้งเพื่อไม่ใช้ quota ของ market-data provider ถี่เกินไป แต่ละ run ประมวลผล alert ที่ค้างนานที่สุดไม่เกิน 5 รายการ เรียก quote ตาม symbol แบบลำดับ และไม่ retry เมื่อ provider แจ้ง rate limit
