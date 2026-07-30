@@ -247,7 +247,7 @@ export function sessionPresentation(
         icon: 'wb_twilight',
         tone: 'pre',
         label: 'ก่อนเปิดตลาด',
-        description: 'ก่อนเปิดตลาด — ช่วงซื้อขายก่อนตลาดเปิดทำการ (Pre-market)',
+        description: 'ก่อนเปิดตลาด — ช่วงซื้อขายก่อนตลาดเปิดทำการ (Pre-market) ราคาหลักคือราคาปิดจริงของวันซื้อขายล่าสุด',
         fullName: 'Pre-market Session',
       };
     case 'REGULAR':

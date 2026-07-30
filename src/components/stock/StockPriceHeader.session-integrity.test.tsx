@@ -39,6 +39,8 @@ vi.stubGlobal('React', React);
 const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
 /** Friday 19:55 ET — the after-hours print in the screenshot's secondary row. */
 const FRIDAY_AFTER_HOURS = '2026-07-24T23:55:00.000Z';
+/** Friday 19:56 ET — inside the after-hours window that print belongs to. */
+const FRIDAY_POST = '2026-07-24T23:56:00.000Z';
 /** Sunday 2026-07-26 13:00 ET — the moment the screenshot was taken. */
 const SUNDAY = '2026-07-26T17:00:00.000Z';
 /** Friday 13:00 ET — when the market-status provider last said "open". */
@@ -143,7 +145,13 @@ function sessionLabel(): string {
 }
 
 describe('Stock price header — current market session integrity', () => {
-  it('reproduces the production screenshot correctly: ปิดตลาด with a dated after-hours row', () => {
+  /**
+   * The screenshot's Sunday, corrected on both counts: the session reads ปิดตลาด,
+   * and Friday's after-hours print is gone. By Sunday that print is two days old and
+   * its window has long closed, so a reader has no way to tell it from a current
+   * one — which is exactly what makes showing it a lie rather than extra detail.
+   */
+  it('reproduces the production screenshot correctly: ปิดตลาด with one row', () => {
     const { currentSession } = renderChain({
       now: SUNDAY,
       // The exact stale evidence that produced the bug: Friday's "open".
@@ -160,17 +168,31 @@ describe('Stock price header — current market session integrity', () => {
     expect(currentSession).toBe('CLOSED');
     expect(sessionLabel()).toContain('ปิดตลาด');
     expect(sessionLabel()).not.toContain('ตลาดเปิด');
-    // The primary row stays the latest completed regular close…
+    // The primary row is the latest completed regular close…
     expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
     expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-1.89');
-    // …and the after-hours row is allowed, carrying its own trading date.
+    // …and it is the ONLY row.
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.textContent).not.toContain('206.7995');
+    // The main line dates the DATA, never the session.
+    expect(container.querySelector('[data-testid="session-line"]')?.textContent).toContain('ข้อมูลล่าสุด 24/07');
+  });
+
+  /** The same print, inside the window it belongs to: row shown, close untouched. */
+  it('shows that print in the second row while the after-hours window is open', () => {
+    const { currentSession } = renderChain({
+      now: FRIDAY_POST,
+      serverExtendedQuote: FRIDAY_EXTENDED,
+    });
+
+    expect(currentSession).toBe('AFTER_HOURS');
+    expect(sessionLabel()).toContain('หลังปิดตลาด');
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
     const extended = container.querySelector('[data-testid="extended-hours-row"]');
     expect(extended?.textContent).toContain('หลังปิดตลาด');
     expect(extended?.textContent).toContain('206.7995');
     expect(extended?.textContent).toContain('-0.0705');
     expect(container.querySelector('[data-testid="extended-hours-date"]')?.textContent).toBe('24/07');
-    // The main line dates the DATA, never the session.
-    expect(container.querySelector('[data-testid="session-line"]')?.textContent).toContain('ข้อมูลล่าสุด 24/07');
   });
 
   it('E: a Friday quote timestamp cannot make Sunday look open', () => {
@@ -241,12 +263,12 @@ describe('Stock price header — current market session integrity', () => {
   });
 
   /**
-   * Before the bell the pre-market print IS the current price, so it takes the main
-   * line and is compared against the previous regular close. Showing Friday's close
-   * there instead — which the old partitioning did — made the header look frozen
-   * every morning while the stock was visibly trading.
+   * Before the bell the main row is Friday's official close and the pre-market print
+   * sits beneath it, measured from that close. The print is a different DOMAIN, not
+   * a fresher version of the same number: promoting it overwrites a finalized
+   * regular value with an extended one, which is the defect in the other direction.
    */
-  it('makes the pre-market print the main price before the open', () => {
+  it('keeps the completed close on the main row before the open', () => {
     const { currentSession, snapshot } = renderChain({
       // Monday 2026-07-27, 08:00 ET.
       now: '2026-07-27T12:00:00.000Z',
@@ -262,17 +284,39 @@ describe('Stock price header — current market session integrity', () => {
     });
     expect(currentSession).toBe('PREMARKET');
     expect(sessionLabel()).toContain('ก่อนเปิดตลาด');
-    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('208.10');
-    expect(snapshot.mainPriceRole).toBe('premarket');
-    // Compared against the previous regular close (208.76), never against 206.87.
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
+    expect(snapshot.mainPriceRole).toBe('regular-close');
+    // Compared against the previous regular close (208.76).
     expect(snapshot.comparisonBase).toBe(208.76);
     expect(snapshot.comparisonBaseKind).toBe('previous-regular-close');
-    // The print is the main line, so it is not duplicated into a secondary row.
+    // The print takes the second row, compared against the close above it:
+    // 208.10 − 206.87 = +1.23.
+    const extended = container.querySelector('[data-testid="extended-hours-row"]');
+    expect(extended?.getAttribute('data-extended-session')).toBe('premarket');
+    expect(container.querySelector('[data-testid="extended-hours-price"]')?.textContent).toBe('208.10');
+    expect(container.querySelector('[data-testid="extended-hours-change"]')?.textContent).toContain('+1.23');
+    expect(container.querySelector('[data-testid="extended-hours-date"]')?.textContent).toBe('27/07');
+  });
+
+  it("refuses yesterday's pre-market print in this morning's row", () => {
+    renderChain({
+      now: '2026-07-27T12:00:00.000Z',
+      // Friday's pre-market print, still held by the pipeline over the weekend.
+      serverExtendedQuote: {
+        ...FRIDAY_EXTENDED,
+        session: 'premarket',
+        price: 210.4,
+        asOf: '2026-07-24T11:45:00.000Z',
+        tradingDate: '2026-07-24',
+      },
+    });
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('206.87');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.textContent).not.toContain('210.40');
   });
 
   it('keeps no raw provider status or debug wording in the primary UI', () => {
-    renderChain({ now: SUNDAY, serverExtendedQuote: FRIDAY_EXTENDED });
+    renderChain({ now: FRIDAY_POST, serverExtendedQuote: FRIDAY_EXTENDED });
     const section = container.querySelector('section')?.textContent ?? '';
     const primarySessionLine = container.querySelector('[data-testid="session-line"]')?.textContent ?? '';
     expect(section).not.toContain('ราคาปิด intraday ล่าสุด');

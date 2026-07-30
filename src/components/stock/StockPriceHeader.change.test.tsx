@@ -71,6 +71,8 @@ function headerModel(
   options: {
     currentSession?: CurrentMarketSession;
     extendedQuote?: SnapshotExtendedInput | null;
+    /** Override when the quote must belong to a session other than the default. */
+    freshness?: DataFreshness;
   } = {},
 ) {
   const session = options.currentSession ?? 'REGULAR';
@@ -79,7 +81,7 @@ function headerModel(
     snapshot: snapshotOf({
       symbol: 'RKLB',
       session: sessionResult(session, { evaluatedAt: now, exchangeDate: '2026-07-23' }),
-      quote: quoteResource(quote, FRESHNESS),
+      quote: quoteResource(quote, options.freshness ?? FRESHNESS),
       extended: options.extendedQuote ?? null,
       now,
     }),
@@ -274,14 +276,21 @@ describe('StockPriceHeader daily change display', () => {
   });
 
   /**
-   * PRE promotes the pre-market print to the MAIN line — that IS the current price
-   * before the bell, and showing yesterday's close there instead is what made the
-   * header look frozen every morning. Because the print is the main line it is not
-   * also duplicated into a secondary row.
+   * Before the bell the main row is the latest COMPLETED regular close, and the
+   * pre-market print sits beside it in the second row. Writing the print into the
+   * main row instead is the defect the resolver exists to prevent: it overwrites a
+   * finalized regular value with an extended one.
    */
-  it('makes the latest pre-market print the main price during PRE', () => {
-    render(baseProps(BASE_QUOTE, {}, {
+  it('keeps the completed close on the main row during PRE and rows the pre-market print', () => {
+    // Before Thursday's bell the latest COMPLETED close is Wednesday's, so the
+    // quote is stamped at that close rather than inside a session yet to happen.
+    render(baseProps({
+      ...BASE_QUOTE,
+      latestTradingDay: '2026-07-22',
+      quoteTimestamp: '2026-07-22T20:00:00.000Z',
+    }, {}, {
       currentSession: 'PREMARKET',
+      freshness: { status: 'end-of-day', asOf: '2026-07-22T20:00:00.000Z', maxAgeSeconds: null },
       extendedQuote: {
         session: 'premarket',
         price: 70.25,
@@ -291,18 +300,23 @@ describe('StockPriceHeader daily change display', () => {
         provider: 'polygon',
       },
     }));
-    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('70.25');
+    // 69.75 is the completed close; 70.25 is this morning's pre-market print.
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
     expect(container.textContent).toContain('ก่อนเปิดตลาด');
-    // Compared against the previous regular close (72.45), not against 69.75.
-    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.20');
-    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    // The main change is measured against the previous regular close (72.45).
+    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.70');
+    const row = container.querySelector('[data-testid="extended-hours-row"]');
+    expect(row?.getAttribute('data-extended-session')).toBe('premarket');
+    expect(container.querySelector('[data-testid="extended-hours-price"]')?.textContent).toBe('70.25');
+    // 70.25 − 69.75 = +0.50 against the close on the main row.
+    expect(container.querySelector('[data-testid="extended-hours-change"]')?.textContent).toContain('+0.50');
     expect(container.querySelector('[data-testid="current-session-label"] [data-session-icon]')
       ?.getAttribute('data-session-icon')).toBe('wb_twilight');
   });
 
-  it('keeps the main status closed while showing the latest after-hours row', () => {
+  it('keeps the close on the main row during POST while showing the after-hours row', () => {
     render(baseProps(BASE_QUOTE, { realtime: true, feed: 'iex' }, {
-      currentSession: 'CLOSED',
+      currentSession: 'AFTER_HOURS',
       extendedQuote: {
         session: 'after-hours',
         price: 70.75,
@@ -313,21 +327,21 @@ describe('StockPriceHeader daily change display', () => {
       },
     }));
     const row = container.querySelector('[data-testid="extended-hours-row"]');
-    expect(container.textContent).toContain('ปิดตลาด');
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+    expect(container.textContent).toContain('หลังปิดตลาด');
     expect(container.textContent).not.toContain('ตลาดเปิด');
-    expect(row?.textContent).toContain('หลังปิดตลาด');
     expect(row?.textContent).toContain('+1.00');
     expect(row?.querySelector('[data-session-icon]')).not.toBeNull();
+    // A completed close is never "real-time", however healthy the socket is.
     expect(container.textContent).not.toContain('Real-time · IEX');
   });
 
   it.each([
     ['delayed', 'ราคาล่าช้า'],
-    ['stale', 'ข้อมูลอาจล่าช้า'],
     ['cached', 'ข้อมูลที่บันทึกไว้'],
   ] as const)('keeps the extended row visible with the %s Thai status', (status, label) => {
     render(baseProps(BASE_QUOTE, {}, {
-      currentSession: 'CLOSED',
+      currentSession: 'AFTER_HOURS',
       extendedQuote: {
         session: 'after-hours',
         price: 70.75,
@@ -343,9 +357,30 @@ describe('StockPriceHeader daily change display', () => {
     expect(statusLine?.textContent).toContain('polygon');
   });
 
+  /**
+   * A print the pipeline itself has marked stale is not evidence of a current
+   * extended price. Rendering it with a "ข้อมูลอาจล่าช้า" badge still puts a number
+   * on screen that a reader takes as now, so the row is hidden instead.
+   */
+  it('hides the extended row when the pipeline reports the print as stale', () => {
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'AFTER_HOURS',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: { status: 'stale', asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
+        provider: 'polygon',
+      },
+    }));
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+  });
+
   it('renders a valid extended price even when its comparison base is unavailable', () => {
     render(baseProps(null, {}, {
-      currentSession: 'CLOSED',
+      currentSession: 'AFTER_HOURS',
       extendedQuote: {
         session: 'after-hours',
         price: 70.75,
@@ -366,18 +401,58 @@ describe('StockPriceHeader daily change display', () => {
       price: 70.75,
       asOf: '2026-07-23T20:05:45.000Z',
       tradingDate: '2026-07-23',
-      freshness: { status: 'stale', asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
+      freshness: { status: 'cached', asOf: '2026-07-23T20:05:45.000Z', maxAgeSeconds: null },
       provider: 'polygon',
     };
     render(baseProps(BASE_QUOTE, { connectionState: 'reconnecting' }, {
-      currentSession: 'CLOSED', extendedQuote,
+      currentSession: 'AFTER_HOURS', extendedQuote,
     }));
     expect(container.querySelector('[data-testid="extended-hours-row"]')?.textContent).toContain('70.75');
 
     render(baseProps(BASE_QUOTE, { connectionState: 'connected', quoteLoading: true }, {
-      currentSession: 'CLOSED', extendedQuote,
+      currentSession: 'AFTER_HOURS', extendedQuote,
     }));
     expect(container.querySelector('[data-testid="extended-hours-row"]')?.textContent).toContain('70.75');
+  });
+
+  /**
+   * The evening rollover: at 20:00 ET the after-hours window ends. The same print
+   * that legitimately filled the second row a minute earlier now belongs to a
+   * finished session, so CLOSED shows the official close alone.
+   */
+  it('drops the extended row once the market is CLOSED, leaving one row', () => {
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'CLOSED',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: FRESHNESS,
+        provider: 'polygon',
+      },
+    }));
+    expect(container.textContent).toContain('ปิดตลาด');
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.textContent).not.toContain('70.75');
+  });
+
+  /** A holiday and a weekend are the same price rule as an ordinary evening. */
+  it('shows the latest close alone on a holiday, never a leftover extended print', () => {
+    render(baseProps(BASE_QUOTE, {}, {
+      currentSession: 'HOLIDAY',
+      extendedQuote: {
+        session: 'after-hours',
+        price: 70.75,
+        asOf: '2026-07-23T20:05:45.000Z',
+        tradingDate: '2026-07-23',
+        freshness: FRESHNESS,
+        provider: 'polygon',
+      },
+    }));
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
   });
 
   it('cleanly hides the secondary row when closed without an extended quote', () => {
@@ -406,6 +481,17 @@ describe('StockPriceHeader daily change display', () => {
     expect(container.textContent).toContain('ตลาดเปิด');
     expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
     expect(container.textContent).not.toContain('หลังปิดตลาด');
+  });
+
+  /** REGULAR is one row: the live regular price, and nothing beneath it. */
+  it('shows the live regular price as the single row while the market is open', () => {
+    render(baseProps(BASE_QUOTE, {}, { currentSession: 'REGULAR' }));
+    expect(container.querySelector('[data-testid="stock-last-price"]')?.textContent).toBe('69.75');
+    // …measured against the previous regular close, 72.45.
+    expect(container.querySelector('[data-testid="regular-change"]')?.textContent).toContain('-2.70');
+    expect(container.querySelector('[data-testid="extended-hours-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="current-session-label"] [data-session-icon]')
+      ?.getAttribute('data-session-icon')).toBe('sunny');
   });
 
   it('F: a connected socket on a closed market still reads ปิดตลาด', () => {

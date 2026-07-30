@@ -21,6 +21,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataFreshness, Quote } from '@/src/lib/market-data/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
+import type { CurrentMarketSession } from '@/src/lib/market-data/current-session';
+import type { SnapshotExtendedInput } from '@/src/lib/market-data/market-snapshot';
 import { quoteResource, sessionResult, snapshotOf } from '@/src/test/fixtures/market-snapshot';
 import { buildStockPriceHeaderModel } from './price-header';
 import { StockPriceHeader } from './StockPriceHeader';
@@ -54,6 +56,54 @@ function baseProps(quote: Quote | null, extra: Record<string, unknown> = {}) {
     quoteError: null, quoteLoading: false, quoteRetryAt: 0, onRetryQuote: () => {},
     fxQuote: null as FxQuote | null, evaluatedAt: '2026-07-23T14:31:00.000Z', connectionState: null, ...extra,
   };
+}
+
+/**
+ * Props whose model carries a REAL extended-hours print, so the second row is
+ * rendered by the resolver rather than forced. PRE and POST are the only two
+ * phases that have one, and both are exercised at every width.
+ */
+function extendedRowProps(session: Extract<CurrentMarketSession, 'PREMARKET' | 'AFTER_HOURS'>) {
+  const premarket = session === 'PREMARKET';
+  // 08:25 ET on the 23rd for PRE; 16:25 ET on the 23rd for POST.
+  const printAt = premarket ? '2026-07-23T12:25:00.000Z' : '2026-07-23T20:25:00.000Z';
+  const now = premarket ? '2026-07-23T12:30:00.000Z' : '2026-07-23T20:30:00.000Z';
+  // Before the bell the completed close is the 22nd's; after it, the 23rd's.
+  const closeAt = premarket ? '2026-07-22T20:00:00.000Z' : '2026-07-23T20:00:00.000Z';
+  const quote: Quote = {
+    ...BASE_QUOTE,
+    latestTradingDay: premarket ? '2026-07-22' : '2026-07-23',
+    quoteTimestamp: closeAt,
+  };
+  const extended: SnapshotExtendedInput = {
+    session: premarket ? 'premarket' : 'after-hours',
+    // Deliberately the widest realistic shape: six figures at full precision.
+    price: 1_234_567.8912,
+    asOf: printAt,
+    tradingDate: '2026-07-23',
+    freshness: { status: 'delayed', asOf: printAt, maxAgeSeconds: 900 },
+    provider: 'yahoo-finance-chart',
+  };
+  return {
+    ...baseProps(quote),
+    model: buildStockPriceHeaderModel({
+      snapshot: snapshotOf({
+        symbol: 'RKLB',
+        session: sessionResult(session, { evaluatedAt: now, exchangeDate: '2026-07-23' }),
+        quote: quoteResource(quote, { status: 'end-of-day', asOf: closeAt, maxAgeSeconds: null }),
+        extended,
+        now,
+      }),
+      evaluatedAt: now,
+    }),
+    evaluatedAt: now,
+  };
+}
+
+function extendedRow(): HTMLElement {
+  const row = container.querySelector<HTMLElement>('[data-testid="extended-hours-row"]');
+  if (!row) throw new Error('extended-hours row not found');
+  return row;
 }
 
 let container: HTMLDivElement;
@@ -148,6 +198,52 @@ describe('StockPriceHeader price-line layout', () => {
       });
     });
   }
+
+  /**
+   * The second row appears in PRE and POST. Its content is longer than the main
+   * line's — session label, price, change, percent, date and a provenance line — so
+   * it is the row most at risk of pushing the page wide on a 320px screen.
+   *
+   * The structure that prevents that: one `flex-wrap` container with `min-w-0`, in
+   * which every numeric token is `whitespace-nowrap` and `shrink-0`. Tokens
+   * therefore move to a new line as whole units instead of either splitting a
+   * number or forcing the row wider than its parent. The status line is `basis-full`
+   * so the longest text in the row always starts on a line of its own.
+   */
+  for (const [label, width] of WIDTHS) {
+    for (const session of ['PREMARKET', 'AFTER_HOURS'] as const) {
+      it(`wraps the ${session} extended row within its container at ${label}`, () => {
+        renderAt(width, extendedRowProps(session));
+        const row = extendedRow();
+        expect(row.className).toContain('flex-wrap');
+        expect(row.className).toContain('min-w-0');
+        // Nothing in the row may grow past the header, at any width.
+        expect(row.className).not.toContain('w-[');
+        expect(row.className).not.toContain('overflow-x');
+
+        const price = container.querySelector<HTMLElement>('[data-testid="extended-hours-price"]')!;
+        const change = container.querySelector<HTMLElement>('[data-testid="extended-hours-change"]')!;
+        expect(price.className).toContain('whitespace-nowrap');
+        expect(price.className).toContain('shrink-0');
+        expect(change.className).toContain('whitespace-nowrap');
+        expect(change.className).toContain('shrink-0');
+        // Every token is a direct child of the wrapping row, so each one can move
+        // to the next line independently rather than dragging the group along.
+        for (const token of [price, change]) expect(token.parentElement).toBe(row);
+        // The provenance line takes a full row of its own, never trailing the price.
+        expect(container.querySelector('[data-testid="extended-hours-status"]')?.className)
+          .toContain('basis-full');
+      });
+    }
+  }
+
+  it('keeps the main price row unchanged when the extended row is present', () => {
+    renderAt(320, extendedRowProps('AFTER_HOURS'));
+    // The close, not the 1,234,567.8912 print above it — the two rows stay separate.
+    expect(priceEl().textContent).toBe('69.75');
+    expect(currencyEl().textContent).toBe('USD');
+    expect(priceCurrencyGroup().contains(currencyEl())).toBe(true);
+  });
 
   it('renders a loss with the red tone and a down arrow (colours unchanged)', () => {
     renderAt(375, baseProps({ ...BASE_QUOTE, price: 66.0, change: -3.12, changePercent: -4.51 }));

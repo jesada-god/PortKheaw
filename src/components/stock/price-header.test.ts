@@ -83,7 +83,6 @@ describe('comparison-base and main-price labels', () => {
   it('names what the main price IS, so a close is never read as a live price', () => {
     expect(mainPriceRoleLabel('regular')).toContain('เวลาทำการปกติ');
     expect(mainPriceRoleLabel('regular-close')).toContain('ราคาปิดจริง');
-    expect(mainPriceRoleLabel('premarket')).toContain('ก่อนเปิดตลาด');
     expect(mainPriceRoleLabel(null)).toContain('ไม่พบราคา');
   });
 });
@@ -402,6 +401,8 @@ describe('stock price header session date labels', () => {
 describe('stock price header final model', () => {
   const FRIDAY_CLOSE = '2026-07-24T20:00:00.000Z';
   const SUNDAY = '2026-07-26T17:00:00.000Z';
+  /** Friday 19:56 ET — inside the after-hours window the print below belongs to. */
+  const FRIDAY_POST = '2026-07-24T23:56:00.000Z';
   const regularClose: Quote = {
     ...HEADER_QUOTE, price: 206.87, regularClose: 206.87,
     previousClose: 208.76, previousRegularClose: 208.76,
@@ -442,24 +443,56 @@ describe('stock price header final model', () => {
   }
 
   it('carries the resolved session and its evaluation instant through untouched', () => {
-    const result = model('CLOSED', afterHoursRow);
+    const result = model('CLOSED', null);
     expect(result.session).toBe('CLOSED');
     expect(result.sessionLabel).toBe('CLOSED');
     expect(result.currentSessionEvaluatedAt).toBe(SUNDAY);
     // The DATA timestamp is a separate field and is two days older — proving the
     // two are not the same value and neither is derived from the other.
     expect(result.main.asOf).toBe(FRIDAY_CLOSE);
-    expect(result.secondary!.asOf).toBe('2026-07-24T23:55:00.000Z');
   });
 
   it('C: computes the after-hours change against the regular close beside it', () => {
-    const result = model('CLOSED', afterHoursRow);
+    const result = model('AFTER_HOURS', afterHoursRow, { now: FRIDAY_POST, exchangeDate: '2026-07-24' });
     // 206.7995 - 206.87 = -0.0705 (-0.03%), the exact production figures.
+    expect(result.secondary!.asOf).toBe('2026-07-24T23:55:00.000Z');
     expect(result.secondary!.comparisonBaseKind).toBe('regular-close');
     expect(result.secondary!.comparisonBase).toBe(206.87);
     expect(result.secondary!.change!.amount).toBeCloseTo(-0.0705, 4);
     expect(result.secondary!.change!.percent).toBeCloseTo(-0.0341, 3);
     expect(result.secondary!.change!.direction).toBe('down');
+  });
+
+  /**
+   * PRE's second row is measured from the SAME base as POST's — `regularClose`, the
+   * latest completed close — which before the bell is the previous session's. The
+   * main row shows that close, so the row reads as "the move since that number".
+   */
+  it('computes the pre-market change against the completed close on the main row', () => {
+    const result = model('PREMARKET', {
+      session: 'premarket',
+      price: 208.1,
+      asOf: '2026-07-27T11:45:00.000Z',
+      tradingDate: '2026-07-27',
+      freshness: { status: 'delayed', asOf: '2026-07-27T11:45:00.000Z', maxAgeSeconds: 900 },
+      provider: 'yahoo-finance-chart',
+    }, { now: '2026-07-27T12:00:00.000Z', exchangeDate: '2026-07-27' });
+
+    expect(result.main.price).toBe(206.87);
+    expect(result.main.role).toBe('regular-close');
+    expect(result.main.comparisonBase).toBe(208.76);
+    expect(result.secondary!.session).toBe('premarket');
+    expect(result.secondary!.comparisonBaseKind).toBe('regular-close');
+    expect(result.secondary!.comparisonBase).toBe(206.87);
+    expect(result.secondary!.change!.amount).toBeCloseTo(1.23, 4);
+    expect(result.secondary!.change!.direction).toBe('up');
+  });
+
+  it('hides the secondary row once the market is CLOSED, however valid the print', () => {
+    const result = model('CLOSED', afterHoursRow);
+    expect(result.main.price).toBe(206.87);
+    expect(result.secondary).toBeNull();
+    expect(result.snapshot.flags).toContain('extended-window-closed');
   });
 
   it('computes the main change against the previous regular close', () => {

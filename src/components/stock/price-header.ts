@@ -223,8 +223,12 @@ export interface PriceHeaderSecondaryRow {
   /**
    * Change against the OFFICIAL REGULAR CLOSE in the main row — the only base that
    * answers what a reader is asking ("how far has it moved since the close?").
-   * Null when no close could be established, which hides the numbers rather than
-   * comparing against something else.
+   *
+   * That close is the latest COMPLETED one in both phases the row can appear in, so
+   * one rule serves both: during POST it is today's close, and during PRE it is the
+   * previous session's — which is exactly the close a pre-market move is measured
+   * from. Null when no close could be established, which hides the numbers rather
+   * than comparing against something else.
    */
   change: PriceChange | null;
   comparisonBase: number | null;
@@ -287,7 +291,10 @@ function priceStatus(
  *
  * The secondary base is deliberately NOT `previousRegularClose`. An after-hours
  * print compared against yesterday's close answers a question nobody asked and
- * double-counts the day's move.
+ * double-counts the day's move. During PRE the two happen to name the same trading
+ * day — the pre-market print follows the latest completed close, which is also the
+ * main row's price — and the row still reads its base from `regularClose`, so the
+ * rule never has to be special-cased per phase.
  */
 export function buildStockPriceHeaderModel(input: {
   snapshot: CanonicalMarketSnapshot;
@@ -374,7 +381,6 @@ export function mainPriceRoleLabel(role: MainPriceRole | null): string {
   switch (role) {
     case 'regular': return 'ราคาซื้อขายล่าสุดในเวลาทำการปกติ';
     case 'regular-close': return 'ราคาปิดจริงของวันซื้อขายล่าสุด (Official Regular Close)';
-    case 'premarket': return 'ราคาซื้อขายล่าสุดช่วงก่อนเปิดตลาด (Pre-market)';
     default: return 'ไม่พบราคาที่ตรวจสอบได้';
   }
 }

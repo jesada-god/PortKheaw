@@ -616,9 +616,14 @@ export function StockPriceHeader({
           THIS session, and what each change is measured against. */}
       <div className="mt-4 space-y-2 rounded-xl border border-border bg-bg-base/60 p-3 text-xs leading-5 text-text-muted">
         <p>{mainPriceRoleLabel(main.role)} · {comparisonBaseLabel(main.comparisonBaseKind)}</p>
-        {(phase === 'POST' || phase === 'CLOSED') && <p>เมื่อตลาดปิดแล้ว ราคาหลักจะเป็นราคาปิดจริงของวันซื้อขายล่าสุดเท่านั้น ราคาที่ซื้อขายนอกเวลาทำการจะแสดงเป็นแถวรองด้านล่าง</p>}
+        {phase === 'PRE' && <p>ก่อนตลาดเปิด ราคาหลักจะเป็นราคาปิดจริงของวันซื้อขายล่าสุด ส่วนราคาที่ซื้อขายช่วงก่อนเปิดตลาดจะแสดงเป็นแถวรองด้านล่าง</p>}
+        {phase === 'POST' && <p>หลังตลาดปิด ราคาหลักจะเป็นราคาปิดจริงของวันนี้เท่านั้น ส่วนราคาที่ซื้อขายหลังตลาดปิดจะแสดงเป็นแถวรองด้านล่าง</p>}
+        {/* CLOSED is deliberately worded differently from POST: both extended
+            windows have ENDED, so the row is not "missing" — it is over, and a
+            leftover print would read as a current price. */}
+        {phase === 'CLOSED' && <p>ช่วงซื้อขายนอกเวลาทำการสิ้นสุดแล้ว จึงแสดงเฉพาะราคาปิดจริงของวันซื้อขายล่าสุดเพียงแถวเดียว</p>}
         {secondary && <p>ราคานอกเวลาทำการ (Extended Hours) {comparisonBaseLabel(secondary.comparisonBaseKind)}</p>}
-        {!secondary && phase !== 'REGULAR' && <p>ยังไม่มีการซื้อขายนอกเวลาทำการที่ตรวจสอบได้ จึงไม่แสดงแถวรอง</p>}
+        {!secondary && (phase === 'PRE' || phase === 'POST') && <p>ยังไม่มีการซื้อขายนอกเวลาทำการที่ตรวจสอบได้ จึงไม่แสดงแถวรอง</p>}
       </div>
     </Modal>
   </>;

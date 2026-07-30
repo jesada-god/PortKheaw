@@ -149,6 +149,29 @@ describe('1. CLOSED — the main line is the official regular close, never a sta
     expect(snapshot.flags).toContain('regular-close-unavailable');
   });
 
+  /**
+   * 20:00 ET ends the after-hours window. A print from 19:55 was current one minute
+   * before that boundary and is a finished session's value one minute after it, so
+   * the row goes away with the window rather than ageing out on a timer.
+   */
+  it("drops tonight's own after-hours row once the window has ended", () => {
+    const snapshot = resolve({
+      session: 'CLOSED',
+      now: CLOSED_NOW,
+      exchangeDate: '2026-07-29',
+      extended: {
+        session: 'after-hours', price: 9.589, asOf: '2026-07-29T23:55:00.000Z',
+        tradingDate: '2026-07-29', provider: 'yahoo-finance-chart',
+        freshness: { status: 'delayed', asOf: '2026-07-29T23:55:00.000Z', maxAgeSeconds: 900 },
+      },
+    });
+    expect(snapshot.mainPrice).toBe(9.735);
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.extendedPriceTimestamp).toBeNull();
+    expect(snapshot.extendedPriceFreshness).toBeNull();
+    expect(snapshot.flags).toContain('extended-window-closed');
+  });
+
   it('reports a finalized close without a staleness flag, however late the evening', () => {
     const snapshot = resolve({
       session: 'CLOSED',
@@ -211,11 +234,53 @@ describe('2. POST — the close is the main line and the post-market print is th
     expect(snapshot.extendedPrice).toBeNull();
     expect(snapshot.flags).toContain('session-mismatch');
   });
+
+  it("refuses last night's after-hours print during tonight's window", () => {
+    const snapshot = resolve({
+      session: 'AFTER_HOURS',
+      now: POST_NOW,
+      extended: { ...postPrint, asOf: '2026-07-28T20:25:00.000Z', tradingDate: '2026-07-28' },
+    });
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.flags).toContain('trading-date-mismatch');
+  });
+
+  it('refuses an after-hours print the pipeline has already declared stale', () => {
+    const snapshot = resolve({
+      session: 'AFTER_HOURS',
+      now: POST_NOW,
+      extended: {
+        ...postPrint,
+        freshness: { status: 'stale', asOf: postPrint.asOf, maxAgeSeconds: 900 },
+      },
+    });
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.flags).toContain('extended-print-rejected');
+    // The main line is untouched by the refusal: it is a different domain.
+    expect(snapshot.mainPrice).toBe(9.735);
+  });
+
+  it('never lets the post-market print reach the main line', () => {
+    const snapshot = resolve({
+      session: 'AFTER_HOURS',
+      now: POST_NOW,
+      // The accepted pipeline is serving the after-hours print as its own `price`.
+      quote: resource(
+        quote({ price: 9.589, quoteTimestamp: '2026-07-29T20:25:00.000Z' }),
+        '2026-07-29T20:25:00.000Z',
+      ),
+      extended: postPrint,
+    });
+    expect(snapshot.mainPrice).toBe(9.735);
+    expect(snapshot.mainPriceRole).toBe('regular-close');
+    expect(snapshot.extendedPrice).toBe(9.589);
+    expect(snapshot.flags).toContain('extended-overwrite-rejected');
+  });
 });
 
 /* --------------------------------- 3. PRE --------------------------------- */
 
-describe('3. PRE — the pre-market print IS the main line', () => {
+describe('3. PRE — the previous close is the main line and the pre-market print is the second row', () => {
   /** 08:30 ET on Thursday 2026-07-30. */
   const PRE_NOW = '2026-07-30T12:30:00.000Z';
   const prePrint: SnapshotExtendedInput = {
@@ -227,7 +292,7 @@ describe('3. PRE — the pre-market print IS the main line', () => {
     freshness: { status: 'delayed', asOf: '2026-07-30T12:25:00.000Z', maxAgeSeconds: 900 },
   };
 
-  it('puts the latest pre-market print on the main line, compared to the previous close', () => {
+  it('keeps the previous regular close on the main line, never the pre-market print', () => {
     const snapshot = resolve({
       session: 'PREMARKET',
       now: PRE_NOW,
@@ -235,25 +300,111 @@ describe('3. PRE — the pre-market print IS the main line', () => {
       extended: prePrint,
     });
     expect(snapshot.session).toBe('PRE');
-    expect(snapshot.mainPrice).toBe(10.15);
-    expect(snapshot.mainPriceRole).toBe('premarket');
-    // 2026-07-29's close is the previous regular close for a 07-30 pre-market print.
+    // 2026-07-29's close is the latest COMPLETED regular close before the bell.
+    expect(snapshot.mainPrice).toBe(9.735);
+    expect(snapshot.mainPriceRole).toBe('regular-close');
+    expect(snapshot.mainPrice).not.toBe(prePrint.price);
+    // …measured against the close of the session before it.
     expect(snapshot.comparisonBase).toBe(10.01);
     expect(snapshot.comparisonBaseKind).toBe('previous-regular-close');
   });
 
-  it('does not duplicate the print into a secondary row', () => {
+  it('puts the pre-market print in the second row, dated to this morning', () => {
     const snapshot = resolve({
       session: 'PREMARKET', now: PRE_NOW, exchangeDate: '2026-07-30', extended: prePrint,
     });
-    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.extendedPrice).toBe(10.15);
+    expect(snapshot.extendedSession).toBe('premarket');
+    expect(snapshot.extendedPriceTradingDate).toBe('2026-07-30');
+    expect(snapshot.extendedPriceSource).toBe('yahoo-finance-chart.preMarketPrice');
+    // The row's base is the close on the main line — 10.15 - 9.735 = +0.415.
+    expect(snapshot.regularClose).toBe(9.735);
   });
 
-  it('falls back to the latest completed close only when there is no pre-market print', () => {
+  it('shows the completed close alone when there is no pre-market print', () => {
     const snapshot = resolve({ session: 'PREMARKET', now: PRE_NOW, exchangeDate: '2026-07-30' });
     expect(snapshot.mainPrice).toBe(9.735);
     expect(snapshot.mainPriceRole).toBe('regular-close');
+    expect(snapshot.extendedPrice).toBeNull();
     expect(snapshot.flags).toContain('extended-unavailable');
+  });
+
+  it("refuses yesterday's pre-market print during this morning's window", () => {
+    const snapshot = resolve({
+      session: 'PREMARKET',
+      now: PRE_NOW,
+      exchangeDate: '2026-07-30',
+      // 08:25 ET on the 29th: a real pre-market print, from a session that is over.
+      extended: {
+        ...prePrint,
+        price: 10.44,
+        asOf: '2026-07-29T12:25:00.000Z',
+        tradingDate: '2026-07-29',
+      },
+    });
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.flags).toContain('trading-date-mismatch');
+    expect(snapshot.flags).toContain('extended-unavailable');
+  });
+
+  it('refuses a pre-market print the pipeline has already declared stale', () => {
+    const snapshot = resolve({
+      session: 'PREMARKET',
+      now: PRE_NOW,
+      exchangeDate: '2026-07-30',
+      extended: {
+        ...prePrint,
+        freshness: { status: 'stale', asOf: prePrint.asOf, maxAgeSeconds: 900 },
+      },
+    });
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.flags).toContain('extended-print-rejected');
+  });
+
+  it('refuses an after-hours print offered during PRE', () => {
+    const snapshot = resolve({
+      session: 'PREMARKET',
+      now: PRE_NOW,
+      exchangeDate: '2026-07-30',
+      // Last night's print, still held by the pipeline across the session boundary.
+      extended: {
+        session: 'after-hours',
+        price: 9.589,
+        asOf: '2026-07-29T20:25:00.000Z',
+        tradingDate: '2026-07-29',
+        provider: 'yahoo-finance-chart',
+        freshness: { status: 'delayed', asOf: '2026-07-29T20:25:00.000Z', maxAgeSeconds: 900 },
+      },
+    });
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.mainPrice).toBe(9.735);
+  });
+
+  /**
+   * The quote served during PRE is routinely stamped in THIS MORNING's pre-market
+   * window while its `regularClose` field still reports the previous session's
+   * close — that is what the field means. Judging it by the stamp alone would
+   * reject the only real close available and blank the header every morning.
+   */
+  it("accepts the previous close from a quote stamped in this morning's pre-market", () => {
+    const snapshot = resolve({
+      session: 'PREMARKET',
+      now: PRE_NOW,
+      exchangeDate: '2026-07-30',
+      quote: resource(
+        quote({ price: 10.15, latestTradingDay: '2026-07-30', quoteTimestamp: '2026-07-30T12:25:00.000Z' }),
+        '2026-07-30T12:25:00.000Z',
+      ),
+      extended: prePrint,
+    });
+    expect(snapshot.mainPrice).toBe(9.735);
+    expect(snapshot.mainPriceRole).toBe('regular-close');
+    // The close is dated to the session it belongs to, not to the stamp it arrived on.
+    expect(snapshot.tradingDate).toBe('2026-07-29');
+    // …and no closing instant is claimed, because the quote does not state one.
+    expect(snapshot.regularCloseTimestamp).toBeNull();
+    // The pre-market price in that quote tried to take the main line and was refused.
+    expect(snapshot.flags).toContain('extended-overwrite-rejected');
   });
 });
 
@@ -413,7 +564,12 @@ describe('6. weekend closure', () => {
     expect(snapshot.tradingDate).toBe('2026-07-24');
   });
 
-  it("still shows Friday's after-hours print in the second row on a Sunday", () => {
+  /**
+   * By Sunday, Friday's after-hours window has been over for two days. The print is
+   * a real value from a finished session, which is precisely what makes showing it
+   * beside "ปิดตลาด" misleading: a reader cannot tell it from a current one.
+   */
+  it("hides Friday's after-hours print on a Sunday, leaving one row", () => {
     const snapshot = resolve({
       session: 'CLOSED',
       now: '2026-07-26T17:00:00.000Z',
@@ -429,9 +585,10 @@ describe('6. weekend closure', () => {
         freshness: { status: 'delayed', asOf: '2026-07-24T23:55:00.000Z', maxAgeSeconds: 900 },
       },
     });
-    expect(snapshot.extendedPrice).toBe(9.65);
-    expect(snapshot.extendedPriceTradingDate).toBe('2026-07-24');
-    // …and it never becomes the main line.
+    expect(snapshot.extendedPrice).toBeNull();
+    expect(snapshot.extendedSession).toBeNull();
+    expect(snapshot.flags).toContain('extended-window-closed');
+    // …and the main line is Friday's official close, as it was all weekend.
     expect(snapshot.mainPrice).toBe(9.735);
   });
 });
@@ -589,6 +746,32 @@ describe('9. timestamp and trading-date mismatch', () => {
     });
     expect(snapshot.flags).toContain('future-timestamp-rejected');
     expect(snapshot.mainPrice).not.toBe(10.42);
+  });
+
+  /**
+   * A response stamped at 16:25 ET carries the right `regularClose` but the wrong
+   * time for it. Publishing that stamp as the close's instant made every genuine
+   * after-hours print look older than the close it followed, which emptied the
+   * second row for the whole evening.
+   */
+  it('does not claim an after-hours response stamp as the closing instant', () => {
+    const snapshot = resolve({
+      session: 'AFTER_HOURS',
+      now: '2026-07-29T20:30:00.000Z',
+      quote: resource(
+        quote({ price: 9.589, quoteTimestamp: '2026-07-29T20:25:00.000Z' }),
+        '2026-07-29T20:25:00.000Z',
+      ),
+      extended: {
+        session: 'after-hours', price: 9.589, asOf: '2026-07-29T20:25:00.000Z',
+        tradingDate: '2026-07-29', provider: 'yahoo-finance-chart',
+        freshness: { status: 'delayed', asOf: '2026-07-29T20:25:00.000Z', maxAgeSeconds: 900 },
+      },
+    });
+    expect(snapshot.regularClose).toBe(9.735);
+    expect(snapshot.regularCloseTimestamp).toBeNull();
+    // …and the print beside it survives, because nothing pretends to precede it.
+    expect(snapshot.extendedPrice).toBe(9.589);
   });
 
   it('falls back to the server-verified quote when the live one is off-date', () => {
