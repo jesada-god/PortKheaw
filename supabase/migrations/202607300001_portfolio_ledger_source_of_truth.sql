@@ -134,7 +134,7 @@ select
   legacy.portfolio_id, 'buy_to_open', legacy.contracts, legacy.premium_per_share,
   legacy.premium_per_share, null, 0, 0, 'USD', legacy.opened_at,
   legacy.opened_at::timestamp at time zone 'Asia/Bangkok',
-  legacy.underlying_symbol, 'LEGACY-' || legacy.id::text, legacy.option_kind, 'long',
+  legacy.underlying_symbol, upper('LEGACY-' || legacy.id::text), legacy.option_kind, 'long',
   legacy.strike_price, legacy.expiration_date, 100, legacy.note, null, legacy.id,
   legacy.created_at, legacy.updated_at
 from public.portfolio_option_positions as legacy
