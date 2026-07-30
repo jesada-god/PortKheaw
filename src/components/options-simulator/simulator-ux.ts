@@ -263,27 +263,29 @@ export function validationFieldLabel(path: string): string {
   const legMatch = /^legs\.(\d+)\.(.+)$/.exec(path);
   if (legMatch) {
     const legNumber = Number(legMatch[1]) + 1;
+    // Names a validation error after the label now printed on the field, so the
+    // reader looks for the same words the form shows them.
     const labels: Record<string, string> = {
-      kind: 'Option Type',
-      side: 'Side',
-      quantity: 'Quantity',
-      strike: 'Strike Price',
-      expiration: 'Expiration',
-      entryPremium: 'Premium',
-      impliedVolatility: 'IV',
-      multiplier: 'Contract Multiplier',
+      kind: 'ประเภทสัญญา (Option Type)',
+      side: 'ฝั่งซื้อ/ขาย (Side)',
+      quantity: 'จำนวนสัญญา (Quantity)',
+      strike: 'ราคาใช้สิทธิ (Strike Price)',
+      expiration: 'วันหมดอายุ (Expiration)',
+      entryPremium: 'ราคาสัญญาต่อหุ้น (Premium)',
+      impliedVolatility: 'ความผันผวนที่ตลาดคาด (IV)',
+      multiplier: 'จำนวนหุ้นต่อ 1 สัญญา (Contract Multiplier)',
       delta: 'Delta',
       theta: 'Theta/day',
     };
     return `Leg ${legNumber} ${labels[legMatch[2]] ?? legMatch[2]}`;
   }
 
-  if (/^scenarios\.\d+\.targetPrice$/.test(path)) return 'Target Stock Price';
-  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'Target Date';
-  if (path === 'symbol') return 'Stock / ETF';
-  if (path === 'underlyingPrice') return 'Current Stock Price';
-  if (path === 'legs') return 'Contract';
-  if (path === 'scenarios') return 'What-If';
+  if (/^scenarios\.\d+\.targetPrice$/.test(path)) return 'ราคาหุ้นที่อยากลอง (Target Stock Price)';
+  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'วันที่ต้องการดูผล (Target Date)';
+  if (path === 'symbol') return 'หุ้นหรือ ETF';
+  if (path === 'underlyingPrice') return 'ราคาหุ้นปัจจุบัน';
+  if (path === 'legs') return 'รายละเอียดสัญญา';
+  if (path === 'scenarios') return 'สถานการณ์ที่ทดลอง';
   return path;
 }
 
