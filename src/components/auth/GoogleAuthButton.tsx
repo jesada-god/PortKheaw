@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { createClient } from '@/src/lib/supabase/client';
 import { describeAuthError } from '@/src/lib/auth/errors';
@@ -38,15 +38,26 @@ function GoogleGlyph() {
 export function GoogleAuthButton({ next, label }: { next: string; label: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * The guard has to be a ref, not the `pending` state. Two clicks dispatched in
+   * the same tick — a double tap, or an impatient second click before React has
+   * re-rendered the button as `disabled` — both read the *previous* `pending`
+   * from this closure, so a state-based check lets the second one through and
+   * starts a second `/auth/v1/authorize` round trip. A ref flips synchronously,
+   * so only the first click ever reaches the provider.
+   */
+  const started = useRef(false);
 
   async function start() {
-    if (pending) return;
+    if (started.current) return;
+    started.current = true;
     setPending(true);
     setError(null);
     const supabase = createClient();
     if (!supabase) {
       setError('ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ');
       setPending(false);
+      started.current = false;
       return;
     }
     const redirectTo = new URL('/auth/callback', window.location.origin);
@@ -55,10 +66,13 @@ export function GoogleAuthButton({ next, label }: { next: string; label: string 
       provider: 'google',
       options: { redirectTo: redirectTo.toString() },
     });
-    // Reaching this line at all means no redirect happened.
+    // Reaching this line at all means no redirect happened. A failed attempt is
+    // released so the visitor can try again; a successful one stays latched,
+    // because the browser is already on its way to Google.
     if (oauthError) {
       setError(describeAuthError(oauthError, 'oauth'));
       setPending(false);
+      started.current = false;
     }
   }
 

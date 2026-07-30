@@ -116,6 +116,12 @@ describe('getSafeReturnPath', () => {
     expect(getSafeReturnPath('/auth/callback?code=abc')).toBe('/');
   });
 
+  it('refuses the /auth/login and /auth/register aliases too, which forward to those pages', () => {
+    expect(getSafeReturnPath('/auth/login')).toBe('/');
+    expect(getSafeReturnPath('/auth/register')).toBe('/');
+    expect(getSafeReturnPath('/auth/login?next=/auth/login')).toBe('/');
+  });
+
   it('still allows the recovery destination, which is not an entry page', () => {
     expect(getSafeReturnPath('/auth/reset-password')).toBe('/auth/reset-password');
   });

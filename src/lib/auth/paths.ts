@@ -13,6 +13,11 @@ export const AUTH_ENTRY_PATHS = [
   '/auth/welcome',
   '/auth/sign-in',
   '/auth/sign-up',
+  // The `/auth/login` and `/auth/register` aliases forward to the two forms
+  // above. They are listed here so a crafted `next` cannot aim at the alias and
+  // build the same loop the real paths are already protected against.
+  '/auth/login',
+  '/auth/register',
   '/auth/forgot-password',
   '/auth/callback',
 ] as const;
