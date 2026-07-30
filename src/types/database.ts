@@ -88,22 +88,51 @@ export interface Database {
       };
       portfolio_transactions: {
         Row: {
-          id: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment';
+          id: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol: string | null; quantity: string | null; price: string | null; amount: string | null; occurred_at: string;
           original_amount: string | null; original_currency: Currency; fx_rate_at_transaction: string | null; normalized_amount_usd: string | null;
+          normalized_price_usd: string | null; fee: string | null; normalized_fee_usd: string | null; broker: string | null;
+          occurred_at_time: string; underlying_symbol: string | null; contract_symbol: string | null;
+          option_kind: 'call' | 'put' | null; option_side: 'long' | 'short' | null; strike_price: string | null;
+          expiration_date: string | null; multiplier: string | null;
           note: string | null; idempotency_key: string; created_at: string; updated_at: string;
         };
         Insert: {
-          id?: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment';
+          id?: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
+          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
+          occurred_at_time: string; underlying_symbol?: string | null; contract_symbol?: string | null;
+          option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
+          expiration_date?: string | null; multiplier?: string | null;
           note?: string | null; idempotency_key: string; created_at?: string; updated_at?: string;
         };
         Update: {
-          transaction_type?: 'acquisition' | 'disposal' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment';
+          transaction_type?: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at?: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
+          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
+          occurred_at_time?: string; underlying_symbol?: string | null; contract_symbol?: string | null;
+          option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
+          expiration_date?: string | null; multiplier?: string | null;
           note?: string | null; updated_at?: string;
+        };
+        Relationships: [];
+      };
+      portfolio_option_targets: {
+        Row: {
+          id: string; portfolio_id: string; contract_symbol: string; side: 'long' | 'short'; mode: 'premium' | 'profit_percent';
+          target_value: string; target_premium: string; estimated_fee: string; enabled: boolean; triggered_at: string | null;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; portfolio_id: string; contract_symbol: string; side: 'long' | 'short'; mode: 'premium' | 'profit_percent';
+          target_value: string; target_premium: string; estimated_fee?: string; enabled?: boolean; triggered_at?: string | null;
+          created_at?: string; updated_at?: string;
+        };
+        Update: {
+          side?: 'long' | 'short'; mode?: 'premium' | 'profit_percent'; target_value?: string; target_premium?: string; estimated_fee?: string;
+          enabled?: boolean; triggered_at?: string | null; updated_at?: string;
         };
         Relationships: [];
       };
@@ -282,6 +311,38 @@ export interface Database {
         Returns: undefined;
       };
       delete_portfolio_transaction: { Args: { transaction_id: string }; Returns: undefined };
+      create_portfolio_ledger_transaction: {
+        Args: {
+          input_type: string; input_symbol: string | null; input_quantity: string | null; input_price: string | null;
+          input_amount: string | null; input_fee: string | null; input_original_currency: Currency;
+          input_fx_rate_at_transaction: string | null; input_occurred_at: string; input_broker: string | null;
+          input_underlying_symbol: string | null; input_contract_symbol: string | null; input_option_kind: string | null;
+          input_option_side: string | null; input_strike_price: string | null; input_expiration_date: string | null;
+          input_multiplier: string | null; input_note: string | null; input_idempotency_key: string;
+        };
+        Returns: string;
+      };
+      update_portfolio_ledger_transaction: {
+        Args: {
+          transaction_id: string; input_type: string; input_symbol: string | null; input_quantity: string | null;
+          input_price: string | null; input_amount: string | null; input_fee: string | null;
+          input_original_currency: Currency; input_fx_rate_at_transaction: string | null; input_occurred_at: string;
+          input_broker: string | null; input_underlying_symbol: string | null; input_contract_symbol: string | null;
+          input_option_kind: string | null; input_option_side: string | null; input_strike_price: string | null;
+          input_expiration_date: string | null; input_multiplier: string | null; input_note: string | null;
+        };
+        Returns: undefined;
+      };
+      delete_portfolio_ledger_transaction: { Args: { transaction_id: string }; Returns: undefined };
+      upsert_portfolio_option_target: {
+        Args: { input_id: string | null; input_contract_symbol: string; input_side: string; input_mode: string; input_target_value: string; input_target_premium: string; input_estimated_fee: string };
+        Returns: string;
+      };
+      delete_portfolio_option_target: { Args: { target_id: string }; Returns: undefined };
+      evaluate_portfolio_option_target: {
+        Args: { target_id: string; observed_premium: number; observed_at: string; notification_title: string; notification_message: string };
+        Returns: string | null;
+      };
       set_portfolio_base_currency: { Args: { input_currency: Currency }; Returns: undefined };
       create_option_position: {
         Args: { input_underlying_symbol: string; input_option_kind: string; input_contracts: number; input_premium_per_share: string; input_strike_price: string; input_opened_at: string; input_expiration_date: string; input_implied_volatility: string | null; input_delta: string | null; input_theta: string | null; input_note: string | null; input_status: string; input_idempotency_key: string };

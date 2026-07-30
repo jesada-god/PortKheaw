@@ -1,6 +1,26 @@
-export const transactionTypes = ['acquisition', 'disposal', 'dividend', 'deposit', 'withdrawal', 'fee', 'adjustment'] as const;
+export const transactionTypes = [
+  'acquisition',
+  'disposal',
+  'initial_position',
+  'dividend',
+  'deposit',
+  'withdrawal',
+  'fee',
+  'adjustment',
+  'buy_to_open',
+  'sell_to_close',
+  'sell_to_open',
+  'buy_to_close',
+  'exercise',
+  'assignment',
+  'expired',
+] as const;
 
 export type PortfolioTransactionType = typeof transactionTypes[number];
+export type OptionTransactionType = Extract<PortfolioTransactionType,
+  'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired'>;
+export type OptionSide = 'long' | 'short';
+export type OptionKind = 'call' | 'put';
 
 export interface PortfolioTransaction {
   id: string;
@@ -14,6 +34,18 @@ export interface PortfolioTransaction {
   originalCurrency?: 'THB' | 'USD';
   fxRateAtTransaction?: string | null;
   normalizedAmountUsd?: string | null;
+  normalizedPriceUsd?: string | null;
+  fee?: string | null;
+  normalizedFeeUsd?: string | null;
+  broker?: string | null;
+  occurredAtTime?: string;
+  underlyingSymbol?: string | null;
+  contractSymbol?: string | null;
+  optionKind?: OptionKind | null;
+  optionSide?: OptionSide | null;
+  strikePrice?: string | null;
+  expirationDate?: string | null;
+  multiplier?: string | null;
   occurredAt: string;
   note: string | null;
   idempotencyKey?: string;
@@ -33,31 +65,57 @@ export interface HoldingSummary {
   quantity: number;
   averageCost: number;
   costBasis: number;
-  marketPrice: number;
-  marketValue: number;
+  marketPrice: number | null;
+  marketValue: number | null;
   realizedGain: number;
-  unrealizedGain: number;
+  unrealizedGain: number | null;
   allocation: number;
-  priceEstimated: boolean;
   priceCached: boolean;
-  todayChange: number;
+  priceStale: boolean;
+  priceSource: string | null;
+  priceAsOf: string | null;
+  todayChange: number | null;
+  todayChangePercent: number | null;
+  lots: HoldingLot[];
+  transactions: PortfolioTransaction[];
+}
+
+export interface HoldingLot {
+  transactionId: string;
+  occurredAt: string;
+  originalQuantity: number;
+  remainingQuantity: number;
+  unitCost: number;
+  remainingCost: number;
+  fee: number;
+  broker: string | null;
 }
 
 export interface PortfolioSummary {
   holdings: HoldingSummary[];
   cashBalance: number;
-  marketValue: number;
+  marketValue: number | null;
   costBasis: number;
   realizedGain: number;
-  unrealizedGain: number;
-  totalValue: number;
-  equityMarketValue: number;
-  optionsMarketValue: number;
+  unrealizedGain: number | null;
+  totalValue: number | null;
+  equityMarketValue: number | null;
+  optionsMarketValue: number | null;
+  optionRemainingCost: number;
   netDepositedCapital: number;
-  totalGain: number;
-  totalGainPercent: number;
-  todayChange: number;
-  todayChangePercent: number;
+  totalGain: number | null;
+  totalGainPercent: number | null;
+  todayChange: number | null;
+  todayChangePercent: number | null;
+  optionPositions: import('./options/types').OptionPositionSummary[];
+  hasMissingPrices: boolean;
 }
 
-export interface MarketPriceInput { price: string | number; previousClose?: string | number | null; cached?: boolean; stale?: boolean; asOf?: string | null }
+export interface MarketPriceInput {
+  price: string | number;
+  previousClose?: string | number | null;
+  cached?: boolean;
+  stale?: boolean;
+  asOf?: string | null;
+  source?: string | null;
+}

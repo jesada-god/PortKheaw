@@ -1,102 +1,277 @@
-import { fixed as decimal, fixedDivide as divide, fixedMultiply as multiply, fixedPercent, fixedToNumber as number } from '../money/fixed';
-import type { HoldingSummary, MarketPriceInput, PortfolioSummary, PortfolioTransaction } from './types';
+import {
+  fixed as decimal,
+  fixedDivide as divide,
+  fixedMultiply as multiply,
+  fixedPercent,
+  fixedToNumber as number,
+  type Fixed,
+} from '../money/fixed';
+import { calculateOptionLedger } from './options/calculations';
+import type { OptionQuoteInput } from './options/types';
+import type { HoldingLot, HoldingSummary, MarketPriceInput, PortfolioSummary, PortfolioTransaction } from './types';
 
 function ordered(transactions: PortfolioTransaction[]) {
-  return [...transactions].sort((a, b) =>
-    a.occurredAt.localeCompare(b.occurredAt) ||
-    a.createdAt.localeCompare(b.createdAt) ||
-    a.id.localeCompare(b.id));
+  return [...transactions].sort((left, right) =>
+    (left.occurredAtTime ?? left.occurredAt).localeCompare(right.occurredAtTime ?? right.occurredAt)
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.id.localeCompare(right.id));
 }
 
-interface HoldingState { quantity: bigint; costBasis: bigint; realizedGain: bigint }
+interface LotState {
+  transactionId: string;
+  occurredAt: string;
+  originalQuantity: Fixed;
+  remainingQuantity: Fixed;
+  remainingCost: Fixed;
+  fee: Fixed;
+  broker: string | null;
+}
 
-/** Replays the complete ledger in deterministic chronological order. */
+interface HoldingState {
+  quantity: Fixed;
+  costBasis: Fixed;
+  realizedGain: Fixed;
+  lots: LotState[];
+  transactions: PortfolioTransaction[];
+}
+
+function transactionPrice(transaction: PortfolioTransaction): Fixed {
+  return decimal(transaction.normalizedPriceUsd ?? transaction.price);
+}
+
+function transactionFee(transaction: PortfolioTransaction): Fixed {
+  return decimal(transaction.normalizedFeeUsd ?? transaction.fee);
+}
+
+function transactionAmount(transaction: PortfolioTransaction): Fixed {
+  return decimal(transaction.normalizedAmountUsd ?? transaction.amount);
+}
+
+function proportional(value: Fixed, removed: Fixed, available: Fixed): Fixed {
+  if (removed === available) return value;
+  const product = value * removed;
+  return (product + (product >= 0n ? available / 2n : -(available / 2n))) / available;
+}
+
+function reduceLots(lots: LotState[], removedQuantity: Fixed, availableQuantity: Fixed, removedCost: Fixed) {
+  let quantityLeft = removedQuantity;
+  let costLeft = removedCost;
+  const active = lots.filter((lot) => lot.remainingQuantity > 0n);
+  active.forEach((lot, index) => {
+    const last = index === active.length - 1;
+    const quantityPart = last ? quantityLeft : proportional(lot.remainingQuantity, removedQuantity, availableQuantity);
+    const costPart = last ? costLeft : proportional(lot.remainingCost, removedQuantity, availableQuantity);
+    lot.remainingQuantity -= quantityPart;
+    lot.remainingCost -= costPart;
+    quantityLeft -= quantityPart;
+    costLeft -= costPart;
+  });
+}
+
+function stockEvent(transaction: PortfolioTransaction): {
+  kind: 'buy' | 'sell';
+  symbol: string;
+  quantity: Fixed;
+  price: Fixed;
+  fee: Fixed;
+  imported: boolean;
+} | null {
+  if (transaction.type === 'acquisition' || transaction.type === 'disposal' || transaction.type === 'initial_position') {
+    if (!transaction.symbol) throw new Error('Asset transaction requires a symbol');
+    return {
+      kind: transaction.type === 'disposal' ? 'sell' : 'buy',
+      symbol: transaction.symbol,
+      quantity: decimal(transaction.quantity),
+      price: transactionPrice(transaction),
+      fee: transactionFee(transaction),
+      imported: transaction.type === 'initial_position',
+    };
+  }
+  if (transaction.type !== 'exercise' && transaction.type !== 'assignment') return null;
+  if (!transaction.underlyingSymbol || !transaction.optionKind) throw new Error('Option settlement requires an underlying symbol');
+  const kind = transaction.optionKind === 'call'
+    ? transaction.type === 'exercise' ? 'buy' : 'sell'
+    : transaction.type === 'exercise' ? 'sell' : 'buy';
+  return {
+    kind,
+    symbol: transaction.underlyingSymbol,
+    quantity: multiply(decimal(transaction.quantity), decimal(transaction.multiplier ?? '100')),
+    price: decimal(transaction.strikePrice),
+    fee: transactionFee(transaction),
+    imported: false,
+  };
+}
+
+/** Replays the complete transaction ledger in deterministic chronological order. */
 export function calculatePortfolio(
   transactions: PortfolioTransaction[],
   marketPrices: Record<string, number | string | MarketPriceInput> = {},
-  optionsMarketValue: number | string = 0,
+  optionQuotes: Record<string, OptionQuoteInput | null> = {},
+  today?: string,
 ): PortfolioSummary {
   const states = new Map<string, HoldingState>();
   let cash = 0n;
   let netDeposited = 0n;
+  let otherRealized = 0n;
 
   for (const transaction of ordered(transactions)) {
-    const amount = decimal(transaction.normalizedAmountUsd ?? transaction.amount);
-    if (transaction.type === 'deposit') cash += amount;
-    if (transaction.type === 'withdrawal' || transaction.type === 'fee') cash -= amount;
-    if (transaction.type === 'dividend') cash += amount;
-    if (transaction.type === 'adjustment') cash += amount;
-    if (transaction.type === 'deposit') netDeposited += amount;
-    if (transaction.type === 'withdrawal') netDeposited -= amount;
-
-    if (transaction.type !== 'acquisition' && transaction.type !== 'disposal') continue;
-    if (!transaction.symbol) throw new Error('Asset transaction requires a symbol');
-    const quantity = decimal(transaction.quantity);
-    const price = decimal(transaction.price);
-    const state = states.get(transaction.symbol) ?? { quantity: 0n, costBasis: 0n, realizedGain: 0n };
-    const value = multiply(quantity, price);
-
-    if (transaction.type === 'acquisition') {
-      state.quantity += quantity;
-      state.costBasis += value;
-      cash -= value;
-    } else {
-      if (quantity > state.quantity) throw new Error(`Insufficient quantity for ${transaction.symbol}`);
-      const averageCost = divide(state.costBasis, state.quantity);
-      const removedCost = quantity === state.quantity ? state.costBasis : multiply(quantity, averageCost);
-      state.quantity -= quantity;
-      state.costBasis -= removedCost;
-      state.realizedGain += value - removedCost;
-      cash += value;
+    const amount = transactionAmount(transaction);
+    if (transaction.type === 'deposit') {
+      cash += amount;
+      netDeposited += amount;
+    } else if (transaction.type === 'withdrawal') {
+      cash -= amount;
+      netDeposited -= amount;
+    } else if (transaction.type === 'dividend') {
+      cash += amount;
+      otherRealized += amount;
+    } else if (transaction.type === 'fee') {
+      cash -= amount;
+      otherRealized -= amount;
+    } else if (transaction.type === 'adjustment') {
+      cash += amount;
+      netDeposited += amount;
     }
-    states.set(transaction.symbol, state);
+
+    const event = stockEvent(transaction);
+    if (!event) continue;
+    const state = states.get(event.symbol) ?? { quantity: 0n, costBasis: 0n, realizedGain: 0n, lots: [], transactions: [] };
+    state.transactions.push(transaction);
+    const gross = multiply(event.quantity, event.price);
+
+    if (event.kind === 'buy') {
+      const acquiredCost = gross + event.fee;
+      state.quantity += event.quantity;
+      state.costBasis += acquiredCost;
+      state.lots.push({
+        transactionId: transaction.id,
+        occurredAt: transaction.occurredAtTime ?? transaction.occurredAt,
+        originalQuantity: event.quantity,
+        remainingQuantity: event.quantity,
+        remainingCost: acquiredCost,
+        fee: event.fee,
+        broker: transaction.broker ?? null,
+      });
+      if (event.imported) {
+        const openingCash = transactionAmount(transaction);
+        cash += openingCash;
+        netDeposited += acquiredCost + openingCash;
+      } else {
+        cash -= acquiredCost;
+      }
+    } else {
+      if (event.quantity > state.quantity) throw new Error(`Insufficient quantity for ${event.symbol}`);
+      const removedCost = event.quantity === state.quantity
+        ? state.costBasis
+        : proportional(state.costBasis, event.quantity, state.quantity);
+      const proceeds = gross - event.fee;
+      reduceLots(state.lots, event.quantity, state.quantity, removedCost);
+      state.quantity -= event.quantity;
+      state.costBasis -= removedCost;
+      state.realizedGain += proceeds - removedCost;
+      cash += proceeds;
+    }
+    states.set(event.symbol, state);
   }
+
+  const optionLedger = calculateOptionLedger(transactions, optionQuotes, today);
+  cash += decimal(optionLedger.cashFlow);
 
   let totalMarketValue = 0n;
   let totalTodayChange = 0n;
+  let missingEquityPrice = false;
+  let missingTodayPrice = false;
   const holdings: HoldingSummary[] = [];
   for (const [symbol, state] of states) {
     if (state.quantity === 0n) continue;
     const rawMarketPrice = marketPrices[symbol];
     const quote = typeof rawMarketPrice === 'object' ? rawMarketPrice : rawMarketPrice == null ? null : { price: rawMarketPrice };
-    const priceEstimated = quote == null;
-    const marketPrice = priceEstimated ? divide(state.costBasis, state.quantity) : decimal(String(quote.price));
-    const marketValue = multiply(state.quantity, marketPrice);
-    const todayChange = quote?.previousClose == null ? 0n : multiply(state.quantity, marketPrice - decimal(String(quote.previousClose)));
-    totalMarketValue += marketValue;
-    totalTodayChange += todayChange;
+    const parsedPrice = quote == null ? Number.NaN : Number(quote.price);
+    const priceMissing = !Number.isFinite(parsedPrice) || parsedPrice <= 0;
+    const marketPrice = priceMissing ? null : decimal(String(quote!.price));
+    const marketValue = marketPrice === null ? null : multiply(state.quantity, marketPrice);
+    const previousClose = quote?.previousClose == null ? null : decimal(String(quote.previousClose));
+    const todayChange = marketPrice === null || previousClose === null
+      ? null
+      : multiply(state.quantity, marketPrice - previousClose);
+    if (marketValue === null) missingEquityPrice = true;
+    else totalMarketValue += marketValue;
+    if (todayChange === null) missingTodayPrice = true;
+    else totalTodayChange += todayChange;
+    const lots: HoldingLot[] = state.lots
+      .filter((lot) => lot.remainingQuantity > 0n)
+      .map((lot) => ({
+        transactionId: lot.transactionId,
+        occurredAt: lot.occurredAt,
+        originalQuantity: number(lot.originalQuantity),
+        remainingQuantity: number(lot.remainingQuantity),
+        unitCost: number(divide(lot.remainingCost, lot.remainingQuantity)),
+        remainingCost: number(lot.remainingCost),
+        fee: number(lot.fee),
+        broker: lot.broker,
+      }));
     holdings.push({
       symbol,
       quantity: number(state.quantity),
       averageCost: number(divide(state.costBasis, state.quantity)),
       costBasis: number(state.costBasis),
-      marketPrice: number(marketPrice),
-      marketValue: number(marketValue),
+      marketPrice: marketPrice === null ? null : number(marketPrice),
+      marketValue: marketValue === null ? null : number(marketValue),
       realizedGain: number(state.realizedGain),
-      unrealizedGain: number(marketValue - state.costBasis),
+      unrealizedGain: marketValue === null ? null : number(marketValue - state.costBasis),
       allocation: 0,
-      priceEstimated,
       priceCached: quote?.cached === true,
-      todayChange: number(todayChange),
+      priceStale: quote?.stale === true,
+      priceSource: quote?.source ?? null,
+      priceAsOf: quote?.asOf ?? null,
+      todayChange: todayChange === null ? null : number(todayChange),
+      todayChangePercent: todayChange === null || previousClose === null
+        ? null
+        : number(fixedPercent(marketPrice! - previousClose, previousClose)),
+      lots,
+      transactions: state.transactions,
     });
   }
 
-  for (const holding of holdings) holding.allocation = totalMarketValue === 0n ? 0 : holding.marketValue / number(totalMarketValue) * 100;
-  holdings.sort((a, b) => b.marketValue - a.marketValue || a.symbol.localeCompare(b.symbol));
-  const costBasis = holdings.reduce((sum, holding) => sum + holding.costBasis, 0);
-  const realizedGain = [...states.values()].reduce((sum, holding) => sum + number(holding.realizedGain), 0);
-  const unrealizedGain = holdings.reduce((sum, holding) => sum + holding.unrealizedGain, 0);
-  const equityMarketValue = number(totalMarketValue);
-  const cashBalance = number(cash);
-  const optionValue = decimal(optionsMarketValue);
-  const totalValueFixed = cash + totalMarketValue + optionValue;
-  const totalGainFixed = totalValueFixed - netDeposited;
-  const previousValue = totalValueFixed - totalTodayChange;
-  const marketValue = equityMarketValue;
+  const allocationBasis = number(totalMarketValue);
+  for (const holding of holdings) {
+    holding.allocation = holding.marketValue === null || allocationBasis === 0 ? 0 : holding.marketValue / allocationBasis * 100;
+  }
+  holdings.sort((left, right) => (right.marketValue ?? -Infinity) - (left.marketValue ?? -Infinity) || left.symbol.localeCompare(right.symbol));
+
+  const stockCostBasis = [...states.values()].reduce((sum, holding) => sum + holding.costBasis, 0n);
+  const stockRealized = [...states.values()].reduce((sum, holding) => sum + holding.realizedGain, 0n);
+  const stockUnrealized = holdings.reduce((sum, holding) => sum + decimal(holding.unrealizedGain), 0n);
+  const equityMarketValue = missingEquityPrice ? null : totalMarketValue;
+  const optionMarketValue = optionLedger.marketValue === null ? null : decimal(optionLedger.marketValue);
+  const hasMissingPrices = missingEquityPrice || optionLedger.hasMissingPrices;
+  const totalValueFixed = hasMissingPrices ? null : cash + equityMarketValue! + optionMarketValue!;
+  const totalGainFixed = totalValueFixed === null ? null : totalValueFixed - netDeposited;
+  const totalToday = missingTodayPrice || optionLedger.todayChange === null
+    ? null
+    : totalTodayChange + decimal(optionLedger.todayChange);
+  const previousValue = totalValueFixed === null || totalToday === null ? null : totalValueFixed - totalToday;
+  const unrealized = hasMissingPrices
+    ? null
+    : stockUnrealized + decimal(optionLedger.unrealizedGain);
+
   return {
-    holdings, cashBalance, marketValue, equityMarketValue, optionsMarketValue: number(optionValue), costBasis,
-    realizedGain, unrealizedGain, totalValue: number(totalValueFixed), netDepositedCapital: number(netDeposited),
-    totalGain: number(totalGainFixed), totalGainPercent: number(fixedPercent(totalGainFixed, netDeposited)),
-    todayChange: number(totalTodayChange), todayChangePercent: number(fixedPercent(totalTodayChange, previousValue)),
+    holdings,
+    cashBalance: number(cash),
+    marketValue: equityMarketValue === null ? null : number(equityMarketValue),
+    equityMarketValue: equityMarketValue === null ? null : number(equityMarketValue),
+    optionsMarketValue: optionMarketValue === null ? null : number(optionMarketValue),
+    optionRemainingCost: optionLedger.remainingCost,
+    costBasis: number(stockCostBasis),
+    realizedGain: number(stockRealized + otherRealized + decimal(optionLedger.realizedGain)),
+    unrealizedGain: unrealized === null ? null : number(unrealized),
+    totalValue: totalValueFixed === null ? null : number(totalValueFixed),
+    netDepositedCapital: number(netDeposited),
+    totalGain: totalGainFixed === null ? null : number(totalGainFixed),
+    totalGainPercent: totalGainFixed === null ? null : number(fixedPercent(totalGainFixed, netDeposited)),
+    todayChange: totalToday === null ? null : number(totalToday),
+    todayChangePercent: totalToday === null || previousValue === null ? null : number(fixedPercent(totalToday, previousValue)),
+    optionPositions: optionLedger.positions,
+    hasMissingPrices,
   };
 }

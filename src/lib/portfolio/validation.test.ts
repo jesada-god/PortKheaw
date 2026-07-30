@@ -10,4 +10,34 @@ describe('portfolio transaction validation', () => {
     expect(portfolioTransactionSchema.safeParse({ ...base, type: 'acquisition', symbol: 'BTC', quantity: '0.00000001', price: '1.00000001' }).success).toBe(true);
     expect(portfolioTransactionSchema.safeParse({ ...base, type: 'deposit', amount: '1', occurredAt: '2999-01-01' }).success).toBe(false);
   });
+
+  it('accepts fees, broker, time, initial positions and signed cash adjustments', () => {
+    expect(portfolioTransactionSchema.safeParse({
+      ...base, type: 'initial_position', symbol: 'VOO', quantity: '2', price: '500',
+      amount: '75', fee: '0', broker: 'Example Broker', occurredAt: '2026-01-01T10:30',
+    }).success).toBe(true);
+    expect(portfolioTransactionSchema.safeParse({ ...base, type: 'adjustment', amount: '-2.50' }).success).toBe(true);
+  });
+
+  it('validates the complete option identity and THB normalization metadata', () => {
+    const option = {
+      ...base,
+      type: 'buy_to_open',
+      underlyingSymbol: 'NVDA',
+      contractSymbol: 'NVDA260821P00100000',
+      optionKind: 'put',
+      optionSide: 'long',
+      strikePrice: '100',
+      expirationDate: '2026-08-21',
+      quantity: '1',
+      multiplier: '100',
+      price: '2',
+      fee: '1',
+      originalCurrency: 'THB',
+      fxRateAtTransaction: '35.5',
+    };
+    expect(portfolioTransactionSchema.safeParse(option).success).toBe(true);
+    expect(portfolioTransactionSchema.safeParse({ ...option, fxRateAtTransaction: '' }).success).toBe(false);
+    expect(portfolioTransactionSchema.safeParse({ ...option, contractSymbol: 'bad symbol' }).success).toBe(false);
+  });
 });

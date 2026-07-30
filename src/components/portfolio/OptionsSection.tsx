@@ -2,113 +2,489 @@
 
 import { useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Edit3, Plus, ScrollText, Trash2 } from 'lucide-react';
-import { closeOptionPositionAction, createOptionPositionAction, deleteOptionPositionAction, updateOptionPositionAction } from '@/app/portfolio/option-actions';
+import { ChevronDown, ChevronUp, Edit3, Plus, Target, Trash2 } from 'lucide-react';
+import { createPortfolioTransactionAction, deletePortfolioTransactionAction, updatePortfolioTransactionAction } from '@/app/portfolio/actions';
+import { deleteOptionTargetAction, upsertOptionTargetAction } from '@/app/portfolio/target-actions';
 import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
-import { calculateDte, calculateOptionStatus, calculateOptionTotalCost } from '@/src/lib/portfolio/options/calculations';
-import type { OptionInput, OptionPosition, OptionStatus } from '@/src/lib/portfolio/options/types';
+import { calculateOptionTarget } from '@/src/lib/portfolio/options/calculations';
+import type { OptionPositionSummary, OptionTarget, OptionTargetMode } from '@/src/lib/portfolio/options/types';
+import type { PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
+import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
+import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { DecimalInput, Field } from './FormControls';
 import { SymbolPreview } from './SymbolPreview';
-import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
-import { formatPortfolioMoney } from '@/src/lib/portfolio/presentation';
+import { transactionLabels, type TransactionFormState } from './TransactionFormModal';
 
-const today = () => new Date().toISOString().slice(0, 10);
-const emptyForm = (): OptionInput => ({ underlyingSymbol: '', optionKind: 'call', contracts: '', premiumPerShare: '', strikePrice: '', openedAt: today(), expirationDate: today(), impliedVolatility: '', delta: '', theta: '', note: '', status: 'open', idempotencyKey: crypto.randomUUID() });
-const statusLabels: Record<OptionStatus, string> = { open: 'Open', closed: 'Closed', expired: 'Expired', cancelled: 'Cancelled' };
+const optionActions: PortfolioTransactionType[] = [
+  'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
+];
 
-function date(value: string) { return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`)); }
+function localNow() {
+  return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
+}
 
-export function OptionsSection({ positions, currency, usdThbRate, showBalances, isOnline }: { positions: OptionPosition[]; currency: SupportedCurrency; usdThbRate: string | null; showBalances: boolean; isOnline: boolean }) {
-  const router = useRouter(); const { addToast } = useToast(); const [pending, startTransition] = useTransition();
-  const [formOpen, setFormOpen] = useState(false); const [editing, setEditing] = useState<OptionPosition | null>(null);
-  const [form, setForm] = useState<OptionInput>(emptyForm); const [errors, setErrors] = useState<Record<string, string>>({});
-  const [closing, setClosing] = useState<OptionPosition | null>(null); const [closedAt, setClosedAt] = useState(today());
-  const [deleting, setDeleting] = useState<OptionPosition | null>(null); const firstFieldRef = useRef<HTMLInputElement>(null);
-  const totalCost = useMemo(() => {
-    try { return form.premiumPerShare && form.contracts ? calculateOptionTotalCost(form.premiumPerShare, form.contracts) : 0; } catch { return 0; }
-  }, [form.premiumPerShare, form.contracts]);
-  const liveDte = form.expirationDate ? calculateDte(form.expirationDate) : 0;
-  const money = (value: number | string, visible = showBalances) => formatPortfolioMoney(value, currency, usdThbRate, visible);
+function emptyOptionForm(): TransactionFormState {
+  return {
+    type: 'buy_to_open',
+    symbol: '',
+    quantity: '1',
+    price: '',
+    amount: '',
+    fee: '0',
+    originalCurrency: 'USD',
+    fxRateAtTransaction: '',
+    occurredAt: localNow(),
+    broker: '',
+    note: '',
+    underlyingSymbol: '',
+    contractSymbol: '',
+    optionKind: 'call',
+    optionSide: 'long',
+    strikePrice: '',
+    expirationDate: '',
+    multiplier: '100',
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
 
-  function change(name: keyof OptionInput, value: string) { setForm((current) => ({ ...current, [name]: value })); setErrors((current) => ({ ...current, [name]: '' })); }
-  function create() { setEditing(null); setErrors({}); setForm(emptyForm()); setFormOpen(true); }
-  function edit(position: OptionPosition) {
-    setEditing(position); setErrors({}); setForm({ underlyingSymbol: position.underlyingSymbol, optionKind: position.optionKind, contracts: position.contracts,
-      premiumPerShare: position.premiumPerShare, strikePrice: position.strikePrice, openedAt: position.openedAt, expirationDate: position.expirationDate,
-      impliedVolatility: position.impliedVolatility ?? '', delta: position.delta ?? '', theta: position.theta ?? '', note: position.note ?? '', status: position.status, idempotencyKey: position.idempotencyKey }); setFormOpen(true);
+function editDateTime(value: string) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16) : `${value}T12:00`;
+}
+
+function displayTime(value: string) {
+  const parsed = Date.parse(value);
+  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' })
+    .format(Number.isFinite(parsed) ? new Date(parsed) : new Date(`${value}T12:00:00+07:00`));
+}
+
+function quoteNumber(value: number | null, digits = 2) {
+  return value === null ? '—' : value.toFixed(digits);
+}
+
+export function OptionsSection({ positions, targets, currency, usdThbRate, showBalances, isOnline }: {
+  positions: OptionPositionSummary[];
+  targets: OptionTarget[];
+  currency: SupportedCurrency;
+  usdThbRate: string | null;
+  showBalances: boolean;
+  isOnline: boolean;
+}) {
+  const router = useRouter();
+  const { addToast } = useToast();
+  const [pending, startTransition] = useTransition();
+  const [expanded, setExpanded] = useState<string | null>(positions.find((item) => item.status === 'open')?.key ?? null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<PortfolioTransaction | null>(null);
+  const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
+  const [form, setForm] = useState<TransactionFormState>(emptyOptionForm);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [targetPosition, setTargetPosition] = useState<OptionPositionSummary | null>(null);
+  const [targetDeleting, setTargetDeleting] = useState<OptionTarget | null>(null);
+  const [targetMode, setTargetMode] = useState<OptionTargetMode>('premium');
+  const [targetValue, setTargetValue] = useState('');
+  const [targetFee, setTargetFee] = useState('0');
+  const [targetError, setTargetError] = useState('');
+  const money = (value: number | null) => value === null ? '—' : formatPortfolioMoney(value, currency, usdThbRate, showBalances);
+  const signed = (value: number | null) => value === null ? '—' : signedMoney(value, currency, usdThbRate, showBalances);
+
+  function change(name: keyof TransactionFormState, value: string) {
+    setForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: '' }));
   }
+
+  function openCreate(position?: OptionPositionSummary, type?: PortfolioTransactionType) {
+    setEditing(null);
+    setErrors({});
+    const base = emptyOptionForm();
+    if (position) {
+      const closeType = type ?? (position.side === 'long' ? 'sell_to_close' : 'buy_to_close');
+      setForm({
+        ...base,
+        type: closeType,
+        quantity: String(position.contracts),
+        price: closeType === 'exercise' || closeType === 'assignment' || closeType === 'expired' ? '0' : '',
+        underlyingSymbol: position.underlyingSymbol,
+        contractSymbol: position.contractSymbol,
+        optionKind: position.optionKind,
+        optionSide: position.side,
+        strikePrice: String(position.strikePrice),
+        expirationDate: position.expirationDate,
+        multiplier: String(position.multiplier),
+      });
+    } else {
+      setForm(base);
+    }
+    setFormOpen(true);
+  }
+
+  function openEdit(transaction: PortfolioTransaction) {
+    setEditing(transaction);
+    setErrors({});
+    setForm({
+      ...emptyOptionForm(),
+      type: transaction.type,
+      quantity: transaction.quantity ?? '',
+      price: transaction.price ?? '0',
+      fee: transaction.fee ?? '0',
+      originalCurrency: transaction.originalCurrency ?? 'USD',
+      fxRateAtTransaction: transaction.fxRateAtTransaction ?? '',
+      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt),
+      broker: transaction.broker ?? '',
+      note: transaction.note ?? '',
+      underlyingSymbol: transaction.underlyingSymbol ?? '',
+      contractSymbol: transaction.contractSymbol ?? '',
+      optionKind: transaction.optionKind ?? 'call',
+      optionSide: transaction.optionSide ?? 'long',
+      strikePrice: transaction.strikePrice ?? '',
+      expirationDate: transaction.expirationDate ?? '',
+      multiplier: transaction.multiplier ?? '100',
+      idempotencyKey: transaction.idempotencyKey ?? crypto.randomUUID(),
+    });
+    setFormOpen(true);
+  }
+
   function submit(event: FormEvent) {
-    event.preventDefault(); if (pending || !isOnline) { if (!isOnline) addToast({ title: 'บันทึกไม่ได้ขณะออฟไลน์', type: 'error' }); return; }
+    event.preventDefault();
+    if (pending || !isOnline) return;
     startTransition(async () => {
-      const result = editing ? await updateOptionPositionAction(editing.id, form) : await createOptionPositionAction(form);
-      if (!result.ok) { setErrors(result.fields ?? {}); addToast({ title: 'บันทึกสัญญาไม่สำเร็จ', message: result.message, type: 'error' }); return; }
-      setFormOpen(false); addToast({ title: editing ? 'แก้ไขสัญญาแล้ว' : 'บันทึกสัญญาย้อนหลังแล้ว', type: 'success' }); router.refresh();
+      const result = editing
+        ? await updatePortfolioTransactionAction(editing.id, form)
+        : await createPortfolioTransactionAction(form);
+      if (!result.ok) {
+        setErrors(result.fields ?? {});
+        addToast({ title: 'บันทึกออปชันไม่สำเร็จ', message: result.message, type: 'error' });
+        return;
+      }
+      setFormOpen(false);
+      addToast({ title: editing ? 'แก้ไขรายการออปชันแล้ว' : 'เพิ่มรายการออปชันแล้ว', message: 'เงินสด ต้นทุน และ P&L คำนวณใหม่จาก Ledger', type: 'success' });
+      router.refresh();
     });
   }
-  function confirmClose() {
-    if (!closing || pending || !isOnline) return; startTransition(async () => {
-      const result = await closeOptionPositionAction(closing.id, closedAt);
-      if (!result.ok) { addToast({ title: 'ปิดสัญญาไม่สำเร็จ', message: result.message, type: 'error' }); return; }
-      setClosing(null); addToast({ title: 'บันทึกการปิดสัญญาแล้ว', type: 'success' }); router.refresh();
-    });
-  }
+
   function confirmDelete() {
-    if (!deleting || pending || !isOnline) return; startTransition(async () => {
-      const result = await deleteOptionPositionAction(deleting.id);
-      if (!result.ok) { addToast({ title: 'ลบสัญญาไม่สำเร็จ', message: result.message, type: 'error' }); return; }
-      setDeleting(null); addToast({ title: 'ลบข้อมูลสัญญาแล้ว', type: 'success' }); router.refresh();
+    if (!deleting || pending || !isOnline) return;
+    startTransition(async () => {
+      const result = await deletePortfolioTransactionAction(deleting.id);
+      if (!result.ok) {
+        addToast({ title: 'ลบรายการไม่สำเร็จ', message: result.message, type: 'error' });
+        return;
+      }
+      setDeleting(null);
+      addToast({ title: 'ลบรายการออปชันแล้ว', type: 'success' });
+      router.refresh();
+    });
+  }
+
+  function openTarget(position: OptionPositionSummary) {
+    const target = targets.find((item) => item.contractSymbol === position.contractSymbol);
+    setTargetPosition(position);
+    setTargetMode(target?.mode ?? 'premium');
+    setTargetValue(target ? String(target.targetValue) : '');
+    setTargetFee(target ? String(target.estimatedFee) : '0');
+    setTargetError('');
+  }
+
+  const targetPreview = useMemo(() => {
+    if (!targetPosition || targetValue === '' || !Number.isFinite(Number(targetValue)) || !Number.isFinite(Number(targetFee || 0))) return null;
+    try {
+      return calculateOptionTarget(targetPosition, targetMode, Number(targetValue), Number(targetFee || 0));
+    } catch {
+      return null;
+    }
+  }, [targetFee, targetMode, targetPosition, targetValue]);
+
+  function submitTarget(event: FormEvent) {
+    event.preventDefault();
+    if (!targetPosition || !targetPreview || pending || !isOnline) {
+      setTargetError('กรุณากรอกเป้าหมายที่คำนวณได้');
+      return;
+    }
+    const existing = targets.find((item) => item.contractSymbol === targetPosition.contractSymbol);
+    startTransition(async () => {
+      const result = await upsertOptionTargetAction({
+        id: existing?.id,
+        contractSymbol: targetPosition.contractSymbol,
+        mode: targetMode,
+        targetValue: Number(targetValue),
+        estimatedFee: Number(targetFee || 0),
+      });
+      if (!result.ok) {
+        setTargetError(result.message);
+        return;
+      }
+      setTargetPosition(null);
+      addToast({ title: 'บันทึกเป้าหมายขายแล้ว', message: 'ระบบติดตามในแอปเมื่อเปิดหรือรีเฟรชหน้าพอร์ต และไม่ส่งคำสั่งซื้อขาย', type: 'success' });
+      router.refresh();
+    });
+  }
+
+  function confirmTargetDelete() {
+    if (!targetDeleting || pending || !isOnline) return;
+    startTransition(async () => {
+      const result = await deleteOptionTargetAction(targetDeleting.id);
+      if (!result.ok) {
+        addToast({ title: 'ลบเป้าหมายไม่สำเร็จ', message: result.message, type: 'error' });
+        return;
+      }
+      setTargetDeleting(null);
+      addToast({ title: 'ลบเป้าหมายขายแล้ว', type: 'success' });
+      router.refresh();
     });
   }
 
   return <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
-    <div className="flex flex-col gap-4 border-b border-slate-800 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-      <div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><ScrollText aria-hidden="true" className="shrink-0 text-[#D4FF00]" size={20} /><h3 className="min-w-0 font-bold text-white">สัญญาออปชันที่ถืออยู่</h3></div><p className="mt-1 text-xs text-slate-500">รายการจำลองที่คุณบันทึกย้อนหลัง</p></div>
-      <Button disabled={!isOnline} onClick={create}><Plus size={17} /> บันทึกสัญญาย้อนหลัง</Button>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
+      <div>
+        <h3 className="font-bold text-white">สัญญาออปชันที่ถืออยู่</h3>
+        <p className="mt-1 text-xs text-slate-500">ทุก Action เป็นรายการใน Transaction Ledger และไม่ส่ง Order ไปโบรกเกอร์</p>
+      </div>
+      <Button size="sm" disabled={!isOnline} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
     </div>
-    <div className="flex gap-3 border-b border-amber-500/20 bg-amber-500/10 p-4 text-xs text-amber-100"><AlertTriangle size={18} className="shrink-0 text-amber-300" /><p>การเพิ่ม แก้ไข หรือ “ปิดสัญญา” เป็นการบันทึกข้อมูลย้อนหลังเท่านั้น ไม่มีการส่งคำสั่งไปตลาดหรือโบรกเกอร์</p></div>
-    {positions.length === 0 ? <div className="p-10 text-center"><p className="font-semibold text-white">ยังไม่มีสัญญาออปชันที่บันทึก</p><p className="mt-1 text-sm text-slate-400">เพิ่มข้อมูลสัญญาที่เกิดขึ้นแล้วเพื่อดู DTE และต้นทุนรวม</p></div> :
-      <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-xs"><thead><tr className="border-b border-slate-800 text-slate-500">
-        {['หุ้นแม่','ประเภท','Strike','สัญญา','Premium','วันเปิด','วันหมดอายุ','DTE','IV','Delta','Theta','ต้นทุนรวม','สถานะ','จัดการ'].map((label, index) => <th key={label} className={`px-3 py-3 ${index > 1 && index < 13 ? 'text-right' : ''}`}>{label}</th>)}
-      </tr></thead><tbody>{positions.map((position) => {
-        const status = calculateOptionStatus(position); const dte = Math.max(0, calculateDte(position.expirationDate)); const call = position.optionKind === 'call';
-        return <tr key={position.id} className="border-b border-slate-800/60 last:border-0"><td className="px-3 py-4 font-bold text-white">{position.underlyingSymbol}</td>
-          <td className="px-3 py-4"><span className={`rounded-md px-2 py-1 font-bold ${call ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>BUY {call ? 'CALL' : 'PUT'}</span></td>
-          <td className="px-3 py-4 text-right font-mono">{money(position.strikePrice)}</td><td className="px-3 py-4 text-right font-mono">{showBalances ? position.contracts : '••••'}</td><td className="px-3 py-4 text-right font-mono">{money(position.premiumPerShare)}</td>
-          <td className="px-3 py-4 text-right">{date(position.openedAt)}</td><td className="px-3 py-4 text-right">{date(position.expirationDate)}</td><td className="px-3 py-4 text-right font-mono">{dte}</td>
-          <td className="px-3 py-4 text-right font-mono">{position.impliedVolatility ? `${position.impliedVolatility}%` : '—'}</td><td className="px-3 py-4 text-right font-mono">{position.delta ?? '—'}</td><td className="px-3 py-4 text-right font-mono">{position.theta ?? '—'}</td>
-          <td className="px-3 py-4 text-right font-mono font-semibold text-white">{money(calculateOptionTotalCost(position.premiumPerShare, position.contracts))}<span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">estimated value</span></td><td className="px-3 py-4 text-right"><StatusBadge status={status} /></td>
-          <td className="px-3 py-2"><div className="flex justify-end gap-1"><button disabled={!isOnline} aria-label={`แก้ไข ${position.underlyingSymbol}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40" onClick={() => edit(position)}><Edit3 size={16} /></button>
-            {position.status === 'open' && <button disabled={!isOnline} className="min-h-11 rounded-lg px-2 text-xs text-[#D4FF00] hover:bg-[#D4FF00]/10 disabled:opacity-40" onClick={() => { setClosing(position); setClosedAt(today()); }}>ปิดสัญญา</button>}
-            <button disabled={!isOnline} aria-label={`ลบ ${position.underlyingSymbol}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-red-400 disabled:opacity-40" onClick={() => setDeleting(position)}><Trash2 size={16} /></button></div></td>
-        </tr>;
-      })}</tbody></table></div>}
+    <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+      ราคาและมูลค่าปิดเป็นการประเมินจากข้อมูลตลาดจริง ไม่ใช่ราคาที่รับประกัน: Long ใช้ Bid สำหรับประมาณการปิด และ Short ใช้ Ask สำหรับประมาณการซื้อคืน
+    </div>
 
-    <Modal isOpen={formOpen} onClose={() => !pending && setFormOpen(false)} initialFocusRef={firstFieldRef} title={editing ? 'แก้ไขสัญญาออปชันย้อนหลัง' : 'บันทึกสัญญาออปชันย้อนหลัง'} className="max-w-2xl scroll-pb-40">
-      <form onSubmit={submit} className="space-y-4"><p className="rounded-lg bg-slate-950/50 p-3 text-xs text-slate-400">ไม่มีการส่งคำสั่งไปตลาดหรือโบรกเกอร์ ข้อมูลนี้ใช้ในพอร์ตจำลองเท่านั้น</p>
-        <SymbolPreview ref={firstFieldRef} label="ชื่อหุ้นแม่ / Symbol" value={form.underlyingSymbol} onChange={(value) => change('underlyingSymbol', value)} error={errors.underlyingSymbol} />
-        <div className="grid gap-4 sm:grid-cols-2"><Field label="ประเภท" error={errors.optionKind}><select value={form.optionKind} onChange={(event) => change('optionKind', event.target.value)} className={`form-input ${form.optionKind === 'call' ? 'border-emerald-500/60' : 'border-red-500/60'}`}><option value="call">BUY CALL</option><option value="put">BUY PUT</option></select></Field>
-          <Field label="จำนวนสัญญา" error={errors.contracts}><input inputMode="numeric" value={form.contracts} onChange={(event) => /^\d*$/.test(event.target.value) && change('contracts', event.target.value)} className="form-input" /></Field>
-          <Field label="Premium ต่อหุ้น (USD)" error={errors.premiumPerShare} helper="ระบบคูณ 100 ต่อสัญญาให้อัตโนมัติ"><DecimalInput value={form.premiumPerShare} onChange={(value) => change('premiumPerShare', value)} /></Field>
-          <Field label="Strike Price (USD)" error={errors.strikePrice}><DecimalInput value={form.strikePrice} onChange={(value) => change('strikePrice', value)} /></Field>
-          <Field label="วันเปิดสัญญา" error={errors.openedAt}><input type="date" max={today()} value={form.openedAt} onChange={(event) => change('openedAt', event.target.value)} className="form-input" /></Field>
-          <Field label="Expiration Date" error={errors.expirationDate} helper={`DTE อัตโนมัติ: ${liveDte}`}><input type="date" min={form.openedAt} value={form.expirationDate} onChange={(event) => change('expirationDate', event.target.value)} className="form-input" /></Field>
-          <Field label="IV%" error={errors.impliedVolatility}><DecimalInput value={form.impliedVolatility ?? ''} onChange={(value) => change('impliedVolatility', value)} /></Field>
-          <Field label="Delta" error={errors.delta}><DecimalInput signed value={form.delta ?? ''} onChange={(value) => change('delta', value)} /></Field>
-          <Field label="Theta" error={errors.theta}><DecimalInput signed value={form.theta ?? ''} onChange={(value) => change('theta', value)} /></Field>
-          <Field label="สถานะที่บันทึก" error={errors.status}><select value={form.status} onChange={(event) => change('status', event.target.value)} className="form-input"><option value="open">Open</option>{editing?.status === 'closed' && <option value="closed">Closed</option>}<option value="cancelled">Cancelled</option></select></Field></div>
-        <Field label="หมายเหตุ" error={errors.note}><textarea rows={3} maxLength={500} value={form.note ?? ''} onChange={(event) => change('note', event.target.value)} className="form-input h-auto py-3" /></Field>
-        <div className={`rounded-xl border p-4 ${form.optionKind === 'call' ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'}`}><p className="text-xs text-slate-400">Live Total Cost (USD)</p><p className="mt-1 font-mono text-2xl font-bold text-white">{formatPortfolioMoney(totalCost, 'USD', null, true)}</p><p className="text-xs text-slate-500">Premium × {form.contracts || 0} สัญญา × 100</p></div>
-        <div className="sticky bottom-0 flex gap-2 bg-[#151B28] pb-[max(.25rem,env(safe-area-inset-bottom))] pt-2"><Button type="button" variant="outline" className="flex-1" disabled={pending} onClick={() => setFormOpen(false)}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending || !isOnline}>{pending ? 'กำลังบันทึก…' : isOnline ? 'ยืนยันการบันทึก' : 'ออฟไลน์'}</Button></div>
+    {positions.length === 0
+      ? <div className="p-8 text-center"><p className="font-semibold text-white">ยังไม่มีรายการออปชันใน Ledger</p><Button className="mt-4" disabled={!isOnline} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button></div>
+      : <>
+        <div className="hidden overflow-x-auto md:block">
+          <table className="w-full min-w-[1180px] text-left text-xs" data-testid="options-desktop-table">
+            <thead><tr className="border-b border-slate-800 text-slate-500">
+              {['สัญญา', 'ฝั่ง', 'จำนวน', 'Avg premium', 'ต้นทุนคงเหลือ', 'Bid / Ask / Mark', 'มูลค่าปัจจุบัน', 'Today P&L', 'Unrealized P&L', 'สถานะ'].map((label, index) =>
+                <th key={label} className={`px-3 py-3 ${index > 1 ? 'text-right' : ''}`}>{label}</th>)}
+            </tr></thead>
+            <tbody>{positions.map((position) => <OptionDesktopRows
+              key={position.key}
+              position={position}
+              target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
+              expanded={expanded === position.key}
+              showBalances={showBalances}
+              money={money}
+              signed={signed}
+              onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
+              onAction={(type) => openCreate(position, type)}
+              onEdit={openEdit}
+              onDelete={setDeleting}
+              onTarget={() => openTarget(position)}
+              onDeleteTarget={setTargetDeleting}
+            />)}</tbody>
+          </table>
+        </div>
+        <div className="divide-y divide-slate-800 md:hidden" data-testid="options-mobile-cards">
+          {positions.map((position) => <OptionMobileCard
+            key={position.key}
+            position={position}
+            target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
+            expanded={expanded === position.key}
+            showBalances={showBalances}
+            money={money}
+            signed={signed}
+            onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
+            onAction={(type) => openCreate(position, type)}
+            onEdit={openEdit}
+            onDelete={setDeleting}
+            onTarget={() => openTarget(position)}
+            onDeleteTarget={setTargetDeleting}
+          />)}
+        </div>
+      </>}
+
+    <OptionTransactionModal open={formOpen} editing={Boolean(editing)} form={form} errors={errors} pending={pending || !isOnline} onChange={change} onClose={() => !pending && setFormOpen(false)} onSubmit={submit} />
+    <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบ ${deleting ? transactionLabels[deleting.type] : 'รายการออปชัน'} หรือไม่`}>
+      <p className="text-sm text-slate-300">การลบจะคำนวณเงินสด จำนวนสัญญา ต้นทุน และ P&amp;L ใหม่จาก Ledger ทั้งหมด และอาจถูกปฏิเสธหากทำให้รายการปิดภายหลังเกินจำนวนที่มี</p>
+      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmDelete}>ยืนยันการลบ</Button></div>
+    </Modal>
+    <Modal isOpen={Boolean(targetPosition)} onClose={() => !pending && setTargetPosition(null)} title={`เป้าหมายขาย ${targetPosition?.contractSymbol ?? ''}`}>
+      <form className="space-y-4" onSubmit={submitTarget}>
+        <Field label="ตั้งเป้าหมายจาก">
+          <select className="form-input" value={targetMode} onChange={(event) => setTargetMode(event.target.value as OptionTargetMode)}>
+            <option value="premium">Target premium</option>
+            <option value="profit_percent">Target profit %</option>
+          </select>
+        </Field>
+        <Field label={targetMode === 'premium' ? 'Premium เป้าหมายต่อหุ้น' : 'กำไรเป้าหมาย (%)'}>
+          <DecimalInput value={targetValue} onChange={setTargetValue} />
+        </Field>
+        <Field label="ค่าธรรมเนียมตอนปิดโดยประมาณ (USD)">
+          <DecimalInput value={targetFee} onChange={setTargetFee} />
+        </Field>
+        {targetPreview && <dl className="grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs">
+          <TargetMetric label="Target premium" value={`$${targetPreview.targetPremium.toFixed(2)}`} />
+          <TargetMetric label={targetPosition?.side === 'long' ? 'Estimated proceeds' : 'Estimated close cost'} value={money(Math.abs(targetPreview.estimatedProceeds))} />
+          <TargetMetric label="Estimated P&L หลัง fee" value={signed(targetPreview.estimatedProfit)} tone={gainColor(targetPreview.estimatedProfit)} />
+          <TargetMetric label="ระยะจาก Mark ปัจจุบัน" value={targetPreview.distanceFromCurrent === null ? '—' : `${targetPreview.distanceFromCurrent >= 0 ? '+' : ''}${targetPreview.distanceFromCurrent.toFixed(2)} (${targetPreview.distancePercent?.toFixed(2)}%)`} />
+        </dl>}
+        {targetError && <p role="alert" className="text-xs text-red-400">{targetError}</p>}
+        <p className="text-xs text-slate-500">ติดตามในแอปเมื่อเปิดหรือรีเฟรชพอร์ต ไม่รับประกัน Push Notification และไม่ส่ง Order</p>
+        <div className="flex gap-2"><Button type="button" variant="outline" className="flex-1" onClick={() => setTargetPosition(null)}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending || !targetPreview}>บันทึกเป้าหมาย</Button></div>
       </form>
     </Modal>
-    <Modal isOpen={Boolean(closing)} onClose={() => !pending && setClosing(null)} title={`บันทึกปิดสัญญา ${closing?.underlyingSymbol ?? ''}`}><p className="text-sm text-slate-300">เป็นการบันทึกย้อนหลังเท่านั้น ไม่มีการส่งคำสั่งไปตลาดหรือโบรกเกอร์</p><Field label="วันที่ปิดสัญญา"><input type="date" min={closing?.openedAt} max={today()} value={closedAt} onChange={(event) => setClosedAt(event.target.value)} className="form-input mt-4" /></Field><div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setClosing(null)}>ยกเลิก</Button><Button className="flex-1" disabled={pending || !isOnline} onClick={confirmClose}>บันทึกการปิด</Button></div></Modal>
-    <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบสัญญา ${deleting?.underlyingSymbol ?? ''} หรือไม่`}><p className="text-sm text-slate-300">ข้อมูลสัญญา {deleting?.optionKind.toUpperCase()} และต้นทุนรวมจะถูกนำออกจากกระเป๋าพอร์ตจำลอง การดำเนินการนี้ไม่ส่งผลต่อตลาดหรือโบรกเกอร์</p><div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending} onClick={confirmDelete}>ยืนยันการลบ</Button></div></Modal>
+    <Modal isOpen={Boolean(targetDeleting)} onClose={() => !pending && setTargetDeleting(null)} title="ลบเป้าหมายขายหรือไม่">
+      <p className="text-sm text-slate-300">ระบบจะหยุดติดตามเป้าหมายของ {targetDeleting?.contractSymbol}</p>
+      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setTargetDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmTargetDelete}>ยืนยันการลบ</Button></div>
+    </Modal>
   </section>;
 }
 
-function StatusBadge({ status }: { status: OptionStatus }) {
-  const style = status === 'open' ? 'bg-emerald-500/15 text-emerald-400' : status === 'expired' ? 'bg-amber-500/15 text-amber-300' : status === 'closed' ? 'bg-blue-500/15 text-blue-300' : 'bg-slate-700 text-slate-300';
-  return <span className={`rounded-full px-2 py-1 font-semibold ${style}`}>{statusLabels[status]}</span>;
+interface OptionViewProps {
+  position: OptionPositionSummary;
+  target?: OptionTarget;
+  expanded: boolean;
+  showBalances: boolean;
+  money: (value: number | null) => string;
+  signed: (value: number | null) => string;
+  onToggle: () => void;
+  onAction: (type: PortfolioTransactionType) => void;
+  onEdit: (transaction: PortfolioTransaction) => void;
+  onDelete: (transaction: PortfolioTransaction) => void;
+  onTarget: () => void;
+  onDeleteTarget: (target: OptionTarget) => void;
+}
+
+function OptionDesktopRows(props: OptionViewProps) {
+  const { position, expanded, showBalances, money, signed, onToggle } = props;
+  return <>
+    <tr className="border-b border-slate-800/60 hover:bg-slate-800/30">
+      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><span className="block max-w-48 truncate font-mono text-[10px] text-slate-500" title={position.contractSymbol}>{position.contractSymbol}</span></span></button></td>
+      <td className="px-3 py-3"><SideBadge side={position.side} /></td>
+      <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : '••'}</td>
+      <td className="px-3 py-3 text-right font-mono">${position.averagePremium.toFixed(2)}</td>
+      <td className="px-3 py-3 text-right font-mono">{money(position.remainingCost)}</td>
+      <td className="px-3 py-3 text-right font-mono">{quoteNumber(position.bid)} / {quoteNumber(position.ask)} / {quoteNumber(position.mark)}<QuoteMeta position={position} /></td>
+      <td className="px-3 py-3 text-right font-mono">{money(position.marketValue)}</td>
+      <td className={`px-3 py-3 text-right font-mono ${position.todayChange === null ? 'text-slate-400' : gainColor(position.todayChange)}`}>{signed(position.todayChange)}</td>
+      <td className={`px-3 py-3 text-right font-mono ${position.unrealizedGain === null ? 'text-slate-400' : gainColor(position.unrealizedGain)}`}>{signed(position.unrealizedGain)}<span className="block text-[10px]">{position.unrealizedGainPercent === null ? '—' : signedPercent(position.unrealizedGainPercent, showBalances)}</span></td>
+      <td className="px-3 py-3 text-right"><StatusBadge position={position} /></td>
+    </tr>
+    {expanded && <tr className="border-b border-slate-800"><td colSpan={10} className="bg-slate-950/35 p-4"><OptionDetails {...props} /></td></tr>}
+  </>;
+}
+
+function OptionMobileCard(props: OptionViewProps) {
+  const { position, expanded, showBalances, money, signed, onToggle } = props;
+  return <article className="min-w-0 p-4">
+    <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-start justify-between gap-3 text-left">
+      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{position.underlyingSymbol} {position.optionKind.toUpperCase()} ${position.strikePrice}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span><span className="mt-1 block break-all font-mono text-[10px] text-slate-500">{position.contractSymbol}</span></span>
+      {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
+    </button>
+    <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
+      <OptionMetric label="จำนวน" value={showBalances ? `${position.contracts} สัญญา` : '••'} />
+      <OptionMetric label="Avg premium" value={`$${position.averagePremium.toFixed(2)}`} />
+      <OptionMetric label="ต้นทุนคงเหลือ" value={money(position.remainingCost)} />
+      <OptionMetric label="มูลค่าปัจจุบัน" value={money(position.marketValue)} />
+      <OptionMetric label="Today P&L" value={signed(position.todayChange)} tone={position.todayChange === null ? 'text-slate-400' : gainColor(position.todayChange)} />
+      <OptionMetric label="Unrealized P&L" value={`${signed(position.unrealizedGain)} ${position.unrealizedGainPercent === null ? '' : `(${signedPercent(position.unrealizedGainPercent, showBalances)})`}`} tone={position.unrealizedGain === null ? 'text-slate-400' : gainColor(position.unrealizedGain)} />
+      <div className="col-span-2"><dt className="text-xs text-slate-500">Bid / Ask / Mark</dt><dd className="mt-1 font-mono text-white">{quoteNumber(position.bid)} / {quoteNumber(position.ask)} / {quoteNumber(position.mark)}</dd><QuoteMeta position={position} /></div>
+    </dl>
+    {expanded && <div className="mt-4 border-t border-slate-800 pt-4"><OptionDetails {...props} /></div>}
+  </article>;
+}
+
+function OptionDetails({ position, target, money, signed, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionViewProps) {
+  const actionTypes: PortfolioTransactionType[] = position.side === 'long'
+    ? ['buy_to_open', 'sell_to_close', 'exercise', 'expired']
+    : ['sell_to_open', 'buy_to_close', 'assignment', 'expired'];
+  return <div className="min-w-0 space-y-5">
+    {position.status === 'open' && <div className="flex flex-wrap gap-2">
+      {actionTypes.map((type) => <Button key={type} size="sm" variant={type === 'buy_to_open' || type === 'sell_to_open' ? 'default' : 'outline'} onClick={() => onAction(type)}>{transactionLabels[type]}</Button>)}
+    </div>}
+    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+      <OptionMetric label="ราคาปิดโดยประมาณ" value={position.estimatedClosePrice === null ? '—' : `$${position.estimatedClosePrice.toFixed(2)}`} />
+      <OptionMetric label="มูลค่าปิดโดยประมาณ" value={money(position.estimatedCloseValue)} />
+      <OptionMetric label="Underlying" value={position.underlyingPrice === null ? '—' : `$${position.underlyingPrice.toFixed(2)}`} />
+      <OptionMetric label="Breakeven" value={`$${position.breakeven.toFixed(2)}`} />
+      <OptionMetric label="DTE" value={String(position.dte)} />
+      <OptionMetric label="IV" value={position.impliedVolatility === null ? '—' : `${(position.impliedVolatility * 100).toFixed(2)}%`} />
+      <OptionMetric label="Delta" value={quoteNumber(position.delta, 4)} />
+      <OptionMetric label="Theta" value={quoteNumber(position.theta, 4)} />
+      <OptionMetric label="Realized P&L" value={signed(position.realizedGain)} tone={gainColor(position.realizedGain)} />
+    </dl>
+    <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h4 className="flex items-center gap-2 text-sm font-bold text-white"><Target size={16} className="text-[#D4FF00]" /> เป้าหมายขาย</h4><p className="mt-1 text-xs text-slate-500">ติดตามในแอปเท่านั้น ไม่ส่ง Order</p></div>
+        {position.status === 'open' && <Button size="sm" variant="outline" onClick={onTarget}>{target ? 'แก้ไขเป้าหมาย' : 'เพิ่มเป้าหมาย'}</Button>}
+      </div>
+      {target ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-900/60 p-3 text-xs">
+        <p><strong className="text-slate-200">{target.mode === 'premium' ? `Target premium $${target.targetValue.toFixed(2)}` : `Target profit ${target.targetValue.toFixed(2)}%`}</strong><span className="mt-1 block text-slate-500">Premium ที่ใช้ติดตาม ${target.targetPremium.toFixed(2)} · fee ${money(target.estimatedFee)}{target.triggeredAt ? ` · ถึงเป้าหมาย ${displayTime(target.triggeredAt)}` : ''}</span></p>
+        <button type="button" aria-label="ลบเป้าหมายขาย" onClick={() => onDeleteTarget(target)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
+      </div> : <p className="mt-3 text-xs text-slate-500">ยังไม่ได้ตั้งเป้าหมาย</p>}
+    </section>
+    <section>
+      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Transaction history</h4>
+      <div className="mt-2 divide-y divide-slate-800">{position.transactions.map((transaction) => <div key={transaction.id} className="flex min-w-0 items-center gap-2 py-2 text-xs">
+        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{displayTime(transaction.occurredAtTime ?? transaction.occurredAt)} · {transaction.quantity} × ${Number(transaction.normalizedPriceUsd ?? transaction.price ?? 0).toFixed(2)} · fee {money(Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0))}</span></span>
+        <button type="button" aria-label={`แก้ไข ${transactionLabels[transaction.type]}`} onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"><Edit3 size={16} /></button>
+        <button type="button" aria-label={`ลบ ${transactionLabels[transaction.type]}`} onClick={() => onDelete(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
+      </div>)}</div>
+    </section>
+  </div>;
+}
+
+function OptionTransactionModal({ open, editing, form, errors, pending, onChange, onClose, onSubmit }: {
+  open: boolean;
+  editing: boolean;
+  form: TransactionFormState;
+  errors: Record<string, string>;
+  pending: boolean;
+  onChange: (name: keyof TransactionFormState, value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  const firstRef = useRef<HTMLSelectElement>(null);
+  const noPremium = form.type === 'exercise' || form.type === 'assignment' || form.type === 'expired';
+  return <Modal isOpen={open} onClose={onClose} initialFocusRef={firstRef} title={editing ? 'แก้ไขรายการออปชัน' : 'เพิ่มรายการออปชัน'} className="max-w-2xl">
+    <form className="space-y-4" onSubmit={onSubmit}>
+      <p className="rounded-lg bg-slate-950/50 p-3 text-xs text-slate-400">บันทึกรายการที่เกิดขึ้นแล้วเท่านั้น ไม่มีการส่งคำสั่งซื้อขายไปยังโบรกเกอร์</p>
+      <Field label="Action" error={errors.type}><select ref={firstRef} className="form-input" value={form.type} onChange={(event) => onChange('type', event.target.value)}>{optionActions.map((type) => <option key={type} value={type}>{transactionLabels[type]}</option>)}</select></Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <SymbolPreview label="หุ้นแม่ (Underlying)" value={form.underlyingSymbol} onChange={(value) => onChange('underlyingSymbol', value)} error={errors.underlyingSymbol} />
+        <Field label="Contract symbol" error={errors.contractSymbol}><input className="form-input font-mono uppercase" value={form.contractSymbol} onChange={(event) => onChange('contractSymbol', event.target.value.toUpperCase())} maxLength={80} /></Field>
+        <Field label="ประเภท" error={errors.optionKind}><select className="form-input" value={form.optionKind} onChange={(event) => onChange('optionKind', event.target.value)}><option value="call">Call</option><option value="put">Put</option></select></Field>
+        {form.type === 'expired' && <Field label="ฝั่งสัญญา" error={errors.optionSide}><select className="form-input" value={form.optionSide} onChange={(event) => onChange('optionSide', event.target.value)}><option value="long">Long</option><option value="short">Short</option></select></Field>}
+        <Field label="Strike" error={errors.strikePrice}><DecimalInput value={form.strikePrice} onChange={(value) => onChange('strikePrice', value)} /></Field>
+        <Field label="วันหมดอายุ" error={errors.expirationDate}><input type="date" className="form-input" value={form.expirationDate} onChange={(event) => onChange('expirationDate', event.target.value)} /></Field>
+        <Field label="จำนวนสัญญา" error={errors.quantity}><DecimalInput value={form.quantity} onChange={(value) => onChange('quantity', value)} /></Field>
+        <Field label="Multiplier" error={errors.multiplier}><DecimalInput value={form.multiplier} onChange={(value) => onChange('multiplier', value)} /></Field>
+        <Field label={`Premium ต่อหุ้น (${form.originalCurrency})`} error={errors.price} helper={noPremium ? 'Exercise / Assignment / Expired ใช้ 0' : undefined}><DecimalInput value={form.price} onChange={(value) => onChange('price', value)} /></Field>
+        <Field label={`ค่าธรรมเนียม (${form.originalCurrency})`} error={errors.fee}><DecimalInput value={form.fee} onChange={(value) => onChange('fee', value)} /></Field>
+        <Field label="สกุลเงินต้นฉบับ" error={errors.originalCurrency}><select className="form-input" value={form.originalCurrency} onChange={(event) => onChange('originalCurrency', event.target.value)}><option value="USD">USD ($)</option><option value="THB">THB (฿)</option></select></Field>
+        {form.originalCurrency === 'THB' && <Field label="USD/THB ณ เวลารายการ" error={errors.fxRateAtTransaction}><DecimalInput value={form.fxRateAtTransaction} onChange={(value) => onChange('fxRateAtTransaction', value)} /></Field>}
+        <Field label="วันและเวลารายการ" error={errors.occurredAt}><input type="datetime-local" className="form-input" value={form.occurredAt.slice(0, 16)} max={localNow()} onChange={(event) => onChange('occurredAt', event.target.value)} /></Field>
+        <Field label="โบรกเกอร์" error={errors.broker}><input className="form-input" value={form.broker} maxLength={100} onChange={(event) => onChange('broker', event.target.value)} /></Field>
+      </div>
+      <Field label="หมายเหตุ" error={errors.note}><textarea className="form-input h-auto py-3" rows={3} maxLength={500} value={form.note} onChange={(event) => onChange('note', event.target.value)} /></Field>
+      <div className="sticky bottom-0 flex gap-2 bg-[#151B28] py-2"><Button type="button" variant="outline" className="flex-1" onClick={onClose}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending}>{pending ? 'กำลังบันทึก…' : 'บันทึกรายการ'}</Button></div>
+    </form>
+  </Modal>;
+}
+
+function QuoteMeta({ position }: { position: OptionPositionSummary }) {
+  if (position.quoteFreshness === 'missing') return <span className="mt-1 block text-[10px] text-amber-300">ไม่มีราคา · แสดง —</span>;
+  return <span className={`mt-1 block text-[10px] ${position.quoteFreshness === 'stale' ? 'text-amber-300' : 'text-slate-500'}`}>
+    {position.quoteFreshness === 'stale' ? 'ราคาเก่า (Stale)' : position.quoteFreshness} · {position.quoteSource ?? 'ไม่ทราบแหล่ง'}{position.quoteAsOf ? ` · ${displayTime(position.quoteAsOf)}` : ''}
+  </span>;
+}
+
+function SideBadge({ side }: { side: 'long' | 'short' }) {
+  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${side === 'long' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>{side}</span>;
+}
+
+function StatusBadge({ position }: { position: OptionPositionSummary }) {
+  const style = position.status === 'open'
+    ? 'bg-emerald-500/15 text-emerald-300'
+    : position.status === 'expired'
+      ? 'bg-amber-500/15 text-amber-300'
+      : 'bg-slate-700 text-slate-300';
+  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${style}`}>{position.status}</span>;
+}
+
+function OptionMetric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
+  return <div className="min-w-0"><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 break-words font-mono text-sm font-semibold ${tone}`}>{value}</dd></div>;
+}
+
+function TargetMetric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
+  return <div className="min-w-0"><dt className="text-slate-500">{label}</dt><dd className={`mt-1 break-words font-mono font-semibold ${tone}`}>{value}</dd></div>;
 }
