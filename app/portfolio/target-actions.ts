@@ -9,6 +9,7 @@ import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repos
 import type { PortfolioActionResult } from './actions';
 
 const targetSchema = z.object({
+  portfolioId: z.string().uuid(),
   id: z.string().uuid().optional(),
   contractSymbol: z.string().trim().toUpperCase().min(3).max(80),
   mode: z.enum(['premium', 'profit_percent']),
@@ -33,13 +34,15 @@ export async function upsertOptionTargetAction(raw: unknown): Promise<PortfolioA
   const ctx = await context();
   if (!ctx) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
   try {
-    const portfolio = await ctx.portfolio.getDefault();
+    const portfolio = await ctx.portfolio.getById(input.data.portfolioId);
+    if (!portfolio) return { ok: false, code: 'not-found', message: 'ไม่พบพอร์ตปลายทาง' };
     const position = calculateOptionLedger(portfolio.transactions).positions
       .find((item) => item.contractSymbol === input.data.contractSymbol && item.status === 'open');
     if (!position) return { ok: false, code: 'not-found', message: 'ไม่พบสถานะออปชันเปิดสำหรับเป้าหมายนี้' };
     const calculation = calculateOptionTarget(position, input.data.mode, input.data.targetValue, input.data.estimatedFee);
     await ctx.targets.upsert({
       ...input.data,
+      portfolioId: portfolio.id,
       side: position.side,
       targetPremium: calculation.targetPremium,
     });

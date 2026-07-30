@@ -16,13 +16,15 @@ import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
+import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
-import type { HoldingSummary, MarketPriceInput, PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
+import type { HoldingSummary, MarketPriceInput, PortfolioGoal, PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
 import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { OptionsSection } from './OptionsSection';
+import { PortfolioManager } from './PortfolioManager';
 import { TransactionFormModal, transactionLabels, type TransactionFormState } from './TransactionFormModal';
 import { useStore } from '@/src/store/useStore';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
@@ -35,7 +37,8 @@ function localNow() {
   return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
 }
 
-const emptyForm = (): TransactionFormState => ({
+const emptyForm = (portfolioId = ''): TransactionFormState => ({
+  portfolioId,
   type: 'acquisition',
   symbol: '',
   quantity: '',
@@ -72,8 +75,9 @@ function editDateTime(value: string) {
   return Number.isFinite(parsed) ? new Date(parsed + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16) : `${value}T12:00`;
 }
 
-export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionTargets, fx }: {
-  portfolio: PortfolioRecord;
+export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx }: {
+  portfolios: PortfolioRecord[];
+  aggregateGoal: PortfolioGoal;
   marketPrices: Record<string, MarketPriceInput | null>;
   optionQuotes: Record<string, OptionQuoteInput | null>;
   optionTargets: OptionTarget[];
@@ -87,7 +91,9 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
   const showBalances = !privacyMode;
   const isOnline = useOnlineStatus();
   const [formOpen, setFormOpen] = useState(false);
-  const [currency, setCurrency] = useState<SupportedCurrency>(portfolio.baseCurrency);
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState(portfolios.find((item) => item.archivedAt === null)?.id ?? portfolios[0]?.id ?? '');
+  const portfolio = (portfolios.find((item) => item.id === selectedPortfolioId) ?? portfolios[0])!;
+  const [currency, setCurrency] = useState<SupportedCurrency>(portfolio?.baseCurrency ?? 'USD');
   const [currentFx, setCurrentFx] = useState(fx);
   const [fxLoading, setFxLoading] = useState(true);
   const [fxError, setFxError] = useState(fx.quote === null);
@@ -96,15 +102,23 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [editing, setEditing] = useState<PortfolioTransaction | null>(null);
   const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
-  const [form, setForm] = useState<TransactionFormState>(emptyForm);
+  const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const prices = useMemo(
     () => Object.fromEntries(Object.entries(marketPrices).filter((entry): entry is [string, MarketPriceInput] => entry[1] != null)),
     [marketPrices],
   );
-  const summary = useMemo(
-    () => calculatePortfolio(portfolio.transactions, prices, optionQuotes),
-    [optionQuotes, portfolio.transactions, prices],
+  const summaries = useMemo(
+    () => Object.fromEntries(portfolios.map((item) => [
+      item.id,
+      calculatePortfolio(item.transactions, prices, optionQuotes),
+    ])),
+    [optionQuotes, portfolios, prices],
+  );
+  const summary = summaries[portfolio.id];
+  const aggregateSummary = useMemo(
+    () => aggregatePortfolioSummaries(portfolios.map((item) => summaries[item.id])),
+    [portfolios, summaries],
   );
   const stockHistory = useMemo(
     () => [...portfolio.transactions]
@@ -144,7 +158,7 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
   function openCreate(type: PortfolioTransactionType = 'acquisition', symbol = '', quantity = '') {
     setEditing(null);
     setErrors({});
-    setForm({ ...emptyForm(), type, symbol, quantity });
+    setForm({ ...emptyForm(portfolio.id), type, symbol, quantity });
     setFormOpen(true);
   }
 
@@ -157,7 +171,8 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
     setEditing(transaction);
     setErrors({});
     setForm({
-      ...emptyForm(),
+      ...emptyForm(transaction.portfolioId),
+      portfolioId: transaction.portfolioId,
       type: transaction.type,
       symbol: transaction.symbol ?? '',
       quantity: transaction.quantity ?? '',
@@ -173,6 +188,13 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
     });
     setHistoryOpen(false);
     setFormOpen(true);
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setEditing(null);
+    setErrors({});
+    setForm(emptyForm(portfolio.id));
   }
 
   function change(name: keyof TransactionFormState, value: string) {
@@ -196,7 +218,7 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
         addToast({ title: 'บันทึกไม่สำเร็จ', message: result.message, type: 'error' });
         return;
       }
-      setFormOpen(false);
+      closeForm();
       addToast({ title: editing ? 'แก้ไขรายการแล้ว' : 'เพิ่มรายการแล้ว', message: 'พอร์ตจะคำนวณใหม่จาก Ledger ทั้งหมด', type: 'success' });
       router.refresh();
     });
@@ -260,32 +282,33 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
             </div>
           </div>
           <div className="mt-2 flex min-w-0 items-center gap-2">
-            <h2 className="min-w-0 break-all font-mono text-3xl font-bold tracking-tight text-white sm:text-5xl">{money(summary.totalValue)}</h2>
+            <h2 className="min-w-0 break-all font-mono text-3xl font-bold tracking-tight text-white sm:text-5xl">{money(aggregateSummary.totalValue)}</h2>
             <button className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={() => setPrivacyMode(showBalances)} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินทั้งหมด'}>
               {showBalances ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
-          <p className={`mt-2 font-mono font-semibold ${summary.totalGain === null ? 'text-slate-400' : gainColor(summary.totalGain)}`}>
-            Total P&amp;L {signed(summary.totalGain)} ({percent(summary.totalGainPercent)})
+          <p className={`mt-2 font-mono font-semibold ${aggregateSummary.totalGain === null ? 'text-slate-400' : gainColor(aggregateSummary.totalGain)}`}>
+            Total P&amp;L {signed(aggregateSummary.totalGain)} ({percent(aggregateSummary.totalGainPercent)})
           </p>
-          <p className={`mt-1 font-mono text-sm ${summary.todayChange === null ? 'text-slate-400' : gainColor(summary.todayChange)}`}>
-            Today P&amp;L {signed(summary.todayChange)} ({percent(summary.todayChangePercent)})
+          <p className={`mt-1 font-mono text-sm ${aggregateSummary.todayChange === null ? 'text-slate-400' : gainColor(aggregateSummary.todayChange)}`}>
+            Today P&amp;L {signed(aggregateSummary.todayChange)} ({percent(aggregateSummary.todayChangePercent)})
           </p>
-          {summary.hasMissingPrices && <p className="mt-2 text-xs text-amber-300">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>}
+          {aggregateSummary.hasMissingPrices && <p className="mt-2 text-xs text-amber-300">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>}
+          {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-amber-300">Today P&amp;L ยังไม่พร้อม: ไม่มีราคาปิดวันก่อนสำหรับบางสถานะ</p>}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto">
-          <Button disabled={!isOnline} onClick={() => openCreate()}><Plus size={17} /> เพิ่มรายการ</Button>
-          <Button variant="outline" onClick={() => openHistory()}><History size={17} /> ประวัติทั้งหมด</Button>
+          <Button disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate(portfolio.type === 'OPTION' ? 'deposit' : 'acquisition')}><Plus size={17} /> เพิ่มรายการใน {portfolio.name}</Button>
+          <Button variant="outline" onClick={() => openHistory()}><History size={17} /> ประวัติพอร์ตที่เลือก</Button>
         </div>
       </div>
       <div className="mt-7 grid grid-cols-2 gap-4 border-t border-slate-800 pt-5 sm:grid-cols-3 lg:grid-cols-5">
-        <Metric label="เงินฝากสุทธิ (Net deposits)" value={money(summary.netDepositedCapital)} />
-        <Metric label="เงินสด" value={money(summary.cashBalance)} />
-        <Metric label="มูลค่าหุ้น" value={money(summary.equityMarketValue)} />
-        <Metric label="มูลค่าออปชันสุทธิ" value={money(summary.optionsMarketValue)} />
-        <Metric label="ต้นทุนคงเหลือ" value={money(summary.costBasis + summary.optionRemainingCost)} />
-        <Metric label="Realized P&L" value={signed(summary.realizedGain)} tone={gainColor(summary.realizedGain)} />
-        <Metric label="Unrealized P&L" value={signed(summary.unrealizedGain)} tone={summary.unrealizedGain === null ? 'text-slate-400' : gainColor(summary.unrealizedGain)} />
+        <Metric label="เงินฝากสุทธิ (Net deposits)" value={money(aggregateSummary.netDepositedCapital)} />
+        <Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />
+        <Metric label="มูลค่าหุ้น" value={money(aggregateSummary.equityMarketValue)} />
+        <Metric label="มูลค่าออปชันสุทธิ" value={money(aggregateSummary.optionsMarketValue)} />
+        <Metric label="ต้นทุนคงเหลือ" value={money(aggregateSummary.costBasis + aggregateSummary.optionRemainingCost)} />
+        <Metric label="Realized P&L" value={signed(aggregateSummary.realizedGain)} tone={gainColor(aggregateSummary.realizedGain)} />
+        <Metric label="Unrealized P&L" value={signed(aggregateSummary.unrealizedGain)} tone={aggregateSummary.unrealizedGain === null ? 'text-slate-400' : gainColor(aggregateSummary.unrealizedGain)} />
       </div>
       <div className="mt-5 flex flex-col gap-2 border-t border-slate-800 pt-4 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -301,19 +324,51 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
       </div>
     </section>
 
+    <PortfolioManager
+      portfolios={portfolios}
+      summaries={summaries}
+      aggregate={aggregateSummary}
+      aggregateGoal={aggregateGoal}
+      selectedPortfolioId={portfolio.id}
+      optionTargetCounts={Object.fromEntries(portfolios.map((item) => [item.id, optionTargets.filter((target) => target.portfolioId === item.id).length]))}
+      isOnline={isOnline}
+      money={money}
+      signed={signed}
+      percent={percent}
+      onSelect={(portfolioId) => {
+        setSelectedPortfolioId(portfolioId);
+        setHistoryOpen(false);
+        closeForm();
+      }}
+    />
+
+    <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-xs uppercase tracking-wider text-slate-500">กำลังดูพอร์ต</p><h3 className="mt-1 text-lg font-bold text-white">{portfolio.name} · {portfolio.type}</h3></div>
+        <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+          <Metric label="มูลค่าพอร์ต" value={money(summary.totalValue)} />
+          <Metric label="เงินสด" value={money(summary.cashBalance)} />
+          <Metric label="Total P&L" value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`} />
+          <Metric label="Today P&L" value={summary.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : signed(summary.todayChange)} />
+        </div>
+      </div>
+      {portfolio.archivedAt && <p className="mt-3 text-xs text-amber-300">พอร์ตนี้ถูก Archive แล้ว จึงรับ transaction ใหม่ไม่ได้ แต่ยังรวมในพอร์ตรวมและเก็บ history ครบถ้วน</p>}
+    </section>
+
+    {portfolio.type !== 'OPTION' && <>
     <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
           <Briefcase aria-hidden="true" className="shrink-0 text-[#D4FF00]" size={20} />
           <h3 className="min-w-0 font-bold text-white">สินทรัพย์ที่ถืออยู่</h3>
         </div>
-        <Button size="sm" disabled={!isOnline} onClick={() => openCreate('acquisition')}><Plus size={16} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
+        <Button size="sm" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={16} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
       </div>
       {summary.holdings.length === 0
         ? <div className="p-8 text-center sm:p-10">
           <p className="font-semibold text-white">ยังไม่มีหุ้นหรือ ETF ในพอร์ต</p>
           <p className="mt-1 text-sm text-slate-400">เพิ่มรายการซื้อ หรือนำเข้าสถานะตั้งต้นเพื่อเริ่มคำนวณ</p>
-          <Button className="mt-5" disabled={!isOnline} onClick={() => openCreate('acquisition')}><Plus size={17} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
+          <Button className="mt-5" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={17} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
         </div>
         : <>
           <div className="hidden overflow-x-auto md:block">
@@ -359,17 +414,34 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
         ทุกสถานะคำนวณจาก Transaction Ledger เท่านั้น การเพิ่มซื้อ ขาย แก้ไข หรือลบจะสร้างหรือเปลี่ยนรายการต้นทางแล้วคำนวณใหม่ทั้งพอร์ต
       </p>
     </section>
+    </>}
 
+    {portfolio.type !== 'STOCK' &&
     <OptionsSection
+      portfolio={portfolio}
+      portfolios={portfolios.filter((item) => item.archivedAt === null && (item.type === 'OPTION' || item.type === 'LEGACY'))}
       positions={summary.optionPositions}
-      targets={optionTargets}
+      targets={optionTargets.filter((target) => target.portfolioId === portfolio.id)}
+      cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
       currency={currency}
       usdThbRate={rate}
       showBalances={showBalances}
       isOnline={isOnline}
-    />
+    />}
 
-    <TransactionFormModal open={formOpen} editing={Boolean(editing)} form={form} errors={errors} pending={pending || !isOnline} onChange={change} onClose={() => !pending && setFormOpen(false)} onSubmit={submit} />
+    <TransactionFormModal
+      open={formOpen}
+      editing={Boolean(editing)}
+      form={form}
+      errors={errors}
+      pending={pending || !isOnline}
+      portfolios={portfolios.filter((item) => item.archivedAt === null)}
+      cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
+      replacedTransaction={editing}
+      onChange={change}
+      onClose={() => !pending && closeForm()}
+      onSubmit={submit}
+    />
     <Modal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} title={historySymbol ? `Transaction Ledger ของ ${historySymbol}` : 'Transaction Ledger'} className="max-w-2xl">
       {stockHistory.length === 0
         ? <p className="py-8 text-center text-sm text-slate-400">ยังไม่มีรายการที่บันทึก</p>
@@ -383,8 +455,12 @@ export function PortfolioClient({ portfolio, marketPrices, optionQuotes, optionT
             {transaction.broker && <p className="text-xs text-slate-500">โบรกเกอร์ {transaction.broker}</p>}
             {transaction.note && <p className="mt-1 break-words text-xs text-slate-500">{transaction.note}</p>}
           </div>
-          <button disabled={!isOnline} aria-label={`แก้ไขรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40" onClick={() => openEdit(transaction)}><Edit3 size={17} /></button>
-          <button disabled={!isOnline} aria-label={`ลบรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-red-400 disabled:opacity-40" onClick={() => { setHistoryOpen(false); setDeleting(transaction); }}><Trash2 size={17} /></button>
+          {transaction.transferId
+            ? <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] text-slate-400">paired transfer</span>
+            : <>
+              <button disabled={!isOnline} aria-label={`แก้ไขรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40" onClick={() => openEdit(transaction)}><Edit3 size={17} /></button>
+              <button disabled={!isOnline} aria-label={`ลบรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-red-400 disabled:opacity-40" onClick={() => { setHistoryOpen(false); setDeleting(transaction); }}><Trash2 size={17} /></button>
+            </>}
         </article>)}</div>}
     </Modal>
     <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบรายการ ${deleting?.symbol ?? transactionLabels[deleting?.type ?? 'adjustment']} หรือไม่`}>

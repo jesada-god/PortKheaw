@@ -2,6 +2,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 
 export type Currency = 'THB' | 'USD';
 export type AppLanguage = 'th' | 'en';
+export type PortfolioType = 'STOCK' | 'OPTION' | 'LEGACY';
 
 export interface Database {
   public: {
@@ -37,6 +38,8 @@ export interface Database {
           quiet_hours_start: string;
           quiet_hours_end: string;
           timezone: string;
+          aggregate_target_value_usd: string | null;
+          aggregate_target_date: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -51,6 +54,8 @@ export interface Database {
           quiet_hours_start?: string;
           quiet_hours_end?: string;
           timezone?: string;
+          aggregate_target_value_usd?: string | null;
+          aggregate_target_date?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -64,6 +69,8 @@ export interface Database {
           quiet_hours_start?: string;
           quiet_hours_end?: string;
           timezone?: string;
+          aggregate_target_value_usd?: string | null;
+          aggregate_target_date?: string | null;
           updated_at?: string;
         };
         Relationships: [];
@@ -81,40 +88,54 @@ export interface Database {
         Relationships: [];
       };
       portfolios: {
-        Row: { id: string; user_id: string; name: string; base_currency: Currency; created_at: string; updated_at: string };
-        Insert: { id?: string; user_id: string; name?: string; base_currency?: Currency; created_at?: string; updated_at?: string };
-        Update: { name?: string; base_currency?: Currency; updated_at?: string };
+        Row: {
+          id: string; user_id: string; name: string; base_currency: Currency; portfolio_type: PortfolioType;
+          is_legacy: boolean; archived_at: string | null; target_value_usd: string | null; target_date: string | null;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; user_id: string; name?: string; base_currency?: Currency; portfolio_type?: PortfolioType;
+          is_legacy?: boolean; archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null;
+          created_at?: string; updated_at?: string;
+        };
+        Update: {
+          name?: string; base_currency?: Currency; portfolio_type?: PortfolioType; is_legacy?: boolean;
+          archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null; updated_at?: string;
+        };
         Relationships: [];
       };
       portfolio_transactions: {
         Row: {
-          id: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
+          id: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol: string | null; quantity: string | null; price: string | null; amount: string | null; occurred_at: string;
           original_amount: string | null; original_currency: Currency; fx_rate_at_transaction: string | null; normalized_amount_usd: string | null;
           normalized_price_usd: string | null; fee: string | null; normalized_fee_usd: string | null; broker: string | null;
           occurred_at_time: string; underlying_symbol: string | null; contract_symbol: string | null;
           option_kind: 'call' | 'put' | null; option_side: 'long' | 'short' | null; strike_price: string | null;
           expiration_date: string | null; multiplier: string | null;
+          transfer_id: string | null; counterparty_portfolio_id: string | null;
           note: string | null; idempotency_key: string; created_at: string; updated_at: string;
         };
         Insert: {
-          id?: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
+          id?: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
           normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
           occurred_at_time: string; underlying_symbol?: string | null; contract_symbol?: string | null;
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
+          transfer_id?: string | null; counterparty_portfolio_id?: string | null;
           note?: string | null; idempotency_key: string; created_at?: string; updated_at?: string;
         };
         Update: {
-          transaction_type?: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
+          transaction_type?: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at?: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
           normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
           occurred_at_time?: string; underlying_symbol?: string | null; contract_symbol?: string | null;
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
+          transfer_id?: string | null; counterparty_portfolio_id?: string | null;
           note?: string | null; updated_at?: string;
         };
         Relationships: [];
@@ -302,6 +323,13 @@ export interface Database {
         Returns: string;
       };
       get_or_create_default_portfolio: { Args: Record<PropertyKey, never>; Returns: string };
+      create_portfolio: { Args: { input_name: string; input_type: 'STOCK' | 'OPTION' }; Returns: string };
+      update_portfolio_details: { Args: { target_portfolio_id: string; input_name: string; input_type: PortfolioType }; Returns: undefined };
+      set_portfolio_goal: { Args: { target_portfolio_id: string; input_target_value_usd: string | null; input_target_date: string | null }; Returns: undefined };
+      set_aggregate_portfolio_goal: { Args: { input_target_value_usd: string | null; input_target_date: string | null }; Returns: undefined };
+      archive_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
+      restore_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
+      delete_empty_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
       create_portfolio_transaction: {
         Args: { input_type: string; input_symbol: string | null; input_quantity: string | null; input_price: string | null; input_amount: string | null; input_occurred_at: string; input_note: string | null; input_idempotency_key: string; input_original_currency: Currency; input_fx_rate_at_transaction: string | null };
         Returns: string;
@@ -313,6 +341,7 @@ export interface Database {
       delete_portfolio_transaction: { Args: { transaction_id: string }; Returns: undefined };
       create_portfolio_ledger_transaction: {
         Args: {
+          input_portfolio_id: string;
           input_type: string; input_symbol: string | null; input_quantity: string | null; input_price: string | null;
           input_amount: string | null; input_fee: string | null; input_original_currency: Currency;
           input_fx_rate_at_transaction: string | null; input_occurred_at: string; input_broker: string | null;
@@ -334,8 +363,15 @@ export interface Database {
         Returns: undefined;
       };
       delete_portfolio_ledger_transaction: { Args: { transaction_id: string }; Returns: undefined };
+      transfer_portfolio_cash: {
+        Args: {
+          source_portfolio_id: string; destination_portfolio_id: string; input_amount_usd: string;
+          input_occurred_at: string; input_note: string | null; input_idempotency_key: string;
+        };
+        Returns: string;
+      };
       upsert_portfolio_option_target: {
-        Args: { input_id: string | null; input_contract_symbol: string; input_side: string; input_mode: string; input_target_value: string; input_target_premium: string; input_estimated_fee: string };
+        Args: { input_portfolio_id: string; input_id: string | null; input_contract_symbol: string; input_side: string; input_mode: string; input_target_value: string; input_target_premium: string; input_estimated_fee: string };
         Returns: string;
       };
       delete_portfolio_option_target: { Args: { target_id: string }; Returns: undefined };

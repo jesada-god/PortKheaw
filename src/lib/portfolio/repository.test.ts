@@ -23,6 +23,7 @@ describe('PortfolioRepository ledger mutations', () => {
       from: vi.fn().mockReturnValue(builder),
     } as unknown as SupabaseClient<Database>);
     await repository.create({
+      portfolioId: '11111111-1111-4111-8111-111111111111',
       type: 'buy_to_open',
       quantity: '1',
       price: '2',
@@ -40,15 +41,13 @@ describe('PortfolioRepository ledger mutations', () => {
     });
     await repository.delete('550e8400-e29b-41d4-a716-446655440000');
     expect(rpc).toHaveBeenNthCalledWith(1, 'create_portfolio_ledger_transaction', expect.objectContaining({
+      input_portfolio_id: '11111111-1111-4111-8111-111111111111',
       input_type: 'buy_to_open',
       input_contract_symbol: 'NVTS260821P00012000',
       input_multiplier: '100',
       input_fee: '0',
     }));
-    expect(builder.update).toHaveBeenCalledWith(expect.objectContaining({
-      contract_symbol: 'NVTS260821P00012000',
-    }));
-    expect(builder.like).toHaveBeenCalledWith('contract_symbol', 'UNRESOLVED-%');
+    expect(builder.update).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenNthCalledWith(2, 'delete_portfolio_ledger_transaction', {
       transaction_id: '550e8400-e29b-41d4-a716-446655440000',
     });

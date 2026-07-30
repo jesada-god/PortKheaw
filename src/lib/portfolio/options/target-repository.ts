@@ -27,14 +27,16 @@ function mapRow(row: Row): OptionTarget {
 export class OptionTargetRepository {
   constructor(private readonly client: SupabaseClient<Database>) {}
 
-  async getAll(portfolioId: string): Promise<OptionTarget[]> {
-    const { data, error } = await this.client.from('portfolio_option_targets').select('*')
-      .eq('portfolio_id', portfolioId).order('created_at', { ascending: false });
+  async getAll(portfolioId?: string): Promise<OptionTarget[]> {
+    let query = this.client.from('portfolio_option_targets').select('*');
+    if (portfolioId) query = query.eq('portfolio_id', portfolioId);
+    const { data, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
     return (data ?? []).map(mapRow);
   }
 
   async upsert(input: {
+    portfolioId: string;
     id?: string;
     contractSymbol: string;
     side: OptionSide;
@@ -44,6 +46,7 @@ export class OptionTargetRepository {
     estimatedFee: number;
   }): Promise<string> {
     const { data, error } = await this.client.rpc('upsert_portfolio_option_target', {
+      input_portfolio_id: input.portfolioId,
       input_id: input.id ?? null,
       input_contract_symbol: input.contractSymbol.toUpperCase(),
       input_side: input.side,

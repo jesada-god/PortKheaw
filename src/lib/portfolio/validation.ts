@@ -19,6 +19,7 @@ const occurredAt = z.string().trim().refine((value) => {
 }, 'วันและเวลารายการไม่ถูกต้องหรืออยู่ในอนาคต');
 
 export const portfolioTransactionSchema = z.object({
+  portfolioId: z.string().uuid('กรุณาเลือกพอร์ตปลายทาง'),
   type: z.enum(transactionTypes),
   symbol: z.string().optional().default(''),
   quantity: z.string().optional().default(''),
@@ -39,6 +40,10 @@ export const portfolioTransactionSchema = z.object({
   multiplier: z.string().optional().default('100'),
   idempotencyKey: z.string().uuid(),
 }).superRefine((value, context) => {
+  if (value.type === 'transfer_in' || value.type === 'transfer_out') {
+    context.addIssue({ code: 'custom', path: ['form'], message: 'กรุณาใช้เมนูย้ายเงินระหว่างพอร์ตเพื่อสร้างรายการคู่' });
+    return;
+  }
   const stockType = value.type === 'acquisition' || value.type === 'disposal' || value.type === 'initial_position';
   const optionType = value.type === 'buy_to_open' || value.type === 'sell_to_close'
     || value.type === 'sell_to_open' || value.type === 'buy_to_close'
@@ -84,6 +89,7 @@ export const portfolioTransactionSchema = z.object({
 });
 
 export interface TransactionInput {
+  portfolioId: string;
   type: PortfolioTransactionType;
   symbol?: string;
   quantity?: string;

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const portfolio = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioClient.tsx'), 'utf8');
 const options = readFileSync(resolve(process.cwd(), 'src/components/portfolio/OptionsSection.tsx'), 'utf8');
+const manager = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioManager.tsx'), 'utf8');
 const modal = readFileSync(resolve(process.cwd(), 'src/components/ui/Modal.tsx'), 'utf8');
 
 describe('portfolio responsive and accessibility contract', () => {
@@ -40,13 +41,14 @@ describe('portfolio responsive and accessibility contract', () => {
 
   it('orders beginner option fields and keeps multiplier editable with a default of 100', () => {
     const labels = [
+      'พอร์ตปลายทาง',
       'ประเภทรายการ (Action)',
       'หุ้นแม่ (Underlying)',
       'ประเภทออปชัน (Call / Put)',
       'ราคาใช้สิทธิ (Strike)',
       'วันหมดอายุ (Expiration)',
       'จำนวนสัญญา (Contracts)',
-      'ราคาต่อหุ้น (Premium',
+      'Premium ต่อหุ้น (USD)',
       'ตัวคูณต่อสัญญา (Multiplier)',
       'ค่าธรรมเนียม (Fee',
       'วันและเวลารายการ (Date)',
@@ -74,5 +76,28 @@ describe('portfolio responsive and accessibility contract', () => {
     expect(options).not.toContain('targetPosition?.contractSymbol');
     expect(options).not.toContain('targetDeleting?.contractSymbol');
     expect(options).not.toContain('>{position.contractSymbol}</span>');
+  });
+
+  it('provides stacked portfolio cards, goal/transfer controls and explicit unavailable reasons', () => {
+    expect(manager).toContain('พอร์ตของฉัน');
+    expect(manager).toContain('role="tablist"');
+    expect(manager).toContain('md:grid-cols-2 xl:grid-cols-3');
+    expect(manager).toContain('เป้าหมายพอร์ตรวม');
+    expect(manager).toContain('ย้ายเงินระหว่างพอร์ต');
+    expect(manager).toContain('ไม่มีราคาปิดวันก่อน');
+    expect(options).toContain('เงินสดติดลบ โปรดตรวจเงินฝากย้อนหลังหรือสถานะ Margin');
+    expect(options).toContain('Technical details / Copy');
+  });
+
+  it('keeps option premium, quote precision, cash warnings and history formatting auditable', () => {
+    expect(options).toContain('Premium ต่อหุ้น (USD)');
+    expect(options).toContain("$${helperPrice} × ${helperContracts} × ${helperMultiplier}");
+    expect(options).toContain('กรอก 194 หมายถึง $19,400');
+    expect(options).toContain('maximumFractionDigits: 8');
+    expect(options).toContain('Mark precision (raw quote)');
+    expect(options).toContain('สัญญา × $');
+    expect(options).toContain('ค่าธรรมเนียม');
+    expect(options).toContain('Estimated profit %');
+    expect(options).toContain('ระยะห่างจาก Mark');
   });
 });

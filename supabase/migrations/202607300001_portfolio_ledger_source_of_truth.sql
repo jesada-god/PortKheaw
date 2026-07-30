@@ -4,7 +4,10 @@ begin;
 alter table public.portfolio_transactions
   drop constraint if exists portfolio_transactions_transaction_type_check,
   drop constraint if exists portfolio_transactions_fields,
-  drop constraint if exists portfolio_transactions_currency_metadata;
+  drop constraint if exists portfolio_transactions_currency_metadata,
+  drop constraint if exists portfolio_transactions_broker_check,
+  drop constraint if exists portfolio_transactions_option_identity_check,
+  drop constraint if exists portfolio_transactions_contract_symbol_check;
 
 alter table public.portfolio_transactions
   add column if not exists normalized_price_usd numeric(28,8),
@@ -116,6 +119,7 @@ alter table public.portfolio_transactions
   );
 
 drop index if exists portfolio_transactions_ledger_order_idx;
+drop index if exists portfolio_transactions_option_identity_idx;
 create index portfolio_transactions_ledger_order_idx
   on public.portfolio_transactions (portfolio_id, occurred_at_time, created_at, id);
 create index portfolio_transactions_option_identity_idx
@@ -347,6 +351,7 @@ create table if not exists public.portfolio_option_targets (
 create index if not exists portfolio_option_targets_enabled_idx
   on public.portfolio_option_targets (portfolio_id, enabled, created_at desc);
 alter table public.portfolio_option_targets enable row level security;
+drop policy if exists "Users can read own option targets" on public.portfolio_option_targets;
 create policy "Users can read own option targets" on public.portfolio_option_targets
   for select to authenticated
   using (exists (select 1 from public.portfolios as portfolio where portfolio.id = portfolio_id and portfolio.user_id = (select auth.uid())));

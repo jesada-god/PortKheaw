@@ -7,6 +7,8 @@ export const transactionTypes = [
   'withdrawal',
   'fee',
   'adjustment',
+  'transfer_out',
+  'transfer_in',
   'buy_to_open',
   'sell_to_close',
   'sell_to_open',
@@ -21,6 +23,7 @@ export type OptionTransactionType = Extract<PortfolioTransactionType,
   'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired'>;
 export type OptionSide = 'long' | 'short';
 export type OptionKind = 'call' | 'put';
+export type PortfolioType = 'STOCK' | 'OPTION' | 'LEGACY';
 
 export interface PortfolioTransaction {
   id: string;
@@ -46,6 +49,8 @@ export interface PortfolioTransaction {
   strikePrice?: string | null;
   expirationDate?: string | null;
   multiplier?: string | null;
+  transferId?: string | null;
+  counterpartyPortfolioId?: string | null;
   occurredAt: string;
   note: string | null;
   idempotencyKey?: string;
@@ -56,8 +61,25 @@ export interface PortfolioTransaction {
 export interface PortfolioRecord {
   id: string;
   name: string;
+  type: PortfolioType;
+  isLegacy: boolean;
+  archivedAt: string | null;
+  targetValueUsd: number | null;
+  targetDate: string | null;
   baseCurrency: 'THB' | 'USD';
   transactions: PortfolioTransaction[];
+}
+
+export interface PortfolioGoal {
+  targetValueUsd: number | null;
+  targetDate: string | null;
+}
+
+export interface GoalProgress {
+  progressPercent: number | null;
+  remainingAmount: number | null;
+  status: 'unset' | 'unavailable' | 'negative' | 'tracking' | 'reached';
+  reason: string | null;
 }
 
 export interface HoldingSummary {
@@ -103,6 +125,7 @@ export interface PortfolioSummary {
   optionsMarketValue: number | null;
   optionRemainingCost: number;
   netDepositedCapital: number;
+  netTransferredCapital: number;
   totalGain: number | null;
   totalGainPercent: number | null;
   todayChange: number | null;

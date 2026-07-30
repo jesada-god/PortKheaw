@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { portfolioTransactionSchema } from './validation';
 
-const base = { occurredAt: '2026-01-01', note: '', idempotencyKey: '550e8400-e29b-41d4-a716-446655440000' };
+const base = {
+  portfolioId: '550e8400-e29b-41d4-a716-446655440001',
+  occurredAt: '2026-01-01',
+  note: '',
+  idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
+};
 describe('portfolio transaction validation', () => {
   it.each(['-1', '0', 'NaN', '1.123456789'])('rejects invalid numeric input %s', (quantity) => {
     expect(portfolioTransactionSchema.safeParse({ ...base, type: 'acquisition', symbol: 'AAPL', quantity, price: '10' }).success).toBe(false);

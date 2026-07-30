@@ -112,6 +112,7 @@ export function calculatePortfolio(
   const states = new Map<string, HoldingState>();
   let cash = 0n;
   let netDeposited = 0n;
+  let netTransferred = 0n;
   let otherRealized = 0n;
 
   for (const transaction of ordered(transactions)) {
@@ -131,6 +132,12 @@ export function calculatePortfolio(
     } else if (transaction.type === 'adjustment') {
       cash += amount;
       netDeposited += amount;
+    } else if (transaction.type === 'transfer_in') {
+      cash += amount;
+      netTransferred += amount;
+    } else if (transaction.type === 'transfer_out') {
+      cash -= amount;
+      netTransferred -= amount;
     }
 
     const event = stockEvent(transaction);
@@ -246,7 +253,7 @@ export function calculatePortfolio(
   const optionMarketValue = optionLedger.marketValue === null ? null : decimal(optionLedger.marketValue);
   const hasMissingPrices = missingEquityPrice || optionLedger.hasMissingPrices;
   const totalValueFixed = hasMissingPrices ? null : cash + equityMarketValue! + optionMarketValue!;
-  const totalGainFixed = totalValueFixed === null ? null : totalValueFixed - netDeposited;
+  const totalGainFixed = totalValueFixed === null ? null : totalValueFixed - netDeposited - netTransferred;
   const totalToday = missingTodayPrice || optionLedger.todayChange === null
     ? null
     : totalTodayChange + decimal(optionLedger.todayChange);
@@ -267,6 +274,7 @@ export function calculatePortfolio(
     unrealizedGain: unrealized === null ? null : number(unrealized),
     totalValue: totalValueFixed === null ? null : number(totalValueFixed),
     netDepositedCapital: number(netDeposited),
+    netTransferredCapital: number(netTransferred),
     totalGain: totalGainFixed === null ? null : number(totalGainFixed),
     totalGainPercent: totalGainFixed === null ? null : number(fixedPercent(totalGainFixed, netDeposited)),
     todayChange: totalToday === null ? null : number(totalToday),

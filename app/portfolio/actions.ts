@@ -21,6 +21,10 @@ async function repository() {
 
 function failure(error: unknown): PortfolioActionResult {
   const value = error as { code?: string; message?: string } | null;
+  if (value?.code === '23505') return { ok: false, code: 'duplicate', message: 'ชื่อพอร์ตนี้มีอยู่แล้วในประเภทเดียวกัน' };
+  if (value?.code === '23514' && value.message?.includes('Portfolio limit')) {
+    return { ok: false, code: 'limit', message: 'สร้างพอร์ตประเภทนี้ได้สูงสุด 10 พอร์ต' };
+  }
   if (value?.code === '23514') return { ok: false, code: 'insufficient-position', message: 'รายการนี้ทำให้จำนวนหุ้นหรือสัญญาติดลบ กรุณาตรวจจำนวนและลำดับเวลาใน Ledger' };
   if (value?.code === '42501') return { ok: false, code: 'unauthorized', message: 'คุณไม่มีสิทธิ์แก้ไขรายการนี้' };
   return { ok: false, code: 'database', message: 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองอีกครั้ง' };
@@ -53,6 +57,7 @@ export async function createPortfolioTransactionAction(raw: unknown): Promise<Po
     }
     await repo.create(await preparePortfolioTransactionForCreate(input));
     revalidatePath('/portfolio');
+    revalidatePath('/');
     return { ok: true };
   } catch (error) {
     return failure(error);
@@ -68,8 +73,12 @@ export async function updatePortfolioTransactionAction(id: string, raw: unknown)
   try {
     const existing = await repo.getTransaction(id);
     if (!existing) return { ok: false, code: 'unauthorized', message: 'ไม่พบรายการที่ต้องการแก้ไข' };
+    if (existing.portfolioId !== input.portfolioId) {
+      return { ok: false, code: 'portfolio-mismatch', message: 'ไม่สามารถย้ายรายการเดิมไปอีกพอร์ตโดยไม่มี audit trail' };
+    }
     await repo.update(id, await preparePortfolioTransactionForUpdate(input, existing));
     revalidatePath('/portfolio');
+    revalidatePath('/');
     return { ok: true };
   } catch (error) {
     return failure(error);
@@ -83,6 +92,7 @@ export async function deletePortfolioTransactionAction(id: string): Promise<Port
   try {
     await repo.delete(id);
     revalidatePath('/portfolio');
+    revalidatePath('/');
     return { ok: true };
   } catch (error) {
     return failure(error);
