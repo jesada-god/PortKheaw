@@ -8,8 +8,11 @@ import {
   type NewsErrorCode,
 } from './provider';
 import type { NewsProvider } from './types';
+import { loadPersonalizedNews } from './personalized';
 
 const cursorSchema = z.coerce.number().int().min(1).max(100).transform(String);
+const topicListSchema = z.string().max(500).transform((value) =>
+  [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 8));
 
 type NewsRouteCode = NewsErrorCode | 'NEWS_INVALID_REQUEST' | 'OK';
 interface NewsRouteLog {
@@ -46,11 +49,23 @@ export async function handleNewsRequest(
   const rawCursor = request.nextUrl.searchParams.get('cursor');
   const parsedSymbol = rawSymbol ? symbolSchema.safeParse(rawSymbol) : null;
   const parsedCursor = rawCursor ? cursorSchema.safeParse(rawCursor) : null;
+  const parsedPortfolio = request.nextUrl.searchParams.has('portfolio')
+    ? topicListSchema.safeParse(request.nextUrl.searchParams.get('portfolio') ?? '')
+    : null;
+  const parsedWatchlist = request.nextUrl.searchParams.has('watchlist')
+    ? topicListSchema.safeParse(request.nextUrl.searchParams.get('watchlist') ?? '')
+    : null;
+  const parsedIndustries = request.nextUrl.searchParams.has('industries')
+    ? topicListSchema.safeParse(request.nextUrl.searchParams.get('industries') ?? '')
+    : null;
   const timestamp = deps.now().toISOString();
 
   if (
     (parsedSymbol && !parsedSymbol.success)
     || (parsedCursor && !parsedCursor.success)
+    || (parsedPortfolio && !parsedPortfolio.success)
+    || (parsedWatchlist && !parsedWatchlist.success)
+    || (parsedIndustries && !parsedIndustries.success)
   ) {
     const entry: NewsRouteLog = {
       route: '/api/news',
@@ -80,9 +95,16 @@ export async function handleNewsRequest(
   try {
     provider = deps.getProvider();
     const cursor = parsedCursor?.success ? parsedCursor.data : undefined;
-    const result = parsedSymbol?.success
-      ? await provider.getSymbolNews(parsedSymbol.data, cursor)
-      : await provider.getMarketNews(cursor);
+    const personalized = parsedPortfolio || parsedWatchlist || parsedIndustries;
+    const result = personalized
+      ? await loadPersonalizedNews({
+        portfolioSymbols: parsedPortfolio?.success ? parsedPortfolio.data : [],
+        watchlistSymbols: parsedWatchlist?.success ? parsedWatchlist.data : [],
+        industryNames: parsedIndustries?.success ? parsedIndustries.data : [],
+      }, provider)
+      : parsedSymbol?.success
+        ? await provider.getSymbolNews(parsedSymbol.data, cursor)
+        : await provider.getMarketNews(cursor);
     deps.log({
       route: '/api/news',
       provider: provider.id,

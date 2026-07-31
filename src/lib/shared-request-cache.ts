@@ -89,4 +89,10 @@ export class SharedRequestCache {
     this.errors.clear();
     this.inflight.clear();
   }
+
+  /** Invalidate one completed key without disrupting an in-flight singleflight. */
+  invalidate(key: string): void {
+    this.values.delete(key);
+    this.errors.delete(key);
+  }
 }

@@ -14,6 +14,7 @@ import {
   formatBangkokDateTime,
   isStaleAt,
 } from '@/src/lib/presentation/datetime';
+import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 
 type SortKey = 'newest' | 'symbol' | 'price' | 'change';
 
@@ -23,9 +24,14 @@ function displayTime(value: string | null) {
 }
 
 function freshnessLabel(quote: WatchlistQuote | undefined, referenceTime: string) {
-  if (!quote || quote.freshness.status === 'unavailable') return 'Quote ไม่พร้อมใช้งาน';
+  if (!quote || quote.freshness.status === 'unavailable') return 'ข้อมูลยังไม่พร้อม';
   const labels: Record<string, string> = {
-    realtime: 'เรียลไทม์', delayed: 'ล่าช้า', 'end-of-day': 'ราคาปิด', cached: 'แคช', unknown: 'ไม่ทราบ',
+    realtime: 'เรียลไทม์',
+    delayed: 'ข้อมูลล่าช้า',
+    'end-of-day': 'ราคาปิดทางการ',
+    cached: 'ข้อมูลล่าสุดที่บันทึกไว้',
+    stale: 'ข้อมูลล่าสุดที่บันทึกไว้',
+    unknown: 'กำลังตรวจสอบข้อมูล',
   };
   const stale = quote.freshness.status === 'stale'
     || isStaleAt(
@@ -33,7 +39,12 @@ function freshnessLabel(quote: WatchlistQuote | undefined, referenceTime: string
       quote.freshness.maxAgeSeconds,
       referenceTime,
     );
-  return `${stale ? 'ข้อมูลเก่า (stale)' : labels[quote.freshness.status] ?? quote.freshness.status} · ${displayTime(quote.freshness.asOf)}`;
+  const label = stale
+    ? 'ข้อมูลล่าสุดที่บันทึกไว้'
+    : labels[quote.freshness.status] ?? 'กำลังตรวจสอบข้อมูล';
+  return quote.freshness.asOf
+    ? `${label} · ${displayTime(quote.freshness.asOf)}`
+    : label;
 }
 
 export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
@@ -203,6 +214,7 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
           <div className="divide-y divide-slate-800/60">{sortedItems.map((item) => {
             const data = quotes[item.symbol]; const quote = data?.quote; const change = quote?.changePercent;
             return <article key={item.id} className="flex min-w-0 items-center gap-3 p-4 hover:bg-slate-800/30 sm:px-5">
+              <InstrumentLogo symbol={item.symbol} companyName={item.symbol} logoUrl={null} size={40} />
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="min-w-0 flex-1 text-left">
                 <span className="block font-bold text-white hover:text-[#D4FF00]">{item.symbol}</span>
                 <span className={`block truncate text-xs ${quote ? 'text-slate-500' : 'text-amber-300'}`}>{freshnessLabel(data, renderedAt)}</span>

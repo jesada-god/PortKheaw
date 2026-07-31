@@ -16,6 +16,7 @@ export interface InstrumentRecord {
 
 export interface InstrumentRepository {
   findExact(symbol: string): Promise<InstrumentRecord | null>;
+  findMany?(symbols: readonly string[]): Promise<InstrumentRecord[]>;
 }
 
 const EXCHANGES: Array<{ pattern: RegExp; mic: string; timezone: string; supported: boolean }> = [
@@ -58,14 +59,26 @@ class SupabaseInstrumentRepository implements InstrumentRepository {
     const exact = data?.find((item) => item.symbol.toUpperCase() === symbol.toUpperCase());
     return exact ?? null;
   }
+
+  async findMany(symbols: readonly string[]): Promise<InstrumentRecord[]> {
+    if (!isSupabaseConfigured || !symbols.length) return [];
+    const client = createClient<Database>(
+      clientEnv.NEXT_PUBLIC_SUPABASE_URL as string,
+      clientEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY as string,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    const { data, error } = await client.from('market_instruments')
+      .select('symbol,provider_symbol,name,exchange,asset_type,currency,status')
+      .in('symbol', [...symbols]);
+    if (error) throw error;
+    return data ?? [];
+  }
 }
 
 export class SymbolResolver {
   constructor(private readonly repository: InstrumentRepository = new SupabaseInstrumentRepository()) {}
 
-  async resolve(symbol: string): Promise<ResolvedInstrument> {
-    const requested = symbol.trim().toUpperCase();
-    const record = await this.repository.findExact(requested);
+  private resolved(requested: string, record: InstrumentRecord | null): ResolvedInstrument {
     if (!record) {
       return resolvedInstrumentSchema.parse({
         canonicalSymbol: requested,
@@ -103,5 +116,25 @@ export class SymbolResolver {
           : type === 'index' || type === 'fund' || type === 'unknown' ? `Unsupported asset type: ${type}`
             : null,
     });
+  }
+
+  async resolve(symbol: string): Promise<ResolvedInstrument> {
+    const requested = symbol.trim().toUpperCase();
+    return this.resolved(requested, await this.repository.findExact(requested));
+  }
+
+  async resolveMany(symbols: readonly string[]): Promise<Map<string, ResolvedInstrument>> {
+    const requested = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()))]
+      .filter(Boolean);
+    if (!this.repository.findMany) {
+      const values = await Promise.all(requested.map((symbol) => this.resolve(symbol)));
+      return new Map(requested.map((symbol, index) => [symbol, values[index]!]));
+    }
+    const rows = await this.repository.findMany(requested);
+    const bySymbol = new Map(rows.map((row) => [row.symbol.toUpperCase(), row]));
+    return new Map(requested.map((symbol) => [
+      symbol,
+      this.resolved(symbol, bySymbol.get(symbol) ?? null),
+    ]));
   }
 }

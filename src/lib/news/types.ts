@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const newsArticleSchema = z.object({
   id: z.string(), title: z.string().min(1), source: z.string().min(1),
   publishedAt: z.iso.datetime(), url: z.url(), imageUrl: z.url().nullable(),
-  symbols: z.array(z.string()),
+  symbols: z.array(z.string()), industries: z.array(z.string()).optional(),
 });
 export const newsPageSchema = z.object({ articles: z.array(newsArticleSchema), nextCursor: z.string().nullable() });
 export const newsDeliveryStatusSchema = z.enum(['live', 'cached', 'stale']);
@@ -20,4 +20,5 @@ export interface NewsProvider {
   readonly id: string;
   getMarketNews(cursor?: string): Promise<NewsProviderResult>;
   getSymbolNews(symbol: string, cursor?: string): Promise<NewsProviderResult>;
+  getTopicNews?(topics: readonly string[], cursor?: string): Promise<NewsProviderResult>;
 }

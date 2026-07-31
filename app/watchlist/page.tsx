@@ -2,8 +2,9 @@ import Header from '@/src/components/layout/Header';
 import { WatchlistClient } from '@/src/components/watchlist/WatchlistClient';
 import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
-import { getMarketDataProvider } from '@/src/lib/market-data';
 import type { WatchlistQuote } from '@/src/lib/watchlist/types';
+import { getInstrumentMetadata } from '@/src/lib/instruments/master';
+import { loadOverviewPrice, mapWithConcurrency } from '@/src/lib/overview/service';
 
 const unavailable: WatchlistQuote = {
   quote: null,
@@ -14,26 +15,45 @@ export default async function WatchlistPage() {
   const client = await createClient();
   if (!client) return null;
   const watchlist = await new WatchlistRepository(client).getDefault();
-  let provider: ReturnType<typeof getMarketDataProvider> | null = null;
-  try { provider = getMarketDataProvider(); } catch { provider = null; }
-  const entries = await Promise.all(watchlist.items.map(async (item) => {
-    if (!provider) return [item.symbol, unavailable] as const;
-    try {
-      const result = await provider.getQuote(item.symbol);
-      return [item.symbol, { quote: result.data, freshness: result.freshness }] as const;
-    } catch {
-      return [item.symbol, unavailable] as const;
-    }
-  }));
+  const metadata = await getInstrumentMetadata(watchlist.items.map((item) => item.symbol));
+  const entries = await mapWithConcurrency(watchlist.items, 4, async (item) => {
+    const result = await loadOverviewPrice(metadata.get(item.symbol)!);
+    const value = result.display;
+    if (value.price === null) return [item.symbol, unavailable] as const;
+    return [item.symbol, {
+      quote: {
+        symbol: item.symbol,
+        currency: value.currency,
+        price: value.price,
+        open: null,
+        high: null,
+        low: null,
+        previousClose: value.change === null ? null : value.price - value.change,
+        regularClose: value.price,
+        previousRegularClose: value.change === null ? null : value.price - value.change,
+        change: value.change,
+        changePercent: value.changePercent,
+        volume: null,
+        latestTradingDay: value.tradingDate,
+        quoteTimestamp: value.asOf,
+        session: value.session === 'PRE' ? 'pre-market'
+          : value.session === 'REGULAR' ? 'regular'
+            : value.session === 'POST' ? 'after-hours' : 'closed',
+      },
+      freshness: value.freshness ?? unavailable.freshness,
+    }] as const;
+  });
 
-  return <div className="min-w-0">
-    <Header title="Watchlist" subtitle="ติดตาม Symbol ที่คุณสนใจ พร้อมราคาและความสดของข้อมูลล่าสุด" />
-    <div className="mx-auto w-full max-w-5xl p-4 md:p-8">
-      <WatchlistClient
-        watchlist={watchlist}
-        initialQuotes={Object.fromEntries(entries)}
-        renderedAt={new Date().toISOString()}
-      />
+  return (
+    <div className="min-w-0">
+      <Header title="Watchlist" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
+      <div className="mx-auto w-full max-w-5xl p-4 md:p-8">
+        <WatchlistClient
+          watchlist={watchlist}
+          initialQuotes={Object.fromEntries(entries)}
+          renderedAt={new Date().toISOString()}
+        />
+      </div>
     </div>
-  </div>;
+  );
 }

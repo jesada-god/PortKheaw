@@ -106,6 +106,18 @@ describe('PolygonMarketDataProvider', () => {
     expect(fetcher).toHaveBeenCalledTimes(calls);
   });
 
+  it('gates endpoints after a proven entitlement failure for the provider instance', async () => {
+    const fetcher = vi.fn(async () => json({ message: 'not entitled' }, 403));
+    const provider = new PolygonMarketDataProvider('secret', undefined, fetcher as typeof fetch);
+    await expect(provider.getQuote(instrument)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(provider.getQuote({
+      ...instrument,
+      canonicalSymbol: 'MSFT',
+      providerSymbol: 'MSFT',
+    })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('falls back to the free previous-close aggregate when the snapshot quote is not entitled (403)', async () => {
     // Root cause of the production /api/market/quote 403: the premium snapshot endpoint
     // is not entitled. The free previous-close aggregate is, so the quote is served as a
@@ -209,4 +221,3 @@ describe('PolygonMarketDataProvider', () => {
     expect(session).toMatchObject({ status: 'open', exchange: 'NASDAQ', timezone: 'America/New_York', provider: 'polygon', source: 'polygon-market-status', stale: false });
   });
 });
-

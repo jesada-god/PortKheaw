@@ -182,12 +182,16 @@ export interface Database {
           id: string; symbol: string; name: string; exchange: string | null; asset_type: 'Stock' | 'ETF';
           currency: string; country: string; status: 'active' | 'delisted'; ipo_date: string | null;
           delisting_date: string | null; provider: string; provider_symbol: string; searchable_text: string;
+          sector: string | null; industry: string | null; website_domain: string | null; logo_url: string | null;
+          metadata_source: string | null; metadata_updated_at: string | null;
           last_synced_at: string; created_at: string; updated_at: string;
         };
         Insert: {
           id?: string; symbol: string; name: string; exchange?: string | null; asset_type: 'Stock' | 'ETF';
           currency?: string; country?: string; status: 'active' | 'delisted'; ipo_date?: string | null;
-          delisting_date?: string | null; provider: string; provider_symbol: string; last_synced_at?: string;
+          delisting_date?: string | null; provider: string; provider_symbol: string;
+          sector?: string | null; industry?: string | null; website_domain?: string | null; logo_url?: string | null;
+          metadata_source?: string | null; metadata_updated_at?: string | null; last_synced_at?: string;
           created_at?: string; updated_at?: string;
         };
         Update: Partial<Database['public']['Tables']['market_instruments']['Insert']>;

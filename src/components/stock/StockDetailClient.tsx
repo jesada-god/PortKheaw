@@ -52,6 +52,7 @@ import {
 } from './price-header';
 import { requestCompanyProfile } from './profile-retry';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
+import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 
 const ChartPanel = dynamic(
   () => import('./ChartPanel').then((module) => module.ChartPanel),
@@ -471,6 +472,12 @@ export function StockDetailClient({
           >
             <ArrowLeft size={20} />
           </button>
+          <InstrumentLogo
+            symbol={symbol}
+            companyName={identity.name}
+            logoUrl={profileResource.data?.logoUrl ?? null}
+            size={40}
+          />
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-white">{symbol}</h1>
             <p className="truncate text-xs text-slate-500">

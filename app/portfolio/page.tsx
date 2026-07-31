@@ -2,9 +2,8 @@ import Header from '@/src/components/layout/Header';
 import { PortfolioClient } from '@/src/components/portfolio/PortfolioClient';
 import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
-import { getMarketDataProvider } from '@/src/lib/market-data';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
-import { resolveQuote } from '@/src/lib/market-data/quote-cache';
+import { loadPortfolioPrices } from '@/src/lib/overview/service';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations';
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
@@ -36,12 +35,19 @@ export default async function PortfolioPage() {
     .filter((item) => item.type === 'acquisition' || item.type === 'disposal' || item.type === 'initial_position')
     .map((item) => item.symbol)
     .filter((value): value is string => Boolean(value)))];
-  let provider: ReturnType<typeof getMarketDataProvider> | null = null;
-  try { provider = getMarketDataProvider(); } catch { provider = null; }
-  const quotes = await Promise.all(stockSymbols.map(async (symbol) => {
-    if (!provider) return [symbol, null] as const;
-    return [symbol, await resolveQuote(symbol, () => provider!.getQuote(symbol))] as const;
-  }));
+  const canonicalPrices = await loadPortfolioPrices(stockSymbols);
+  const quotes = stockSymbols.map((symbol) => {
+    const item = canonicalPrices.get(symbol)?.display;
+    if (!item || item.price === null) return [symbol, null] as const;
+    return [symbol, {
+      price: item.price,
+      previousClose: item.change === null ? null : item.price - item.change,
+      cached: item.status === 'saved',
+      stale: item.freshness?.status === 'stale',
+      source: 'canonical-market-snapshot',
+      asOf: item.asOf,
+    }] as const;
+  });
 
   let optionService: ReturnType<typeof getOptionsMarketDataService> | null = null;
   try { optionService = getOptionsMarketDataService(); } catch { optionService = null; }

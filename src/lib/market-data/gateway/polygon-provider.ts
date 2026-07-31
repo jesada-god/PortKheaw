@@ -116,6 +116,8 @@ function dateBounds(range: HistoricalRange, now: Date): { from: string; to: stri
 
 export class PolygonMarketDataProvider implements MarketDataProviderV2 {
   readonly id = 'polygon';
+  private snapshotCapability: 'unknown' | 'available' | 'forbidden' = 'unknown';
+  private previousCloseCapability: 'unknown' | 'available' | 'forbidden' = 'unknown';
 
   constructor(
     private readonly apiKey: string,
@@ -156,9 +158,19 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
   }
 
   async getQuote(instrument: ResolvedInstrument) {
+    let snapshotFailure: unknown;
     try {
-      return await this.snapshotQuote(instrument);
+      if (this.snapshotCapability === 'forbidden') {
+        throw new MarketDataError('forbidden', 'Polygon snapshot entitlement is unavailable');
+      }
+      const quote = await this.snapshotQuote(instrument);
+      this.snapshotCapability = 'available';
+      return quote;
     } catch (cause) {
+      snapshotFailure = cause;
+      if (cause instanceof MarketDataError && cause.code === 'forbidden') {
+        this.snapshotCapability = 'forbidden';
+      }
       // The real-time/snapshot endpoint is a premium Polygon entitlement. When the
       // configured plan is not authorized (403 → forbidden) or the symbol simply has
       // no snapshot, fall back to the free previous-close aggregate — a truthful
@@ -166,13 +178,21 @@ export class PolygonMarketDataProvider implements MarketDataProviderV2 {
       // fabricated; a genuine unavailability still throws the typed error below.
       if (cause instanceof MarketDataError && (cause.code === 'forbidden' || cause.code === 'not-found')) {
         try {
-          return await this.previousCloseQuote(instrument);
+          if (this.previousCloseCapability === 'forbidden') {
+            throw new MarketDataError('forbidden', 'Polygon previous-close entitlement is unavailable');
+          }
+          const quote = await this.previousCloseQuote(instrument);
+          this.previousCloseCapability = 'available';
+          return quote;
         } catch (fallbackCause) {
+          if (fallbackCause instanceof MarketDataError && fallbackCause.code === 'forbidden') {
+            this.previousCloseCapability = 'forbidden';
+          }
           // Neither endpoint is entitled/available: surface the primary snapshot
           // error so the typed reason stays truthful about the root cause.
           throw fallbackCause instanceof MarketDataError && fallbackCause.code === 'invalid-symbol'
             ? fallbackCause
-            : cause;
+            : snapshotFailure;
         }
       }
       throw cause;

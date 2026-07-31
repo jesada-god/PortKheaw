@@ -62,6 +62,29 @@ export function selectLatestNews(
   return selected;
 }
 
+/** Keep category priority while still sorting newest-first inside each category. */
+export function selectPrioritizedNews(
+  categories: readonly (readonly NewsArticle[])[],
+  limit: number = NEWS_MAX_COUNT,
+): NewsArticle[] {
+  const seen = new Set<string>();
+  const selected: NewsArticle[] = [];
+  for (const category of categories) {
+    for (const article of selectLatestNews(category, category.length)) {
+      const keys = [
+        `id:${article.id}`,
+        `url:${canonicalNewsUrl(article.url) ?? article.url}`,
+        ...(normalizeNewsTitle(article.title) ? [`title:${normalizeNewsTitle(article.title)}`] : []),
+      ];
+      if (keys.some((key) => seen.has(key))) continue;
+      keys.forEach((key) => seen.add(key));
+      selected.push(article);
+      if (selected.length >= limit) return selected;
+    }
+  }
+  return selected;
+}
+
 /** How many of the already-loaded articles the collapsed/expanded feed shows. */
 export function visibleNewsCount(total: number, expanded: boolean): number {
   return Math.min(total, expanded ? NEWS_MAX_COUNT : NEWS_PREVIEW_COUNT);

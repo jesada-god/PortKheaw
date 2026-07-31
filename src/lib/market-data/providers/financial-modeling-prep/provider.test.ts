@@ -46,6 +46,7 @@ describe('Financial Modeling Prep Company Profile provider', () => {
       industry: 'Aerospace & Defense',
       marketCapitalization: 20_000_000_000,
       website: 'https://www.rocketlabusa.com/',
+      logoUrl: null,
       exchange: 'NASDAQ',
       latestQuarter: null,
     });

@@ -49,4 +49,16 @@ describe('SharedRequestCache', () => {
     await cache.resolve('history:AAPL:1m', () => operation('1m'), policy); await cache.resolve('history:AAPL:1y', () => operation('1y'), policy);
     expect(operation).toHaveBeenCalledTimes(2);
   });
+
+  it('invalidates one key without clearing unrelated last-good values', async () => {
+    const cache = new SharedRequestCache();
+    const policy = { freshMs: 1_000, staleMs: 1_000, errorMs: 10 };
+    await cache.resolve('market', async () => 'old-market', policy);
+    await cache.resolve('news', async () => 'old-news', policy);
+    cache.invalidate('market');
+    const market = await cache.resolve('market', async () => 'new-market', policy);
+    const news = await cache.resolve('news', async () => 'unexpected', policy);
+    expect(market.value).toBe('new-market');
+    expect(news.value).toBe('old-news');
+  });
 });

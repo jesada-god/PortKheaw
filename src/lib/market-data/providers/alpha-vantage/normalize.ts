@@ -129,6 +129,7 @@ export function normalizeProfileResponse(input: unknown) {
     sector: nullableText(profile.Sector),
     industry: nullableText(profile.Industry),
     website: website(profile.OfficialSite),
+    logoUrl: null,
     marketCapitalization: nullableNumber(profile.MarketCapitalization),
     employees: nullableInteger(profile.FullTimeEmployees),
     fiscalYearEnd: nullableText(profile.FiscalYearEnd),

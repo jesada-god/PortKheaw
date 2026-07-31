@@ -23,6 +23,7 @@ export class DefaultMarketDataGateway implements MarketDataGateway {
   ) {}
 
   resolveInstrument(symbol: string) { return this.resolver.resolve(symbol); }
+  resolveInstruments(symbols: readonly string[]) { return this.resolver.resolveMany(symbols); }
 
   private configuredProvider(): MarketDataProviderV2 {
     if (!this.provider) throw new MarketDataError('provider-not-configured', 'Set POLYGON_API_KEY and MARKET_DATA_PROVIDER=polygon to load production market data');

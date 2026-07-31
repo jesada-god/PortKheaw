@@ -8,11 +8,11 @@ import { appConfig } from '@/src/config/app';
 import { BrandMark } from '@/src/components/brand/BrandMark';
 
 const navItems = [
-  { name: 'Home', href: '/', icon: Home },
+  { name: 'ภาพรวม', href: '/', icon: Home },
   { name: 'Watchlist', href: '/watchlist', icon: Star },
-  { name: 'Search', href: '/search', icon: Search },
-  { name: 'Portfolio', href: '/portfolio', icon: PieChart },
-  { name: 'Tools', href: '/tools', icon: Wrench },
+  { name: 'ค้นหา', href: '/search', icon: Search },
+  { name: 'พอร์ต', href: '/portfolio', icon: PieChart },
+  { name: 'เครื่องมือ', href: '/tools', icon: Wrench },
 ];
 
 export default function Sidebar() {
@@ -54,8 +54,8 @@ export default function Sidebar() {
 
       <div className="mt-auto p-6">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-4">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">Pro Analysis</p>
-          <p className="text-sm text-[var(--text-secondary)]">What-If & Monte Carlo Ready</p>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">วิเคราะห์เพิ่มเติม</p>
+          <p className="text-sm text-[var(--text-secondary)]">What-If และ Monte Carlo</p>
         </div>
       </div>
     </aside>

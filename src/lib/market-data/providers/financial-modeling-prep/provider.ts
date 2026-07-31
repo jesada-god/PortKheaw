@@ -132,6 +132,7 @@ export class FinancialModelingPrepProfileProvider {
           industry: nullableText(raw.industry),
           marketCapitalization: nullableNumber(raw.marketCap),
           website: nullableWebsite(raw.website),
+          logoUrl: nullableWebsite(raw.image),
           exchange: nullableText(raw.exchange) ?? nullableText(raw.exchangeShortName),
           latestQuarter: null,
         }),

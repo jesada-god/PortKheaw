@@ -13,6 +13,7 @@ import {
   updatePortfolioTransactionAction,
 } from '@/app/portfolio/actions';
 import { Button } from '@/src/components/ui/Button';
+import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
@@ -474,11 +475,17 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
 }
 
 function quoteMeta(holding: HoldingSummary) {
-  if (holding.marketPrice === null) return <span className="block text-[10px] text-amber-300">ไม่มีราคาจริง · แสดง —</span>;
-  return <span className={`block text-[10px] ${holding.priceStale ? 'text-amber-300' : 'text-slate-500'}`}>
-    {holding.priceStale ? 'ราคาเก่า (Stale)' : holding.priceCached ? 'Cached' : 'Market'} · {holding.priceSource ?? 'ไม่ทราบแหล่ง'}
-    {holding.priceAsOf ? ` · ${transactionDate(holding.priceAsOf)}` : ''}
-  </span>;
+  if (holding.marketPrice === null) {
+    return <span className="block text-[10px] text-amber-300">ข้อมูลราคายังไม่พร้อม</span>;
+  }
+  return (
+    <span className={`block text-[10px] ${holding.priceStale ? 'text-amber-300' : 'text-slate-500'}`}>
+      {holding.priceStale || holding.priceCached
+        ? 'ข้อมูลล่าสุดที่บันทึกไว้'
+        : 'ข้อมูลตลาด'}
+      {holding.priceAsOf ? ` · ${transactionDate(holding.priceAsOf)}` : ''}
+    </span>
+  );
 }
 
 function totalPnlPercent(holding: HoldingSummary) {
@@ -490,7 +497,9 @@ function HoldingDesktopRows({ holding, expanded, showBalances, money, signed, hi
     <tr className="border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
       <td className="p-0">
         <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-14 w-full items-center gap-2 px-3 text-left font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}{holding.symbol}
+          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={32} />
+          {holding.symbol}
         </button>
       </td>
       <td className="px-3 py-3 text-right font-mono">{hidden(number(holding.quantity))}</td>
@@ -509,6 +518,7 @@ function HoldingMobileCard(props: HoldingViewProps) {
   const { holding, expanded, showBalances, money, signed, hidden, onToggle } = props;
   return <article className="p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-center justify-between gap-3 text-left">
+      <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={40} />
       <span><strong className="text-lg text-white">{holding.symbol}</strong><span className="mt-1 block text-xs text-slate-400">{hidden(number(holding.quantity))} หน่วย · น้ำหนัก {showBalances ? `${holding.allocation.toFixed(2)}%` : '••••'}</span></span>
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>

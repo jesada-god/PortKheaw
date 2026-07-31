@@ -20,6 +20,7 @@ type ApiError = { code: string; message: string; retryable?: boolean; retryAfter
 type ApiResponse = { data: NewsPage | null; error: ApiError | null; meta: { timestamp: string; asOf: string | null; status: 'live' | 'cached' | 'stale' | 'unavailable' } };
 const pending = new Map<string, Promise<ApiResponse>>(); const pages = new Map<string, { value: ApiResponse; savedAt: number }>();
 const CACHE_MS = 5 * 60_000;
+const EMPTY_TOPICS: string[] = [];
 function load(url: string, force = false) {
   const cached = pages.get(url); if (!force && cached && Date.now() - cached.savedAt < CACHE_MS) return Promise.resolve(cached.value);
   const existing = pending.get(url); if (existing) return existing;
@@ -61,13 +62,28 @@ function NewsCardSkeleton() {
  * {@link NEWS_MAX_COUNT}), so "ดูเพิ่มเติม"/"แสดงน้อยลง" only changes how many of
  * the already-loaded articles are shown — expanding never touches the network.
  */
-export function NewsFeed({ symbol }: { symbol?: string }) {
+export function NewsFeed({
+  symbol,
+  portfolioSymbols = EMPTY_TOPICS,
+  watchlistSymbols = EMPTY_TOPICS,
+  industryNames = EMPTY_TOPICS,
+}: {
+  symbol?: string;
+  portfolioSymbols?: string[];
+  watchlistSymbols?: string[];
+  industryNames?: string[];
+}) {
   const root = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   // Articles and the expansion carry the feed they belong to, so switching symbol
   // can never show the previous symbol's news or keep its "expanded" state — both
   // fall back by derivation instead of an effect that would re-render twice.
-  const feedKey = symbol ?? 'market';
+  const personalizedKey = [
+    portfolioSymbols.join(','),
+    watchlistSymbols.join(','),
+    industryNames.join(','),
+  ].join('|');
+  const feedKey = symbol ?? (personalizedKey || 'market');
   const [feed, setFeed] = useState<{ key: string; articles: NewsArticle[] }>({ key: '', articles: [] });
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
   const items = feed.key === feedKey ? feed.articles : [];
@@ -90,6 +106,11 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
     setLoading(true);
     const params = new URLSearchParams();
     if (symbol) params.set('symbol', symbol);
+    else {
+      if (portfolioSymbols.length) params.set('portfolio', portfolioSymbols.join(','));
+      if (watchlistSymbols.length) params.set('watchlist', watchlistSymbols.join(','));
+      if (industryNames.length) params.set('industries', industryNames.join(','));
+    }
     try {
       const result = await load(`/api/news?${params}`, force);
       if (result.error || !result.data) {
@@ -100,7 +121,7 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
         // Newest first, one card per story, at most NEWS_MAX_COUNT — re-applied
         // here so a cached or partially ordered payload cannot reach the reader
         // out of order.
-        setFeed({ key: symbol ?? 'market', articles: selectLatestNews(result.data.articles, NEWS_MAX_COUNT) });
+        setFeed({ key: feedKey, articles: selectLatestNews(result.data.articles, NEWS_MAX_COUNT) });
         setTimestamp(result.meta.asOf ?? result.meta.timestamp);
         setError(undefined);
       }
@@ -109,7 +130,16 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
       setError({ code: 'NEWS_PROVIDER_UPSTREAM_FAILURE', message: 'News unavailable', retryable: true });
       setRetryAt(currentTime + 30_000);
     } finally { setLoading(false); }
-  }, [visible, isOnline, retryAt, symbol]);
+  }, [
+    visible,
+    isOnline,
+    retryAt,
+    symbol,
+    feedKey,
+    portfolioSymbols,
+    watchlistSymbols,
+    industryNames,
+  ]);
 
   useEffect(() => { if (ready && visible && isOnline) queueMicrotask(() => void fetchPage()); }, [ready, visible, isOnline, fetchPage]);
   useEffect(() => { if (!retryAt || !visible) return; const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [visible, retryAt]);
@@ -120,7 +150,7 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
 
   let content: React.ReactNode;
   if (state === 'loading') {
-    content = <div className="space-y-3" aria-label="Loading news" aria-busy="true">{[1, 2, 3].map((index) => <NewsCardSkeleton key={index} />)}</div>;
+    content = <div className="space-y-3" aria-label="กำลังโหลดข่าว" aria-busy="true">{[1, 2, 3].map((index) => <NewsCardSkeleton key={index} />)}</div>;
   } else if (state !== 'ready' && state !== 'empty') {
     content = (
       <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-6 text-center">
@@ -147,6 +177,13 @@ export function NewsFeed({ symbol }: { symbol?: string }) {
             <div className="flex min-w-0 flex-1 flex-col justify-between">
               <h3 className="line-clamp-3 text-sm font-semibold leading-snug text-slate-100 sm:line-clamp-2">{article.title}</h3>
               <p className="mt-2 truncate text-xs text-slate-500">{article.source} · {formatBangkokDateTime(article.publishedAt)}</p>
+              {(article.symbols.length > 0 || (article.industries?.length ?? 0) > 0) && (
+                <span className="mt-1 flex flex-wrap gap-1">
+                  {[...article.symbols, ...(article.industries ?? [])].slice(0, 3).map((tag) => (
+                    <span key={tag} className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">{tag}</span>
+                  ))}
+                </span>
+              )}
               {saveData && <span className="mt-1 inline-block text-[10px] text-amber-300">Data Saver</span>}
             </div>
           </a>

@@ -105,6 +105,15 @@ export class NewsApiProvider implements NewsProvider {
   }
   getMarketNews(cursor?: string) { return this.get('(stock market OR financial markets)', cursor); }
   getSymbolNews(symbol: string, cursor?: string) { return this.get(`(${symbol} AND (stock OR company))`, cursor); }
+  getTopicNews(topics: readonly string[], cursor?: string) {
+    const normalized = [...new Set(topics.map((topic) => topic.trim()).filter(Boolean))]
+      .slice(0, 8);
+    if (!normalized.length) return this.getMarketNews(cursor);
+    const query = normalized
+      .map((topic) => `"${topic.replace(/["\\]/g, ' ')}"`)
+      .join(' OR ');
+    return this.get(`(${query}) AND (stock OR company OR market)`, cursor);
+  }
 }
 
 const newsCache = new SharedRequestCache();
@@ -132,6 +141,16 @@ export class CachedNewsProvider implements NewsProvider {
   }
   getMarketNews(cursor = '1') { return this.load(`market:${cursor}`, () => this.source.getMarketNews(cursor)); }
   getSymbolNews(symbol: string, cursor = '1') { return this.load(`symbol:${symbol}:${cursor}`, () => this.source.getSymbolNews(symbol, cursor)); }
+  getTopicNews(topics: readonly string[], cursor = '1') {
+    const normalized = [...new Set(topics.map((topic) => topic.trim()).filter(Boolean))]
+      .slice(0, 8);
+    return this.load(
+      `topics:${normalized.join('|')}:${cursor}`,
+      () => this.source.getTopicNews
+        ? this.source.getTopicNews(normalized, cursor)
+        : this.source.getMarketNews(cursor),
+    );
+  }
 }
 export function getNewsProvider(): NewsProvider {
   // Deliberately never borrow ALPHA_VANTAGE_API_KEY: market quota is reserved for market data.

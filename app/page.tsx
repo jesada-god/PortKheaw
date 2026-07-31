@@ -2,67 +2,157 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
-import { getMarketDataProvider } from '@/src/lib/market-data';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
-import type { MarketOverview, Quote, DataFreshness } from '@/src/lib/market-data/types';
 import {
-  marketStatusReasonFromError,
-  type MarketStatusUnavailableReason,
-} from '@/src/lib/market-data/market-status';
-import { DashboardClient, type DashboardData } from '@/src/components/dashboard/DashboardClient';
+  buildServiceStatus,
+  loadIndustryDashboardSnapshot,
+  loadMarketIndices,
+  loadPortfolioPrices,
+  loadWatchlistPrices,
+  warmIndustryDashboard,
+} from '@/src/lib/overview/service';
+import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
+import type { PortfolioRecord } from '@/src/lib/portfolio/types';
+import { rankIndustries } from '@/src/lib/overview/industry-ranking';
+import { after } from 'next/server';
 
-const unavailable: DataFreshness = { status: 'unavailable', asOf: null, maxAgeSeconds: null };
-export default async function Home() {
-  const client = await createClient();
-  let portfolio = null; let watchlist = null;
-  if (client) {
-    const [p, w] = await Promise.allSettled([new PortfolioRepository(client).getDefault(), new WatchlistRepository(client).getDefault()]);
-    portfolio = p.status === 'fulfilled' ? p.value : null; watchlist = w.status === 'fulfilled' ? w.value : null;
+async function settleWithin<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  const providerResolution: {
-    provider: ReturnType<typeof getMarketDataProvider> | null;
-    reason: MarketStatusUnavailableReason | null;
-  } = (() => {
-    try {
-      return { provider: getMarketDataProvider(), reason: null };
-    } catch (cause) {
-      return {
-        provider: null,
-        reason: marketStatusReasonFromError(cause),
-      };
-    }
-  })();
-  const provider = providerResolution.provider;
-  const symbols = [...new Set([...(portfolio?.transactions.map((row) => row.symbol).filter(Boolean) ?? []), ...(watchlist?.items.map((row) => row.symbol) ?? [])])] as string[];
-  const [quoteEntries, overviewOutcome, fxResult] = await Promise.all([
-    Promise.all(symbols.slice(0, 12).map(async (symbol) => {
-      if (!provider) return [symbol, { quote: null, freshness: unavailable }] as const;
-      try { const result = await provider.getQuote(symbol); return [symbol, { quote: result.data, freshness: result.freshness }] as const; }
-      catch { return [symbol, { quote: null, freshness: unavailable }] as const; }
-    })),
-    (async () => {
-      if (!provider) {
-        return { result: null, reason: providerResolution.reason };
-      }
-      try {
-        return {
-          result: await provider.getMarketOverview(),
-          reason: null,
-        };
-      } catch (cause) {
-        return {
-          result: null,
-          reason: marketStatusReasonFromError(cause),
-        };
-      }
-    })(),
-    (async () => { try { return await getFxRate('USD', 'THB'); } catch { return { quote: null, unavailable: true }; } })(),
+}
+
+export default async function Home() {
+  const generatedAt = new Date().toISOString();
+  const client = await createClient();
+  const user = client ? (await client.auth.getUser()).data.user : null;
+  let portfolios: PortfolioRecord[] = [];
+  let watchlistSymbols: string[] = [];
+  let targetValueUsd: number | null = null;
+
+  if (client && user) {
+    const portfolioRepository = new PortfolioRepository(client);
+    const [portfolioResult, watchlistResult, goalResult] = await Promise.allSettled([
+      portfolioRepository.getAll(),
+      new WatchlistRepository(client).getDefault(),
+      portfolioRepository.getAggregateGoal(),
+    ]);
+    portfolios = portfolioResult.status === 'fulfilled'
+      ? portfolioResult.value.filter((portfolio) => !portfolio.archivedAt)
+      : [];
+    watchlistSymbols = watchlistResult.status === 'fulfilled'
+      ? watchlistResult.value.items.map((item) => item.symbol)
+      : [];
+    targetValueUsd = goalResult.status === 'fulfilled'
+      ? goalResult.value.targetValueUsd
+      : null;
+  }
+
+  const transactions = portfolios.flatMap((portfolio) => portfolio.transactions);
+  const portfolioSymbols = [...new Set(transactions.flatMap((row) => [
+    row.symbol,
+    row.underlyingSymbol,
+  ]).filter((value): value is string => Boolean(value)))];
+
+  const overviewNow = new Date(generatedAt);
+  const industryResult = loadIndustryDashboardSnapshot(overviewNow);
+  after(async () => {
+    await warmIndustryDashboard(overviewNow);
+  });
+
+  const [indices, watchlist, portfolioPriceMap, fxResult] = await Promise.all([
+    loadMarketIndices(new Date(generatedAt)),
+    loadWatchlistPrices(watchlistSymbols, new Date(generatedAt)),
+    loadPortfolioPrices(portfolioSymbols, new Date(generatedAt)),
+    settleWithin(
+      getFxRate('USD', 'THB').catch(() => ({ quote: null, unavailable: true })),
+      1_500,
+      { quote: null, unavailable: true },
+    ),
   ]);
-  const overviewResult = overviewOutcome.result;
-  const marketStatusReason = overviewOutcome.reason;
-  const quotes = Object.fromEntries(quoteEntries) as Record<string, { quote: Quote | null; freshness: DataFreshness }>;
-  const marketPrices = Object.fromEntries(Object.entries(quotes).filter(([, value]) => value.quote).map(([symbol, value]) => [symbol, { price: value.quote!.price, previousClose: value.quote!.previousClose }]));
-  const summary = portfolio ? calculatePortfolio(portfolio.transactions, marketPrices) : null;
-  const data: DashboardData = { summary, baseCurrency: portfolio?.baseCurrency ?? 'USD', usdThbRate: fxResult.quote?.rate ?? null, watchlist: watchlist?.items ?? [], quotes, overview: (overviewResult?.data ?? null) as MarketOverview | null, overviewFreshness: overviewResult?.freshness ?? unavailable, providerConfigured: Boolean(provider), marketStatusReason, timestamp: new Date().toISOString() };
-  return <DashboardClient data={data} />;
+
+  const marketPrices = Object.fromEntries(
+    [...portfolioPriceMap].flatMap(([symbol, loaded]) => {
+      const price = loaded.display.price;
+      if (price === null) return [];
+      return [[symbol, {
+        price,
+        previousClose: loaded.display.change === null
+          ? null
+          : price - loaded.display.change,
+        cached: loaded.display.status === 'saved',
+        stale: loaded.display.freshness?.status === 'stale',
+        asOf: loaded.display.asOf,
+      }]];
+    }),
+  );
+  const hasPortfolioActivity = transactions.length > 0;
+  const summary = hasPortfolioActivity
+    ? calculatePortfolio(transactions, marketPrices)
+    : null;
+  const serviceStatus = buildServiceStatus({
+    checkedAt: generatedAt,
+    indices,
+    watchlist,
+    industryCandidateCount: industryResult.candidateCount,
+    industries: industryResult.industries.length,
+    breadthAvailable: Boolean(industryResult.breadth),
+    industryRefreshing: industryResult.state === 'refreshing',
+  });
+  const limitations = industryResult.state === 'refreshing'
+    ? ['กำลังรวบรวมราคาช่วงตลาดปกติ ระบบจะแสดงเฉพาะกลุ่มที่มีข้อมูลจริงอย่างน้อย 5 บริษัท']
+    : industryResult.candidateCount === 0
+      ? ['ข้อมูลราคายังไม่เพียงพอสำหรับจัดอันดับอุตสาหกรรม']
+      : [];
+
+  return (
+    <DashboardClient
+      data={{
+        generatedAt,
+        serviceStatus,
+        portfolio: {
+          authenticated: Boolean(user),
+          portfolioCount: portfolios.length,
+          summary,
+          baseCurrency: portfolios[0]?.baseCurrency ?? 'USD',
+          targetValueUsd,
+        },
+        usdThbRate: fxResult.quote?.rate ?? null,
+        indices,
+        industries: industryResult.industries,
+        watchlist,
+        breadth: industryResult.breadth,
+        industryData: {
+          state: industryResult.state,
+          classificationUpdatedAt: industryResult.classificationUpdatedAt,
+          quotesUpdatedAt: industryResult.quotesUpdatedAt,
+          candidateCount: industryResult.candidateCount,
+          completedCount: industryResult.completedCount,
+          deadlineReached: industryResult.deadlineReached,
+        },
+        newsContext: {
+          portfolioSymbols: portfolioSymbols.slice(0, 6),
+          watchlistSymbols: watchlistSymbols.slice(0, 6),
+          industryNames: rankIndustries(
+            industryResult.industries,
+            'gainers',
+            8,
+          ).map((industry) => industry.name),
+        },
+        limitations,
+      }}
+    />
+  );
 }

@@ -11,6 +11,7 @@ export const financialModelingPrepProfileSchema = z.object({
   sector: z.string().nullable().optional(),
   industry: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
+  image: z.string().nullable().optional(),
   exchange: z.string().nullable().optional(),
   exchangeShortName: z.string().nullable().optional(),
   marketCap: nullableScalar,

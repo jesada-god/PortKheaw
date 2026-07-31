@@ -5,6 +5,7 @@ import {
   canExpandNews,
   normalizeNewsTitle,
   selectLatestNews,
+  selectPrioritizedNews,
   visibleNewsCount,
 } from './feed';
 import type { NewsArticle } from './types';
@@ -90,6 +91,28 @@ describe('selectLatestNews', () => {
       article({ id: 'real', publishedAt: '2026-07-01T00:00:00.000Z' }),
     ]);
     expect(selected.map((item) => item.id)).toEqual(['real', 'broken']);
+  });
+});
+
+describe('selectPrioritizedNews', () => {
+  it('keeps portfolio priority and removes a duplicate from later categories', () => {
+    const portfolio = article({
+      id: 'portfolio',
+      title: 'Apple announces earnings',
+      publishedAt: '2026-07-20T00:00:00.000Z',
+    });
+    const duplicate = article({
+      id: 'duplicate',
+      title: 'Apple announces earnings',
+      url: 'https://another.example/apple',
+      publishedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const market = article({
+      id: 'market',
+      publishedAt: '2026-07-26T00:00:00.000Z',
+    });
+    expect(selectPrioritizedNews([[portfolio], [duplicate, market]]).map((item) => item.id))
+      .toEqual(['portfolio', 'market']);
   });
 });
 

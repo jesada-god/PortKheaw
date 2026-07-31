@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "sync:instruments": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/sync-instruments.ts",
+    "instruments:classify": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/classify-instruments.ts",
     "seed:fx": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/seed-fx.ts",
     "probe:polygon-ws": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local --experimental-strip-types scripts/probe-polygon-ws.ts",
     "probe:auth-recovery": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-auth-recovery.ts",

@@ -85,6 +85,7 @@ export const companyProfileSchema = z.object({
   sector: z.string().nullable(),
   industry: z.string().nullable(),
   website: z.url().nullable(),
+  logoUrl: z.url().nullable().optional(),
   marketCapitalization: nullableNumber,
   employees: z.number().int().nonnegative().nullable(),
   fiscalYearEnd: z.string().nullable(),
