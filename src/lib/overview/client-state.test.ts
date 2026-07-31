@@ -8,9 +8,11 @@ const base = {
   portfolio: {
     authenticated: false,
     portfolioCount: 0,
+    portfolioName: null,
     summary: null,
     baseCurrency: 'USD',
     targetValueUsd: null,
+    coverage: null,
   },
   usdThbRate: null,
   indices: [],

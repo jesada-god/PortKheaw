@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { aggregatePortfolioSummaries, calculateGoalProgress } from './aggregate';
+import {
+  aggregatePortfolioSummaries,
+  calculateGoalProgress,
+  portfolioValuationCoverage,
+} from './aggregate';
 import { calculatePortfolio } from './calculations';
 import type { PortfolioTransaction, PortfolioTransactionType } from './types';
 
@@ -70,5 +74,21 @@ describe('portfolio aggregation and goals', () => {
       reason: 'มูลค่าพอร์ตติดลบ',
     });
     expect(calculateGoalProgress(null, { targetValueUsd: 100, targetDate: null }).reason).toContain('ไม่มีราคาปัจจุบัน');
+  });
+
+  it('reports a verified subtotal and coverage without treating a deposit as profit', () => {
+    const summary = calculatePortfolio([
+      tx('cash', 'deposit', '1000'),
+    ]);
+    expect(summary).toMatchObject({
+      totalValue: 1000,
+      totalGain: 0,
+      netDepositedCapital: 1000,
+    });
+    expect(portfolioValuationCoverage(summary)).toEqual({
+      pricedAssets: 0,
+      totalAssets: 0,
+      verifiedValueUsd: 1000,
+    });
   });
 });

@@ -33,11 +33,11 @@ export class NewsProviderError extends Error {
 
 const articleSchema = z.object({
   source: z.object({ name: z.string().nullish() }), title: z.string().nullish(), url: z.string().nullish(),
-  urlToImage: z.string().nullish(), publishedAt: z.string().nullish(),
+  description: z.string().nullish().optional(), urlToImage: z.string().nullish(), publishedAt: z.string().nullish(),
 });
 const responseSchema = z.object({ status: z.literal('ok'), articles: z.array(articleSchema) });
 const errorSchema = z.object({ status: z.literal('error'), code: z.string().optional(), message: z.string().optional() });
-const PAGE_SIZE = NEWS_MAX_COUNT;
+const PAGE_SIZE = 30;
 
 /**
  * NewsAPI keeps articles whose content the publisher withdrew, replacing every
@@ -90,7 +90,17 @@ export class NewsApiProvider implements NewsProvider {
       // `urlToImage` is the provider's own article image: mapped verbatim when it
       // is a usable link, and left null when the publisher supplied none. No image
       // is ever substituted or borrowed from another article.
-      articles.push({ id: createHash('sha256').update(key).digest('hex').slice(0, 20), title, source: item.source.name?.trim() || new URL(externalUrl).hostname, publishedAt: date.toISOString(), url: externalUrl, imageUrl: safeExternalUrl(item.urlToImage), symbols: [] });
+      articles.push({
+        id: createHash('sha256').update(key).digest('hex').slice(0, 20),
+        title,
+        summary: item.description?.trim() || null,
+        source: item.source.name?.trim() || new URL(externalUrl).hostname,
+        publishedAt: date.toISOString(),
+        url: externalUrl,
+        imageUrl: safeExternalUrl(item.urlToImage),
+        symbols: [],
+        tags: [],
+      });
     }
     return {
       data: {
@@ -103,7 +113,12 @@ export class NewsApiProvider implements NewsProvider {
       asOf: this.now().toISOString(),
     };
   }
-  getMarketNews(cursor?: string) { return this.get('(stock market OR financial markets)', cursor); }
+  getMarketNews(cursor?: string) {
+    return this.get(
+      '(Federal Reserve OR FOMC OR inflation OR CPI OR PCE OR payrolls OR GDP OR Treasury OR oil OR geopolitics OR regulation) AND (stock market OR Wall Street OR S&P 500 OR Nasdaq OR Dow)',
+      cursor,
+    );
+  }
   getSymbolNews(symbol: string, cursor?: string) { return this.get(`(${symbol} AND (stock OR company))`, cursor); }
   getTopicNews(topics: readonly string[], cursor?: string) {
     const normalized = [...new Set(topics.map((topic) => topic.trim()).filter(Boolean))]

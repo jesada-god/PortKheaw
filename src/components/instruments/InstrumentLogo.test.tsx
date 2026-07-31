@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InstrumentLogo } from './InstrumentLogo';
+import { InstrumentLogo, normalizeInstrumentLogoUrl } from './InstrumentLogo';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,6 +23,14 @@ afterEach(() => {
 });
 
 describe('InstrumentLogo', () => {
+  it('normalizes only credential-free HTTPS provider URLs', () => {
+    expect(normalizeInstrumentLogoUrl(' https://images.example.test/logo.png#fragment '))
+      .toBe('https://images.example.test/logo.png');
+    expect(normalizeInstrumentLogoUrl('http://images.example.test/logo.png')).toBeNull();
+    expect(normalizeInstrumentLogoUrl('https://user:secret@images.example.test/logo.png')).toBeNull();
+    expect(normalizeInstrumentLogoUrl('not-a-url')).toBeNull();
+  });
+
   it('renders a fixed-size monogram when no provider logo exists', () => {
     act(() => {
       root.render(<InstrumentLogo symbol="NVDA" companyName="NVIDIA" logoUrl={null} size={44} />);

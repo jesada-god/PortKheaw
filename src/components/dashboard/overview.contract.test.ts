@@ -60,4 +60,22 @@ describe('Overview dashboard contracts', () => {
     expect(read('app/industry/[slug]/page.tsx')).toContain('loadIndustryDetail');
     expect(read('src/components/dashboard/DashboardClient.tsx')).toContain('/industry/');
   });
+
+  it('summarizes the same initially selected active portfolio and option quote pipeline as Portfolio', () => {
+    const page = read('app/page.tsx');
+    const portfolio = read('src/components/portfolio/PortfolioClient.tsx');
+    expect(page).toContain('portfolios.find((portfolio) => !portfolio.archivedAt)');
+    expect(portfolio).toContain("portfolios.find((item) => item.archivedAt === null)?.id");
+    expect(page).toContain('calculatePortfolio(transactions, marketPrices, optionQuotes)');
+    expect(page).toContain('loadPortfolioOptionQuotes');
+    expect(page).toContain('portfolioValuationCoverage');
+  });
+
+  it('loads Industry history after SSR and renders only a paginated constituent slice', () => {
+    const detail = read('src/components/industry/IndustryDetailClient.tsx');
+    expect(detail).toContain('/api/market/industry/');
+    expect(detail).toContain('PAGE_SIZE = 20');
+    expect(detail).toContain('visibleMembers.map');
+    expect(detail).toContain('rollbackWatchlistChange');
+  });
 });

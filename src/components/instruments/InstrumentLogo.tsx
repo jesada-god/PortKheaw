@@ -5,6 +5,25 @@ import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/src/utils/cn';
 
 const failedLogos = new Set<string>();
+const normalizedLogos = new Map<string, string | null>();
+
+export function normalizeInstrumentLogoUrl(value: string | null): string | null {
+  if (!value) return null;
+  const cached = normalizedLogos.get(value);
+  if (cached !== undefined) return cached;
+  let normalized: string | null = null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol === 'https:' && !url.username && !url.password) {
+      url.hash = '';
+      normalized = url.href;
+    }
+  } catch {
+    normalized = null;
+  }
+  normalizedLogos.set(value, normalized);
+  return normalized;
+}
 
 function initials(symbol: string): string {
   return symbol.replace(/[^A-Z0-9]/gi, '').slice(0, 3).toUpperCase() || '?';
@@ -25,28 +44,31 @@ export function InstrumentLogo({
   className?: string;
   priority?: boolean;
 }) {
+  const normalizedLogoUrl = normalizeInstrumentLogoUrl(logoUrl);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
-  const failed = Boolean(logoUrl && (failedUrl === logoUrl || failedLogos.has(logoUrl)));
+  const failed = Boolean(normalizedLogoUrl && (
+    failedUrl === normalizedLogoUrl || failedLogos.has(normalizedLogoUrl)
+  ));
   useEffect(() => {
-    if (!logoUrl || failedLogos.has(logoUrl)) return;
+    if (!normalizedLogoUrl || failedLogos.has(normalizedLogoUrl)) return;
     timeoutRef.current = window.setTimeout(() => {
-      failedLogos.add(logoUrl);
-      setFailedUrl(logoUrl);
+      failedLogos.add(normalizedLogoUrl);
+      setFailedUrl(normalizedLogoUrl);
     }, 8_000);
     return () => {
       if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     };
-  }, [logoUrl]);
+  }, [normalizedLogoUrl]);
 
   const fail = () => {
-    if (logoUrl) failedLogos.add(logoUrl);
-    setFailedUrl(logoUrl);
+    if (normalizedLogoUrl) failedLogos.add(normalizedLogoUrl);
+    setFailedUrl(normalizedLogoUrl);
   };
   const style = { width: size, height: size };
 
-  if (!logoUrl || failed) {
+  if (!normalizedLogoUrl || failed) {
     return (
       <span
         role="img"
@@ -71,7 +93,7 @@ export function InstrumentLogo({
       )}
     >
       <Image
-        src={logoUrl}
+        src={normalizedLogoUrl}
         alt={`โลโก้ ${companyName || symbol}`}
         fill
         sizes={`${size}px`}

@@ -102,4 +102,18 @@ describe('mapWithConcurrencyDeadline', () => {
     expect(result.completed).toHaveLength(1);
     vi.useRealTimers();
   });
+
+  it('isolates one mapper failure and keeps successful siblings', async () => {
+    const result = await mapWithConcurrencyDeadline(
+      ['A', 'B', 'C'],
+      2,
+      Date.now() + 1_000,
+      async (value) => {
+        if (value === 'B') throw new Error('one provider symbol failed');
+        return value;
+      },
+    );
+    expect(result.timedOut).toBe(false);
+    expect(result.completed.map((item) => item.value).sort()).toEqual(['A', 'C']);
+  });
 });

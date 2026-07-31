@@ -55,13 +55,14 @@ export interface OverviewPrice {
 
 export interface MarketIndexCard extends OverviewPrice {
   name: string;
-  proxyLabel: 'ETF อ้างอิง';
+  proxyLabel: 'ETF อ้างอิง' | 'สินทรัพย์จริง';
 }
 
 export interface IndustryMember {
   price: OverviewPrice;
   volume: number | null;
   marketCap: number | null;
+  contributionPercent: number;
 }
 
 export interface IndustryGroup {
@@ -70,6 +71,10 @@ export interface IndustryGroup {
   nameTh: string | null;
   sector: string | null;
   returnPercent: number;
+  averageChange: number;
+  medianChange: number;
+  upDownRatio: number | null;
+  weighting: 'equal';
   advancing: number;
   declining: number;
   unchanged: number;
@@ -101,9 +106,40 @@ export interface ServiceStatus {
 export interface PortfolioOverview {
   authenticated: boolean;
   portfolioCount: number;
+  portfolioName: string | null;
   summary: PortfolioSummary | null;
   baseCurrency: 'USD' | 'THB';
   targetValueUsd: number | null;
+  coverage: {
+    pricedAssets: number;
+    totalAssets: number;
+    verifiedValueUsd: number | null;
+  } | null;
+}
+
+export type IndustryTimeframe = '1D' | '1W' | '1M' | '3M' | '1Y';
+
+export interface IndustryChartPoint {
+  timestamp: number;
+  industryReturn: number;
+  benchmarkReturn: number | null;
+  memberCount: number;
+}
+
+export interface IndustryChartResult {
+  timeframe: IndustryTimeframe;
+  status: 'available' | 'unavailable';
+  points: IndustryChartPoint[];
+  benchmarkSymbol: 'SPY';
+  benchmarkLabel: 'S&P 500 (SPY ETF อ้างอิง)';
+  coverage: {
+    usable: number;
+    requested: number;
+    thresholdPercent: number;
+  };
+  stale: boolean;
+  asOf: string | null;
+  reason: string | null;
 }
 
 export interface OverviewDashboardData {

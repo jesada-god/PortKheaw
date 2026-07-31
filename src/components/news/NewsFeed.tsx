@@ -8,6 +8,7 @@ import {
   selectLatestNews,
   visibleNewsCount,
 } from '@/src/lib/news/feed';
+import { MARKET_WIDE_NEWS_LIMIT } from '@/src/lib/news/market-wide';
 import type { NewsArticle, NewsPage } from '@/src/lib/news/types';
 import { newsErrorMessage, newsViewState } from './news-policy';
 import { NewsThumbnail } from './NewsThumbnail';
@@ -67,11 +68,13 @@ export function NewsFeed({
   portfolioSymbols = EMPTY_TOPICS,
   watchlistSymbols = EMPTY_TOPICS,
   industryNames = EMPTY_TOPICS,
+  marketWide = false,
 }: {
   symbol?: string;
   portfolioSymbols?: string[];
   watchlistSymbols?: string[];
   industryNames?: string[];
+  marketWide?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -83,7 +86,7 @@ export function NewsFeed({
     watchlistSymbols.join(','),
     industryNames.join(','),
   ].join('|');
-  const feedKey = symbol ?? (personalizedKey || 'market');
+  const feedKey = symbol ?? (marketWide ? 'market-wide' : (personalizedKey || 'market'));
   const [feed, setFeed] = useState<{ key: string; articles: NewsArticle[] }>({ key: '', articles: [] });
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
   const items = feed.key === feedKey ? feed.articles : [];
@@ -106,6 +109,7 @@ export function NewsFeed({
     setLoading(true);
     const params = new URLSearchParams();
     if (symbol) params.set('symbol', symbol);
+    else if (marketWide) params.set('scope', 'market-wide');
     else {
       if (portfolioSymbols.length) params.set('portfolio', portfolioSymbols.join(','));
       if (watchlistSymbols.length) params.set('watchlist', watchlistSymbols.join(','));
@@ -121,7 +125,13 @@ export function NewsFeed({
         // Newest first, one card per story, at most NEWS_MAX_COUNT — re-applied
         // here so a cached or partially ordered payload cannot reach the reader
         // out of order.
-        setFeed({ key: feedKey, articles: selectLatestNews(result.data.articles, NEWS_MAX_COUNT) });
+        setFeed({
+          key: feedKey,
+          articles: selectLatestNews(
+            result.data.articles,
+            marketWide ? MARKET_WIDE_NEWS_LIMIT : NEWS_MAX_COUNT,
+          ),
+        });
         setTimestamp(result.meta.asOf ?? result.meta.timestamp);
         setError(undefined);
       }
@@ -139,6 +149,7 @@ export function NewsFeed({
     portfolioSymbols,
     watchlistSymbols,
     industryNames,
+    marketWide,
   ]);
 
   useEffect(() => { if (ready && visible && isOnline) queueMicrotask(() => void fetchPage()); }, [ready, visible, isOnline, fetchPage]);
@@ -160,7 +171,9 @@ export function NewsFeed({
       </div>
     );
   } else if (state === 'empty') {
-    content = <div className="rounded-xl border border-slate-800 p-6 text-center text-sm text-slate-400">ยังไม่มีข่าวในขณะนี้</div>;
+    content = <div className="rounded-xl border border-slate-800 p-6 text-center text-sm text-slate-400">
+      {marketWide ? 'ยังไม่มีข่าวที่ผ่านเกณฑ์ผลกระทบต่อตลาดโดยรวม' : 'ยังไม่มีข่าวในขณะนี้'}
+    </div>;
   } else {
     content = (
       <div className="space-y-3">

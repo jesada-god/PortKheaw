@@ -39,6 +39,33 @@ function validPercent(value: number | null): value is number {
   return value !== null && Number.isFinite(value);
 }
 
+function median(values: readonly number[]): number {
+  const ordered = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2
+    ? ordered[middle]!
+    : (ordered[middle - 1]! + ordered[middle]!) / 2;
+}
+
+function canonicalCohort(
+  candidates: readonly IndustryQuoteCandidate[],
+): IndustryQuoteCandidate[] {
+  const cohorts = new Map<string, IndustryQuoteCandidate[]>();
+  for (const candidate of candidates) {
+    if (
+      !candidate.valid
+      || !validPercent(candidate.price.changePercent)
+      || !candidate.price.tradingDate
+    ) continue;
+    const key = `${candidate.price.tradingDate}:${candidate.price.session}`;
+    cohorts.set(key, [...(cohorts.get(key) ?? []), candidate]);
+  }
+  return [...cohorts.values()].sort((left, right) =>
+    right.length - left.length
+    || (right[0]?.price.tradingDate ?? '').localeCompare(left[0]?.price.tradingDate ?? '')
+  )[0] ?? [];
+}
+
 export function industrySlug(name: string): string {
   return name.normalize('NFKD').toLowerCase().replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
@@ -83,13 +110,13 @@ export function buildIndustryRanking(
 
   const result: IndustryGroup[] = [];
   for (const [name, allMembers] of groups) {
-    const usable = allMembers.filter((candidate) =>
-      candidate.valid && validPercent(candidate.price.changePercent));
+    // Never blend different trading dates or regular/extended domains. The
+    // largest canonical cohort wins and every other quote is excluded.
+    const usable = canonicalCohort(allMembers);
     if (usable.length < minimumSymbols) continue;
-    const returnPercent = usable.reduce(
-      (sum, candidate) => sum + candidate.price.changePercent!,
-      0,
-    ) / usable.length;
+    const changes = usable.map((candidate) => candidate.price.changePercent!);
+    const returnPercent = changes.reduce((sum, change) => sum + change, 0)
+      / usable.length;
     const advancing = usable.filter((item) => item.price.changePercent! > 0).length;
     const declining = usable.filter((item) => item.price.changePercent! < 0).length;
     const unchanged = usable.length - advancing - declining;
@@ -99,6 +126,7 @@ export function buildIndustryRanking(
       price: candidate.price,
       volume: candidate.volume ?? null,
       marketCap: candidate.marketCap ?? null,
+      contributionPercent: candidate.price.changePercent! / usable.length,
     }));
     result.push({
       slug: usable.find((item) => item.industrySlug)?.industrySlug ?? industrySlug(name),
@@ -107,6 +135,10 @@ export function buildIndustryRanking(
         ?? thaiIndustryName(name),
       sector: usable.find((item) => item.sector)?.sector ?? null,
       returnPercent,
+      averageChange: returnPercent,
+      medianChange: median(changes),
+      upDownRatio: declining > 0 ? advancing / declining : null,
+      weighting: 'equal',
       advancing,
       declining,
       unchanged,

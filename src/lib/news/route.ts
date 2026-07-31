@@ -9,6 +9,7 @@ import {
 } from './provider';
 import type { NewsProvider } from './types';
 import { loadPersonalizedNews } from './personalized';
+import { selectMarketWideNews } from './market-wide';
 
 const cursorSchema = z.coerce.number().int().min(1).max(100).transform(String);
 const topicListSchema = z.string().max(500).transform((value) =>
@@ -47,6 +48,7 @@ export async function handleNewsRequest(
   const deps = { ...defaults, ...dependencies };
   const rawSymbol = request.nextUrl.searchParams.get('symbol');
   const rawCursor = request.nextUrl.searchParams.get('cursor');
+  const marketWide = request.nextUrl.searchParams.get('scope') === 'market-wide';
   const parsedSymbol = rawSymbol ? symbolSchema.safeParse(rawSymbol) : null;
   const parsedCursor = rawCursor ? cursorSchema.safeParse(rawCursor) : null;
   const parsedPortfolio = request.nextUrl.searchParams.has('portfolio')
@@ -96,7 +98,7 @@ export async function handleNewsRequest(
     provider = deps.getProvider();
     const cursor = parsedCursor?.success ? parsedCursor.data : undefined;
     const personalized = parsedPortfolio || parsedWatchlist || parsedIndustries;
-    const result = personalized
+    const loaded = personalized
       ? await loadPersonalizedNews({
         portfolioSymbols: parsedPortfolio?.success ? parsedPortfolio.data : [],
         watchlistSymbols: parsedWatchlist?.success ? parsedWatchlist.data : [],
@@ -105,6 +107,16 @@ export async function handleNewsRequest(
       : parsedSymbol?.success
         ? await provider.getSymbolNews(parsedSymbol.data, cursor)
         : await provider.getMarketNews(cursor);
+    const result = marketWide && !parsedSymbol?.success && !personalized
+      ? {
+          ...loaded,
+          data: {
+            ...loaded.data,
+            articles: selectMarketWideNews(loaded.data.articles),
+            nextCursor: null,
+          },
+        }
+      : loaded;
     deps.log({
       route: '/api/news',
       provider: provider.id,

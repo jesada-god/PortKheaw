@@ -243,9 +243,17 @@ function PortfolioCard({ data, usdThbRate }: {
         <div>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-medium text-[var(--text-muted)]">มูลค่าพอร์ตรวม</p>
+              <p className="text-xs font-medium text-[var(--text-muted)]">
+                {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
+                {data.portfolioName ? ` · ${data.portfolioName}` : ''}
+              </p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--text)] sm:text-3xl">
-                {visible ? formatMoney(convert(summary.totalValue), data.baseCurrency) : '••••••'}
+                {visible
+                  ? formatMoney(
+                    convert(summary.totalValue ?? data.coverage?.verifiedValueUsd ?? null),
+                    data.baseCurrency,
+                  )
+                  : '••••••'}
               </p>
             </div>
             <button
@@ -291,7 +299,8 @@ function PortfolioCard({ data, usdThbRate }: {
           <p className="mt-3 text-xs text-[var(--text-muted)]">{data.portfolioCount} พอร์ตที่ใช้งานอยู่</p>
           {summary.hasMissingPrices && (
             <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
-              มีสินทรัพย์บางรายการที่ราคายังไม่พร้อม ยอดรวมจึงไม่ถูกประมาณแทน
+              ใช้ราคาได้ {data.coverage?.pricedAssets ?? 0} จาก {data.coverage?.totalAssets ?? 0} สินทรัพย์
+              {' '}ตัวเลขด้านบนเป็นยอดที่ตรวจสอบได้เท่านั้น และไม่ประมาณรายการที่ขาด
             </p>
           )}
         </div>
@@ -312,9 +321,17 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
   return (
     <article className="min-w-[238px] snap-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:min-w-0">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-semibold text-[var(--text)]">{item.name}</h3>
-          <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{item.symbol} · {item.proxyLabel}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          <InstrumentLogo
+            symbol={item.symbol}
+            companyName={item.instrument.companyName}
+            logoUrl={item.instrument.logoUrl}
+            size={36}
+          />
+          <div className="min-w-0">
+            <h3 className="truncate font-semibold text-[var(--text)]">{item.name}</h3>
+            <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{item.symbol} · {item.proxyLabel}</p>
+          </div>
         </div>
         <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)]">
           {item.sessionLabel}
@@ -704,13 +721,9 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
           <SectionTitle
             icon={Newspaper}
-            title="ข่าวที่เกี่ยวข้อง"
+            title="ข่าวสำคัญต่อตลาดหุ้น"
           />
-          <NewsFeed
-            portfolioSymbols={view.newsContext.portfolioSymbols}
-            watchlistSymbols={view.newsContext.watchlistSymbols}
-            industryNames={view.newsContext.industryNames}
-          />
+          <NewsFeed marketWide />
         </section>
       </main>
     </div>

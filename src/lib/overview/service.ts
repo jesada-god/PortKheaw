@@ -24,8 +24,17 @@ import {
   mapWithConcurrencyDeadline,
 } from './industry-snapshot';
 import { overviewPriceStatus } from './presentation';
+import { MARKET_ASSETS } from './market-assets';
+import {
+  aggregateIndustryChartSeries,
+  attachBenchmark,
+  INDUSTRY_CHART_MIN_COVERAGE,
+  type MemberCandleSeries,
+} from './industry-chart';
 import type {
+  IndustryChartResult,
   IndustryGroup,
+  IndustryTimeframe,
   InstrumentMetadata,
   MarketIndexCard,
   MarketBreadth,
@@ -40,14 +49,8 @@ const unavailableFreshness = {
   maxAgeSeconds: null,
 };
 
-const INDEX_PROXIES = [
-  { symbol: 'SPY', name: 'S&P 500' },
-  { symbol: 'QQQ', name: 'NASDAQ 100' },
-  { symbol: 'DIA', name: 'Dow Jones' },
-  { symbol: 'IWM', name: 'Russell 2000' },
-] as const;
-
 const priceCache = new SharedRequestCache();
+const industryChartCache = new SharedRequestCache();
 const INDUSTRY_REFRESH_DEADLINE_MS = 20_000;
 const INDUSTRY_SNAPSHOT_POLICY = {
   freshMs: 2 * 60_000,
@@ -341,12 +344,12 @@ export async function loadMarketIndices(
   force = false,
 ): Promise<MarketIndexCard[]> {
   if (force) {
-    INDEX_PROXIES.forEach((item) => priceCache.invalidate(`overview-price:${item.symbol}`));
+    MARKET_ASSETS.forEach((item) => priceCache.invalidate(`overview-price:${item.symbol}`));
   }
-  const metadata = await getInstrumentMetadata(INDEX_PROXIES.map((item) => item.symbol));
+  const metadata = await getInstrumentMetadata(MARKET_ASSETS.map((item) => item.symbol));
   const resolved = await getMarketDataGateway()
-    .resolveInstruments(INDEX_PROXIES.map((item) => item.symbol));
-  return mapWithConcurrency(INDEX_PROXIES, 4, async (proxy) => {
+    .resolveInstruments(MARKET_ASSETS.map((item) => item.symbol));
+  return mapWithConcurrency(MARKET_ASSETS, 4, async (proxy) => {
     const instrument = metadata.get(proxy.symbol)!;
     const [loaded, points] = await Promise.all([
       loadOverviewPrice(instrument, now, resolved.get(proxy.symbol)),
@@ -356,7 +359,7 @@ export async function loadMarketIndices(
       ...loaded.display,
       sparkline: points,
       name: proxy.name,
-      proxyLabel: 'ETF อ้างอิง' as const,
+      proxyLabel: proxy.proxyLabel,
     };
   });
 }
@@ -536,28 +539,158 @@ export async function loadIndustryDashboard(now = new Date(), force = false) {
 export async function loadIndustryDetail(slug: string, now = new Date()) {
   const instruments = await getIndustryInstruments(slug);
   if (!instruments.length) return null;
-  const resolved = await getMarketDataGateway()
-    .resolveInstruments(instruments.map((instrument) => instrument.symbol));
-  const loaded = await mapWithConcurrency(
+  const deadlineAt = Date.now() + 12_000;
+  const resolved = await settleBeforeDeadline(
+    getMarketDataGateway().resolveInstruments(
+      instruments.map((instrument) => instrument.symbol),
+    ),
+    deadlineAt,
+  );
+  if (!resolved) return null;
+  const collection = await mapWithConcurrencyDeadline(
     instruments,
     6,
-    (instrument) => loadOverviewPrice(
+    deadlineAt,
+    (instrument) => loadIndustryRegularPrice(
       instrument,
-      now,
       resolved.get(instrument.symbol),
+      now,
     ),
   );
-  const candidates: IndustryQuoteCandidate[] = loaded.map((item, index) => ({
-    price: item.display,
+  const candidates: IndustryQuoteCandidate[] = collection.completed.map(({ index, value }) => ({
+    price: value.display,
     sector: instruments[index]?.sector ?? null,
     industry: instruments[index]?.industry ?? null,
     industryNameTh: instruments[index]?.industryNameTh ?? null,
     industrySlug: instruments[index]?.industrySlug ?? null,
-    valid: item.validForRanking,
-    volume: item.volume,
+    valid: value.validForRanking,
+    volume: value.volume,
     marketCap: null,
+    groupTotalCount: instruments[index]?.industryMemberCount ?? instruments.length,
   }));
   return buildIndustryRanking(candidates, 1)[0] ?? null;
+}
+
+const INDUSTRY_CHART_CONFIG: Record<IndustryTimeframe, {
+  interval: '5m' | '1h' | '1D';
+  range: '1d' | '5d' | '1m' | '3m' | '1y';
+  minimumPoints: number;
+}> = {
+  '1D': { interval: '5m', range: '1d', minimumPoints: 12 },
+  '1W': { interval: '1h', range: '5d', minimumPoints: 12 },
+  '1M': { interval: '1D', range: '1m', minimumPoints: 10 },
+  '3M': { interval: '1D', range: '3m', minimumPoints: 30 },
+  '1Y': { interval: '1D', range: '1y', minimumPoints: 120 },
+};
+
+async function calculateIndustryChart(
+  slug: string,
+  timeframe: IndustryTimeframe,
+): Promise<IndustryChartResult> {
+  const config = INDUSTRY_CHART_CONFIG[timeframe];
+  const instruments = await getIndustryInstruments(slug, 20);
+  if (!instruments.length) throw new Error('ไม่พบสมาชิกอุตสาหกรรมที่ตรวจสอบได้');
+  const deadlineAt = Date.now() + 12_000;
+  const candles = getCandleMarketDataService();
+  const benchmarkPromise = settleBeforeDeadline(
+    candles.getCandles({
+      symbol: 'SPY',
+      interval: config.interval,
+      range: config.range,
+      adjusted: true,
+      session: 'regular',
+    }).catch(() => null),
+    deadlineAt,
+  );
+  const collection = await mapWithConcurrencyDeadline(
+    instruments,
+    5,
+    deadlineAt,
+    async (instrument): Promise<MemberCandleSeries> => {
+      const result = await candles.getCandles({
+        symbol: instrument.symbol,
+        interval: config.interval,
+        range: config.range,
+        adjusted: true,
+        session: 'regular',
+      });
+      return {
+        symbol: instrument.symbol,
+        candles: result.data.candles,
+      };
+    },
+  );
+  const aggregated = aggregateIndustryChartSeries(
+    collection.completed.map(({ value }) => value),
+    instruments.length,
+    config.minimumPoints,
+  );
+  if (!aggregated.points.length) {
+    throw new Error(
+      `ข้อมูลสมาชิกผ่านเกณฑ์ไม่ถึง ${Math.ceil(INDUSTRY_CHART_MIN_COVERAGE * 100)}% หรือจำนวนจุดไม่พอ`,
+    );
+  }
+  const benchmark = await benchmarkPromise;
+  if (!benchmark) throw new Error('ข้อมูล S&P 500 อ้างอิงไม่พร้อมภายในเวลาที่กำหนด');
+  const points = attachBenchmark(aggregated.points, benchmark.data.candles);
+  if (points.filter((point) => point.benchmarkReturn !== null).length < config.minimumPoints) {
+    throw new Error('ข้อมูล S&P 500 ไม่ตรงกับช่วงเวลาของสมาชิกเพียงพอ');
+  }
+  return {
+    timeframe,
+    status: 'available',
+    points,
+    benchmarkSymbol: 'SPY',
+    benchmarkLabel: 'S&P 500 (SPY ETF อ้างอิง)',
+    coverage: {
+      usable: aggregated.usableMembers,
+      requested: instruments.length,
+      thresholdPercent: INDUSTRY_CHART_MIN_COVERAGE * 100,
+    },
+    stale: collection.timedOut
+      || benchmark.data.dataStatus === 'stale',
+    asOf: points.length
+      ? new Date(points.at(-1)!.timestamp * 1_000).toISOString()
+      : null,
+    reason: null,
+  };
+}
+
+export async function loadIndustryChart(
+  slug: string,
+  timeframe: IndustryTimeframe,
+): Promise<IndustryChartResult> {
+  try {
+    const resolution = await industryChartCache.resolve(
+      `industry-chart:${slug}:${timeframe}`,
+      () => calculateIndustryChart(slug, timeframe),
+      {
+        freshMs: timeframe === '1D' ? 60_000 : 6 * 60 * 60_000,
+        staleMs: 24 * 60 * 60_000,
+        errorMs: 30_000,
+      },
+    );
+    return {
+      ...resolution.value,
+      stale: resolution.state === 'stale' || resolution.value.stale,
+    };
+  } catch (cause) {
+    return {
+      timeframe,
+      status: 'unavailable',
+      points: [],
+      benchmarkSymbol: 'SPY',
+      benchmarkLabel: 'S&P 500 (SPY ETF อ้างอิง)',
+      coverage: {
+        usable: 0,
+        requested: 0,
+        thresholdPercent: INDUSTRY_CHART_MIN_COVERAGE * 100,
+      },
+      stale: false,
+      asOf: null,
+      reason: cause instanceof Error ? cause.message : 'ข้อมูลกราฟยังไม่พร้อม',
+    };
+  }
 }
 
 export function buildServiceStatus(input: {

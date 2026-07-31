@@ -106,7 +106,25 @@ describe('industry ranking', () => {
       declining: 1,
       unchanged: 2,
       breadthPercent: 40,
+      averageChange: 2,
+      medianChange: 0,
+      upDownRatio: 2,
+      weighting: 'equal',
     });
+    expect(group.members.find((member) => member.price.symbol === 'A')?.contributionPercent).toBe(2);
+  });
+
+  it('never mixes trading dates or session domains in one industry aggregate', () => {
+    const current = Array.from({ length: 5 }, (_, index) => candidate(`A${index}`, index + 1));
+    const wrongDate = candidate('OLD', 100);
+    wrongDate.price.tradingDate = '2026-07-30';
+    const wrongSession = candidate('POST', 100);
+    wrongSession.price.session = 'POST';
+    const group = buildIndustryRanking([...current, wrongDate, wrongSession])[0]!;
+    expect(group.validCount).toBe(5);
+    expect(group.returnPercent).toBe(3);
+    expect(group.members.map((member) => member.price.symbol)).not.toContain('OLD');
+    expect(group.members.map((member) => member.price.symbol)).not.toContain('POST');
   });
 
   it('excludes stale, unavailable and wrong-date candidates through the canonical verdict', () => {

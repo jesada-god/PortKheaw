@@ -2,6 +2,10 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
+import { portfolioValuationCoverage } from '@/src/lib/portfolio/aggregate';
+import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations';
+import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
+import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
 import {
   buildServiceStatus,
@@ -13,7 +17,6 @@ import {
 } from '@/src/lib/overview/service';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
 import type { PortfolioRecord } from '@/src/lib/portfolio/types';
-import { rankIndustries } from '@/src/lib/overview/industry-ranking';
 import { after } from 'next/server';
 
 async function settleWithin<T>(
@@ -40,14 +43,12 @@ export default async function Home() {
   const user = client ? (await client.auth.getUser()).data.user : null;
   let portfolios: PortfolioRecord[] = [];
   let watchlistSymbols: string[] = [];
-  let targetValueUsd: number | null = null;
 
   if (client && user) {
     const portfolioRepository = new PortfolioRepository(client);
-    const [portfolioResult, watchlistResult, goalResult] = await Promise.allSettled([
+    const [portfolioResult, watchlistResult] = await Promise.allSettled([
       portfolioRepository.getAll(),
       new WatchlistRepository(client).getDefault(),
-      portfolioRepository.getAggregateGoal(),
     ]);
     portfolios = portfolioResult.status === 'fulfilled'
       ? portfolioResult.value.filter((portfolio) => !portfolio.archivedAt)
@@ -55,12 +56,13 @@ export default async function Home() {
     watchlistSymbols = watchlistResult.status === 'fulfilled'
       ? watchlistResult.value.items.map((item) => item.symbol)
       : [];
-    targetValueUsd = goalResult.status === 'fulfilled'
-      ? goalResult.value.targetValueUsd
-      : null;
   }
 
-  const transactions = portfolios.flatMap((portfolio) => portfolio.transactions);
+  // PortfolioClient selects the first active portfolio on initial load. Reuse
+  // that exact record here so Overview and Portfolio never summarize different
+  // ledgers on the first visit.
+  const selectedPortfolio = portfolios.find((portfolio) => !portfolio.archivedAt) ?? null;
+  const transactions = selectedPortfolio?.transactions ?? [];
   const portfolioSymbols = [...new Set(transactions.flatMap((row) => [
     row.symbol,
     row.underlyingSymbol,
@@ -99,8 +101,18 @@ export default async function Home() {
     }),
   );
   const hasPortfolioActivity = transactions.length > 0;
+  const optionPreview = calculateOptionLedger(transactions);
+  let optionService: ReturnType<typeof getOptionsMarketDataService> | null = null;
+  try { optionService = getOptionsMarketDataService(); } catch { optionService = null; }
+  const optionQuotes = await loadPortfolioOptionQuotes(
+    optionPreview.positions.filter((position) => position.status === 'open'),
+    optionService
+      ? async (underlying, expiration) =>
+        (await optionService!.getChain(underlying, expiration)).data
+      : undefined,
+  );
   const summary = hasPortfolioActivity
-    ? calculatePortfolio(transactions, marketPrices)
+    ? calculatePortfolio(transactions, marketPrices, optionQuotes)
     : null;
   const serviceStatus = buildServiceStatus({
     checkedAt: generatedAt,
@@ -125,9 +137,11 @@ export default async function Home() {
         portfolio: {
           authenticated: Boolean(user),
           portfolioCount: portfolios.length,
+          portfolioName: selectedPortfolio?.name ?? null,
           summary,
-          baseCurrency: portfolios[0]?.baseCurrency ?? 'USD',
-          targetValueUsd,
+          baseCurrency: selectedPortfolio?.baseCurrency ?? 'USD',
+          targetValueUsd: selectedPortfolio?.targetValueUsd ?? null,
+          coverage: summary ? portfolioValuationCoverage(summary) : null,
         },
         usdThbRate: fxResult.quote?.rate ?? null,
         indices,
@@ -142,15 +156,7 @@ export default async function Home() {
           completedCount: industryResult.completedCount,
           deadlineReached: industryResult.deadlineReached,
         },
-        newsContext: {
-          portfolioSymbols: portfolioSymbols.slice(0, 6),
-          watchlistSymbols: watchlistSymbols.slice(0, 6),
-          industryNames: rankIndustries(
-            industryResult.industries,
-            'gainers',
-            8,
-          ).map((industry) => industry.name),
-        },
+        newsContext: { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
         limitations,
       }}
     />

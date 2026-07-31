@@ -1,6 +1,12 @@
 import { fixed, fixedPercent, fixedToNumber, type Fixed } from '../money/fixed';
 import type { GoalProgress, PortfolioGoal, PortfolioSummary } from './types';
 
+export interface PortfolioValuationCoverage {
+  pricedAssets: number;
+  totalAssets: number;
+  verifiedValueUsd: number | null;
+}
+
 function sum(values: number[]): number {
   return fixedToNumber(values.reduce<Fixed>((total, value) => total + fixed(value), 0n));
 }
@@ -79,4 +85,26 @@ export function calculateGoalProgress(currentValue: number | null, goal: Portfol
     status: progressPercent >= 100 ? 'reached' : 'tracking',
     reason: null,
   };
+}
+
+/**
+ * Reports only values already calculated from verified quotes. It does not make
+ * an incomplete portfolio look complete: callers must label verifiedValueUsd as
+ * a covered subtotal whenever pricedAssets < totalAssets.
+ */
+export function portfolioValuationCoverage(
+  summary: PortfolioSummary,
+): PortfolioValuationCoverage {
+  const openOptions = summary.optionPositions.filter((position) => position.status === 'open');
+  const totalAssets = summary.holdings.length + openOptions.length;
+  const pricedAssets = summary.holdings.filter((holding) => holding.marketValue !== null).length
+    + openOptions.filter((position) => position.marketValue !== null).length;
+  const verifiedAssetsValue = [
+    ...summary.holdings.map((holding) => holding.marketValue),
+    ...openOptions.map((position) => position.marketValue),
+  ].reduce<number>((total, value) => total + (value ?? 0), 0);
+  const verifiedValueUsd = Number.isFinite(summary.cashBalance + verifiedAssetsValue)
+    ? summary.cashBalance + verifiedAssetsValue
+    : null;
+  return { pricedAssets, totalAssets, verifiedValueUsd };
 }
