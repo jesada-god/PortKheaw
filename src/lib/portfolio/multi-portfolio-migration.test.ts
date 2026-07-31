@@ -4,7 +4,9 @@ import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 
 const migrationFile = '202607310002_multi_portfolios.sql';
+const bangkokDateMigrationFile = '202607310003_portfolio_bangkok_transaction_date.sql';
 const rawSql = readFileSync(resolve(process.cwd(), 'supabase/migrations', migrationFile), 'utf8');
+const bangkokDateSql = readFileSync(resolve(process.cwd(), 'supabase/migrations', bangkokDateMigrationFile), 'utf8');
 const sql = rawSql.replace(/\s+/g, ' ').toLowerCase();
 const BEFORE_MULTI = [
   '202607180001_phase_1_auth.sql',
@@ -39,6 +41,7 @@ async function database() {
   await db.exec(readFileSync(resolve(process.cwd(), 'supabase/migrations', BEFORE_MULTI.at(-2)!), 'utf8'));
   await db.exec(readFileSync(resolve(process.cwd(), 'supabase/migrations', BEFORE_MULTI.at(-1)!), 'utf8'));
   await db.exec(rawSql);
+  await db.exec(bangkokDateSql);
   await db.exec(`
     grant usage on schema public, auth to authenticated;
     grant select on all tables in schema public to authenticated;
@@ -72,6 +75,23 @@ async function deposit(db: PGlite, portfolioId: string, amount: number, idempote
 }
 
 describe('multi-portfolio migration and RPC integration', () => {
+  it('validates ledger dates against the same Bangkok calendar used by the RPC', async () => {
+    expect(bangkokDateSql).toContain('drop constraint if exists portfolio_transactions_occurred_at_check');
+    expect(bangkokDateSql).toContain("(current_timestamp at time zone 'Asia/Bangkok')::date");
+
+    const db = await database();
+    try {
+      const constraint = await db.query<{ definition: string }>(`
+        select pg_get_constraintdef(oid) as definition
+        from pg_constraint
+        where conname = 'portfolio_transactions_occurred_at_check'
+      `);
+      expect(constraint.rows[0].definition).toContain("AT TIME ZONE 'Asia/Bangkok'");
+    } finally {
+      await db.close();
+    }
+  });
+
   it('extends the existing model with atomic limits, owner RLS and restrict-only ledger ownership', () => {
     expect(sql).toContain("portfolio_type in ('stock', 'option', 'legacy')");
     expect(sql).toContain('pg_advisory_xact_lock');
