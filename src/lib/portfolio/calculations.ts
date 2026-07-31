@@ -195,9 +195,15 @@ export function calculatePortfolio(
     const quote = typeof rawMarketPrice === 'object' ? rawMarketPrice : rawMarketPrice == null ? null : { price: rawMarketPrice };
     const parsedPrice = quote == null ? Number.NaN : Number(quote.price);
     const priceMissing = !Number.isFinite(parsedPrice) || parsedPrice <= 0;
-    const marketPrice = priceMissing ? null : decimal(String(quote!.price));
+    // Provider quotes arrive as IEEE-754 numbers and can expose binary tails
+    // (for example 333.42999267578125). Keep ledger strings strict, but round
+    // external numeric quotes through the fixed-point number boundary.
+    const marketPrice = priceMissing ? null : decimal(parsedPrice);
     const marketValue = marketPrice === null ? null : multiply(state.quantity, marketPrice);
-    const previousClose = quote?.previousClose == null ? null : decimal(String(quote.previousClose));
+    const parsedPreviousClose = quote?.previousClose == null ? Number.NaN : Number(quote.previousClose);
+    const previousClose = Number.isFinite(parsedPreviousClose) && parsedPreviousClose > 0
+      ? decimal(parsedPreviousClose)
+      : null;
     const todayChange = marketPrice === null || previousClose === null
       ? null
       : multiply(state.quantity, marketPrice - previousClose);

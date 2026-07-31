@@ -37,7 +37,6 @@ import type {
   IndustryTimeframe,
   InstrumentMetadata,
   MarketIndexCard,
-  MarketBreadth,
   OverviewPrice,
   ServiceStatus,
 } from './types';
@@ -68,7 +67,7 @@ interface IndustryDashboardSnapshot {
 
 interface IndustryDashboardResult {
   industries: IndustryGroup[];
-  breadth: MarketBreadth | null;
+  breadth: ReturnType<typeof calculateMarketBreadth>;
   candidateCount: number;
   completedCount: number;
   deadlineReached: boolean;

@@ -39,6 +39,7 @@ import {
   type RetriableOverviewSection,
 } from '@/src/lib/overview/client-state';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
 import { useStore } from '@/src/store/useStore';
 
 const NewsFeed = dynamic(
@@ -185,16 +186,28 @@ function PortfolioCard({ data, usdThbRate }: {
   data: OverviewDashboardData['portfolio'];
   usdThbRate: string | null;
 }) {
+  const [selectedId, setSelectedId] = useState('aggregate');
   const privacyMode = useStore((state) => state.privacyMode);
   const setPrivacyMode = useStore((state) => state.setPrivacyMode);
   const visible = !privacyMode;
-  const summary = data.summary;
-  const rate = data.baseCurrency === 'THB' ? Number(usdThbRate) : 1;
+  const selectedPortfolio = data.portfolios.find((portfolio) => portfolio.id === selectedId);
+  const summary = selectedPortfolio?.summary ?? data.summary;
+  const baseCurrency = selectedPortfolio?.baseCurrency ?? data.baseCurrency;
+  const targetValueUsd = selectedPortfolio ? selectedPortfolio.targetValueUsd : data.targetValueUsd;
+  const targetDate = selectedPortfolio ? selectedPortfolio.targetDate : data.targetDate;
+  const coverage = selectedPortfolio?.coverage ?? data.coverage;
+  const valuedAt = selectedPortfolio ? selectedPortfolio.valuedAt : data.valuedAt;
+  const portfolioName = selectedPortfolio?.name ?? data.portfolioName;
+  const rate = baseCurrency === 'THB' ? Number(usdThbRate) : 1;
   const convert = (value: number | null) =>
     value === null || !Number.isFinite(rate) || rate <= 0 ? null : value * rate;
-  const progress = summary?.totalValue != null && data.targetValueUsd
-    ? Math.max(0, Math.min(100, summary.totalValue / data.targetValueUsd * 100))
-    : null;
+  const goal = calculateGoalProgress(summary?.totalValue ?? null, {
+    targetValueUsd,
+    targetDate,
+  });
+  const progress = goal.progressPercent === null
+    ? null
+    : Math.max(0, Math.min(100, goal.progressPercent));
   const actions = [
     { href: '#market-overview', label: 'ภาพรวมตลาด', icon: TrendingUp },
     { href: '/portfolio', label: 'พอร์ตของฉัน', icon: PieChart },
@@ -242,19 +255,36 @@ function PortfolioCard({ data, usdThbRate }: {
       <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1.2fr_1fr]">
         <div>
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <p className="text-xs font-medium text-[var(--text-muted)]">
                 {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
-                {data.portfolioName ? ` · ${data.portfolioName}` : ''}
+                {portfolioName ? ` · ${portfolioName}` : ''}
               </p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--text)] sm:text-3xl">
                 {visible
                   ? formatMoney(
-                    convert(summary.totalValue ?? data.coverage?.verifiedValueUsd ?? null),
-                    data.baseCurrency,
+                    convert(summary.totalValue ?? coverage?.verifiedValueUsd ?? null),
+                    baseCurrency,
                   )
                   : '••••••'}
               </p>
+              {data.portfolios.length > 0 && (
+                <label className="mt-3 block text-xs text-[var(--text-secondary)]">
+                  ขอบเขตพอร์ต
+                  <select
+                    value={selectedId}
+                    onChange={(event) => setSelectedId(event.target.value)}
+                    className="mt-1 min-h-11 w-full max-w-xs rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] px-3 text-sm text-[var(--text)]"
+                  >
+                    <option value="aggregate">รวมทุกพอร์ต</option>
+                    {data.portfolios.map((portfolio) => (
+                      <option key={portfolio.id} value={portfolio.id}>
+                        {portfolio.name}{portfolio.archived ? ' (Archive)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <button
               type="button"
@@ -285,22 +315,49 @@ function PortfolioCard({ data, usdThbRate }: {
               </p>
             </div>
           </div>
+          <div className="mt-4 grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
+            {[
+              ['เงินสด', summary.cashBalance],
+              ['หุ้น', summary.equityMarketValue],
+              ['ออปชัน', summary.optionsMarketValue],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-xl bg-[var(--surface-elevated)] p-2">
+                <p className="text-[10px] text-[var(--text-muted)]">{label}</p>
+                <p className="mt-1 text-xs font-semibold tabular-nums text-[var(--text)]">
+                  {visible ? formatMoney(convert(value as number | null), baseCurrency) : '••••'}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
         <div className="rounded-xl bg-[var(--surface-elevated)] p-3">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[var(--text-secondary)]">เป้าหมายพอร์ต</span>
             <span className="font-semibold tabular-nums text-[var(--text)]">
-              {progress === null ? 'ยังไม่ได้ตั้งเป้าหมาย' : `${progress.toFixed(0)}%`}
+              {progress === null ? 'ยังไม่ได้ตั้งเป้าหมาย' : `${goal.progressPercent!.toFixed(0)}%`}
             </span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--surface-selected)]">
-            {progress !== null && <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${progress}%` }} />}
+          {progress === null ? (
+            <Link
+              href="/portfolio"
+              className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--border)] px-3 text-xs font-semibold text-[var(--text)] hover:bg-[var(--surface-hover)]"
+            >
+              <Plus size={15} /> ตั้งเป้าหมาย
+            </Link>
+          ) : (
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--surface-selected)]">
+              <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+          <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
+            <p>{data.portfolioCount} พอร์ตที่ใช้งานอยู่ · {data.totalPortfolioCount} พอร์ตทั้งหมด</p>
+            <p>{coverage?.totalAssets ?? 0} สินทรัพย์</p>
+            {valuedAt && <p>ประเมินล่าสุด {formatBangkokDateTime(valuedAt)}</p>}
           </div>
-          <p className="mt-3 text-xs text-[var(--text-muted)]">{data.portfolioCount} พอร์ตที่ใช้งานอยู่</p>
           {summary.hasMissingPrices && (
             <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
-              ใช้ราคาได้ {data.coverage?.pricedAssets ?? 0} จาก {data.coverage?.totalAssets ?? 0} สินทรัพย์
-              {' '}ตัวเลขด้านบนเป็นยอดที่ตรวจสอบได้เท่านั้น และไม่ประมาณรายการที่ขาด
+              คำนวณได้ {coverage?.pricedAssets ?? 0} จาก {coverage?.totalAssets ?? 0} สินทรัพย์
+              {' '}โดยแสดงยอดที่ยืนยันได้และไม่ล้างค่าที่คำนวณสำเร็จแล้ว
             </p>
           )}
         </div>
@@ -585,13 +642,33 @@ function BreadthSection({
         action={<RetryButton section="breadth" loading={retrying} onRetry={onRetry} />}
       />
       {!data ? (
-        <div className="py-8 text-center">
-          <Activity className="mx-auto text-[var(--text-muted)]" aria-hidden="true" />
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">ข้อมูลยังไม่เพียงพอสำหรับสรุป</p>
+        <div className="py-8 text-center" role="status">
+          <RefreshCw className="mx-auto animate-spin text-[var(--text-muted)]" aria-hidden="true" />
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">กำลังอ่าน breadth snapshot ล่าสุด</p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px]">
+            <span className={`rounded-full px-2 py-1 ${
+              data.status === 'ready'
+                ? 'bg-[var(--positive-soft)] text-[var(--positive)]'
+                : 'bg-[var(--warning-soft)] text-[var(--warning)]'
+            }`}>
+              {data.status === 'ready' ? 'พร้อมใช้งาน' : data.status === 'stale' ? 'ข้อมูลบันทึกล่าสุด' : 'ข้อมูลตลาดยังไม่ครบ'}
+            </span>
+            <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[var(--text-muted)]">
+              Regular session · delayed SIP
+            </span>
+            <span className="group relative inline-flex">
+              <button type="button" aria-label="อธิบายขอบเขตและวิธีคำนวณ market breadth" className="inline-flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)]">
+                <Info size={16} />
+              </button>
+              <span role="tooltip" className="invisible absolute right-0 top-full z-20 w-72 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs leading-5 text-[var(--text-secondary)] shadow-xl group-hover:visible group-focus-within:visible">
+                {data.universeDescription} เปรียบเทียบ regular close/price กับ previous regular close ของ trading date เดียวกันเท่านั้น
+              </span>
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
             {[
               ['หุ้นปรับขึ้น', data.advancing, 'text-[var(--positive)]'],
               ['หุ้นปรับลง', data.declining, 'text-[var(--negative)]'],
@@ -613,16 +690,26 @@ function BreadthSection({
               {data.upDownRatio === null ? 'ยังคำนวณไม่ได้' : data.upDownRatio.toFixed(2)}
             </strong>
           </div>
+          <div className="mt-2 flex items-center justify-between text-sm">
+            <span className="text-[var(--text-secondary)]">% Breadth (Up)</span>
+            <strong className="tabular-nums text-[var(--text)]">{data.breadthPercent.toFixed(1)}%</strong>
+          </div>
           {data.aboveEma20Percent !== null && (
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className="text-[var(--text-secondary)]">อยู่เหนือ EMA20</span>
               <strong className="tabular-nums text-[var(--text)]">{data.aboveEma20Percent.toFixed(1)}%</strong>
             </div>
           )}
-          <p className="mt-4 text-[10px] text-[var(--text-muted)]">
-            จากหุ้นที่มีข้อมูลใช้ได้ {data.validCount} ตัว
-            {data.updatedAt ? ` · อัปเดต ${formatBangkokDateTime(data.updatedAt)}` : ''}
-          </p>
+          <div className="mt-4 space-y-1 text-[10px] leading-4 text-[var(--text-muted)]">
+            <p>คำนวณจากหุ้นที่มีข้อมูลพร้อมใช้ {data.validCount.toLocaleString()} จากทั้งหมด {data.universeCount.toLocaleString()} ตัว ({data.coveragePercent.toFixed(1)}%)</p>
+            <p>Failed {data.failedCount.toLocaleString()} · Stale {data.staleCount.toLocaleString()} · ใช้เวลา {(data.durationMs / 1_000).toFixed(1)} วินาที</p>
+            <p>ประเมิน {formatBangkokDateTime(data.evaluatedAt)}{data.updatedAt ? ` · ราคาล่าสุด ${formatBangkokDateTime(data.updatedAt)}` : ''}</p>
+          </div>
+          {data.validCount < 800 && (
+            <p className="mt-3 rounded-xl bg-[var(--warning-soft)] p-3 text-xs leading-5 text-[var(--warning)]">
+              ข้อมูลตลาดยังไม่ครบ: มีหุ้นพร้อมคำนวณน้อยกว่า 800 ตัว จึงยังไม่ถือว่าเป็นภาพรวมทั้งตลาด
+            </p>
+          )}
         </>
       )}
     </section>
@@ -634,6 +721,7 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
   const [retrying, setRetrying] = useState<Partial<Record<RetriableOverviewSection, boolean>>>({});
   const [retryNotice, setRetryNotice] = useState('');
   const autoIndustryRefreshStarted = useRef(false);
+  const autoBreadthRefreshStarted = useRef(false);
   const retry = useCallback(async (section: RetriableOverviewSection) => {
     setRetrying((current) => ({ ...current, [section]: true }));
     setRetryNotice('');
@@ -677,6 +765,12 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
     autoIndustryRefreshStarted.current = true;
     void retry('industries');
   }, [retry, view.industries.length, view.industryData.state]);
+
+  useEffect(() => {
+    if (autoBreadthRefreshStarted.current || view.breadth) return;
+    autoBreadthRefreshStarted.current = true;
+    void retry('breadth');
+  }, [retry, view.breadth]);
 
   return (
     <div className="min-w-0">

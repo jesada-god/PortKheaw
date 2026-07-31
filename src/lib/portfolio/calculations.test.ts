@@ -135,6 +135,30 @@ describe('portfolio transaction-ledger accounting', () => {
     expect(stale.holdings[0]).toMatchObject({ marketPrice: 12, priceStale: true, priceSource: 'alpha-vantage', unrealizedGain: 2 });
   });
 
+  it('normalizes provider float tails at the fixed-point boundary', () => {
+    const ledger = [tx('acquisition', {
+      symbol: 'AAPL',
+      quantity: '2',
+      price: '300',
+      normalizedPriceUsd: '300',
+      fee: '0',
+      normalizedFeeUsd: '0',
+    })];
+
+    const result = calculatePortfolio(ledger, {
+      AAPL: {
+        price: 334.42999267578125,
+        previousClose: 333.42999267578125,
+      },
+    });
+
+    expect(result.holdings[0]).toMatchObject({
+      marketPrice: 334.42999268,
+      marketValue: 668.85998536,
+      todayChange: 2,
+    });
+  });
+
   it('passes the mandatory $274.04 option regression without fabricating +$200', () => {
     const ledger = [
       tx('deposit', { amount: '274.04', normalizedAmountUsd: '274.04' }),

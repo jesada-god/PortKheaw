@@ -61,14 +61,28 @@ describe('Overview dashboard contracts', () => {
     expect(read('src/components/dashboard/DashboardClient.tsx')).toContain('/industry/');
   });
 
-  it('summarizes the same initially selected active portfolio and option quote pipeline as Portfolio', () => {
+  it('summarizes every Portfolio ledger through the shared aggregate and option quote pipeline', () => {
     const page = read('app/page.tsx');
     const portfolio = read('src/components/portfolio/PortfolioClient.tsx');
-    expect(page).toContain('portfolios.find((portfolio) => !portfolio.archivedAt)');
-    expect(portfolio).toContain("portfolios.find((item) => item.archivedAt === null)?.id");
-    expect(page).toContain('calculatePortfolio(transactions, marketPrices, optionQuotes)');
+    const overview = read('src/lib/overview/portfolio-summary.ts');
+    expect(page).toContain('buildOverviewPortfolio');
+    expect(overview).toContain('calculatePortfolio(portfolio.transactions');
+    expect(overview).toContain('aggregatePortfolioSummaries(summaries)');
+    expect(portfolio).toContain('aggregatePortfolioSummaries(portfolios.map');
     expect(page).toContain('loadPortfolioOptionQuotes');
-    expect(page).toContain('portfolioValuationCoverage');
+    expect(overview).toContain('portfolioValuationCoverage');
+  });
+
+  it('uses one bounded batch snapshot for market breadth and never blocks Home SSR on it', () => {
+    const page = read('app/page.tsx');
+    const breadth = read('src/lib/overview/market-breadth.ts');
+    expect(page).toContain('loadMarketBreadthSnapshot');
+    expect(page).toContain('warmMarketBreadth');
+    expect(page).not.toMatch(/await\s+loadMarketBreadth\(/);
+    expect(breadth).toContain('/v2/stocks/snapshots');
+    expect(breadth).toContain("url.searchParams.set('symbols'");
+    expect(breadth).toContain('CONCURRENCY = 3');
+    expect(breadth).not.toContain('/v2/stocks/{symbol}');
   });
 
   it('loads Industry history after SSR and renders only a paginated constituent slice', () => {

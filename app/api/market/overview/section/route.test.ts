@@ -5,9 +5,13 @@ const services = vi.hoisted(() => ({
   loadMarketIndices: vi.fn(),
   loadIndustryDashboard: vi.fn(),
   loadWatchlistPrices: vi.fn(),
+  loadMarketBreadth: vi.fn(),
 }));
 
 vi.mock('@/src/lib/overview/service', () => services);
+vi.mock('@/src/lib/overview/market-breadth', () => ({
+  loadMarketBreadth: services.loadMarketBreadth,
+}));
 vi.mock('@/src/lib/supabase/server', () => ({ createClient: vi.fn(async () => null) }));
 vi.mock('@/src/lib/watchlist/repository', () => ({
   WatchlistRepository: class {
@@ -36,6 +40,7 @@ describe('overview section retry route', () => {
       deadlineReached: false,
     });
     services.loadWatchlistPrices.mockResolvedValue([]);
+    services.loadMarketBreadth.mockResolvedValue({ validCount: 1_000 });
   });
 
   it('returns only the requested batch section', async () => {
@@ -46,7 +51,6 @@ describe('overview section retry route', () => {
       section: 'industries',
       value: [{ slug: 'semiconductors' }],
       related: {
-        breadth: { validCount: 12 },
         industryData: {
           state: 'ready',
           candidateCount: 285,
@@ -56,6 +60,18 @@ describe('overview section retry route', () => {
     });
     expect(services.loadMarketIndices).not.toHaveBeenCalled();
     expect(services.loadIndustryDashboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads breadth through its independent batch snapshot service', async () => {
+    const response = await GET(request('breadth'));
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.data).toMatchObject({
+      section: 'breadth',
+      value: { validCount: 1_000 },
+    });
+    expect(services.loadMarketBreadth).toHaveBeenCalledTimes(1);
+    expect(services.loadIndustryDashboard).not.toHaveBeenCalled();
   });
 
   it('isolates a provider failure behind safe copy', async () => {

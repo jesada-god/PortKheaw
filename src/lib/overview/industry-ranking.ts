@@ -1,4 +1,14 @@
-import type { IndustryGroup, IndustryMember, MarketBreadth, OverviewPrice } from './types';
+import type { IndustryGroup, IndustryMember, OverviewPrice } from './types';
+
+export interface IndustryBreadth {
+  advancing: number;
+  declining: number;
+  unchanged: number;
+  validCount: number;
+  upDownRatio: number | null;
+  aboveEma20Percent: number | null;
+  updatedAt: string | null;
+}
 
 export const MIN_INDUSTRY_SYMBOLS = 5;
 
@@ -77,7 +87,7 @@ export function thaiIndustryName(name: string): string | null {
 
 export function calculateMarketBreadth(
   candidates: readonly IndustryQuoteCandidate[],
-): MarketBreadth | null {
+): IndustryBreadth | null {
   const usable = candidates.filter((candidate) =>
     candidate.valid && validPercent(candidate.price.changePercent));
   if (!usable.length) return null;

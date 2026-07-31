@@ -1,8 +1,6 @@
 import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
-import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
-import { portfolioValuationCoverage } from '@/src/lib/portfolio/aggregate';
 import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations';
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
@@ -15,8 +13,13 @@ import {
   loadWatchlistPrices,
   warmIndustryDashboard,
 } from '@/src/lib/overview/service';
+import {
+  loadMarketBreadthSnapshot,
+  warmMarketBreadth,
+} from '@/src/lib/overview/market-breadth';
+import { buildOverviewPortfolio } from '@/src/lib/overview/portfolio-summary';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
-import type { PortfolioRecord } from '@/src/lib/portfolio/types';
+import type { PortfolioGoal, PortfolioRecord } from '@/src/lib/portfolio/types';
 import { after } from 'next/server';
 
 async function settleWithin<T>(
@@ -42,36 +45,41 @@ export default async function Home() {
   const client = await createClient();
   const user = client ? (await client.auth.getUser()).data.user : null;
   let portfolios: PortfolioRecord[] = [];
+  let aggregateGoal: PortfolioGoal = { targetValueUsd: null, targetDate: null };
   let watchlistSymbols: string[] = [];
 
   if (client && user) {
     const portfolioRepository = new PortfolioRepository(client);
-    const [portfolioResult, watchlistResult] = await Promise.allSettled([
+    const [portfolioResult, goalResult, watchlistResult] = await Promise.allSettled([
       portfolioRepository.getAll(),
+      portfolioRepository.getAggregateGoal(),
       new WatchlistRepository(client).getDefault(),
     ]);
     portfolios = portfolioResult.status === 'fulfilled'
-      ? portfolioResult.value.filter((portfolio) => !portfolio.archivedAt)
+      ? portfolioResult.value
       : [];
+    aggregateGoal = goalResult.status === 'fulfilled' ? goalResult.value : aggregateGoal;
     watchlistSymbols = watchlistResult.status === 'fulfilled'
       ? watchlistResult.value.items.map((item) => item.symbol)
       : [];
   }
 
-  // PortfolioClient selects the first active portfolio on initial load. Reuse
-  // that exact record here so Overview and Portfolio never summarize different
-  // ledgers on the first visit.
-  const selectedPortfolio = portfolios.find((portfolio) => !portfolio.archivedAt) ?? null;
-  const transactions = selectedPortfolio?.transactions ?? [];
-  const portfolioSymbols = [...new Set(transactions.flatMap((row) => [
-    row.symbol,
-    row.underlyingSymbol,
-  ]).filter((value): value is string => Boolean(value)))];
+  const portfolioSymbols = [...new Set(portfolios.flatMap((portfolio) => portfolio.transactions)
+    .filter((item) =>
+      item.type === 'acquisition'
+      || item.type === 'disposal'
+      || item.type === 'initial_position')
+    .map((item) => item.symbol)
+    .filter((value): value is string => Boolean(value)))];
 
   const overviewNow = new Date(generatedAt);
   const industryResult = loadIndustryDashboardSnapshot(overviewNow);
+  const breadth = loadMarketBreadthSnapshot(overviewNow);
   after(async () => {
-    await warmIndustryDashboard(overviewNow);
+    await Promise.allSettled([
+      warmIndustryDashboard(overviewNow),
+      warmMarketBreadth(overviewNow),
+    ]);
   });
 
   const [indices, watchlist, portfolioPriceMap, fxResult] = await Promise.all([
@@ -100,27 +108,35 @@ export default async function Home() {
       }]];
     }),
   );
-  const hasPortfolioActivity = transactions.length > 0;
-  const optionPreview = calculateOptionLedger(transactions);
+  const optionPreviews = new Map(portfolios.map((portfolio) => [
+    portfolio.id,
+    calculateOptionLedger(portfolio.transactions),
+  ]));
   let optionService: ReturnType<typeof getOptionsMarketDataService> | null = null;
   try { optionService = getOptionsMarketDataService(); } catch { optionService = null; }
   const optionQuotes = await loadPortfolioOptionQuotes(
-    optionPreview.positions.filter((position) => position.status === 'open'),
+    [...optionPreviews.values()]
+      .flatMap((preview) => preview.positions.filter((position) => position.status === 'open')),
     optionService
       ? async (underlying, expiration) =>
         (await optionService!.getChain(underlying, expiration)).data
       : undefined,
   );
-  const summary = hasPortfolioActivity
-    ? calculatePortfolio(transactions, marketPrices, optionQuotes)
-    : null;
+  const portfolioOverview = buildOverviewPortfolio({
+    authenticated: Boolean(user),
+    portfolios,
+    aggregateGoal,
+    marketPrices,
+    optionQuotes,
+    evaluatedAt: generatedAt,
+  });
   const serviceStatus = buildServiceStatus({
     checkedAt: generatedAt,
     indices,
     watchlist,
     industryCandidateCount: industryResult.candidateCount,
     industries: industryResult.industries.length,
-    breadthAvailable: Boolean(industryResult.breadth),
+    breadthAvailable: Boolean(breadth),
     industryRefreshing: industryResult.state === 'refreshing',
   });
   const limitations = industryResult.state === 'refreshing'
@@ -134,20 +150,12 @@ export default async function Home() {
       data={{
         generatedAt,
         serviceStatus,
-        portfolio: {
-          authenticated: Boolean(user),
-          portfolioCount: portfolios.length,
-          portfolioName: selectedPortfolio?.name ?? null,
-          summary,
-          baseCurrency: selectedPortfolio?.baseCurrency ?? 'USD',
-          targetValueUsd: selectedPortfolio?.targetValueUsd ?? null,
-          coverage: summary ? portfolioValuationCoverage(summary) : null,
-        },
+        portfolio: portfolioOverview,
         usdThbRate: fxResult.quote?.rate ?? null,
         indices,
         industries: industryResult.industries,
         watchlist,
-        breadth: industryResult.breadth,
+        breadth,
         industryData: {
           state: industryResult.state,
           classificationUpdatedAt: industryResult.classificationUpdatedAt,

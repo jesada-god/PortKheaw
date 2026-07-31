@@ -91,9 +91,23 @@ export interface MarketBreadth {
   declining: number;
   unchanged: number;
   validCount: number;
+  universeCount: number;
+  returnedCount: number;
+  failedCount: number;
+  staleCount: number;
   upDownRatio: number | null;
+  breadthPercent: number;
+  coveragePercent: number;
   aboveEma20Percent: number | null;
   updatedAt: string | null;
+  evaluatedAt: string;
+  durationMs: number;
+  tradingDate: string;
+  session: 'regular';
+  source: 'alpaca-multi-snapshot';
+  feed: 'delayed_sip';
+  status: 'ready' | 'partial' | 'stale';
+  universeDescription: string;
 }
 
 export interface ServiceStatus {
@@ -106,15 +120,33 @@ export interface ServiceStatus {
 export interface PortfolioOverview {
   authenticated: boolean;
   portfolioCount: number;
+  totalPortfolioCount: number;
   portfolioName: string | null;
   summary: PortfolioSummary | null;
   baseCurrency: 'USD' | 'THB';
   targetValueUsd: number | null;
+  targetDate: string | null;
+  valuedAt: string | null;
   coverage: {
     pricedAssets: number;
     totalAssets: number;
     verifiedValueUsd: number | null;
   } | null;
+  portfolios: Array<{
+    id: string;
+    name: string;
+    archived: boolean;
+    summary: PortfolioSummary;
+    baseCurrency: 'USD' | 'THB';
+    targetValueUsd: number | null;
+    targetDate: string | null;
+    valuedAt: string | null;
+    coverage: {
+      pricedAssets: number;
+      totalAssets: number;
+      verifiedValueUsd: number | null;
+    };
+  }>;
 }
 
 export type IndustryTimeframe = '1D' | '1W' | '1M' | '3M' | '1Y';

@@ -7,6 +7,7 @@ import {
   loadMarketIndices,
   loadWatchlistPrices,
 } from '@/src/lib/overview/service';
+import { loadMarketBreadth } from '@/src/lib/overview/market-breadth';
 
 const sectionSchema = z.enum(['market', 'industries', 'watchlist', 'breadth']);
 
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
   try {
     let value: unknown;
     let related: {
-      breadth: unknown;
+      breadth?: unknown;
       industryData: {
         state: string;
         classificationUpdatedAt: string;
@@ -41,22 +42,21 @@ export async function GET(request: NextRequest) {
         ? (await new WatchlistRepository(client).getDefault()).items.map((item) => item.symbol)
         : [];
       value = await loadWatchlistPrices(symbols, new Date(generatedAt), true);
+    } else if (parsed.data === 'breadth') {
+      value = await loadMarketBreadth(new Date(generatedAt), true);
     } else {
       const result = await loadIndustryDashboard(new Date(generatedAt), true);
-      value = parsed.data === 'industries' ? result.industries : result.breadth;
-      if (parsed.data === 'industries') {
-        related = {
-          breadth: result.breadth,
-          industryData: {
-            state: result.state,
-            classificationUpdatedAt: result.classificationUpdatedAt,
-            quotesUpdatedAt: result.quotesUpdatedAt,
-            candidateCount: result.candidateCount,
-            completedCount: result.completedCount,
-            deadlineReached: result.deadlineReached,
-          },
-        };
-      }
+      value = result.industries;
+      related = {
+        industryData: {
+          state: result.state,
+          classificationUpdatedAt: result.classificationUpdatedAt,
+          quotesUpdatedAt: result.quotesUpdatedAt,
+          candidateCount: result.candidateCount,
+          completedCount: result.completedCount,
+          deadlineReached: result.deadlineReached,
+        },
+      };
     }
     return NextResponse.json({
       data: { section: parsed.data, value, related, generatedAt },

@@ -9,6 +9,7 @@ import type {
   InstrumentClassification,
   InstrumentClassificationDataset,
 } from './classification';
+import { selectMarketBreadthUniverse } from '@/src/lib/overview/market-breadth-universe';
 
 type BasicRow = Database['public']['Tables']['market_instruments']['Row'];
 type EnrichedRow = BasicRow & {
@@ -171,6 +172,10 @@ export async function getIndustryInstrumentUniverse(
         || left.symbol.localeCompare(right.symbol))
       .slice(0, Math.max(1, perIndustry)))
     .slice(0, Math.max(1, Math.min(limit, 500)));
+}
+
+export async function getMarketBreadthInstrumentUniverse(): Promise<InstrumentMetadata[]> {
+  return selectMarketBreadthUniverse(dataset.instruments).map(fromClassification);
 }
 
 export async function getIndustryInstruments(
