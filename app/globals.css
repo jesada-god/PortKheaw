@@ -314,6 +314,219 @@ html[data-reduce-motion] *::after {
   transition-duration: 0.01ms !important;
 }
 
+/* ==========================================================================
+ * Kheaw loading indicator
+ *
+ * One visual for every wait in the product: the mascot bounces, a static
+ * speech bubble sits above it, and a contact shadow tracks the bounce. The
+ * mascot is `public/brand/kheaw-loading.png`, cut from the source artwork with
+ * its alpha intact — no plate, no baked text, no baked shadow, so it drops onto
+ * the dark and the light surface unchanged.
+ *
+ * Timing lives in two places on purpose, and they agree on the same numbers
+ * (see src/lib/ui/loading-visibility.ts):
+ *   - `--deferred` is the 300ms grace rendered as CSS, for Next's route-level
+ *     `loading.tsx`. Those fallbacks are streamed as HTML before any JavaScript
+ *     runs, so a JS timer would leave a slow first paint blank until hydration.
+ *     A keyframe holds the loader hidden for 300ms and fades it in over 200ms,
+ *     which means a route that resolves inside the grace never paints it.
+ *   - `KheawLoadingBoundary` drives client data loading from the same constants
+ *     and does not mount this markup at all until the grace has elapsed.
+ *
+ * Everything animated here is transform/opacity only, so nothing in the loader
+ * can shift the layout around it.
+ * ========================================================================== */
+
+.kheaw-loader {
+  --kheaw-mascot-size: clamp(110px, 34vw, 180px);
+  --kheaw-bubble-bg: var(--surface-elevated);
+  --kheaw-bubble-border: color-mix(in srgb, var(--accent) 42%, var(--border));
+  /* Derived from the foreground token so it reads in both appearances: a soft
+     dark ellipse on the light surface, a soft light one on the dark surface. */
+  --kheaw-shadow-color: color-mix(in srgb, var(--text) 62%, transparent);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+/*
+ * Centred in the visible content area without forcing the page to scroll. The
+ * 11rem is the shell around it — header, bottom navigation and their padding —
+ * so the loader lands in the middle of what the reader can actually see rather
+ * than in the middle of a box that stops two thirds of the way up. The floor
+ * keeps it sane on a short landscape phone.
+ */
+.kheaw-loader--page { min-block-size: max(17rem, calc(100dvh - 11rem)); }
+.kheaw-loader--section { min-block-size: 12.5rem; }
+
+.kheaw-loader__bubble {
+  position: relative;
+  max-inline-size: min(22rem, 100%);
+  border: 1px solid var(--kheaw-bubble-border);
+  border-radius: 1rem;
+  background: var(--kheaw-bubble-bg);
+  padding: 0.6rem 1.1rem;
+  color: var(--text);
+  font-size: clamp(0.875rem, 0.82rem + 0.3vw, 1rem);
+  font-weight: 700;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+  box-shadow: var(--shadow);
+}
+
+/*
+ * Two stacked triangles make the tail: the outer one is the border colour, the
+ * inner one is the fill, pulled up a pixel to sit inside it. Both hang entirely
+ * below the bubble, so neither can draw a seam across the message.
+ */
+.kheaw-loader__bubble::before,
+.kheaw-loader__bubble::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 50%;
+  inline-size: 0;
+  block-size: 0;
+  translate: -50% 0;
+  border-inline: 0.5rem solid transparent;
+}
+
+.kheaw-loader__bubble::before {
+  inset-block-start: 100%;
+  border-block-start: 0.5rem solid var(--kheaw-bubble-border);
+}
+
+.kheaw-loader__bubble::after {
+  inset-block-start: calc(100% - 1px);
+  border-inline-width: 0.44rem;
+  border-block-start: 0.44rem solid var(--kheaw-bubble-bg);
+}
+
+/*
+ * The stage is the mascot's box plus the strip of ground its shadow lives on.
+ * The gap above clears the top of the bounce, so the mascot never reaches the
+ * bubble — which stays put, because only the mascot is animated.
+ */
+.kheaw-loader__stage {
+  position: relative;
+  display: block;
+  inline-size: var(--kheaw-mascot-size);
+  max-inline-size: 100%;
+  margin-block-start: clamp(1.25rem, 3vw, 2rem);
+  padding-block-end: 0.85rem;
+}
+
+.kheaw-loader__mascot {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  /* Bottom-centre, so the squash flattens the mascot onto the ground rather
+     than shrinking it about its middle. */
+  transform-origin: 50% 100%;
+  animation: kheaw-mascot-bounce 0.9s ease-in-out infinite;
+}
+
+.kheaw-loader__shadow {
+  position: absolute;
+  inset-block-end: 0.15rem;
+  inset-inline-start: 50%;
+  inline-size: 58%;
+  block-size: 0.55rem;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--kheaw-shadow-color), transparent);
+  opacity: 0.3;
+  animation: kheaw-shadow-contact 0.9s ease-in-out infinite;
+}
+
+/* Slime, not a rubber ball: a little taller at the top of the arc, a little
+   wider and flatter on contact, and never far enough to be distracting. */
+@keyframes kheaw-mascot-bounce {
+  0%, 100% { transform: translateY(0) scale(1.055, 0.945); }
+  14% { transform: translateY(-3.5%) scale(1, 1); }
+  46% { transform: translateY(-12%) scale(0.975, 1.045); }
+  78% { transform: translateY(-3.5%) scale(1, 1); }
+}
+
+@keyframes kheaw-shadow-contact {
+  0%, 100% { transform: scale(1, 1); opacity: 0.42; }
+  46% { transform: scale(0.7, 0.85); opacity: 0.15; }
+}
+
+/*
+ * `visibility` keeps the loader out of the accessibility tree during the grace,
+ * so a fast route never announces a wait that did not happen. Both keyframes at
+ * or before 60% are hidden, so it only becomes visible once the fade starts.
+ */
+@keyframes kheaw-loader-reveal {
+  from { opacity: 0; visibility: hidden; }
+  60% { opacity: 0; visibility: hidden; }
+  to { opacity: 1; visibility: visible; }
+}
+
+@keyframes kheaw-loader-leave {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.kheaw-loader--deferred { animation: kheaw-loader-reveal 500ms ease-out both; }
+.kheaw-loader--leaving { animation: kheaw-loader-leave 200ms ease-in both; }
+
+/*
+ * Fade-out geometry. The boundary keeps the real content mounted underneath
+ * while the loader dissolves off it, so there is never an empty frame between
+ * the two; the overlay is inert so it cannot swallow a click on content that is
+ * already interactive.
+ */
+.kheaw-loader-host { position: relative; }
+
+.kheaw-loader--overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/*
+ * Reduced motion drops the bounce and the shadow's pulse — the decorative half.
+ * The reveal and fade timings are kept at full length on purpose: they are not
+ * decoration, they are what stops a fast load from flashing the mascot, and a
+ * gentle fade is the one motion this preference still allows. Both selectors
+ * out-specify the global `*` reset above, which would otherwise collapse them
+ * to 0.01ms and bring the flash back for exactly these users.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .kheaw-loader .kheaw-loader__mascot,
+  .kheaw-loader .kheaw-loader__shadow { animation: none !important; }
+
+  .kheaw-loader.kheaw-loader--deferred {
+    animation-duration: 500ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .kheaw-loader.kheaw-loader--leaving {
+    animation-duration: 200ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+html[data-reduce-motion] .kheaw-loader .kheaw-loader__mascot,
+html[data-reduce-motion] .kheaw-loader .kheaw-loader__shadow { animation: none !important; }
+
+html[data-reduce-motion] .kheaw-loader.kheaw-loader--deferred {
+  animation-duration: 500ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
+  animation-duration: 200ms !important;
+  animation-iteration-count: 1 !important;
+}
+
 @supports (height: 100svh) {
   .keyboard-safe-modal {
     max-height: 100svh;

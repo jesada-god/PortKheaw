@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Activity, RefreshCw } from 'lucide-react';
 import { DataProvenance } from '@/src/components/market-data/DataProvenance';
 import { Button } from '@/src/components/ui/Button';
+import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { Select } from '@/src/components/ui/Select';
 import { useAppActive } from '@/src/hooks/useAppActive';
 import { DESKTOP_QUERY, useMediaQuery } from '@/src/hooks/useMediaQuery';
@@ -623,7 +624,21 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
           <Button className="mt-3 min-h-11" variant="outline" disabled={loading || cooldown > 0} onClick={() => { setUserStarted(true); setError(null); }}>ลองใหม่</Button>
         </div>
       )}
-      {loading && !chain && <div className="flex h-48 items-center justify-center rounded-xl bg-slate-800/60 px-4 text-center text-sm text-slate-300 sm:h-64" aria-label="กำลังโหลดข้อมูลออปชัน…">กำลังโหลดข้อมูลออปชัน…</div>}
+      {/*
+        * `ready` is the existing chain: a refresh over data already on screen
+        * is a background revalidation, and the Refresh button's own cooldown is
+        * the indicator for that. The mascot only appears when there is nothing
+        * to look at yet — and only once the wait has run past the grace, so
+        * fetching a cached expiration no longer flashes a grey panel.
+        */}
+      <KheawLoadingBoundary
+        loading={loading}
+        ready={Boolean(chain)}
+        message="กำลังโหลดข้อมูลออปชัน"
+        className="rounded-xl bg-slate-800/60"
+      >
+        {null}
+      </KheawLoadingBoundary>
 
       {expirations && expirations.expirations.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">

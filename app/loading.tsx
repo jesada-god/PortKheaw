@@ -1,19 +1,22 @@
-import { Skeleton } from "@/src/components/ui/Skeleton"
-import Header from "@/src/components/layout/Header"
-import { appConfig } from "@/src/config/app"
+import Header from '@/src/components/layout/Header';
+import { KheawLoader } from '@/src/components/ui/KheawLoader';
+import { appConfig } from '@/src/config/app';
 
+/**
+ * Route fallback for the overview page, which waits on several market data
+ * providers at once and is the slowest first paint in the product.
+ *
+ * `deferred` is what makes the mascot safe to put on a route. The fallback is
+ * streamed the instant navigation starts, but the CSS grace holds it invisible
+ * for 300ms, so a warm cache swaps straight to the dashboard with the mascot
+ * never painted. The header stays: it is the page's own furniture, not part of
+ * the loading area.
+ */
 export default function Loading() {
   return (
-    <div aria-label={`กำลังโหลด ${appConfig.name}`}>
+    <div>
       <Header title={`กำลังโหลด ${appConfig.name}`} />
-      <div className="p-4 md:p-8 space-y-6">
-        <Skeleton className="w-full h-40" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-        </div>
-      </div>
+      <KheawLoader variant="page" deferred />
     </div>
-  )
+  );
 }

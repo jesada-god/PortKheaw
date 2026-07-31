@@ -24,6 +24,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { OVERVIEW_STATUS_COPY } from '@/src/lib/overview/presentation';
 import { rankIndustries, type IndustryRankingOrder } from '@/src/lib/overview/industry-ranking';
 import type {
@@ -642,10 +643,24 @@ function BreadthSection({
         action={<RetryButton section="breadth" loading={retrying} onRetry={onRetry} />}
       />
       {!data ? (
-        <div className="py-8 text-center" role="status">
-          <RefreshCw className="mx-auto animate-spin text-[var(--text-muted)]" aria-hidden="true" />
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">กำลังอ่าน breadth snapshot ล่าสุด</p>
-        </div>
+        /*
+         * `ready` is false here by definition — there is no snapshot to protect
+         * — so the boundary owns the wait, and the spinner that used to sit in
+         * this slot is gone. That spinner had no exit: the auto-refresh below
+         * fires once on mount, and if it failed the section spun forever with
+         * no way to tell that it had stopped trying. Now a failed refresh falls
+         * through to the message and its retry control.
+         */
+        <KheawLoadingBoundary loading={retrying} message="กำลังอ่าน breadth snapshot ล่าสุด">
+          <div className="py-8 text-center">
+            <p className="text-sm text-[var(--text-secondary)]">
+              ยังอ่าน breadth snapshot ไม่ได้
+            </p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              กดปุ่มโหลดใหม่ด้านบนเพื่อลองอีกครั้ง ส่วนอื่นของหน้ายังใช้งานได้ตามปกติ
+            </p>
+          </div>
+        </KheawLoadingBoundary>
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px]">

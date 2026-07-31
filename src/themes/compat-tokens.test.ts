@@ -118,11 +118,22 @@ describe('PortKheaw palette compatibility map', () => {
 
   it('resolves every mapped token in both PortKheaw appearances', () => {
     const css = readFileSync(resolve('app/globals.css'), 'utf8');
+    /*
+     * Properties globals.css declares for itself. A component-scoped variable
+     * derived from the tokens — `--kheaw-shadow-color` is a color-mix over
+     * `--text` — resolves identically in both appearances by construction, so
+     * requiring the theme files to declare it would mean duplicating one value
+     * per appearance and inviting them to drift.
+     */
+    const local = new Set(
+      [...css.matchAll(/^\s{2}(--[a-z-]+):/gm)].map((match) => match[1]),
+    );
     const referenced = new Set(
       [...css.matchAll(/var\((--[a-z-]+)\)/g)]
         .map((match) => match[1])
         // Tailwind supplies its own --tw-* and --color-* variables.
-        .filter((name) => !name.startsWith('--tw-') && !name.startsWith('--color-')),
+        .filter((name) => !name.startsWith('--tw-') && !name.startsWith('--color-'))
+        .filter((name) => !local.has(name)),
     );
 
     expect(referenced.size).toBeGreaterThan(15);
