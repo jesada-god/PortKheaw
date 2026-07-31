@@ -16,21 +16,19 @@ import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
+import {
+  buildPortfolioGoalCardModel,
+  latestPortfolioPriceTime,
+  type PortfolioGoalScope,
+} from '@/src/lib/portfolio/goal-card';
 import type { PortfolioGoal, PortfolioRecord, PortfolioSummary, PortfolioType } from '@/src/lib/portfolio/types';
 import { DecimalInput, Field } from './FormControls';
+import { PortfolioGoalCard } from './PortfolioGoalCard';
 
 type Money = (value: number | string | null) => string;
 
 function localNow() {
   return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
-}
-
-function latestPriceTime(summary: PortfolioSummary): string | null {
-  const values = [
-    ...summary.holdings.map((holding) => holding.priceAsOf),
-    ...summary.optionPositions.map((position) => position.quoteAsOf),
-  ].filter((value): value is string => Boolean(value));
-  return values.sort().at(-1) ?? null;
 }
 
 function displayTime(value: string) {
@@ -54,6 +52,7 @@ export function PortfolioManager({
   aggregateGoal,
   selectedPortfolioId,
   optionTargetCounts,
+  showBalances,
   isOnline,
   money,
   signed,
@@ -66,6 +65,7 @@ export function PortfolioManager({
   aggregateGoal: PortfolioGoal;
   selectedPortfolioId: string;
   optionTargetCounts: Record<string, number>;
+  showBalances: boolean;
   isOnline: boolean;
   money: Money;
   signed: (value: number | null) => string;
@@ -75,6 +75,7 @@ export function PortfolioManager({
   const router = useRouter();
   const { addToast } = useToast();
   const [pending, startTransition] = useTransition();
+  const [goalScope, setGoalScope] = useState<PortfolioGoalScope>('selected');
   const [tab, setTab] = useState<'STOCK' | 'OPTION'>('STOCK');
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
@@ -104,6 +105,18 @@ export function PortfolioManager({
       : summary.holdings.length > 0 || summary.optionPositions.length === 0;
   });
   const active = portfolios.filter((portfolio) => portfolio.archivedAt === null);
+  const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? portfolios[0];
+  const goalSummary = goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id];
+  const goal = goalScope === 'aggregate'
+    ? aggregateGoal
+    : { targetValueUsd: selectedPortfolio.targetValueUsd, targetDate: selectedPortfolio.targetDate };
+  const goalCard = buildPortfolioGoalCardModel({
+    scope: goalScope,
+    summary: goalSummary,
+    goal,
+    activePortfolios: active.length,
+    totalPortfolios: portfolios.length,
+  });
 
   function complete(message: string) {
     addToast({ title: message, type: 'success' });
@@ -213,7 +226,6 @@ export function PortfolioManager({
     );
   }
 
-  const aggregateProgress = calculateGoalProgress(aggregate.totalValue, aggregateGoal);
   const transferAmountNumber = Number(transferAmount);
   const transferCashAfter = (summaries[transferSource]?.cashBalance ?? 0)
     - (Number.isFinite(transferAmountNumber) ? transferAmountNumber : 0);
@@ -230,16 +242,18 @@ export function PortfolioManager({
       </div>
     </div>
 
-    <div className="mt-4 rounded-xl border border-[#D4FF00]/30 bg-[#D4FF00]/5 p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#D4FF00]">เป้าหมายพอร์ตรวม · Tracker เท่านั้น</p>
-          {aggregateGoal.targetValueUsd === null
-            ? <p className="mt-2 text-sm text-slate-400">ยังไม่ได้ตั้งเป้าหมายรวม</p>
-            : <GoalReadout current={aggregate.totalValue} goal={aggregateGoal} progress={aggregateProgress} money={money} />}
-        </div>
-        <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => openGoal('aggregate')}><Target size={15} /> {aggregateGoal.targetValueUsd === null ? 'ตั้งเป้าหมายรวม' : 'แก้ไขเป้าหมายรวม'}</Button>
-      </div>
+    <div className="mt-4">
+      <PortfolioGoalCard
+        model={goalCard}
+        selectedPortfolioName={selectedPortfolio.name}
+        showBalances={showBalances}
+        isOnline={isOnline}
+        money={money}
+        signed={signed}
+        percent={percent}
+        onScopeChange={setGoalScope}
+        onEditGoal={() => openGoal(goalScope === 'aggregate' ? 'aggregate' : selectedPortfolio)}
+      />
     </div>
 
     <div className="mt-4 flex gap-2" role="tablist" aria-label="ประเภทพอร์ต">
@@ -259,7 +273,7 @@ export function PortfolioManager({
         const goal = { targetValueUsd: portfolio.targetValueUsd, targetDate: portfolio.targetDate };
         const goalProgress = calculateGoalProgress(summary.totalValue, goal);
         const positions = summary.holdings.length + summary.optionPositions.filter((position) => position.status === 'open').length;
-        const updated = latestPriceTime(summary);
+        const updated = latestPortfolioPriceTime(summary);
         const canDelete = !portfolio.isLegacy
           && portfolio.transactions.length === 0
           && portfolio.targetValueUsd === null
@@ -381,19 +395,6 @@ export function PortfolioManager({
       </form>
     </Modal>
   </section>;
-}
-
-function GoalReadout({ current, goal, progress, money }: {
-  current: number | null;
-  goal: PortfolioGoal;
-  progress: ReturnType<typeof calculateGoalProgress>;
-  money: Money;
-}) {
-  return <div className="mt-2">
-    <p className="text-sm text-slate-200">ปัจจุบัน {money(current)} / เป้าหมาย {money(goal.targetValueUsd)}</p>
-    <p className="mt-1 text-xs text-slate-400">ขาดอีก {money(progress.remainingAmount)} · Progress {progress.progressPercent === null ? '—' : `${progress.progressPercent.toFixed(2)}%`}{goal.targetDate ? ` · ${goal.targetDate}` : ''}</p>
-    {progress.reason && <p className="mt-1 text-xs text-amber-300">{progress.reason}</p>}
-  </div>;
 }
 
 function CardMetric({ label, value }: { label: string; value: string }) {

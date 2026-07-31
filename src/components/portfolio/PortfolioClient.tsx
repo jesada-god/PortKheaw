@@ -332,6 +332,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       aggregateGoal={aggregateGoal}
       selectedPortfolioId={portfolio.id}
       optionTargetCounts={Object.fromEntries(portfolios.map((item) => [item.id, optionTargets.filter((target) => target.portfolioId === item.id).length]))}
+      showBalances={showBalances}
       isOnline={isOnline}
       money={money}
       signed={signed}

@@ -1,0 +1,68 @@
+.card {
+  isolation: isolate;
+}
+
+.card::before {
+  position: absolute;
+  z-index: -1;
+  right: -5rem;
+  bottom: -7rem;
+  width: 18rem;
+  height: 18rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle, var(--goal-accent-soft) 0%, transparent 68%);
+  content: '';
+  pointer-events: none;
+}
+
+.mascot {
+  animation: kheaw-goal-breathe 5.5s ease-in-out infinite;
+  transform-origin: 50% 90%;
+  will-change: transform;
+}
+
+.strongGain {
+  filter: hue-rotate(24deg) saturate(1.15) brightness(0.84);
+}
+
+.gain {
+  filter: saturate(0.86) brightness(1.08);
+}
+
+.flat {
+  filter: hue-rotate(-44deg) saturate(1.15) brightness(1.04);
+}
+
+.loss {
+  filter: hue-rotate(-125deg) saturate(0.9) brightness(1.12);
+}
+
+.strongLoss {
+  filter: hue-rotate(-78deg) saturate(1.35) brightness(1.02);
+}
+
+.severeLoss {
+  filter: hue-rotate(-78deg) saturate(1.65) brightness(0.78);
+}
+
+.unavailable {
+  filter: none;
+}
+
+@keyframes kheaw-goal-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    transform: translateY(-2px) scale(1.015);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot {
+    animation: none;
+    transform: none;
+  }
+}

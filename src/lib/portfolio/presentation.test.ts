@@ -17,6 +17,8 @@ describe('portfolio currency presentation', () => {
   it('uses one visibility flag for every balance and formats signs safely', () => {
     for (const amount of [1500, -50, 1450, 100]) expect(formatPortfolioMoney(amount, 'USD', null, false)).toBe('••••••');
     expect(signedMoney(125, 'USD', null)).toContain('+$125.00');
+    expect(signedMoney(0, 'USD', null)).toContain('$0.00');
+    expect(signedMoney(-125, 'USD', null)).toContain('-$125.00');
     expect(signedPercent(Number.NaN)).toBe('0.00%');
   });
 });
