@@ -158,12 +158,12 @@ function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] 
       : 'bg-[var(--warning)]';
   return (
     <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm">
+      <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-          <span className="truncate font-medium text-[var(--text-secondary)]">{data.label}</span>
+          <span className="font-medium text-[var(--text-secondary)]">{data.label}</span>
         </span>
-        <span className="shrink-0 text-xs text-[var(--text-muted)]">
+        <span className="pl-4 text-[10px] text-[var(--text-muted)] sm:shrink-0 sm:pl-0 sm:text-xs">
           ตรวจล่าสุด {formatBangkokDateTime(data.checkedAt)}
         </span>
       </summary>

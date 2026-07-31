@@ -47,6 +47,15 @@ describe('Overview dashboard contracts', () => {
     expect(dashboard).toContain('xl:grid-cols-4');
   });
 
+  it('keeps the compact service status readable without truncating its Thai label', () => {
+    const dashboard = read('src/components/dashboard/DashboardClient.tsx');
+    expect(dashboard).toContain('grid min-h-11 cursor-pointer');
+    expect(dashboard).toContain('sm:flex sm:items-center sm:justify-between');
+    expect(dashboard).not.toContain(
+      'truncate font-medium text-[var(--text-secondary)]">{data.label}',
+    );
+  });
+
   it('provides a shareable Industry Detail route', () => {
     expect(read('app/industry/[slug]/page.tsx')).toContain('loadIndustryDetail');
     expect(read('src/components/dashboard/DashboardClient.tsx')).toContain('/industry/');
