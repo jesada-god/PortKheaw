@@ -26,6 +26,9 @@ describe('InstrumentLogo', () => {
   it('normalizes only credential-free HTTPS provider URLs', () => {
     expect(normalizeInstrumentLogoUrl(' https://images.example.test/logo.png#fragment '))
       .toBe('https://images.example.test/logo.png');
+    expect(normalizeInstrumentLogoUrl('/market-logos/spy.svg#fragment'))
+      .toBe('/market-logos/spy.svg');
+    expect(normalizeInstrumentLogoUrl('//images.example.test/logo.png')).toBeNull();
     expect(normalizeInstrumentLogoUrl('http://images.example.test/logo.png')).toBeNull();
     expect(normalizeInstrumentLogoUrl('https://user:secret@images.example.test/logo.png')).toBeNull();
     expect(normalizeInstrumentLogoUrl('not-a-url')).toBeNull();

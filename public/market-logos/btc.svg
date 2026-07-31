@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Bitcoin</title>
+  <rect width="64" height="64" rx="14" fill="#f7931a"/>
+  <path d="M39 17c8 2 9 12 3 16 8 3 6 15-3 17H20v-7h5V22h-5v-7h6v-5h6v5h3v-5h6v6zm-7 6v8h5c5 0 5-8 0-8zm0 14v8h6c5 0 5-8 0-8z" fill="#fff"/>
+</svg>

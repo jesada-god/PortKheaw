@@ -349,7 +349,10 @@ export async function loadMarketIndices(
   const resolved = await getMarketDataGateway()
     .resolveInstruments(MARKET_ASSETS.map((item) => item.symbol));
   return mapWithConcurrency(MARKET_ASSETS, 4, async (proxy) => {
-    const instrument = metadata.get(proxy.symbol)!;
+    const instrument = {
+      ...metadata.get(proxy.symbol)!,
+      logoUrl: proxy.logoUrl,
+    };
     const [loaded, points] = await Promise.all([
       loadOverviewPrice(instrument, now, resolved.get(proxy.symbol)),
       sparkline(proxy.symbol),

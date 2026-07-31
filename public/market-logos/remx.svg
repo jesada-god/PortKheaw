@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>REMX</title>
+  <rect width="64" height="64" rx="14" fill="#1d4ed8"/>
+  <path d="m32 9 18 12v22L32 55 14 43V21zm0 10-9 6v13l9 6 9-6V25z" fill="#dbeafe"/>
+</svg>

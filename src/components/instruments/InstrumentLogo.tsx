@@ -12,8 +12,14 @@ export function normalizeInstrumentLogoUrl(value: string | null): string | null 
   const cached = normalizedLogos.get(value);
   if (cached !== undefined) return cached;
   let normalized: string | null = null;
+  const trimmed = value.trim();
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    normalized = trimmed.split('#', 1)[0] || null;
+    normalizedLogos.set(value, normalized);
+    return normalized;
+  }
   try {
-    const url = new URL(value.trim());
+    const url = new URL(trimmed);
     if (url.protocol === 'https:' && !url.username && !url.password) {
       url.hash = '';
       normalized = url.href;
