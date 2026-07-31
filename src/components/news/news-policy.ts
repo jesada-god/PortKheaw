@@ -8,12 +8,19 @@
  * ever rendered. The rule that actually protects the reader is transport, not
  * host: HTTPS only (an `http:` thumbnail is mixed content and would be blocked
  * anyway), matched by `img-src 'self' data: blob: https:` in the middleware CSP.
- * Data Saver still suppresses every image request.
+ * Data Saver still suppresses every image request. Hosts proven to reject
+ * browser hotlinks are blocked before rendering so their predictable failures
+ * do not pollute the page network state.
  */
+const blockedThumbnailHosts = new Set(['biztoc.com']);
+
 export function shouldRenderNewsImage(saveData: boolean, imageUrl: string | null) {
   if (saveData || !imageUrl) return false;
   try {
-    return new URL(imageUrl).protocol === 'https:';
+    const url = new URL(imageUrl);
+    const blocked = [...blockedThumbnailHosts].some((host) =>
+      url.hostname === host || url.hostname.endsWith(`.${host}`));
+    return url.protocol === 'https:' && !blocked;
   } catch {
     return false;
   }

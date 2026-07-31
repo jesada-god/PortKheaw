@@ -79,14 +79,9 @@ describe('NewsThumbnail', () => {
     expect(container.firstElementChild).toBeNull();
   });
 
-  it('removes the whole frame when a publisher blocks or drops the request', () => {
-    // Observed live: biztoc.com answers hotlinked thumbnails with a Cloudflare 403.
+  it('does not request a publisher host proven to block browser hotlinks', () => {
+    // Observed live: biztoc.com triggers ERR_BLOCKED_BY_ORB for its .webp URLs.
     render(<NewsThumbnail imageUrl="https://biztoc.com/cdn/thumb.webp" saveData={false} />);
-    const image = container.querySelector('img');
-    expect(image).not.toBeNull();
-
-    act(() => { image!.dispatchEvent(new Event('error')); });
-
     expect(container.querySelector('img')).toBeNull();
     expect(container.firstElementChild).toBeNull();
   });
