@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Image from 'next/image';
 import { cn } from '@/src/utils/cn';
 import { shouldRenderNewsImage } from './news-policy';
 
@@ -9,9 +8,11 @@ import { shouldRenderNewsImage } from './news-policy';
  * The one news thumbnail in the app: the article's real image when the publisher
  * supplied a usable one, otherwise no thumbnail at all.
  *
- * `unoptimized` keeps the publisher's own URL: see the `images` note in
- * next.config.ts for why the optimizer is not used. If that request fails, the
- * entire frame is removed so the card content occupies the full width.
+ * A native image keeps publisher URLs on the browser's `img-src` path. Using
+ * Next/Image for an arbitrary unoptimized publisher URL can cause React/Next to
+ * preconnect through `connect-src`, which our strict CSP intentionally blocks.
+ * If the image request fails, the entire frame is removed so the card content
+ * occupies the full width.
  */
 export function NewsThumbnail({
   imageUrl,
@@ -38,16 +39,17 @@ export function NewsThumbnail({
         className,
       )}
     >
-      <Image
+      {/* eslint-disable-next-line @next/next/no-img-element -- provider-supplied news URLs must not turn Vercel into an open image proxy */}
+      <img
         src={imageUrl as string}
         alt=""
-        fill
-        sizes="(min-width: 640px) 112px, 96px"
-        unoptimized
+        width={112}
+        height={84}
         loading={priority ? 'eager' : 'lazy'}
-        priority={priority}
+        fetchPriority={priority ? 'high' : 'auto'}
+        decoding="async"
         referrerPolicy="no-referrer"
-        className="object-cover"
+        className="h-full w-full object-cover"
         onError={() => setFailedUrl(imageUrl)}
       />
     </div>

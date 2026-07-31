@@ -3,11 +3,9 @@
 /**
  * Guards the two decisions behind the news thumbnail.
  *
- * 1. `unoptimized` is what lets `next/image` render a publisher CDN that is not in
- *    `images.remotePatterns` — routing news images through the optimizer would
- *    require `hostname: '**'`, an open image proxy. Next only enforces the
- *    remote-pattern allowlist when `process.env.NODE_ENV !== 'test'`, so this file
- *    renders under `production` to exercise the validation the app really runs.
+ * 1. A native image keeps arbitrary provider-supplied URLs out of the Next image
+ *    optimizer and on CSP `img-src`; routing them through the optimizer would
+ *    require `hostname: '**'`, an open image proxy.
  * 2. Everything that is not a renderable publisher image — none supplied, Data
  *    Saver, plain HTTP, or a request that fails — renders no thumbnail frame.
  */
@@ -41,7 +39,7 @@ afterEach(() => {
 });
 
 describe('NewsThumbnail', () => {
-  it('renders any publisher CDN without an images.remotePatterns allowlist', () => {
+  it('renders any publisher CDN without an optimizer or preconnect request', () => {
     render(<NewsThumbnail imageUrl="https://cdn.never-allowlisted.example/story.jpg" saveData={false} />);
 
     const image = container.querySelector('img');
@@ -49,6 +47,7 @@ describe('NewsThumbnail', () => {
     // No optimizer in the path: the publisher's own URL, not /_next/image.
     expect(image?.getAttribute('src')).not.toContain('/_next/image');
     expect(image?.getAttribute('srcset')).toBeNull();
+    expect(image?.getAttribute('fetchpriority')).toBe('auto');
   });
 
   it('lazy-loads by default and only loads eagerly when asked', () => {
