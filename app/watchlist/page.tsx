@@ -46,7 +46,7 @@ export default async function WatchlistPage() {
 
   return (
     <div className="min-w-0">
-      <Header title="Watchlist" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
+      <Header title="รายการติดตาม" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
       <div className="mx-auto w-full max-w-5xl p-4 md:p-8">
         <WatchlistClient
           watchlist={watchlist}

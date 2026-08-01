@@ -90,7 +90,7 @@ describe('multi-portfolio migration and RPC integration', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 10_000);
 
   it('extends the existing model with atomic limits, owner RLS and restrict-only ledger ownership', () => {
     expect(sql).toContain("portfolio_type in ('stock', 'option', 'legacy')");

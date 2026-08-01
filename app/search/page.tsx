@@ -52,11 +52,11 @@ export default function SearchPage() {
   }
   async function addToWatchlist(event: React.MouseEvent, result: SymbolSearchResult) {
     event.stopPropagation();
-    if (!isOnline) { addToast({ title: 'เพิ่ม Watchlist ไม่ได้ขณะออฟไลน์', type: 'error' }); return; }
+    if (!isOnline) { addToast({ title: 'เพิ่มรายการติดตามไม่ได้ขณะออฟไลน์', type: 'error' }); return; }
     if (result.status === 'delisted') { addToast({ title: `${result.symbol} ถูก delisted`, message: 'ไม่สามารถเพิ่ม Symbol นี้เป็นรายการใหม่ได้', type: 'error' }); return; }
     const response = await addWatchlistItemAction(result.symbol);
     addToast(response.ok
-      ? { title: `เพิ่ม ${result.symbol} เข้า Watchlist แล้ว`, type: 'success' }
+      ? { title: `เพิ่ม ${result.symbol} เข้ารายการติดตามแล้ว`, type: 'success' }
       : { title: 'เพิ่มไม่สำเร็จ', message: response.message, type: 'error' });
   }
 
@@ -75,7 +75,7 @@ export default function SearchPage() {
         <InstrumentLogo symbol={result.symbol} companyName={result.name} logoUrl={null} size={40} />
         <span className="w-20 shrink-0 font-bold text-white">{result.symbol}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm text-slate-200">{result.name}</span><span className="block truncate text-xs text-slate-500">{result.exchange ?? 'ไม่ระบุตลาด'} · {result.assetType} · {result.currency ?? 'USD'}</span></span>
         {result.status === 'delisted' && <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-300">DELISTED</span>}
-        <span role="button" aria-label={`เพิ่ม ${result.symbol} เข้า Watchlist`} aria-disabled={!isOnline || result.status === 'delisted'} onClick={(event) => void addToWatchlist(event, result)} className={`flex min-h-11 min-w-11 items-center justify-center rounded-full ${!isOnline || result.status === 'delisted' ? 'cursor-not-allowed text-slate-700' : 'text-slate-500 hover:bg-[#D4FF00]/10 hover:text-[#D4FF00]'}`}><Plus size={20} /></span>
+        <span role="button" aria-label={`เพิ่ม ${result.symbol} เข้ารายการติดตาม`} aria-disabled={!isOnline || result.status === 'delisted'} onClick={(event) => void addToWatchlist(event, result)} className={`flex min-h-11 min-w-11 items-center justify-center rounded-full ${!isOnline || result.status === 'delisted' ? 'cursor-not-allowed text-slate-700' : 'text-slate-500 hover:bg-[#D4FF00]/10 hover:text-[#D4FF00]'}`}><Plus size={20} /></span>
       </button>)}
     </div> : <div className="rounded-2xl border border-slate-800 bg-[#151B28] p-6"><div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 font-semibold text-white"><History size={16} className="text-slate-400" /> Recent Searches</h3>{recentSearches.length > 0 && <button onClick={clearRecentSearches} className="text-xs text-slate-500 hover:text-white">Clear</button>}</div>
       {recentSearches.length ? <div className="flex flex-wrap gap-2">{recentSearches.map((term) => <button key={term} onClick={() => updateQuery(term)} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">{term}</button>)}</div> : <p className="text-sm text-slate-500">ไม่มีประวัติการค้นหา</p>}

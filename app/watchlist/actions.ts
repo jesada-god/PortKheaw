@@ -19,9 +19,9 @@ async function repository() {
 
 function failure(error: unknown): WatchlistActionResult {
   const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
-  if (code === '23505') return { ok: false, code: 'duplicate', message: 'Symbol นี้อยู่ใน Watchlist แล้ว' };
-  if (code === '42501' || code.startsWith('PGRST')) return { ok: false, code: 'unauthorized', message: 'คุณไม่มีสิทธิ์แก้ไข Watchlist นี้' };
-  return { ok: false, code: 'database', message: 'บันทึก Watchlist ไม่สำเร็จ กรุณาลองอีกครั้ง' };
+  if (code === '23505') return { ok: false, code: 'duplicate', message: 'Symbol นี้อยู่ในรายการติดตามแล้ว' };
+  if (code === '42501' || code.startsWith('PGRST')) return { ok: false, code: 'unauthorized', message: 'คุณไม่มีสิทธิ์แก้ไขรายการติดตามนี้' };
+  return { ok: false, code: 'database', message: 'บันทึกรายการติดตามไม่สำเร็จ กรุณาลองอีกครั้ง' };
 }
 
 export async function addWatchlistItemAction(rawSymbol: string): Promise<WatchlistActionResult> {
@@ -49,7 +49,7 @@ export async function removeWatchlistItemAction(rawSymbol: string): Promise<Watc
   if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
   try {
     const removed = await repo.remove(parsed.data);
-    if (!removed) return { ok: false, code: 'not-found', message: 'ไม่พบ Symbol ใน Watchlist' };
+    if (!removed) return { ok: false, code: 'not-found', message: 'ไม่พบ Symbol ในรายการติดตาม' };
     revalidatePath('/watchlist');
     return { ok: true };
   } catch (error) {

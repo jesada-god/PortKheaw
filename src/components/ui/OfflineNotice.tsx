@@ -22,7 +22,7 @@ export function OfflineNotice() {
   return (
     <div role="status" className="flex min-h-11 items-center justify-center gap-2 border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-center text-xs font-medium text-amber-200">
       <WifiOff aria-hidden="true" size={16} />
-      ออฟไลน์อยู่ — ข้อมูลที่เห็นอาจเก่าและไม่ใช่ราคาปัจจุบัน การแก้ไข Portfolio และ Watchlist ถูกปิดไว้
+      ออฟไลน์อยู่ — ข้อมูลที่เห็นอาจเก่าและไม่ใช่ราคาปัจจุบัน การแก้ไข Portfolio และรายการติดตามถูกปิดไว้
     </div>
   );
 }

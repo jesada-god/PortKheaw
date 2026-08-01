@@ -5,6 +5,11 @@ import { z } from 'zod';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { createClient } from '@/src/lib/supabase/server';
 import type { PortfolioActionResult } from './actions';
+import {
+  DEFAULT_TRANSACTION_TIME_ZONE,
+  resolveTransactionTimeZone,
+  validateTransactionDateTime,
+} from '@/src/lib/portfolio/transaction-datetime';
 
 const portfolioName = z.string().trim().min(1, 'กรุณาตั้งชื่อพอร์ต').max(40, 'ชื่อพอร์ตต้องไม่เกิน 40 ตัวอักษร');
 const portfolioType = z.enum(['STOCK', 'OPTION']);
@@ -133,10 +138,18 @@ const transferSchema = z.object({
   destinationPortfolioId: uuid,
   amountUsd: z.number().finite().positive().max(1_000_000_000_000),
   occurredAt: z.string().min(1),
+  timezone: z.string().trim().min(1).max(64).optional()
+    .default(DEFAULT_TRANSACTION_TIME_ZONE)
+    .transform(resolveTransactionTimeZone),
   note: z.string().trim().max(500).optional(),
   idempotencyKey: uuid,
 }).refine((value) => value.sourcePortfolioId !== value.destinationPortfolioId, {
   message: 'พอร์ตต้นทางและปลายทางต้องเป็นคนละพอร์ต',
+}).superRefine((value, context) => {
+  const dateTime = validateTransactionDateTime(value.occurredAt, value.timezone);
+  if (!dateTime.ok) {
+    context.addIssue({ code: 'custom', path: ['occurredAt'], message: dateTime.message });
+  }
 });
 
 export async function transferPortfolioCashAction(raw: unknown): Promise<PortfolioActionResult> {
@@ -145,10 +158,7 @@ export async function transferPortfolioCashAction(raw: unknown): Promise<Portfol
   const repo = await repository();
   if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
   try {
-    const occurredAt = /(?:Z|[+-]\d{2}:\d{2})$/.test(input.data.occurredAt)
-      ? input.data.occurredAt
-      : `${input.data.occurredAt}${input.data.occurredAt.length === 16 ? ':00' : ''}+07:00`;
-    await repo.transferCash({ ...input.data, occurredAt });
+    await repo.transferCash(input.data);
     refreshPortfolio();
     return { ok: true };
   } catch (error) {

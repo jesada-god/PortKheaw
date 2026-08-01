@@ -48,6 +48,16 @@ export interface PortfolioGoalCardModel {
   today: PortfolioTodayState;
 }
 
+export function formatPortfolioGoalTime(value: string): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return '—';
+  return new Intl.DateTimeFormat('th-TH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Bangkok',
+  }).format(parsed);
+}
+
 export function portfolioAssetCount(summary: PortfolioSummary): number {
   return summary.holdings.length
     + summary.optionPositions.filter((position) => position.status === 'open').length;

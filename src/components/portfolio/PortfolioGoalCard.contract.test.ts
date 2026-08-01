@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const component = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioGoalCard.tsx'), 'utf8');
+const mascot = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioGoalMascot.tsx'), 'utf8');
 const css = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioGoalCard.module.css'), 'utf8');
 const manager = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioManager.tsx'), 'utf8');
 
@@ -17,8 +18,8 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
   });
 
   it('uses the requested mobile and desktop mascot sizes without horizontal overflow', () => {
-    expect(component).toContain('h-20 w-auto');
-    expect(component).toContain('sm:h-24 lg:h-28');
+    expect(mascot).toContain("'h-20 sm:h-24 lg:h-28'");
+    expect(mascot).toContain('w-auto object-contain');
     expect(component).toContain('overflow-hidden');
     expect(component).toContain('min-w-0');
     expect(component).toContain('break-words');
@@ -34,7 +35,7 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
     expect(component).toContain('aria-labelledby="portfolio-goal-title"');
     expect(component).toContain('aria-label="ขอบเขตเป้าหมายพอร์ต"');
     expect(component).toContain('role="progressbar"');
-    expect(component).toContain('alt={`น้อง Kheaw สไตล์ Glossy Tech');
+    expect(mascot).toContain('alt={`น้อง Kheaw สไตล์ Glossy Tech');
     expect(component).not.toContain('Total P&L');
     expect(manager).toContain("useState<PortfolioGoalScope>('selected')");
     expect(manager).toContain("goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id]");

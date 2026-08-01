@@ -168,7 +168,7 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
 
   return (
     <div className="space-y-5">
-      {!isOnline && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">โหมดอ่านอย่างเดียวขณะออฟไลน์ — ราคาอาจเก่า และการเพิ่มหรือลบ Watchlist ถูกปิดไว้</div>}
+      {!isOnline && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">โหมดอ่านอย่างเดียวขณะออฟไลน์ — ราคาอาจเก่า และการเพิ่มหรือลบรายการติดตามถูกปิดไว้</div>}
       <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-4 shadow-xl sm:p-5">
         <label htmlFor="watchlist-search" className="mb-2 block text-sm font-semibold text-white">เพิ่ม Symbol</label>
         <div className="relative">
@@ -181,7 +181,7 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
         {query.trim() && (
           <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40">
             {searching && <p className="p-4 text-sm text-slate-400">กำลังค้นหา…</p>}
-            {!searching && searchError && <p className="p-4 text-sm text-amber-300">{searchError} — Watchlist ที่บันทึกไว้ไม่ได้รับผลกระทบ</p>}
+            {!searching && searchError && <p className="p-4 text-sm text-amber-300">{searchError} — รายการติดตามที่บันทึกไว้ไม่ได้รับผลกระทบ</p>}
             {!searching && !searchError && results.length === 0 && <p className="p-4 text-sm text-slate-400">ไม่พบผลลัพธ์</p>}
             {!searching && results.map((result) => {
               const added = existingSymbols.has(result.symbol);
@@ -210,7 +210,7 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
             </select>
           </label>
         </div>
-        {sortedItems.length === 0 ? <EmptyState icon={Star} title="Watchlist ยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
+        {sortedItems.length === 0 ? <EmptyState icon={Star} title="รายการติดตามยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
           <div className="divide-y divide-slate-800/60">{sortedItems.map((item) => {
             const data = quotes[item.symbol]; const quote = data?.quote; const change = quote?.changePercent;
             return <article key={item.id} className="flex min-w-0 items-center gap-3 p-4 hover:bg-slate-800/30 sm:px-5">

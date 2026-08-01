@@ -223,9 +223,9 @@ export function IndustryDetailClient({
         : await addWatchlistItemAction(symbol);
       if (!result.ok) {
         setWatched((current) => rollbackWatchlistChange(current, change));
-        addToast({ title: 'บันทึก Watchlist ไม่สำเร็จ', message: result.message, type: 'error' });
+        addToast({ title: 'บันทึกรายการติดตามไม่สำเร็จ', message: result.message, type: 'error' });
       } else {
-        addToast({ title: removing ? `นำ ${symbol} ออกจาก Watchlist แล้ว` : `เพิ่ม ${symbol} เข้า Watchlist แล้ว`, type: 'success' });
+        addToast({ title: removing ? `นำ ${symbol} ออกจากรายการติดตามแล้ว` : `เพิ่ม ${symbol} เข้ารายการติดตามแล้ว`, type: 'success' });
       }
       setSavingSymbols((current) => {
         const next = new Set(current);
@@ -502,7 +502,7 @@ export function IndustryDetailClient({
                   <button
                     type="button"
                     disabled={savingSymbols.has(price.symbol)}
-                    aria-label={watched.has(price.symbol) ? `นำ ${price.symbol} ออกจาก Watchlist` : `เพิ่ม ${price.symbol} เข้า Watchlist`}
+                    aria-label={watched.has(price.symbol) ? `นำ ${price.symbol} ออกจากรายการติดตาม` : `เพิ่ม ${price.symbol} เข้ารายการติดตาม`}
                     aria-pressed={watched.has(price.symbol)}
                     onClick={(event) => {
                       event.stopPropagation();

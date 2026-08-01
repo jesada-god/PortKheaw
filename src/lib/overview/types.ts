@@ -37,10 +37,12 @@ export interface OverviewPrice {
   currency: string;
   change: number | null;
   changePercent: number | null;
-  session: 'PRE' | 'REGULAR' | 'POST' | 'CLOSED';
+  session: 'PRE' | 'REGULAR' | 'POST' | 'CLOSED' | 'CONTINUOUS';
   sessionLabel: string;
   status: OverviewPriceStatus;
   asOf: string | null;
+  source?: string | null;
+  unavailableReason?: string | null;
   tradingDate: string | null;
   extended: {
     label: 'ก่อนตลาดเปิด' | 'หลังตลาด';

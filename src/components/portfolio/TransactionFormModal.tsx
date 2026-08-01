@@ -11,6 +11,7 @@ import type {
 import { DecimalInput, Field } from './FormControls';
 import { SymbolPreview } from './SymbolPreview';
 import { estimateCashAfterTransaction } from '@/src/lib/portfolio/cash-preview';
+import { maximumTransactionDateTimeLocal } from '@/src/lib/portfolio/transaction-datetime';
 
 export interface TransactionFormState {
   portfolioId: string;
@@ -23,6 +24,7 @@ export interface TransactionFormState {
   originalCurrency: 'USD' | 'THB';
   fxRateAtTransaction: string;
   occurredAt: string;
+  timezone: string;
   broker: string;
   note: string;
   underlyingSymbol: string;
@@ -155,7 +157,7 @@ export function TransactionFormModal({ open, editing, form, errors, pending, por
         </Field>}
         <div className={form.originalCurrency === 'THB' ? 'sm:col-span-2' : undefined}>
           <Field label="วันและเวลาที่เกิดรายการ" error={errors.occurredAt}>
-          <input type="datetime-local" value={form.occurredAt.slice(0, 16)} max={new Date().toISOString().slice(0, 16)} onChange={(event) => onChange('occurredAt', event.target.value)} className="form-input" />
+          <input type="datetime-local" value={form.occurredAt.slice(0, 16)} max={maximumTransactionDateTimeLocal(form.timezone)} onChange={(event) => onChange('occurredAt', event.target.value)} className="form-input" />
           </Field>
         </div>
       </div>

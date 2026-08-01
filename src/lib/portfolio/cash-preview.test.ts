@@ -11,6 +11,7 @@ function input(values: Partial<TransactionInput> = {}): TransactionInput {
     fee: '0',
     originalCurrency: 'USD',
     occurredAt: '2026-01-01',
+    timezone: 'Asia/Bangkok',
     underlyingSymbol: 'NVTS',
     optionKind: 'put',
     strikePrice: '12',

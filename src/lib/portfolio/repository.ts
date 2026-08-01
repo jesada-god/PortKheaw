@@ -4,6 +4,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
 import type { PortfolioGoal, PortfolioRecord, PortfolioTransaction, PortfolioType } from './types';
 import type { TransactionInput } from './validation';
+import {
+  resolveTransactionTimeZone,
+  transactionDateTimeToUtcIso,
+} from './transaction-datetime';
 
 type TransactionRow = Database['public']['Tables']['portfolio_transactions']['Row'];
 
@@ -34,11 +38,7 @@ function rpcInput(input: TransactionInput) {
     || input.type === 'sell_to_open' || input.type === 'buy_to_close'
     || input.type === 'exercise' || input.type === 'assignment' || input.type === 'expired';
   const cash = !asset && !option;
-  const occurredAt = /^\d{4}-\d{2}-\d{2}$/.test(input.occurredAt)
-    ? `${input.occurredAt}T12:00:00+07:00`
-    : /(?:Z|[+-]\d{2}:\d{2})$/.test(input.occurredAt)
-      ? input.occurredAt
-      : `${input.occurredAt}${input.occurredAt.length === 16 ? ':00' : ''}+07:00`;
+  const occurredAt = transactionDateTimeToUtcIso(input.occurredAt, input.timezone);
   return {
     input_type: input.type,
     input_symbol: asset ? input.symbol!.trim().toUpperCase() : null,
@@ -120,6 +120,13 @@ export class PortfolioRepository {
       targetValueUsd: data.aggregate_target_value_usd === null ? null : Number(data.aggregate_target_value_usd),
       targetDate: data.aggregate_target_date,
     };
+  }
+
+  async getTimeZone(): Promise<string> {
+    const { data, error } = await this.client.from('user_settings')
+      .select('timezone').single();
+    if (error) return resolveTransactionTimeZone(null);
+    return resolveTransactionTimeZone(data.timezone);
   }
 
   async getTransaction(id: string): Promise<PortfolioTransaction | null> {
@@ -205,6 +212,7 @@ export class PortfolioRepository {
     destinationPortfolioId: string;
     amountUsd: number;
     occurredAt: string;
+    timezone: string;
     note?: string;
     idempotencyKey: string;
   }): Promise<string> {
@@ -212,7 +220,7 @@ export class PortfolioRepository {
       source_portfolio_id: input.sourcePortfolioId,
       destination_portfolio_id: input.destinationPortfolioId,
       input_amount_usd: String(input.amountUsd),
-      input_occurred_at: input.occurredAt,
+      input_occurred_at: transactionDateTimeToUtcIso(input.occurredAt, input.timezone),
       input_note: input.note?.trim() || null,
       input_idempotency_key: input.idempotencyKey,
     });

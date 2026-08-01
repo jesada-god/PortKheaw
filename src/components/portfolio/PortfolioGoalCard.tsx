@@ -1,73 +1,20 @@
 'use client';
 
-import Image from 'next/image';
 import type { CSSProperties } from 'react';
 import { Target } from 'lucide-react';
 import { Button } from '@/src/components/ui/Button';
-import type { PortfolioGoalCardModel, PortfolioGoalScope, PortfolioTodayMood } from '@/src/lib/portfolio/goal-card';
+import {
+  formatPortfolioGoalTime,
+  type PortfolioGoalCardModel,
+  type PortfolioGoalScope,
+} from '@/src/lib/portfolio/goal-card';
+import {
+  PortfolioGoalMascot,
+  portfolioGoalAppearance,
+} from './PortfolioGoalMascot';
 import styles from './PortfolioGoalCard.module.css';
 
 type Money = (value: number | string | null) => string;
-
-const appearance: Record<PortfolioTodayMood, {
-  accent: string;
-  soft: string;
-  mascotClass: string;
-  colorLabel: string;
-}> = {
-  'strong-gain': {
-    accent: '#22C55E',
-    soft: 'rgba(34, 197, 94, 0.18)',
-    mascotClass: styles.strongGain,
-    colorLabel: 'เขียวเข้ม',
-  },
-  gain: {
-    accent: '#A3E635',
-    soft: 'rgba(163, 230, 53, 0.16)',
-    mascotClass: styles.gain,
-    colorLabel: 'เขียวอ่อน',
-  },
-  flat: {
-    accent: '#FACC15',
-    soft: 'rgba(250, 204, 21, 0.16)',
-    mascotClass: styles.flat,
-    colorLabel: 'เหลือง',
-  },
-  loss: {
-    accent: '#FB7185',
-    soft: 'rgba(251, 113, 133, 0.16)',
-    mascotClass: styles.loss,
-    colorLabel: 'ชมพู',
-  },
-  'strong-loss': {
-    accent: '#EF4444',
-    soft: 'rgba(239, 68, 68, 0.17)',
-    mascotClass: styles.strongLoss,
-    colorLabel: 'แดง',
-  },
-  'severe-loss': {
-    accent: '#B91C1C',
-    soft: 'rgba(185, 28, 28, 0.19)',
-    mascotClass: styles.severeLoss,
-    colorLabel: 'แดงเข้ม',
-  },
-  unavailable: {
-    accent: '#84CC16',
-    soft: 'rgba(132, 204, 22, 0.15)',
-    mascotClass: styles.unavailable,
-    colorLabel: 'เขียว Glossy Tech',
-  },
-};
-
-function displayTime(value: string): string {
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return '—';
-  return new Intl.DateTimeFormat('th-TH', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Asia/Bangkok',
-  }).format(parsed);
-}
 
 export function PortfolioGoalCard({
   model,
@@ -90,7 +37,7 @@ export function PortfolioGoalCard({
   onScopeChange: (scope: PortfolioGoalScope) => void;
   onEditGoal: () => void;
 }) {
-  const moodAppearance = appearance[model.today.mood];
+  const moodAppearance = portfolioGoalAppearance[model.today.mood];
   const progressText = model.progress.progressPercent === null
     ? '—'
     : showBalances
@@ -169,14 +116,7 @@ export function PortfolioGoalCard({
 
       <aside className="min-w-0 text-center lg:row-span-2" data-testid="portfolio-goal-mascot">
         <div className="flex h-20 items-end justify-center sm:h-24 lg:h-28">
-          <Image
-            alt={`น้อง Kheaw สไตล์ Glossy Tech สี${moodAppearance.colorLabel} แสดงสถานะพอร์ตวันนี้`}
-            className={`${styles.mascot} ${moodAppearance.mascotClass} h-20 w-auto object-contain sm:h-24 lg:h-28`}
-            height={512}
-            sizes="(max-width: 640px) 80px, (max-width: 1024px) 96px, 112px"
-            src="/brand/kheaw-goal-tech.png"
-            width={512}
-          />
+          <PortfolioGoalMascot mood={model.today.mood} />
         </div>
         {model.today.kind === 'ready'
           ? <>
@@ -197,7 +137,7 @@ export function PortfolioGoalCard({
         <MetaMetric
           className="col-span-2 sm:col-span-1"
           label="อัปเดตล่าสุด"
-          value={model.latestUpdatedAt ? displayTime(model.latestUpdatedAt) : 'ยังไม่มีเวลาที่ตรวจสอบได้'}
+          value={model.latestUpdatedAt ? formatPortfolioGoalTime(model.latestUpdatedAt) : 'ยังไม่มีเวลาที่ตรวจสอบได้'}
         />
       </dl>
     </div>

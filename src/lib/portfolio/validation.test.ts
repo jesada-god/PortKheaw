@@ -4,6 +4,7 @@ import { portfolioTransactionSchema } from './validation';
 const base = {
   portfolioId: '550e8400-e29b-41d4-a716-446655440001',
   occurredAt: '2026-01-01',
+  timezone: 'Asia/Bangkok',
   note: '',
   idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
 };

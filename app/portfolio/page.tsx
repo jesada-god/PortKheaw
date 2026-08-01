@@ -14,9 +14,10 @@ export default async function PortfolioPage() {
   const client = await createClient();
   if (!client) return null;
   const portfolioRepository = new PortfolioRepository(client);
-  const [portfolios, aggregateGoal] = await Promise.all([
+  const [portfolios, aggregateGoal, timezone] = await Promise.all([
     portfolioRepository.getAll(),
     portfolioRepository.getAggregateGoal(),
+    portfolioRepository.getTimeZone(),
   ]);
   const targetRepository = new OptionTargetRepository(client);
   const [targets, fx] = await Promise.all([
@@ -75,6 +76,7 @@ export default async function PortfolioPage() {
       optionQuotes={optionQuotes}
       optionTargets={targets}
       fx={fx}
+      timezone={timezone}
     />
   </div>;
 }

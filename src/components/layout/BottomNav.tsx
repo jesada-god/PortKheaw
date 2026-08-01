@@ -7,7 +7,7 @@ import { cn } from '@/src/utils/cn';
 
 const navItems = [
   { name: 'ภาพรวม', href: '/', icon: Home },
-  { name: 'Watchlist', href: '/watchlist', icon: Star },
+  { name: 'รายการติดตาม', href: '/watchlist', icon: Star },
   { name: 'ค้นหา', href: '/search', icon: Search },
   { name: 'พอร์ต', href: '/portfolio', icon: PieChart },
   { name: 'เครื่องมือ', href: '/tools', icon: Wrench },

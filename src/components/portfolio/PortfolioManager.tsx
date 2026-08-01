@@ -22,14 +22,15 @@ import {
   type PortfolioGoalScope,
 } from '@/src/lib/portfolio/goal-card';
 import type { PortfolioGoal, PortfolioRecord, PortfolioSummary, PortfolioType } from '@/src/lib/portfolio/types';
+import {
+  currentDateTimeLocal,
+  maximumTransactionDateTimeLocal,
+  validateTransactionDateTime,
+} from '@/src/lib/portfolio/transaction-datetime';
 import { DecimalInput, Field } from './FormControls';
 import { PortfolioGoalCard } from './PortfolioGoalCard';
 
 type Money = (value: number | string | null) => string;
-
-function localNow() {
-  return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
-}
 
 function displayTime(value: string) {
   return new Intl.DateTimeFormat('th-TH', {
@@ -52,6 +53,7 @@ export function PortfolioManager({
   aggregateGoal,
   selectedPortfolioId,
   optionTargetCounts,
+  timezone,
   showBalances,
   isOnline,
   money,
@@ -65,6 +67,7 @@ export function PortfolioManager({
   aggregateGoal: PortfolioGoal;
   selectedPortfolioId: string;
   optionTargetCounts: Record<string, number>;
+  timezone: string;
   showBalances: boolean;
   isOnline: boolean;
   money: Money;
@@ -91,7 +94,7 @@ export function PortfolioManager({
   const [transferSource, setTransferSource] = useState(selectedPortfolioId);
   const [transferDestination, setTransferDestination] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
-  const [transferDate, setTransferDate] = useState(localNow());
+  const [transferDate, setTransferDate] = useState(currentDateTimeLocal(timezone));
   const [transferNote, setTransferNote] = useState('');
   const [transferIdempotencyKey, setTransferIdempotencyKey] = useState('');
   const [error, setError] = useState('');
@@ -189,7 +192,7 @@ export function PortfolioManager({
     setTransferSource(source);
     setTransferDestination(active.find((portfolio) => portfolio.id !== source)?.id ?? '');
     setTransferAmount('');
-    setTransferDate(localNow());
+    setTransferDate(currentDateTimeLocal(timezone));
     setTransferNote('');
     setTransferIdempotencyKey(crypto.randomUUID());
     setError('');
@@ -201,7 +204,7 @@ export function PortfolioManager({
     setTransferSource('');
     setTransferDestination('');
     setTransferAmount('');
-    setTransferDate(localNow());
+    setTransferDate(currentDateTimeLocal(timezone));
     setTransferNote('');
     setTransferIdempotencyKey('');
     setError('');
@@ -371,11 +374,17 @@ export function PortfolioManager({
     <Modal isOpen={transferOpen} onClose={() => !pending && closeTransfer()} title="ย้ายเงินระหว่างพอร์ต">
       <form className="space-y-4" onSubmit={(event) => {
         event.preventDefault();
+        const dateTime = validateTransactionDateTime(transferDate, timezone);
+        if (!dateTime.ok) {
+          setError(dateTime.message);
+          return;
+        }
         run(() => transferPortfolioCashAction({
           sourcePortfolioId: transferSource,
           destinationPortfolioId: transferDestination,
           amountUsd: Number(transferAmount),
           occurredAt: transferDate,
+          timezone,
           note: transferNote,
           idempotencyKey: transferIdempotencyKey,
         }), 'บันทึก transfer_out / transfer_in แล้ว', closeTransfer);
@@ -384,7 +393,7 @@ export function PortfolioManager({
         <Field label="พอร์ตต้นทาง"><select className="form-input" value={transferSource} onChange={(event) => { const value = event.target.value; setTransferSource(value); if (transferDestination === value) setTransferDestination(active.find((portfolio) => portfolio.id !== value)?.id ?? ''); }}>{active.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>)}</select></Field>
         <Field label="พอร์ตปลายทาง"><select className="form-input" value={transferDestination} onChange={(event) => setTransferDestination(event.target.value)}>{active.filter((portfolio) => portfolio.id !== transferSource).map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>)}</select></Field>
         <Field label="จำนวนเงิน (USD)"><DecimalInput value={transferAmount} onChange={setTransferAmount} /></Field>
-        <Field label="วันและเวลา"><input type="datetime-local" className="form-input" max={localNow()} value={transferDate} onChange={(event) => setTransferDate(event.target.value)} /></Field>
+        <Field label="วันและเวลา"><input type="datetime-local" className="form-input" max={maximumTransactionDateTimeLocal(timezone)} value={transferDate} onChange={(event) => setTransferDate(event.target.value)} /></Field>
         <Field label="หมายเหตุ (ไม่บังคับ)"><textarea className="form-input h-auto py-3" rows={2} maxLength={500} value={transferNote} onChange={(event) => setTransferNote(event.target.value)} /></Field>
         <div className={`rounded-lg p-3 text-sm ${transferCashAfter < 0 ? 'bg-amber-500/10 text-amber-200' : 'bg-slate-950/50 text-slate-300'}`}>
           เงินสดพอร์ตต้นทางหลังย้าย: <strong className="font-mono">${transferCashAfter.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>

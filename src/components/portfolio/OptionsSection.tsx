@@ -21,6 +21,12 @@ import type { PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } 
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { estimateCashAfterTransaction } from '@/src/lib/portfolio/cash-preview';
+import {
+  currentDateTimeLocal,
+  formatDateTimeLocal,
+  maximumTransactionDateTimeLocal,
+  validateTransactionDateTime,
+} from '@/src/lib/portfolio/transaction-datetime';
 import { DecimalInput, Field } from './FormControls';
 import { SymbolPreview } from './SymbolPreview';
 import { transactionLabels, type TransactionFormState } from './TransactionFormModal';
@@ -29,11 +35,7 @@ const optionActions: PortfolioTransactionType[] = [
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
 ];
 
-function localNow() {
-  return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
-}
-
-function emptyOptionForm(portfolioId = ''): TransactionFormState {
+function emptyOptionForm(portfolioId = '', timezone = 'Asia/Bangkok'): TransactionFormState {
   return {
     portfolioId,
     type: 'buy_to_open',
@@ -44,7 +46,8 @@ function emptyOptionForm(portfolioId = ''): TransactionFormState {
     fee: '0',
     originalCurrency: 'USD',
     fxRateAtTransaction: '',
-    occurredAt: localNow(),
+    occurredAt: currentDateTimeLocal(timezone),
+    timezone,
     broker: '',
     note: '',
     underlyingSymbol: '',
@@ -58,14 +61,13 @@ function emptyOptionForm(portfolioId = ''): TransactionFormState {
   };
 }
 
-function editDateTime(value: string) {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16) : `${value}T12:00`;
+function editDateTime(value: string, timezone: string) {
+  return formatDateTimeLocal(value, timezone) || `${value}T12:00`;
 }
 
-function displayTime(value: string) {
+function displayTime(value: string, timezone = 'Asia/Bangkok') {
   const parsed = Date.parse(value);
-  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' })
+  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone })
     .format(Number.isFinite(parsed) ? new Date(parsed) : new Date(`${value}T12:00:00+07:00`));
 }
 
@@ -79,7 +81,7 @@ function quoteNumber(value: number | null, digits?: number) {
   }).format(value);
 }
 
-export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline }: {
+export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone }: {
   portfolio: PortfolioRecord;
   portfolios: PortfolioRecord[];
   positions: OptionPositionSummary[];
@@ -89,6 +91,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   usdThbRate: string | null;
   showBalances: boolean;
   isOnline: boolean;
+  timezone: string;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -97,7 +100,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PortfolioTransaction | null>(null);
   const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
-  const [form, setForm] = useState<TransactionFormState>(() => emptyOptionForm(portfolio.id));
+  const [form, setForm] = useState<TransactionFormState>(() => emptyOptionForm(portfolio.id, timezone));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [targetPosition, setTargetPosition] = useState<OptionPositionSummary | null>(null);
   const [targetDeleting, setTargetDeleting] = useState<OptionTarget | null>(null);
@@ -119,7 +122,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   function openCreate(position?: OptionPositionSummary, type?: PortfolioTransactionType) {
     setEditing(null);
     setErrors({});
-    const base = emptyOptionForm(portfolio.id);
+    const base = emptyOptionForm(portfolio.id, timezone);
     if (position) {
       const closeType = type ?? (position.side === 'long' ? 'sell_to_close' : 'buy_to_close');
       setForm({
@@ -145,7 +148,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     setEditing(transaction);
     setErrors({});
     setForm({
-      ...emptyOptionForm(transaction.portfolioId),
+      ...emptyOptionForm(transaction.portfolioId, timezone),
       portfolioId: transaction.portfolioId,
       type: transaction.type,
       quantity: transaction.quantity ?? '',
@@ -153,7 +156,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
       fee: transaction.fee ?? '0',
       originalCurrency: transaction.originalCurrency ?? 'USD',
       fxRateAtTransaction: transaction.fxRateAtTransaction ?? '',
-      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt),
+      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone),
       broker: transaction.broker ?? '',
       note: transaction.note ?? '',
       underlyingSymbol: transaction.underlyingSymbol ?? '',
@@ -172,12 +175,17 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     setFormOpen(false);
     setEditing(null);
     setErrors({});
-    setForm(emptyOptionForm(portfolio.id));
+    setForm(emptyOptionForm(portfolio.id, timezone));
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (pending || !isOnline) return;
+    const dateTime = validateTransactionDateTime(form.occurredAt, form.timezone);
+    if (!dateTime.ok) {
+      setErrors((current) => ({ ...current, occurredAt: dateTime.message }));
+      return;
+    }
     startTransition(async () => {
       const result = editing
         ? await updatePortfolioTransactionAction(editing.id, form)
@@ -292,6 +300,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
               target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
               expanded={expanded === position.key}
               showBalances={showBalances}
+              timezone={timezone}
               money={money}
               signed={signed}
               onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
@@ -310,6 +319,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
             target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
             expanded={expanded === position.key}
             showBalances={showBalances}
+            timezone={timezone}
             money={money}
             signed={signed}
             onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
@@ -378,6 +388,7 @@ interface OptionViewProps {
   target?: OptionTarget;
   expanded: boolean;
   showBalances: boolean;
+  timezone: string;
   money: (value: number | null) => string;
   signed: (value: number | null) => string;
   onToggle: () => void;
@@ -427,7 +438,7 @@ function OptionMobileCard(props: OptionViewProps) {
   </article>;
 }
 
-function OptionDetails({ position, target, money, signed, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionViewProps) {
+function OptionDetails({ position, target, money, signed, timezone, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionViewProps) {
   const actionTypes: PortfolioTransactionType[] = position.side === 'long'
     ? ['buy_to_open', 'sell_to_close', 'exercise', 'expired']
     : ['sell_to_open', 'buy_to_close', 'assignment', 'expired'];
@@ -473,7 +484,7 @@ function OptionDetails({ position, target, money, signed, onAction, onEdit, onDe
       </div>
       {target && targetCalculation ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-900/60 p-3 text-xs">
         <div className="min-w-0 flex-1">
-          <p><strong className="text-slate-200">{target.mode === 'premium' ? `Target premium $${target.targetValue.toFixed(2)}` : `Target profit ${target.targetValue.toFixed(2)}%`}</strong>{target.triggeredAt ? <span className="mt-1 block text-slate-500">ถึงเป้าหมาย {displayTime(target.triggeredAt)}</span> : null}</p>
+          <p><strong className="text-slate-200">{target.mode === 'premium' ? `Target premium $${target.targetValue.toFixed(2)}` : `Target profit ${target.targetValue.toFixed(2)}%`}</strong>{target.triggeredAt ? <span className="mt-1 block text-slate-500">ถึงเป้าหมาย {displayTime(target.triggeredAt, timezone)}</span> : null}</p>
           <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
             <TargetMetric label="Target premium" value={`$${quoteNumber(target.targetPremium)}`} />
             <TargetMetric label={position.side === 'long' ? 'Estimated proceeds' : 'Estimated close cost'} value={money(Math.abs(targetCalculation.estimatedProceeds))} />
@@ -488,7 +499,7 @@ function OptionDetails({ position, target, money, signed, onAction, onEdit, onDe
     <section>
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Transaction history</h4>
       <div className="mt-2 divide-y divide-slate-800">{position.transactions.map((transaction) => <div key={transaction.id} className="flex min-w-0 items-center gap-2 py-2 text-xs">
-        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{displayTime(transaction.occurredAtTime ?? transaction.occurredAt)} · {Number(transaction.quantity).toLocaleString('th-TH', { maximumFractionDigits: 8 })} สัญญา × ${Number(transaction.normalizedPriceUsd ?? transaction.price ?? 0).toFixed(2)} · ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0))}</span></span>
+        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{displayTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone)} · {Number(transaction.quantity).toLocaleString('th-TH', { maximumFractionDigits: 8 })} สัญญา × ${Number(transaction.normalizedPriceUsd ?? transaction.price ?? 0).toFixed(2)} · ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0))}</span></span>
         <button type="button" aria-label={`แก้ไข ${transactionLabels[transaction.type]}`} onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"><Edit3 size={16} /></button>
         <button type="button" aria-label={`ลบ ${transactionLabels[transaction.type]}`} onClick={() => onDelete(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
       </div>)}</div>
@@ -548,7 +559,7 @@ function OptionTransactionModal({ open, editing, form, errors, pending, portfoli
         <Field label="สกุลเงินต้นฉบับ" error={errors.originalCurrency}><select className="form-input" value={form.originalCurrency} onChange={(event) => onChange('originalCurrency', event.target.value)}><option value="USD">USD ($)</option><option value="THB">THB (฿)</option></select></Field>
         {form.originalCurrency === 'THB' && <Field label="USD/THB ณ เวลารายการ" error={errors.fxRateAtTransaction}><DecimalInput value={form.fxRateAtTransaction} onChange={(value) => onChange('fxRateAtTransaction', value)} /></Field>}
         <div className={form.originalCurrency === 'THB' ? 'sm:col-span-2' : undefined}>
-          <Field label="วันและเวลารายการ (Date)" error={errors.occurredAt}><input type="datetime-local" className="form-input" value={form.occurredAt.slice(0, 16)} max={localNow()} onChange={(event) => onChange('occurredAt', event.target.value)} /></Field>
+          <Field label="วันและเวลารายการ (Date)" error={errors.occurredAt}><input type="datetime-local" className="form-input" value={form.occurredAt.slice(0, 16)} max={maximumTransactionDateTimeLocal(form.timezone)} onChange={(event) => onChange('occurredAt', event.target.value)} /></Field>
         </div>
       </div>
       {!noPremium && <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-300">

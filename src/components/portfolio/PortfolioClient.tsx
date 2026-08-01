@@ -24,6 +24,11 @@ import type { FxResult } from '@/src/lib/market-data/fx/service';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
 import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
+import {
+  currentDateTimeLocal,
+  formatDateTimeLocal,
+  validateTransactionDateTime,
+} from '@/src/lib/portfolio/transaction-datetime';
 import { OptionsSection } from './OptionsSection';
 import { PortfolioManager } from './PortfolioManager';
 import { TransactionFormModal, transactionLabels, type TransactionFormState } from './TransactionFormModal';
@@ -34,11 +39,7 @@ const OPTION_TYPES = new Set<PortfolioTransactionType>([
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
 ]);
 
-function localNow() {
-  return new Date(Date.now() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16);
-}
-
-const emptyForm = (portfolioId = ''): TransactionFormState => ({
+const emptyForm = (portfolioId = '', timezone = 'Asia/Bangkok'): TransactionFormState => ({
   portfolioId,
   type: 'acquisition',
   symbol: '',
@@ -48,7 +49,8 @@ const emptyForm = (portfolioId = ''): TransactionFormState => ({
   fee: '0',
   originalCurrency: 'USD',
   fxRateAtTransaction: '',
-  occurredAt: localNow(),
+  occurredAt: currentDateTimeLocal(timezone),
+  timezone,
   broker: '',
   note: '',
   underlyingSymbol: '',
@@ -65,24 +67,26 @@ function number(value: number, maximumFractionDigits = 8) {
   return new Intl.NumberFormat('th-TH', { maximumFractionDigits }).format(value);
 }
 
-function transactionDate(value: string) {
-  const parsed = Date.parse(value);
-  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' })
-    .format(Number.isFinite(parsed) ? new Date(parsed) : new Date(`${value}T12:00:00+07:00`));
+function transactionDate(value: string, timezone: string) {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone })
+    .format(parsed);
 }
 
-function editDateTime(value: string) {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed + 7 * 60 * 60 * 1_000).toISOString().slice(0, 16) : `${value}T12:00`;
+function editDateTime(value: string, timezone: string) {
+  const formatted = formatDateTimeLocal(value, timezone);
+  return formatted || `${value}T12:00`;
 }
 
-export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx }: {
+export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx, timezone }: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
   marketPrices: Record<string, MarketPriceInput | null>;
   optionQuotes: Record<string, OptionQuoteInput | null>;
   optionTargets: OptionTarget[];
   fx: FxResult;
+  timezone: string;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -103,7 +107,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [editing, setEditing] = useState<PortfolioTransaction | null>(null);
   const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
-  const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id));
+  const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id, timezone));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const prices = useMemo(
     () => Object.fromEntries(Object.entries(marketPrices).filter((entry): entry is [string, MarketPriceInput] => entry[1] != null)),
@@ -159,7 +163,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   function openCreate(type: PortfolioTransactionType = 'acquisition', symbol = '', quantity = '') {
     setEditing(null);
     setErrors({});
-    setForm({ ...emptyForm(portfolio.id), type, symbol, quantity });
+    setForm({ ...emptyForm(portfolio.id, timezone), type, symbol, quantity });
     setFormOpen(true);
   }
 
@@ -172,7 +176,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     setEditing(transaction);
     setErrors({});
     setForm({
-      ...emptyForm(transaction.portfolioId),
+      ...emptyForm(transaction.portfolioId, timezone),
       portfolioId: transaction.portfolioId,
       type: transaction.type,
       symbol: transaction.symbol ?? '',
@@ -182,7 +186,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       fee: transaction.fee ?? '0',
       originalCurrency: transaction.originalCurrency ?? 'USD',
       fxRateAtTransaction: transaction.fxRateAtTransaction ?? '',
-      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt),
+      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone),
       broker: transaction.broker ?? '',
       note: transaction.note ?? '',
       idempotencyKey: transaction.idempotencyKey ?? crypto.randomUUID(),
@@ -195,7 +199,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     setFormOpen(false);
     setEditing(null);
     setErrors({});
-    setForm(emptyForm(portfolio.id));
+    setForm(emptyForm(portfolio.id, timezone));
   }
 
   function change(name: keyof TransactionFormState, value: string) {
@@ -208,6 +212,11 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     if (pending) return;
     if (!isOnline) {
       addToast({ title: 'บันทึกไม่ได้ขณะออฟไลน์', message: 'เชื่อมต่ออินเทอร์เน็ตก่อนเพื่อป้องกันข้อมูลขัดแย้ง', type: 'error' });
+      return;
+    }
+    const dateTime = validateTransactionDateTime(form.occurredAt, form.timezone);
+    if (!dateTime.ok) {
+      setErrors((current) => ({ ...current, occurredAt: dateTime.message }));
       return;
     }
     startTransition(async () => {
@@ -314,7 +323,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       <div className="mt-5 flex flex-col gap-2 border-t border-slate-800 pt-4 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
         <div>
           {fxLoading && <p className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={14} /> กำลังโหลดอัตราแลกเปลี่ยน…</p>}
-          {hasValidRate && <p>1 USD = {formatFxRate(rate)} THB · อัปเดต {transactionDate(currentFx.quote!.asOf)} · แหล่งข้อมูล {currentFx.quote!.source}</p>}
+          {hasValidRate && <p>1 USD = {formatFxRate(rate)} THB · อัปเดต {transactionDate(currentFx.quote!.asOf, timezone)} · แหล่งข้อมูล {currentFx.quote!.source}</p>}
           {!fxLoading && !hasValidRate && <p className="text-amber-300">ไม่มีอัตราแลกเปลี่ยนจริง จึงปิดการแสดงผล THB</p>}
           {currentFx.quote?.stale && <p className="mt-1 text-amber-300">กำลังใช้อัตราแลกเปลี่ยนล่าสุดที่บันทึกไว้ (Stale)</p>}
           {fxError && hasValidRate && <p className="mt-1 text-amber-300">โหลดอัตราใหม่ไม่สำเร็จ แต่ยังใช้อัตราที่มีอยู่ได้</p>}
@@ -332,6 +341,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       aggregateGoal={aggregateGoal}
       selectedPortfolioId={portfolio.id}
       optionTargetCounts={Object.fromEntries(portfolios.map((item) => [item.id, optionTargets.filter((target) => target.portfolioId === item.id).length]))}
+      timezone={timezone}
       showBalances={showBalances}
       isOnline={isOnline}
       money={money}
@@ -384,6 +394,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
                 holding={holding}
                 expanded={expandedSymbol === holding.symbol}
                 showBalances={showBalances}
+                timezone={timezone}
                 money={money}
                 signed={signed}
                 hidden={hidden}
@@ -401,6 +412,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
               holding={holding}
               expanded={expandedSymbol === holding.symbol}
               showBalances={showBalances}
+              timezone={timezone}
               money={money}
               signed={signed}
               hidden={hidden}
@@ -429,6 +441,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       usdThbRate={rate}
       showBalances={showBalances}
       isOnline={isOnline}
+      timezone={timezone}
     />}
 
     <TransactionFormModal
@@ -450,7 +463,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
         : <div className="divide-y divide-slate-800">{stockHistory.map((transaction) => <article key={transaction.id} className="flex min-w-0 items-center gap-2 py-3">
           <div className="min-w-0 flex-1">
             <p className="break-words font-semibold text-white">{transactionLabels[transaction.type]} {transaction.symbol && `· ${transaction.symbol}`}</p>
-            <p className="text-xs text-slate-400">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt)} · {transaction.quantity
+            <p className="text-xs text-slate-400">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)} · {transaction.quantity
               ? `${hidden(number(Number(transaction.quantity)))} × ${money(Number(transaction.normalizedPriceUsd ?? transaction.price))}`
               : money(Number(transaction.normalizedAmountUsd ?? transaction.amount))}</p>
             {Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0) > 0 && <p className="text-xs text-slate-500">ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee))}</p>}
@@ -475,7 +488,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   </main>;
 }
 
-function quoteMeta(holding: HoldingSummary) {
+function quoteMeta(holding: HoldingSummary, timezone: string) {
   if (holding.marketPrice === null) {
     return <span className="block text-[10px] text-amber-300">ข้อมูลราคายังไม่พร้อม</span>;
   }
@@ -484,7 +497,7 @@ function quoteMeta(holding: HoldingSummary) {
       {holding.priceStale || holding.priceCached
         ? 'ข้อมูลล่าสุดที่บันทึกไว้'
         : 'ข้อมูลตลาด'}
-      {holding.priceAsOf ? ` · ${transactionDate(holding.priceAsOf)}` : ''}
+      {holding.priceAsOf ? ` · ${transactionDate(holding.priceAsOf, timezone)}` : ''}
     </span>
   );
 }
@@ -493,7 +506,7 @@ function totalPnlPercent(holding: HoldingSummary) {
   return holding.unrealizedGain === null || holding.costBasis === 0 ? null : holding.unrealizedGain / holding.costBasis * 100;
 }
 
-function HoldingDesktopRows({ holding, expanded, showBalances, money, signed, hidden, onToggle, onBuy, onSell, onClose, onEdit }: HoldingViewProps) {
+function HoldingDesktopRows({ holding, expanded, showBalances, timezone, money, signed, hidden, onToggle, onBuy, onSell, onClose, onEdit }: HoldingViewProps) {
   return <>
     <tr className="border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
       <td className="p-0">
@@ -505,18 +518,18 @@ function HoldingDesktopRows({ holding, expanded, showBalances, money, signed, hi
       </td>
       <td className="px-3 py-3 text-right font-mono">{hidden(number(holding.quantity))}</td>
       <td className="px-3 py-3 text-right font-mono">{money(holding.averageCost)}</td>
-      <td className="px-3 py-3 text-right font-mono">{money(holding.marketPrice)}{quoteMeta(holding)}</td>
+      <td className="px-3 py-3 text-right font-mono">{money(holding.marketPrice)}{quoteMeta(holding, timezone)}</td>
       <td className="px-3 py-3 text-right font-mono text-white">{money(holding.marketValue)}</td>
       <td className={`px-3 py-3 text-right font-mono ${holding.todayChange === null ? 'text-slate-400' : gainColor(holding.todayChange)}`}>{signed(holding.todayChange)}</td>
       <td className={`px-3 py-3 text-right font-mono ${holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain)}<span className="block text-[10px]">{holding.unrealizedGain === null ? '—' : signedPercent(totalPnlPercent(holding)!, showBalances)}</span></td>
       <td className="px-3 py-3 text-right font-mono">{showBalances ? `${holding.allocation.toFixed(2)}%` : '••••'}</td>
     </tr>
-    {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} onEdit={onEdit} /></td></tr>}
+    {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} timezone={timezone} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} onEdit={onEdit} /></td></tr>}
   </>;
 }
 
 function HoldingMobileCard(props: HoldingViewProps) {
-  const { holding, expanded, showBalances, money, signed, hidden, onToggle } = props;
+  const { holding, expanded, showBalances, timezone, money, signed, hidden, onToggle } = props;
   return <article className="p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-center justify-between gap-3 text-left">
       <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={40} />
@@ -525,7 +538,7 @@ function HoldingMobileCard(props: HoldingViewProps) {
     </button>
     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
       <MobileMetric label="ต้นทุนเฉลี่ย" value={money(holding.averageCost)} />
-      <MobileMetric label="ราคาปัจจุบัน" value={money(holding.marketPrice)} extra={quoteMeta(holding)} />
+      <MobileMetric label="ราคาปัจจุบัน" value={money(holding.marketPrice)} extra={quoteMeta(holding, timezone)} />
       <MobileMetric label="มูลค่าตลาด" value={money(holding.marketValue)} />
       <MobileMetric label="Today P&L" value={signed(holding.todayChange)} tone={holding.todayChange === null ? 'text-slate-400' : gainColor(holding.todayChange)} />
       <MobileMetric label="Total P&L" value={signed(holding.unrealizedGain)} tone={holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)} />
@@ -539,6 +552,7 @@ interface HoldingViewProps {
   holding: HoldingSummary;
   expanded: boolean;
   showBalances: boolean;
+  timezone: string;
   money: (value: number | string | null) => string;
   signed: (value: number | null) => string;
   hidden: (value: string) => string;
@@ -549,7 +563,7 @@ interface HoldingViewProps {
   onEdit: (transaction: PortfolioTransaction) => void;
 }
 
-function HoldingDetails({ holding, money, hidden, onBuy, onSell, onClose, onEdit }: Pick<HoldingViewProps, 'holding' | 'money' | 'hidden' | 'onBuy' | 'onSell' | 'onClose' | 'onEdit'>) {
+function HoldingDetails({ holding, timezone, money, hidden, onBuy, onSell, onClose, onEdit }: Pick<HoldingViewProps, 'holding' | 'timezone' | 'money' | 'hidden' | 'onBuy' | 'onSell' | 'onClose' | 'onEdit'>) {
   return <div className="min-w-0 space-y-4">
     <div className="flex flex-wrap gap-2">
       <Button size="sm" onClick={onBuy}>เพิ่มซื้อ</Button>
@@ -560,14 +574,14 @@ function HoldingDetails({ holding, money, hidden, onBuy, onSell, onClose, onEdit
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Lots ที่เหลือ</h4>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">{holding.lots.map((lot) => <div key={lot.transactionId} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs">
         <p className="font-mono text-white">{hidden(number(lot.remainingQuantity))} / {hidden(number(lot.originalQuantity))} หน่วย</p>
-        <p className="mt-1 text-slate-400">{transactionDate(lot.occurredAt)} · ต้นทุนคงเหลือ {money(lot.remainingCost)}</p>
+        <p className="mt-1 text-slate-400">{transactionDate(lot.occurredAt, timezone)} · ต้นทุนคงเหลือ {money(lot.remainingCost)}</p>
         {lot.broker && <p className="text-slate-500">{lot.broker}</p>}
       </div>)}</div>
     </div>
     <div>
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">ประวัติของสินทรัพย์</h4>
       <div className="mt-2 divide-y divide-slate-800">{holding.transactions.map((transaction) => <div key={transaction.id} className="flex items-center gap-2 py-2 text-xs">
-        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt)}</span></span>
+        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)}</span></span>
         <button type="button" onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white" aria-label={`แก้ไข ${transactionLabels[transaction.type]}`}><Edit3 size={16} /></button>
       </div>)}</div>
     </div>

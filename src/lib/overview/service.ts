@@ -23,8 +23,9 @@ import {
   LastGoodSnapshotCoordinator,
   mapWithConcurrencyDeadline,
 } from './industry-snapshot';
+import { loadContinuousMarketPrice } from './continuous-market';
 import { overviewPriceStatus } from './presentation';
-import { MARKET_ASSETS } from './market-assets';
+import { equityMarketSymbols, MARKET_ASSETS } from './market-assets';
 import {
   aggregateIndustryChartSeries,
   attachBenchmark,
@@ -91,6 +92,7 @@ function phaseLabel(phase: OverviewPrice['session']): string {
   if (phase === 'PRE') return 'ก่อนตลาดเปิด';
   if (phase === 'REGULAR') return 'ตลาดเปิด';
   if (phase === 'POST') return 'หลังตลาด';
+  if (phase === 'CONTINUOUS') return 'ซื้อขายตลอด 24 ชม.';
   return 'ตลาดปิด';
 }
 
@@ -193,6 +195,8 @@ async function loadPriceUncached(
       model.main.role === 'regular-close',
     ),
     asOf: model.main.asOf,
+    source: quote.provider ?? null,
+    unavailableReason: null,
     tradingDate: model.main.tradingDate,
     extended: secondary ? {
       label: secondary.session === 'premarket' ? 'ก่อนตลาดเปิด' : 'หลังตลาด',
@@ -243,6 +247,67 @@ export async function loadOverviewPrice(
       },
     };
   } catch {
+    return unavailablePrice(instrument);
+  }
+}
+
+class ContinuousPriceUnavailable extends Error {
+  constructor(readonly display: OverviewPrice) {
+    super(display.unavailableReason ?? 'Continuous market data is unavailable');
+    this.name = 'ContinuousPriceUnavailable';
+  }
+}
+
+async function loadContinuousOverviewPrice(
+  instrument: InstrumentMetadata,
+  now: Date,
+): Promise<LoadedPrice> {
+  try {
+    const resolution = await priceCache.resolve(
+      `overview-price:${instrument.symbol}`,
+      async () => {
+        const referenceSeconds = Math.floor(now.valueOf() / 1_000);
+        const display = await loadContinuousMarketPrice({
+          instrument,
+          quote: getYahooChartProvider().getQuote(instrument.symbol),
+          candles: getCandleMarketDataService().getCandles({
+            symbol: instrument.symbol,
+            interval: '5m',
+            range: '1d',
+            period1: referenceSeconds - 86_400,
+            period2: referenceSeconds + 300,
+            adjusted: false,
+            session: 'regular',
+          }),
+        });
+        if (display.status === 'unavailable') throw new ContinuousPriceUnavailable(display);
+        return {
+          display,
+          validForRanking: false,
+          volume: null,
+        } satisfies LoadedPrice;
+      },
+      { freshMs: 30_000, staleMs: 5 * 60_000, errorMs: 30_000 },
+    );
+    if (resolution.state !== 'stale') return resolution.value;
+    return {
+      ...resolution.value,
+      display: {
+        ...resolution.value.display,
+        status: 'saved',
+        freshness: resolution.value.display.freshness
+          ? { ...resolution.value.display.freshness, status: 'stale' }
+          : resolution.value.display.freshness,
+      },
+    };
+  } catch (cause) {
+    if (cause instanceof ContinuousPriceUnavailable) {
+      return {
+        display: cause.display,
+        validForRanking: false,
+        volume: null,
+      };
+    }
     return unavailablePrice(instrument);
   }
 }
@@ -346,13 +411,25 @@ export async function loadMarketIndices(
     MARKET_ASSETS.forEach((item) => priceCache.invalidate(`overview-price:${item.symbol}`));
   }
   const metadata = await getInstrumentMetadata(MARKET_ASSETS.map((item) => item.symbol));
+  const equitySymbols = equityMarketSymbols();
   const resolved = await getMarketDataGateway()
-    .resolveInstruments(MARKET_ASSETS.map((item) => item.symbol));
+    .resolveInstruments(equitySymbols);
   return mapWithConcurrency(MARKET_ASSETS, 4, async (proxy) => {
     const instrument = {
       ...metadata.get(proxy.symbol)!,
       logoUrl: proxy.logoUrl,
+      ...(proxy.marketKind === 'continuous'
+        ? { assetType: 'crypto', exchange: null }
+        : {}),
     };
+    if (proxy.marketKind === 'continuous') {
+      const loaded = await loadContinuousOverviewPrice(instrument, now);
+      return {
+        ...loaded.display,
+        name: proxy.name,
+        proxyLabel: proxy.proxyLabel,
+      };
+    }
     const [loaded, points] = await Promise.all([
       loadOverviewPrice(instrument, now, resolved.get(proxy.symbol)),
       sparkline(proxy.symbol),

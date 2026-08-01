@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { transactionTypes, type OptionKind, type OptionSide, type PortfolioTransactionType } from './types';
+import {
+  DEFAULT_TRANSACTION_TIME_ZONE,
+  resolveTransactionTimeZone,
+  validateTransactionDateTime,
+} from './transaction-datetime';
 
 const unsignedDecimal = z.string().trim().regex(/^\d+(?:\.\d{1,8})?$/, 'กรอกทศนิยมได้ไม่เกิน 8 ตำแหน่ง');
 const positiveDecimal = unsignedDecimal.refine((value) => Number(value) > 0 && Number.isFinite(Number(value)), 'ค่าต้องมากกว่า 0');
@@ -12,11 +17,7 @@ const signedDecimal = z.string().trim().regex(/^-?\d+(?:\.\d{1,8})?$/, 'กร�
 const symbol = z.string().trim().toUpperCase().regex(/^(\^[A-Z0-9]+|[A-Z0-9][A-Z0-9.-]{0,19})$/, 'Symbol ไม่ถูกต้อง');
 export const portfolioContractSymbolSchema = z.string().trim().toUpperCase()
   .regex(/^[A-Z0-9][A-Z0-9._:-]{2,79}$/, 'รหัสออปชันภายในไม่ถูกต้อง');
-const occurredAt = z.string().trim().refine((value) => {
-  if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(value)) return false;
-  const instant = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00+07:00` : value;
-  return Number.isFinite(Date.parse(instant)) && Date.parse(instant) <= Date.now();
-}, 'วันและเวลารายการไม่ถูกต้องหรืออยู่ในอนาคต');
+const occurredAt = z.string().trim().min(1);
 
 export const portfolioTransactionSchema = z.object({
   portfolioId: z.string().uuid('กรุณาเลือกพอร์ตปลายทาง'),
@@ -29,6 +30,9 @@ export const portfolioTransactionSchema = z.object({
   originalCurrency: z.enum(['USD', 'THB']).optional().default('USD'),
   fxRateAtTransaction: z.string().optional().default(''),
   occurredAt,
+  timezone: z.string().trim().min(1).max(64).optional()
+    .default(DEFAULT_TRANSACTION_TIME_ZONE)
+    .transform(resolveTransactionTimeZone),
   broker: z.string().trim().max(100, 'ชื่อโบรกเกอร์ต้องไม่เกิน 100 ตัวอักษร').optional().default(''),
   note: z.string().trim().max(500, 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร').optional().default(''),
   underlyingSymbol: z.string().optional().default(''),
@@ -40,6 +44,10 @@ export const portfolioTransactionSchema = z.object({
   multiplier: z.string().optional().default('100'),
   idempotencyKey: z.string().uuid(),
 }).superRefine((value, context) => {
+  const dateTime = validateTransactionDateTime(value.occurredAt, value.timezone);
+  if (!dateTime.ok) {
+    context.addIssue({ code: 'custom', path: ['occurredAt'], message: dateTime.message });
+  }
   if (value.type === 'transfer_in' || value.type === 'transfer_out') {
     context.addIssue({ code: 'custom', path: ['form'], message: 'กรุณาใช้เมนูย้ายเงินระหว่างพอร์ตเพื่อสร้างรายการคู่' });
     return;
@@ -99,6 +107,7 @@ export interface TransactionInput {
   originalCurrency: 'USD' | 'THB';
   fxRateAtTransaction?: string;
   occurredAt: string;
+  timezone: string;
   broker?: string;
   note?: string;
   underlyingSymbol?: string;

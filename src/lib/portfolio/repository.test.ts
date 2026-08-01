@@ -30,6 +30,7 @@ describe('PortfolioRepository ledger mutations', () => {
       fee: '0',
       originalCurrency: 'USD',
       occurredAt: '2026-07-30T10:00',
+      timezone: 'Asia/Bangkok',
       underlyingSymbol: 'NVTS',
       contractSymbol: 'NVTS260821P00012000',
       optionKind: 'put',
@@ -46,6 +47,7 @@ describe('PortfolioRepository ledger mutations', () => {
       input_contract_symbol: 'NVTS260821P00012000',
       input_multiplier: '100',
       input_fee: '0',
+      input_occurred_at: '2026-07-30T03:00:00.000Z',
     }));
     expect(builder.update).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenNthCalledWith(2, 'delete_portfolio_ledger_transaction', {

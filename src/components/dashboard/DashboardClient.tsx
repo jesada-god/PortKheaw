@@ -24,6 +24,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { OverviewPortfolioGoalCard } from '@/src/components/dashboard/OverviewPortfolioGoalCard';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { OVERVIEW_STATUS_COPY } from '@/src/lib/overview/presentation';
 import { rankIndustries, type IndustryRankingOrder } from '@/src/lib/overview/industry-ranking';
@@ -40,7 +41,7 @@ import {
   type RetriableOverviewSection,
 } from '@/src/lib/overview/client-state';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
-import { calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
+import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
 import { useStore } from '@/src/store/useStore';
 
 const NewsFeed = dynamic(
@@ -197,26 +198,25 @@ function PortfolioCard({ data, usdThbRate }: {
   const targetValueUsd = selectedPortfolio ? selectedPortfolio.targetValueUsd : data.targetValueUsd;
   const targetDate = selectedPortfolio ? selectedPortfolio.targetDate : data.targetDate;
   const coverage = selectedPortfolio?.coverage ?? data.coverage;
-  const valuedAt = selectedPortfolio ? selectedPortfolio.valuedAt : data.valuedAt;
   const portfolioName = selectedPortfolio?.name ?? data.portfolioName;
   const rate = baseCurrency === 'THB' ? Number(usdThbRate) : 1;
   const convert = (value: number | null) =>
     value === null || !Number.isFinite(rate) || rate <= 0 ? null : value * rate;
-  const goal = calculateGoalProgress(summary?.totalValue ?? null, {
-    targetValueUsd,
-    targetDate,
-  });
-  const progress = goal.progressPercent === null
-    ? null
-    : Math.max(0, Math.min(100, goal.progressPercent));
+  const goalCard = summary ? buildPortfolioGoalCardModel({
+    scope: selectedPortfolio ? 'selected' : 'aggregate',
+    summary,
+    goal: { targetValueUsd, targetDate },
+    activePortfolios: data.portfolioCount,
+    totalPortfolios: data.totalPortfolioCount,
+  }) : null;
   const actions = [
     { href: '#market-overview', label: 'ภาพรวมตลาด', icon: TrendingUp },
     { href: '/portfolio', label: 'พอร์ตของฉัน', icon: PieChart },
-    { href: '/watchlist', label: 'Watchlist', icon: Star },
+    { href: '/watchlist', label: 'รายการติดตาม', icon: Star },
     { href: '/portfolio', label: 'รายการเงินสด', icon: Banknote },
   ];
 
-  if (!data.authenticated || !summary) {
+  if (!data.authenticated || !summary || !goalCard) {
     return (
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)] sm:p-5">
         <div className="flex items-start gap-3">
@@ -331,32 +331,18 @@ function PortfolioCard({ data, usdThbRate }: {
             ))}
           </div>
         </div>
-        <div className="rounded-xl bg-[var(--surface-elevated)] p-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--text-secondary)]">เป้าหมายพอร์ต</span>
-            <span className="font-semibold tabular-nums text-[var(--text)]">
-              {progress === null ? 'ยังไม่ได้ตั้งเป้าหมาย' : `${goal.progressPercent!.toFixed(0)}%`}
-            </span>
-          </div>
-          {progress === null ? (
-            <Link
-              href="/portfolio"
-              className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--border)] px-3 text-xs font-semibold text-[var(--text)] hover:bg-[var(--surface-hover)]"
-            >
-              <Plus size={15} /> ตั้งเป้าหมาย
-            </Link>
-          ) : (
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--surface-selected)]">
-              <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${progress}%` }} />
-            </div>
-          )}
-          <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
-            <p>{data.portfolioCount} พอร์ตที่ใช้งานอยู่ · {data.totalPortfolioCount} พอร์ตทั้งหมด</p>
-            <p>{coverage?.totalAssets ?? 0} สินทรัพย์</p>
-            {valuedAt && <p>ประเมินล่าสุด {formatBangkokDateTime(valuedAt)}</p>}
-          </div>
+        <div className="min-w-0">
+          <OverviewPortfolioGoalCard
+            model={goalCard}
+            money={(value) => visible
+              ? formatMoney(convert(value), baseCurrency)
+              : '••••••'}
+            signed={(value) => visible ? signed(convert(value)) : '••••'}
+            percent={(value) => visible ? signed(value, '%') : '••••'}
+            showBalances={visible}
+          />
           {summary.hasMissingPrices && (
-            <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
+            <p className="mt-2 rounded-lg bg-[var(--warning-soft)] p-2.5 text-xs leading-5 text-[var(--warning)]">
               คำนวณได้ {coverage?.pricedAssets ?? 0} จาก {coverage?.totalAssets ?? 0} สินทรัพย์
               {' '}โดยแสดงยอดที่ยืนยันได้และไม่ล้างค่าที่คำนวณสำเร็จแล้ว
             </p>
@@ -405,10 +391,18 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
       <div className="mt-2">
         <MiniLine values={item.sparkline} positive={(item.changePercent ?? 0) >= 0} />
       </div>
+      {item.price === null && item.unavailableReason && (
+        <p className="mt-2 text-[10px] leading-4 text-[var(--warning)]">{item.unavailableReason}</p>
+      )}
       <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-[var(--text-muted)]">
         <span>{OVERVIEW_STATUS_COPY[item.status]}</span>
         <span>{item.asOf ? formatBangkokDateTime(item.asOf) : 'ยังไม่มีเวลาอัปเดต'}</span>
       </div>
+      {item.source && (
+        <p className="mt-1 truncate text-[10px] text-[var(--text-muted)]" title={item.source}>
+          แหล่งข้อมูล {item.source}
+        </p>
+      )}
     </article>
   );
 }
@@ -573,7 +567,7 @@ function WatchlistSection({
       {items.length === 0 ? (
         <div className="py-6 text-center">
           <Star className="mx-auto text-[var(--text-muted)]" aria-hidden="true" />
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">ยังไม่มีหุ้นใน Watchlist</p>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">ยังไม่มีหุ้นในรายการติดตาม</p>
           <Link href="/search" className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-[var(--accent-soft)] px-4 text-sm font-semibold text-[var(--accent)]">ค้นหาหุ้น</Link>
         </div>
       ) : visible.length === 0 ? (

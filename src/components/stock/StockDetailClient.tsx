@@ -392,7 +392,7 @@ export function StockDetailClient({
 
   const toggleWatch = () => {
     if (!isOnline) {
-      addToast({ title: 'แก้ไข Watchlist ไม่ได้ขณะออฟไลน์', type: 'error' });
+      addToast({ title: 'แก้ไขรายการติดตามไม่ได้ขณะออฟไลน์', type: 'error' });
       return;
     }
     startTransition(async () => {
@@ -402,7 +402,7 @@ export function StockDetailClient({
       if (result.ok) {
         setWatched(!watched);
         addToast({
-          title: watched ? 'นำออกจาก Watchlist แล้ว' : 'เพิ่มใน Watchlist แล้ว',
+          title: watched ? 'นำออกจากรายการติดตามแล้ว' : 'เพิ่มในรายการติดตามแล้ว',
           type: 'success',
         });
       } else {
@@ -488,7 +488,7 @@ export function StockDetailClient({
         <div className="flex shrink-0">
           <button
             disabled={pending || !isOnline}
-            aria-label="Watchlist"
+            aria-label={watched ? `นำ ${symbol} ออกจากรายการติดตาม` : `เพิ่ม ${symbol} ในรายการติดตาม`}
             onClick={toggleWatch}
             className={watched
               ? 'flex min-h-11 min-w-11 items-center justify-center text-[#D4FF00]'

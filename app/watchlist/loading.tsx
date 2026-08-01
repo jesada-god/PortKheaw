@@ -8,7 +8,7 @@ import { KheawLoader } from '@/src/components/ui/KheawLoader';
 export default function WatchlistLoading() {
   return (
     <div>
-      <Header title="Watchlist" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
+      <Header title="รายการติดตาม" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
       <KheawLoader variant="page" deferred />
     </div>
   );

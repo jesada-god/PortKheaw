@@ -18,6 +18,7 @@ const input: TransactionInput = {
   fee: '0',
   originalCurrency: 'USD',
   occurredAt: '2026-07-30T10:00',
+  timezone: 'Asia/Bangkok',
   underlyingSymbol: 'NVDA',
   optionKind: 'put',
   optionSide: 'long',
