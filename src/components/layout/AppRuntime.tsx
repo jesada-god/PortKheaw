@@ -3,17 +3,27 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useStore } from '@/src/store/useStore';
+import { DEVICE_PREFERENCES_SYNC_EVENT } from '@/src/lib/privacy';
 
 const REFRESH_AFTER_MS = 2 * 60_000;
 
 export function AppRuntime() {
   const pathname = usePathname();
   const router = useRouter();
-  const reducedMotion = useStore((state) => state.reducedMotion);
+  const motionPreference = useStore((state) => state.motionPreference);
   const inactiveAt = useRef<number | null>(null);
 
   useEffect(() => {
-    void useStore.persist.rehydrate();
+    const rehydrateDevicePreferences = async () => {
+      await useStore.persist.rehydrate();
+      window.dispatchEvent(new Event(DEVICE_PREFERENCES_SYNC_EVENT));
+    };
+    void rehydrateDevicePreferences();
+    const syncDevicePreferences = (event: StorageEvent) => {
+      if (event.key === 'nexora-ai-storage') void rehydrateDevicePreferences();
+    };
+    window.addEventListener('storage', syncDevicePreferences);
+    return () => window.removeEventListener('storage', syncDevicePreferences);
   }, []);
 
   useEffect(() => {
@@ -25,8 +35,17 @@ export function AppRuntime() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.toggleAttribute('data-reduce-motion', reducedMotion);
-  }, [reducedMotion]);
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const apply = () => {
+      const reduced = motionPreference === 'reduce'
+        || (motionPreference === 'system' && media.matches);
+      document.documentElement.dataset.motionPreference = motionPreference;
+      document.documentElement.toggleAttribute('data-reduce-motion', reduced);
+    };
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, [motionPreference]);
 
   useEffect(() => {
     if ('scrollRestoration' in history) history.scrollRestoration = 'auto';

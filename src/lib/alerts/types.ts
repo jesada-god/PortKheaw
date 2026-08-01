@@ -15,9 +15,11 @@ export interface PriceAlert {
 export interface AppNotification {
   id: string;
   priceAlertId: string | null;
-  type: 'price_alert' | 'system';
+  type: 'price_alert' | 'daily_summary' | 'quiet_hours_digest' | 'system';
   title: string;
   message: string;
+  metadata: import('@/src/types/database').Json;
+  href: string | null;
   readAt: string | null;
   createdAt: string;
 }

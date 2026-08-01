@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { conditionMatches, cooldownElapsed } from './logic';
+import { conditionMatches, cooldownElapsed, shouldTriggerCrossing } from './logic';
 
 const quote = { price: 100, changePercent: 4.5 };
 describe('price alert conditions', () => {
@@ -25,5 +25,17 @@ describe('price alert cooldown', () => {
     expect(cooldownElapsed('2026-07-18T11:00:00.000Z', 60, now)).toBe(true);
   });
   it('blocks repeated triggers inside cooldown', () => expect(cooldownElapsed('2026-07-18T11:00:01.000Z', 60, now)).toBe(false));
+});
+
+describe('price alert crossing state', () => {
+  it('triggers only when entering the target zone', () => {
+    expect(shouldTriggerCrossing(false, true)).toBe(true);
+    expect(shouldTriggerCrossing(true, true)).toBe(false);
+  });
+
+  it('re-arms after leaving the target zone', () => {
+    expect(shouldTriggerCrossing(true, false)).toBe(false);
+    expect(shouldTriggerCrossing(false, true)).toBe(true);
+  });
 });
 

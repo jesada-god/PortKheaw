@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Watchlist, Notification, PortfolioItem } from '../types';
 
+export type MotionPreference = 'system' | 'reduce' | 'normal';
+
 interface AppState {
   currency: 'THB' | 'USD';
   toggleCurrency: () => void;
@@ -11,8 +13,8 @@ interface AppState {
   setPrivacyMode: (enabled: boolean) => void;
   dataSaver: boolean;
   setDataSaver: (enabled: boolean) => void;
-  reducedMotion: boolean;
-  setReducedMotion: (enabled: boolean) => void;
+  motionPreference: MotionPreference;
+  setMotionPreference: (preference: MotionPreference) => void;
   
   watchlists: Watchlist[];
   activeWatchlistId: string;
@@ -45,12 +47,14 @@ export const useStore = create<AppState>()(
       toggleCurrency: () => set((state) => ({ currency: state.currency === 'THB' ? 'USD' : 'THB' })),
       showBalances: true,
       toggleBalances: () => set((state) => ({ showBalances: !state.showBalances })),
-      privacyMode: false,
+      // Fail closed until persisted device preferences hydrate so portfolio
+      // values never flash before a saved privacy preference is restored.
+      privacyMode: true,
       setPrivacyMode: (privacyMode) => set({ privacyMode }),
       dataSaver: false,
       setDataSaver: (dataSaver) => set({ dataSaver }),
-      reducedMotion: false,
-      setReducedMotion: (reducedMotion) => set({ reducedMotion }),
+      motionPreference: 'system',
+      setMotionPreference: (motionPreference) => set({ motionPreference }),
       
       watchlists: [
         { id: '1', name: 'รายการโปรด', symbols: ['AAPL', 'NVDA', 'DELTA'] },
@@ -109,6 +113,15 @@ export const useStore = create<AppState>()(
     {
       name: 'nexora-ai-storage',
       skipHydration: true,
+      version: 2,
+      migrate: (persisted, version) => {
+        const state = persisted as Partial<AppState> & { reducedMotion?: boolean };
+        if (version < 2 && state.motionPreference === undefined) {
+          state.motionPreference = state.reducedMotion ? 'reduce' : 'system';
+        }
+        delete state.reducedMotion;
+        return state as AppState;
+      },
     }
   )
 );

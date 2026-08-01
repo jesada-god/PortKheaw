@@ -30,14 +30,18 @@ export class AlertsRepository {
 
   async update(id: string, input: AlertWrite): Promise<PriceAlert | null> {
     const { data, error } = await this.client.from('price_alerts').update({ symbol: input.symbol, condition: input.condition,
-      target_value: String(input.targetValue), cooldown_minutes: input.cooldownMinutes, enabled: input.enabled, updated_at: new Date().toISOString() })
+      target_value: String(input.targetValue), cooldown_minutes: input.cooldownMinutes, enabled: input.enabled,
+      was_matching: false, last_observed_price: null, last_observed_session: null,
+      last_observed_source: null, last_observed_at: null, updated_at: new Date().toISOString() })
       .eq('id', id).eq('user_id', this.userId).select('*').maybeSingle();
     if (error) throw error;
     return data ? mapAlert(data) : null;
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<boolean> {
-    const { data, error } = await this.client.from('price_alerts').update({ enabled, updated_at: new Date().toISOString() })
+    const { data, error } = await this.client.from('price_alerts').update({
+      enabled, was_matching: false, updated_at: new Date().toISOString(),
+    })
       .eq('id', id).eq('user_id', this.userId).select('id');
     if (error) throw error;
     return Boolean(data?.length);
@@ -66,12 +70,27 @@ export class AlertsRepository {
 export class NotificationsRepository {
   constructor(private readonly client: SupabaseClient<Database>, private readonly userId: string) {}
 
-  async list(): Promise<AppNotification[]> {
-    const { data, error } = await this.client.from('notifications').select('id, price_alert_id, type, title, message, read_at, created_at')
-      .eq('user_id', this.userId).order('created_at', { ascending: false });
+  async list(limit = 100): Promise<AppNotification[]> {
+    const { data, error } = await this.client.from('notifications').select('id, price_alert_id, type, title, message, metadata, read_at, created_at')
+      .eq('user_id', this.userId).order('created_at', { ascending: false }).limit(limit);
     if (error) throw error;
-    return (data ?? []).map((row) => ({ id: row.id, priceAlertId: row.price_alert_id, type: row.type, title: row.title,
-      message: row.message, readAt: row.read_at, createdAt: row.created_at }));
+    return (data ?? []).map((row) => {
+      const href = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        && typeof row.metadata.href === 'string'
+        ? row.metadata.href
+        : null;
+      return {
+        id: row.id,
+        priceAlertId: row.price_alert_id,
+        type: row.type,
+        title: row.title,
+        message: row.message,
+        metadata: row.metadata,
+        href,
+        readAt: row.read_at,
+        createdAt: row.created_at,
+      };
+    });
   }
 
   async unreadCount(): Promise<number> {

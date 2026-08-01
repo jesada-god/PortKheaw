@@ -20,6 +20,7 @@ import type { OptionPositionSummary, OptionTarget, OptionTargetMode } from '@/sr
 import type { PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
+import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { estimateCashAfterTransaction } from '@/src/lib/portfolio/cash-preview';
 import {
   currentDateTimeLocal,
@@ -405,7 +406,7 @@ function OptionDesktopRows(props: OptionViewProps) {
     <tr className="border-b border-slate-800/60 hover:bg-slate-800/30">
       <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{optionPositionTitle(position)}</strong><span className="block text-[10px] text-slate-400">{optionPositionDescription(position)}</span></span></button></td>
       <td className="px-3 py-3"><SideBadge side={position.side} /></td>
-      <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : '••'}</td>
+      <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : SENSITIVE_VALUE_MASK}</td>
       <td className="px-3 py-3 text-right font-mono">${position.averagePremium.toFixed(2)}</td>
       <td className="px-3 py-3 text-right font-mono">{money(position.remainingCost)}</td>
       <td className="px-3 py-3 text-right font-mono">{quoteNumber(position.bid)} / {quoteNumber(position.ask)} / {quoteNumber(position.mark)}<QuoteMeta position={position} /></td>
@@ -426,7 +427,7 @@ function OptionMobileCard(props: OptionViewProps) {
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>
     <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
-      <OptionMetric label="จำนวน" value={showBalances ? `${position.contracts} สัญญา` : '••'} />
+      <OptionMetric label="จำนวน" value={showBalances ? `${position.contracts} สัญญา` : SENSITIVE_VALUE_MASK} />
       <OptionMetric label="Avg premium" value={`$${position.averagePremium.toFixed(2)}`} />
       <OptionMetric label="ต้นทุนคงเหลือ" value={money(position.remainingCost)} />
       <OptionMetric label="มูลค่าปัจจุบัน" value={money(position.marketValue)} />

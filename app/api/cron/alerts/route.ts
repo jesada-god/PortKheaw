@@ -2,7 +2,6 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { serverEnv } from '@/src/config/env/server';
 import { createAdminClient } from '@/src/lib/supabase/admin';
-import { getMarketDataProvider } from '@/src/lib/market-data';
 import { runBackgroundAlerts } from '@/src/lib/alerts/background';
 
 export const runtime = 'nodejs';
@@ -21,7 +20,7 @@ export async function GET(request: NextRequest) {
   const client = createAdminClient();
   if (!client) return NextResponse.json({ error: 'Background alerts are not configured' }, { status: 503 });
   try {
-    const summary = await runBackgroundAlerts(client, getMarketDataProvider());
+    const summary = await runBackgroundAlerts(client);
     return NextResponse.json({ data: summary });
   } catch {
     return NextResponse.json({ error: 'Background alert run failed' }, { status: 503 });

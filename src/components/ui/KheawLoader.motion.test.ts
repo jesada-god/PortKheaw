@@ -88,7 +88,7 @@ describe('Kheaw loader — CSS motion contract', () => {
 
   describe('reduced motion', () => {
     const media = CSS.slice(
-      CSS.indexOf('@media (prefers-reduced-motion: reduce) {\n  .kheaw-loader'),
+      CSS.indexOf('@media (prefers-reduced-motion: reduce) {\n  html:not([data-motion-preference="normal"]) .kheaw-loader'),
       CSS.indexOf('html[data-reduce-motion] .kheaw-loader'),
     );
     const attribute = CSS.slice(CSS.indexOf('html[data-reduce-motion] .kheaw-loader'));

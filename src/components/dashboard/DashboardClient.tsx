@@ -42,7 +42,8 @@ import {
 } from '@/src/lib/overview/client-state';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
-import { useStore } from '@/src/store/useStore';
+import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
+import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
   () => import('@/src/components/news/NewsFeed').then((module) => module.NewsFeed),
@@ -189,9 +190,7 @@ function PortfolioCard({ data, usdThbRate }: {
   usdThbRate: string | null;
 }) {
   const [selectedId, setSelectedId] = useState('aggregate');
-  const privacyMode = useStore((state) => state.privacyMode);
-  const setPrivacyMode = useStore((state) => state.setPrivacyMode);
-  const visible = !privacyMode;
+  const { visible, toggleVisibility } = usePortfolioPrivacy();
   const selectedPortfolio = data.portfolios.find((portfolio) => portfolio.id === selectedId);
   const summary = selectedPortfolio?.summary ?? data.summary;
   const baseCurrency = selectedPortfolio?.baseCurrency ?? data.baseCurrency;
@@ -267,7 +266,7 @@ function PortfolioCard({ data, usdThbRate }: {
                     convert(summary.totalValue ?? coverage?.verifiedValueUsd ?? null),
                     baseCurrency,
                   )
-                  : '••••••'}
+                  : SENSITIVE_VALUE_MASK}
               </p>
               {data.portfolios.length > 0 && (
                 <label className="mt-3 block text-xs text-[var(--text-secondary)]">
@@ -290,7 +289,7 @@ function PortfolioCard({ data, usdThbRate }: {
             <button
               type="button"
               aria-label={visible ? 'ซ่อนยอดพอร์ต' : 'แสดงยอดพอร์ต'}
-              onClick={() => setPrivacyMode(visible)}
+              onClick={toggleVisibility}
               className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"
             >
               {visible ? <EyeOff size={20} /> : <Eye size={20} />}
@@ -300,19 +299,19 @@ function PortfolioCard({ data, usdThbRate }: {
             <div>
               <p className="text-xs text-[var(--text-muted)]">วันนี้</p>
               <p className={`mt-1 text-sm font-semibold tabular-nums ${tone(summary.todayChange)}`}>
-                {visible ? signed(convert(summary.todayChange)) : '••••'}
+                {visible ? signed(convert(summary.todayChange)) : SENSITIVE_VALUE_MASK}
               </p>
               <p className={`text-xs tabular-nums ${tone(summary.todayChangePercent)}`}>
-                {visible ? signed(summary.todayChangePercent, '%') : '••••'}
+                {visible ? signed(summary.todayChangePercent, '%') : SENSITIVE_VALUE_MASK}
               </p>
             </div>
             <div>
               <p className="text-xs text-[var(--text-muted)]">กำไร / ขาดทุนรวม</p>
               <p className={`mt-1 text-sm font-semibold tabular-nums ${tone(summary.totalGain)}`}>
-                {visible ? signed(convert(summary.totalGain)) : '••••'}
+                {visible ? signed(convert(summary.totalGain)) : SENSITIVE_VALUE_MASK}
               </p>
               <p className={`text-xs tabular-nums ${tone(summary.totalGainPercent)}`}>
-                {visible ? signed(summary.totalGainPercent, '%') : '••••'}
+                {visible ? signed(summary.totalGainPercent, '%') : SENSITIVE_VALUE_MASK}
               </p>
             </div>
           </div>
@@ -325,7 +324,7 @@ function PortfolioCard({ data, usdThbRate }: {
               <div key={String(label)} className="rounded-xl bg-[var(--surface-elevated)] p-2">
                 <p className="text-[10px] text-[var(--text-muted)]">{label}</p>
                 <p className="mt-1 text-xs font-semibold tabular-nums text-[var(--text)]">
-                  {visible ? formatMoney(convert(value as number | null), baseCurrency) : '••••'}
+                  {visible ? formatMoney(convert(value as number | null), baseCurrency) : SENSITIVE_VALUE_MASK}
                 </p>
               </div>
             ))}
@@ -336,9 +335,9 @@ function PortfolioCard({ data, usdThbRate }: {
             model={goalCard}
             money={(value) => visible
               ? formatMoney(convert(value), baseCurrency)
-              : '••••••'}
-            signed={(value) => visible ? signed(convert(value)) : '••••'}
-            percent={(value) => visible ? signed(value, '%') : '••••'}
+              : SENSITIVE_VALUE_MASK}
+            signed={(value) => visible ? signed(convert(value)) : SENSITIVE_VALUE_MASK}
+            percent={(value) => visible ? signed(value, '%') : SENSITIVE_VALUE_MASK}
             showBalances={visible}
           />
           {summary.hasMissingPrices && (

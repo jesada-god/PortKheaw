@@ -297,7 +297,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  html:not([data-motion-preference="normal"]) *,
+  html:not([data-motion-preference="normal"]) *::before,
+  html:not([data-motion-preference="normal"]) *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
@@ -500,15 +502,15 @@ html[data-reduce-motion] *::after {
  * to 0.01ms and bring the flash back for exactly these users.
  */
 @media (prefers-reduced-motion: reduce) {
-  .kheaw-loader .kheaw-loader__mascot,
-  .kheaw-loader .kheaw-loader__shadow { animation: none !important; }
+  html:not([data-motion-preference="normal"]) .kheaw-loader .kheaw-loader__mascot,
+  html:not([data-motion-preference="normal"]) .kheaw-loader .kheaw-loader__shadow { animation: none !important; }
 
-  .kheaw-loader.kheaw-loader--deferred {
+  html:not([data-motion-preference="normal"]) .kheaw-loader.kheaw-loader--deferred {
     animation-duration: 500ms !important;
     animation-iteration-count: 1 !important;
   }
 
-  .kheaw-loader.kheaw-loader--leaving {
+  html:not([data-motion-preference="normal"]) .kheaw-loader.kheaw-loader--leaving {
     animation-duration: 200ms !important;
     animation-iteration-count: 1 !important;
   }

@@ -38,7 +38,7 @@ describe('POST /api/alerts/evaluate', () => {
     });
   });
 
-  it('evaluates alerts with the cookie-bound authenticated client', async () => {
+  it('authenticates the cookie-bound user without starting browser-driven polling', async () => {
     mocks.createClient.mockResolvedValue(
       authClient({
         data: { user: { id: 'user-1' } },
@@ -48,15 +48,14 @@ describe('POST /api/alerts/evaluate', () => {
 
     const response = await POST();
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({
       data: {
-        evaluated: 1,
-        triggered: 0,
-        unavailable: [],
+        scheduled: true,
+        message: 'ระบบจะตรวจราคาเป้าหมายตามรอบอัตโนมัติ',
       },
     });
-    expect(mocks.evaluateEnabledAlerts).toHaveBeenCalledOnce();
+    expect(mocks.evaluateEnabledAlerts).not.toHaveBeenCalled();
   });
 
   it('returns 401 and a structured safe log for an invalid session', async () => {

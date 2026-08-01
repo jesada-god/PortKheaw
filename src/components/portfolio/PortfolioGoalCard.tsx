@@ -13,6 +13,7 @@ import {
   portfolioGoalAppearance,
 } from './PortfolioGoalMascot';
 import styles from './PortfolioGoalCard.module.css';
+import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
 type Money = (value: number | string | null) => string;
 
@@ -42,7 +43,7 @@ export function PortfolioGoalCard({
     ? '—'
     : showBalances
       ? `${model.progress.progressPercent.toFixed(2)}%`
-      : '••••';
+      : SENSITIVE_VALUE_MASK;
   const hasGoal = model.goal.targetValueUsd !== null;
   const cardStyle = {
     '--goal-accent': moodAppearance.accent,

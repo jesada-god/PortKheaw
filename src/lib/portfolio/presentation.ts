@@ -1,5 +1,6 @@
 import { fixed, fixedMultiply, fixedToNumber } from '../money/fixed';
 import type { SupportedCurrency } from '../market-data/fx/types';
+import { SENSITIVE_VALUE_MASK } from '../privacy';
 
 export function convertUsd(value: number | string, currency: SupportedCurrency, usdThbRate: string | null): number | null {
   if (currency === 'USD') return fixedToNumber(fixed(value));
@@ -8,7 +9,7 @@ export function convertUsd(value: number | string, currency: SupportedCurrency, 
 }
 
 export function formatPortfolioMoney(valueUsd: number | string, currency: SupportedCurrency, usdThbRate: string | null, visible = true): string {
-  if (!visible) return '••••••';
+  if (!visible) return SENSITIVE_VALUE_MASK;
   const converted = convertUsd(valueUsd, currency, usdThbRate);
   if (converted == null) return '—';
   return new Intl.NumberFormat('th-TH', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(converted);
@@ -21,7 +22,7 @@ export function signedMoney(valueUsd: number, currency: SupportedCurrency, usdTh
 }
 
 export function signedPercent(value: number, visible = true): string {
-  if (!visible) return '••••';
+  if (!visible) return SENSITIVE_VALUE_MASK;
   const safe = Number.isFinite(value) ? value : 0;
   return `${safe > 0 ? '+' : ''}${safe.toFixed(2)}%`;
 }

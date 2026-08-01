@@ -228,3 +228,47 @@ export class PortfolioRepository {
     return data;
   }
 }
+
+/**
+ * Service-role read for scheduled summaries. The user id comes from the
+ * server-owned user_settings row selected by the cron worker, never from a
+ * browser request.
+ */
+export async function loadPortfoliosForUser(
+  client: SupabaseClient<Database>,
+  userId: string,
+): Promise<PortfolioRecord[]> {
+  const { data: portfolios, error: portfolioError } = await client.from('portfolios')
+    .select('id, name, base_currency, portfolio_type, is_legacy, archived_at, target_value_usd, target_date, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true });
+  if (portfolioError) throw portfolioError;
+  const ids = (portfolios ?? []).map((portfolio) => portfolio.id);
+  if (!ids.length) return [];
+
+  const { data: rows, error: rowsError } = await client.from('portfolio_transactions')
+    .select('*')
+    .in('portfolio_id', ids)
+    .order('occurred_at_time', { ascending: true })
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true });
+  if (rowsError) throw rowsError;
+
+  const transactions = new Map<string, PortfolioTransaction[]>();
+  for (const row of rows ?? []) {
+    const mapped = mapTransaction(row);
+    transactions.set(mapped.portfolioId, [...(transactions.get(mapped.portfolioId) ?? []), mapped]);
+  }
+  return (portfolios ?? []).map((portfolio) => ({
+    id: portfolio.id,
+    name: portfolio.name,
+    type: portfolio.portfolio_type,
+    isLegacy: portfolio.is_legacy,
+    archivedAt: portfolio.archived_at,
+    targetValueUsd: portfolio.target_value_usd === null ? null : Number(portfolio.target_value_usd),
+    targetDate: portfolio.target_date,
+    baseCurrency: portfolio.base_currency,
+    transactions: transactions.get(portfolio.id) ?? [],
+  }));
+}

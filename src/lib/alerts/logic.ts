@@ -3,6 +3,10 @@ import type { AlertCondition } from './types';
 
 export interface AlertRule { condition: AlertCondition; targetValue: number }
 
+export function shouldTriggerCrossing(wasMatching: boolean, matchesNow: boolean): boolean {
+  return matchesNow && !wasMatching;
+}
+
 export function conditionMatches(rule: AlertRule, quote: Pick<Quote, 'price' | 'changePercent'>): boolean {
   if (!Number.isFinite(rule.targetValue) || rule.targetValue <= 0) return false;
   switch (rule.condition) {

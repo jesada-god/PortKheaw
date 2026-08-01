@@ -33,7 +33,10 @@ export interface Database {
           language: AppLanguage;
           price_alerts_enabled: boolean;
           daily_summary_enabled: boolean;
+          daily_summary_time: string;
+          daily_summary_last_local_date: string | null;
           push_enabled: boolean;
+          price_alert_extended_hours: boolean;
           quiet_hours_enabled: boolean;
           quiet_hours_start: string;
           quiet_hours_end: string;
@@ -49,7 +52,10 @@ export interface Database {
           language?: AppLanguage;
           price_alerts_enabled?: boolean;
           daily_summary_enabled?: boolean;
+          daily_summary_time?: string;
+          daily_summary_last_local_date?: string | null;
           push_enabled?: boolean;
+          price_alert_extended_hours?: boolean;
           quiet_hours_enabled?: boolean;
           quiet_hours_start?: string;
           quiet_hours_end?: string;
@@ -64,7 +70,10 @@ export interface Database {
           language?: AppLanguage;
           price_alerts_enabled?: boolean;
           daily_summary_enabled?: boolean;
+          daily_summary_time?: string;
+          daily_summary_last_local_date?: string | null;
           push_enabled?: boolean;
+          price_alert_extended_hours?: boolean;
           quiet_hours_enabled?: boolean;
           quiet_hours_start?: string;
           quiet_hours_end?: string;
@@ -268,15 +277,21 @@ export interface Database {
         Relationships: [];
       };
       price_alerts: {
-        Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; created_at: string; updated_at: string };
-        Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; created_at?: string; updated_at?: string };
-        Update: { symbol?: string; condition?: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value?: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; updated_at?: string };
+        Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; was_matching: boolean; last_observed_price: string | null; last_observed_session: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source: string | null; last_observed_at: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; created_at?: string; updated_at?: string };
+        Update: { symbol?: string; condition?: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value?: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; updated_at?: string };
         Relationships: [];
       };
       notifications: {
-        Row: { id: string; user_id: string; price_alert_id: string | null; type: 'price_alert' | 'system'; title: string; message: string; metadata: Json; idempotency_key: string | null; read_at: string | null; created_at: string };
-        Insert: { id?: string; user_id: string; price_alert_id?: string | null; type?: 'price_alert' | 'system'; title: string; message: string; metadata?: Json; idempotency_key?: string | null; read_at?: string | null; created_at?: string };
+        Row: { id: string; user_id: string; price_alert_id: string | null; type: 'price_alert' | 'daily_summary' | 'quiet_hours_digest' | 'system'; title: string; message: string; metadata: Json; idempotency_key: string | null; read_at: string | null; created_at: string };
+        Insert: { id?: string; user_id: string; price_alert_id?: string | null; type?: 'price_alert' | 'daily_summary' | 'quiet_hours_digest' | 'system'; title: string; message: string; metadata?: Json; idempotency_key?: string | null; read_at?: string | null; created_at?: string };
         Update: { read_at?: string | null };
+        Relationships: [];
+      };
+      queued_notifications: {
+        Row: { id: string; user_id: string; type: 'price_alert' | 'daily_summary' | 'system'; title: string; message: string; metadata: Json; idempotency_key: string; release_after: string; delivered_at: string | null; created_at: string };
+        Insert: { id?: string; user_id: string; type: 'price_alert' | 'daily_summary' | 'system'; title: string; message: string; metadata?: Json; idempotency_key: string; release_after: string; delivered_at?: string | null; created_at?: string };
+        Update: { delivered_at?: string | null };
         Relationships: [];
       };
       push_subscriptions: {
@@ -403,7 +418,9 @@ export interface Database {
       fail_market_instrument_sync: { Args: { input_run_id: string; input_error: Json }; Returns: undefined };
       finalize_market_instrument_sync: { Args: { input_run_id: string; input_failed_count?: number }; Returns: Array<{ inserted: number; updated: number; skipped: number; failed: number }> };
       trigger_price_alert: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; notification_title: string; notification_message: string }; Returns: string | null };
-      trigger_price_alert_service: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; notification_title: string; notification_message: string; input_idempotency_key: string }; Returns: string | null };
+      trigger_price_alert_service: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; observed_session: string; observed_source: string; notification_title: string; notification_message: string; input_idempotency_key: string }; Returns: string | null };
+      enqueue_account_notification_service: { Args: { input_user_id: string; input_type: string; input_title: string; input_message: string; input_metadata: Json; input_idempotency_key: string; input_observed_at: string }; Returns: string };
+      flush_queued_notifications_service: { Args: { input_now: string }; Returns: number };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

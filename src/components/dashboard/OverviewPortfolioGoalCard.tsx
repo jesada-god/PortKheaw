@@ -9,6 +9,7 @@ import {
   PortfolioGoalMascot,
   portfolioGoalAppearance,
 } from '@/src/components/portfolio/PortfolioGoalMascot';
+import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
 export function OverviewPortfolioGoalCard({
   model,
@@ -28,7 +29,7 @@ export function OverviewPortfolioGoalCard({
   const progress = model.progress.progressPercent;
   const progressText = progress === null
     ? '—'
-    : showBalances ? `${progress.toFixed(2)}%` : '••••';
+    : showBalances ? `${progress.toFixed(2)}%` : SENSITIVE_VALUE_MASK;
   const style = {
     '--goal-accent': appearance.accent,
     '--goal-accent-soft': appearance.soft,

@@ -32,8 +32,9 @@ import {
 import { OptionsSection } from './OptionsSection';
 import { PortfolioManager } from './PortfolioManager';
 import { TransactionFormModal, transactionLabels, type TransactionFormState } from './TransactionFormModal';
-import { useStore } from '@/src/store/useStore';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
+import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
+import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
 const OPTION_TYPES = new Set<PortfolioTransactionType>([
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
@@ -91,9 +92,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const router = useRouter();
   const { addToast } = useToast();
   const [pending, startTransition] = useTransition();
-  const privacyMode = useStore((state) => state.privacyMode);
-  const setPrivacyMode = useStore((state) => state.setPrivacyMode);
-  const showBalances = !privacyMode;
+  const { visible: showBalances, toggleVisibility } = usePortfolioPrivacy();
   const isOnline = useOnlineStatus();
   const [formOpen, setFormOpen] = useState(false);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(portfolios.find((item) => item.archivedAt === null)?.id ?? portfolios[0]?.id ?? '');
@@ -248,7 +247,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     });
   }
 
-  const hidden = (value: string) => showBalances ? value : '••••••';
+  const hidden = (value: string) => showBalances ? value : SENSITIVE_VALUE_MASK;
   const rate = currentFx.quote?.rate ?? null;
   const hasValidRate = rate !== null;
   const money = (value: number | string | null) => value === null ? '—' : formatPortfolioMoney(value, currency, rate, showBalances);
@@ -293,7 +292,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
           </div>
           <div className="mt-2 flex min-w-0 items-center gap-2">
             <h2 className="min-w-0 break-all font-mono text-3xl font-bold tracking-tight text-white sm:text-5xl">{money(aggregateSummary.totalValue)}</h2>
-            <button className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={() => setPrivacyMode(showBalances)} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินทั้งหมด'}>
+            <button className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={toggleVisibility} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินชั่วคราว'}>
               {showBalances ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
@@ -522,7 +521,7 @@ function HoldingDesktopRows({ holding, expanded, showBalances, timezone, money, 
       <td className="px-3 py-3 text-right font-mono text-white">{money(holding.marketValue)}</td>
       <td className={`px-3 py-3 text-right font-mono ${holding.todayChange === null ? 'text-slate-400' : gainColor(holding.todayChange)}`}>{signed(holding.todayChange)}</td>
       <td className={`px-3 py-3 text-right font-mono ${holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain)}<span className="block text-[10px]">{holding.unrealizedGain === null ? '—' : signedPercent(totalPnlPercent(holding)!, showBalances)}</span></td>
-      <td className="px-3 py-3 text-right font-mono">{showBalances ? `${holding.allocation.toFixed(2)}%` : '••••'}</td>
+      <td className="px-3 py-3 text-right font-mono">{showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</td>
     </tr>
     {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} timezone={timezone} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} onEdit={onEdit} /></td></tr>}
   </>;
@@ -533,7 +532,7 @@ function HoldingMobileCard(props: HoldingViewProps) {
   return <article className="p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-center justify-between gap-3 text-left">
       <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={40} />
-      <span><strong className="text-lg text-white">{holding.symbol}</strong><span className="mt-1 block text-xs text-slate-400">{hidden(number(holding.quantity))} หน่วย · น้ำหนัก {showBalances ? `${holding.allocation.toFixed(2)}%` : '••••'}</span></span>
+      <span><strong className="text-lg text-white">{holding.symbol}</strong><span className="mt-1 block text-xs text-slate-400">{hidden(number(holding.quantity))} หน่วย · น้ำหนัก {showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</span></span>
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>
     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">

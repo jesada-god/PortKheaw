@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
 
-import { AlertsRepository } from '@/src/lib/alerts/repository';
-import { evaluateEnabledAlerts } from '@/src/lib/alerts/evaluation';
-import { getMarketDataProvider } from '@/src/lib/market-data';
 import { createClient } from '@/src/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -110,45 +107,15 @@ export async function POST() {
     );
   }
 
-  try {
-    const repository = new AlertsRepository(client, user.id);
-    const provider = getMarketDataProvider();
-
-    const summary = await evaluateEnabledAlerts(
-      repository,
-      provider,
-    );
-
-    return NextResponse.json(
-      {
-        data: summary,
+  return NextResponse.json(
+    {
+      data: {
+        scheduled: true,
+        message: 'ระบบจะตรวจราคาเป้าหมายตามรอบอัตโนมัติ',
       },
-      {
-        status: 200,
-      },
-    );
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        event: 'alert_evaluation_failed',
-        ...errorDetails(error, {
-          message: 'Unknown evaluation error',
-          code: 'alert-evaluation-failed',
-          status: 503,
-        }),
-      }),
-    );
-
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Evaluation failed',
-      },
-      {
-        status: 503,
-      },
-    );
-  }
+    },
+    {
+      status: 202,
+    },
+  );
 }
