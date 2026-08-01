@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { cn } from '@/src/utils/cn';
 
 const failedLogos = new Set<string>();
@@ -40,6 +40,8 @@ export function InstrumentLogo({
   companyName,
   logoUrl,
   size = 40,
+  mobileSize,
+  appearance = 'framed',
   className,
   priority = false,
 }: {
@@ -47,6 +49,8 @@ export function InstrumentLogo({
   companyName: string;
   logoUrl: string | null;
   size?: number;
+  mobileSize?: number;
+  appearance?: 'framed' | 'plain';
   className?: string;
   priority?: boolean;
 }) {
@@ -72,7 +76,15 @@ export function InstrumentLogo({
     if (normalizedLogoUrl) failedLogos.add(normalizedLogoUrl);
     setFailedUrl(normalizedLogoUrl);
   };
-  const style = { width: size, height: size };
+  const style = {
+    position: 'relative',
+    width: mobileSize ?? size,
+    height: mobileSize ?? size,
+    '--instrument-logo-desktop-size': `${size}px`,
+    '--instrument-logo-mobile-size': `${mobileSize ?? size}px`,
+  } as CSSProperties;
+  const responsiveSize = 'sm:!size-[var(--instrument-logo-desktop-size)]';
+  const plain = appearance === 'plain';
 
   if (!normalizedLogoUrl || failed) {
     return (
@@ -81,7 +93,11 @@ export function InstrumentLogo({
         aria-label={`โลโก้สำรอง ${companyName || symbol}`}
         style={style}
         className={cn(
-          'inline-flex shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] text-[11px] font-bold tracking-tight text-[var(--text-secondary)]',
+          responsiveSize,
+          'inline-flex shrink-0 items-center justify-center text-[11px] font-bold tracking-tight text-[var(--text-secondary)]',
+          plain
+            ? 'bg-transparent'
+            : 'rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)]',
           className,
         )}
       >
@@ -94,7 +110,11 @@ export function InstrumentLogo({
     <span
       style={style}
       className={cn(
-        'relative inline-flex shrink-0 overflow-hidden rounded-xl border border-[var(--border)] bg-white',
+        responsiveSize,
+        'relative inline-flex shrink-0',
+        plain
+          ? 'bg-transparent'
+          : 'overflow-hidden rounded-xl border border-[var(--border)] bg-white',
         className,
       )}
     >
@@ -107,7 +127,7 @@ export function InstrumentLogo({
         priority={priority}
         loading={priority ? 'eager' : 'lazy'}
         referrerPolicy="no-referrer"
-        className="object-contain p-1"
+        className={plain ? 'object-contain' : 'object-contain p-1'}
         onLoad={() => {
           if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
           timeoutRef.current = null;

@@ -41,8 +41,34 @@ describe('InstrumentLogo', () => {
     const fallback = container.querySelector('[role="img"]') as HTMLElement;
     expect(fallback.textContent).toBe('NVD');
     expect(fallback.style.width).toBe('44px');
+    expect(fallback.style.getPropertyValue('--instrument-logo-desktop-size')).toBe('44px');
+    expect(fallback.style.getPropertyValue('--instrument-logo-mobile-size')).toBe('44px');
     expect(fallback.getAttribute('aria-label')).toContain('NVIDIA');
     expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('renders a responsive plain logo without a nested frame or image padding', () => {
+    act(() => {
+      root.render(
+        <InstrumentLogo
+          symbol="RKLB"
+          companyName="Rocket Lab"
+          logoUrl="https://images.example.test/rklb.png"
+          size={44}
+          mobileSize={40}
+          appearance="plain"
+        />,
+      );
+    });
+    const logo = container.firstElementChild as HTMLElement;
+    const image = container.querySelector('img') as HTMLImageElement;
+    expect(logo.style.width).toBe('40px');
+    expect(logo.style.getPropertyValue('--instrument-logo-desktop-size')).toBe('44px');
+    expect(logo.style.getPropertyValue('--instrument-logo-mobile-size')).toBe('40px');
+    expect(logo.className).toContain('bg-transparent');
+    expect(logo.className).not.toContain('border');
+    expect(image.className).toContain('object-contain');
+    expect(image.className).not.toContain('p-1');
   });
 
   it('falls back to a monogram after one real provider image fails', () => {

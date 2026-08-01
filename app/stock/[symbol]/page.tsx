@@ -8,6 +8,7 @@ import { loadMarketSignal } from '@/src/lib/analytics/market-signal/service';
 import { loadOptionsSignalContext } from '@/src/lib/analytics/options-signal/service';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
+import { getInstrumentMetadata } from '@/src/lib/instruments/master';
 import {
   advancedChartTypesEnabled,
   analystConsensusEnabled,
@@ -38,7 +39,14 @@ export default async function StockDetailPage({
   if (!parsed.success) notFound();
   const symbol = parsed.data;
 
-  const [marketResult, fxResult, watchResult, signalResult, optionsSignalResult] = await Promise.allSettled([
+  const [
+    marketResult,
+    fxResult,
+    watchResult,
+    signalResult,
+    optionsSignalResult,
+    instrumentMetadataResult,
+  ] = await Promise.allSettled([
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
@@ -48,6 +56,7 @@ export default async function StockDetailPage({
     // the symbol; only SPY/QQQ and the earnings calendar are additional, and
     // both are shared across every stock page on the instance.
     loadOptionsSignalContext(symbol),
+    getInstrumentMetadata([symbol]),
   ]);
 
   if (marketResult.status === 'rejected') {
@@ -64,6 +73,9 @@ export default async function StockDetailPage({
       instrumentName={snapshot.instrument.name}
       instrumentCurrency={snapshot.instrument.currency}
       instrumentExchange={snapshot.instrument.exchange}
+      instrumentLogoUrl={instrumentMetadataResult.status === 'fulfilled'
+        ? instrumentMetadataResult.value.get(symbol)?.logoUrl ?? null
+        : null}
       initialHistory={snapshot.history}
       fxQuote={fxResult.status === 'fulfilled' ? fxResult.value.quote : null}
       evaluatedAt={new Date().toISOString()}

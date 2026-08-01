@@ -94,6 +94,7 @@ interface StockDetailClientProps {
   instrumentName: string | null;
   instrumentCurrency: string | null;
   instrumentExchange: string | null;
+  instrumentLogoUrl: string | null;
   initialHistory: InitialHistoryResponse;
   fxQuote: FxQuote | null;
   evaluatedAt: string;
@@ -158,6 +159,7 @@ export function StockDetailClient({
   instrumentName,
   instrumentCurrency,
   instrumentExchange,
+  instrumentLogoUrl,
   initialHistory,
   fxQuote,
   evaluatedAt,
@@ -475,8 +477,11 @@ export function StockDetailClient({
           <InstrumentLogo
             symbol={symbol}
             companyName={identity.name}
-            logoUrl={profileResource.data?.logoUrl ?? null}
-            size={40}
+            logoUrl={profileResource.data?.logoUrl ?? instrumentLogoUrl}
+            size={44}
+            mobileSize={40}
+            appearance="plain"
+            priority
           />
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-white">{symbol}</h1>

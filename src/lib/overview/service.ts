@@ -17,6 +17,7 @@ import {
   getInstrumentClassificationMetadata,
   getInstrumentMetadata,
 } from '@/src/lib/instruments/master';
+import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
 import { buildIndustryRanking, calculateMarketBreadth, type IndustryQuoteCandidate } from './industry-ranking';
 import {
@@ -452,7 +453,7 @@ export async function loadWatchlistPrices(
   if (force) {
     visible.forEach((symbol) => priceCache.invalidate(`overview-price:${symbol}`));
   }
-  const metadata = await getInstrumentMetadata(visible);
+  const metadata = await getInstrumentPresentationMetadata(visible);
   const resolved = await getMarketDataGateway().resolveInstruments(visible);
   const loaded = await mapWithConcurrency(
     visible,

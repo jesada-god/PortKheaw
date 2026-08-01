@@ -371,6 +371,7 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
             companyName={item.instrument.companyName}
             logoUrl={item.instrument.logoUrl}
             size={36}
+            appearance="plain"
           />
           <div className="min-w-0">
             <h3 className="truncate font-semibold text-[var(--text)]">{item.name}</h3>
@@ -585,6 +586,7 @@ function WatchlistSection({
                 companyName={item.instrument.companyName}
                 logoUrl={item.instrument.logoUrl}
                 size={40}
+                appearance="plain"
               />
               <span className="min-w-0">
                 <span className="flex items-baseline gap-2">

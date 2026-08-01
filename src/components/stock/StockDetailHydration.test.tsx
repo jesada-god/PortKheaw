@@ -96,6 +96,7 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   instrumentName: 'Rocket Lab USA, Inc.',
   instrumentCurrency: 'USD',
   instrumentExchange: 'NASDAQ',
+  instrumentLogoUrl: null,
   initialHistory: {
     data: null,
     meta: {

@@ -21,6 +21,7 @@ function profile(symbol: string): CompanyProfile {
     sector: 'Industrials',
     industry: 'Aerospace & Defense',
     website: null,
+    logoUrl: `https://logos.example.test/${symbol}.png`,
     marketCapitalization: null,
     employees: null,
     fiscalYearEnd: null,
@@ -78,6 +79,32 @@ describe('Company Profile fallback service', () => {
       profileStatus: 'fresh',
       retryAfterSeconds: 45,
       reasonCode: 'PRIMARY_RATE_LIMITED',
+    });
+    expect(primary.getCompanyProfile).toHaveBeenCalledTimes(1);
+    expect(secondary.getCompanyProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('supplements a successful primary profile with the secondary logo', async () => {
+    const primary = provider('alpha-vantage', async (symbol) => ({
+      ...result(symbol, 'alpha-vantage'),
+      data: { ...profile(symbol), logoUrl: null },
+    }));
+    const secondary = provider(
+      'financial-modeling-prep',
+      async (symbol) => result(symbol, 'financial-modeling-prep'),
+    );
+    const service = new CompanyProfileService(primary, secondary);
+
+    const resolved = await service.getCompanyProfile('NVTS');
+
+    expect(resolved).toMatchObject({
+      providerUsed: 'alpha-vantage+financial-modeling-prep',
+      fallbackUsed: true,
+      reasonCode: 'PRIMARY_LOGO_MISSING',
+      data: {
+        name: 'NVTS Company',
+        logoUrl: 'https://logos.example.test/NVTS.png',
+      },
     });
     expect(primary.getCompanyProfile).toHaveBeenCalledTimes(1);
     expect(secondary.getCompanyProfile).toHaveBeenCalledTimes(1);

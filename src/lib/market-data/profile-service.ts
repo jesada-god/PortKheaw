@@ -211,6 +211,34 @@ export class CompanyProfileService {
     let primaryError: MarketDataError;
     try {
       const result = await this.requestProvider(this.primary, symbol);
+      if (!result.data.logoUrl && this.secondary) {
+        try {
+          const secondary = await this.requestProvider(this.secondary, symbol);
+          if (secondary.data.logoUrl) {
+            return {
+              ...result,
+              data: {
+                ...result.data,
+                logoUrl: secondary.data.logoUrl,
+              },
+              provider: `${result.provider ?? this.primary.id}+${secondary.provider ?? this.secondary.id}`,
+              reasonCode: 'PRIMARY_LOGO_MISSING',
+            };
+          }
+          return {
+            ...result,
+            provider: result.provider ?? this.primary.id,
+            reasonCode: 'PRIMARY_LOGO_MISSING; SECONDARY_LOGO_MISSING',
+          };
+        } catch (cause) {
+          const secondaryError = marketError(cause);
+          return {
+            ...result,
+            provider: result.provider ?? this.primary.id,
+            reasonCode: `PRIMARY_LOGO_MISSING; ${providerReason('SECONDARY', secondaryError)}`,
+          };
+        }
+      }
       return {
         ...result,
         provider: result.provider ?? this.primary.id,

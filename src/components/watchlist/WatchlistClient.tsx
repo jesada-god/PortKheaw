@@ -15,8 +15,13 @@ import {
   isStaleAt,
 } from '@/src/lib/presentation/datetime';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { requestCompanyProfile } from '@/src/components/stock/profile-retry';
 
 type SortKey = 'newest' | 'symbol' | 'price' | 'change';
+type WatchlistInstrument = {
+  companyName: string;
+  logoUrl: string | null;
+};
 
 function displayTime(value: string | null) {
   if (!value) return 'ไม่ทราบเวลา';
@@ -47,15 +52,22 @@ function freshnessLabel(quote: WatchlistQuote | undefined, referenceTime: string
     : label;
 }
 
-export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
+export function WatchlistClient({
+  watchlist,
+  initialQuotes,
+  initialInstruments,
+  renderedAt,
+}: {
   watchlist: WatchlistRecord;
   initialQuotes: Record<string, WatchlistQuote>;
+  initialInstruments: Record<string, WatchlistInstrument>;
   renderedAt: string;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
   const [items, setItems] = useState(watchlist.items);
   const [quotes, setQuotes] = useState(initialQuotes);
+  const [instruments, setInstruments] = useState(initialInstruments);
   const [sort, setSort] = useState<SortKey>('newest');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SymbolSearchResult[]>([]);
@@ -117,7 +129,11 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
     }
   }
 
-  function addSymbol(symbol: string, status: SymbolSearchResult['status'] = 'active') {
+  function addSymbol(
+    symbol: string,
+    status: SymbolSearchResult['status'] = 'active',
+    searchResult?: SymbolSearchResult,
+  ) {
     if (!isOnline) { addToast({ title: 'เพิ่มไม่ได้ขณะออฟไลน์', message: 'เชื่อมต่ออินเทอร์เน็ตก่อนเพื่อป้องกันข้อมูลขัดแย้ง', type: 'error' }); return; }
     if (status === 'delisted') { addToast({ title: `${symbol} ถูก delisted`, message: 'ไม่สามารถเพิ่ม Symbol นี้เป็นรายการใหม่ได้', type: 'error' }); return; }
     if (existingSymbols.has(symbol) || pendingSymbols.has(symbol)) return;
@@ -130,8 +146,30 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
         return;
       }
       setItems((current) => [result.item as WatchlistItemRecord, ...current]);
+      setInstruments((current) => ({
+        ...current,
+        [symbol]: {
+          companyName: searchResult?.name ?? symbol,
+          logoUrl: null,
+        },
+      }));
       setQuery(''); setResults([]);
       addToast({ title: `เพิ่ม ${symbol} แล้ว`, type: 'success' });
+      void requestCompanyProfile(symbol)
+        .then((resource) => {
+          const profile = resource.data;
+          if (!profile) return;
+          setInstruments((current) => ({
+            ...current,
+            [symbol]: {
+              companyName: profile.name ?? current[symbol]?.companyName ?? symbol,
+              logoUrl: profile.logoUrl ?? current[symbol]?.logoUrl ?? null,
+            },
+          }));
+        })
+        .catch(() => {
+          // The new row keeps its symbol fallback if the independent logo request fails.
+        });
       // Quote is independent from the persisted item. Failure only changes its display state.
       try {
         const response = await fetch(`/api/market/quote/${encodeURIComponent(symbol)}`);
@@ -192,7 +230,7 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
                   <span className="block truncate text-xs text-slate-400">{result.name} · {result.exchange ?? 'ไม่ระบุตลาด'} · {result.assetType}</span>
                 </button>
                 {result.status === 'delisted' && <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-300">DELISTED</span>}
-                <Button size="sm" disabled={!isOnline || added || pending || result.status === 'delisted'} onClick={() => addSymbol(result.symbol, result.status)} className="min-w-24 shrink-0">
+                <Button size="sm" disabled={!isOnline || added || pending || result.status === 'delisted'} onClick={() => addSymbol(result.symbol, result.status, result)} className="min-w-24 shrink-0">
                   <Plus size={16} /> {result.status === 'delisted' ? 'เพิ่มไม่ได้' : added ? 'เพิ่มแล้ว' : pending ? 'กำลังเพิ่ม' : 'เพิ่ม'}
                 </Button>
               </div>;
@@ -213,8 +251,15 @@ export function WatchlistClient({ watchlist, initialQuotes, renderedAt }: {
         {sortedItems.length === 0 ? <EmptyState icon={Star} title="รายการติดตามยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
           <div className="divide-y divide-slate-800/60">{sortedItems.map((item) => {
             const data = quotes[item.symbol]; const quote = data?.quote; const change = quote?.changePercent;
+            const instrument = instruments[item.symbol];
             return <article key={item.id} className="flex min-w-0 items-center gap-3 p-4 hover:bg-slate-800/30 sm:px-5">
-              <InstrumentLogo symbol={item.symbol} companyName={item.symbol} logoUrl={null} size={40} />
+              <InstrumentLogo
+                symbol={item.symbol}
+                companyName={instrument?.companyName ?? item.symbol}
+                logoUrl={instrument?.logoUrl ?? null}
+                size={40}
+                appearance="plain"
+              />
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="min-w-0 flex-1 text-left">
                 <span className="block font-bold text-white hover:text-[#D4FF00]">{item.symbol}</span>
                 <span className={`block truncate text-xs ${quote ? 'text-slate-500' : 'text-amber-300'}`}>{freshnessLabel(data, renderedAt)}</span>

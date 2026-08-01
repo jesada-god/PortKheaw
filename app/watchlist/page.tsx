@@ -3,7 +3,7 @@ import { WatchlistClient } from '@/src/components/watchlist/WatchlistClient';
 import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import type { WatchlistQuote } from '@/src/lib/watchlist/types';
-import { getInstrumentMetadata } from '@/src/lib/instruments/master';
+import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { loadOverviewPrice, mapWithConcurrency } from '@/src/lib/overview/service';
 
 const unavailable: WatchlistQuote = {
@@ -15,7 +15,9 @@ export default async function WatchlistPage() {
   const client = await createClient();
   if (!client) return null;
   const watchlist = await new WatchlistRepository(client).getDefault();
-  const metadata = await getInstrumentMetadata(watchlist.items.map((item) => item.symbol));
+  const metadata = await getInstrumentPresentationMetadata(
+    watchlist.items.map((item) => item.symbol),
+  );
   const entries = await mapWithConcurrency(watchlist.items, 4, async (item) => {
     const result = await loadOverviewPrice(metadata.get(item.symbol)!);
     const value = result.display;
@@ -51,6 +53,15 @@ export default async function WatchlistPage() {
         <WatchlistClient
           watchlist={watchlist}
           initialQuotes={Object.fromEntries(entries)}
+          initialInstruments={Object.fromEntries(
+            [...metadata].map(([symbol, instrument]) => [
+              symbol,
+              {
+                companyName: instrument.companyName,
+                logoUrl: instrument.logoUrl,
+              },
+            ]),
+          )}
           renderedAt={new Date().toISOString()}
         />
       </div>
