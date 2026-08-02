@@ -144,22 +144,22 @@ export type SimulationWorkspaceInput = z.infer<typeof simulationWorkspaceSchema>
 
 function calculationIssueMessage(path: string): string {
   if (path === 'symbol') return 'กรุณาเลือกหุ้นก่อนคำนวณ';
-  if (path === 'underlyingPrice') return 'Current Stock Price ต้องเป็นตัวเลขที่มากกว่า 0';
-  if (/^legs\.\d+\.kind$/.test(path)) return 'Option Type ต้องเป็น Call หรือ Put';
-  if (/^legs\.\d+\.side$/.test(path)) return 'Side ต้องเป็น Buy หรือ Sell';
-  if (/^legs\.\d+\.strike$/.test(path)) return 'Strike Price ต้องเป็นตัวเลขที่มากกว่า 0';
-  if (/^legs\.\d+\.entryPremium$/.test(path)) return 'Premium ต้องเป็นจำนวนเงินที่ไม่ติดลบ';
-  if (/^legs\.\d+\.impliedVolatility$/.test(path)) return 'IV ต้องเป็น engine decimal ที่มากกว่า 0 และไม่เกิน 10';
-  if (/^legs\.\d+\.multiplier$/.test(path)) return 'Multiplier ต้องเป็นตัวเลขที่มากกว่า 0';
-  if (/^legs\.\d+\.delta$/.test(path)) return 'Delta ต้องเป็นตัวเลขระหว่าง -1 ถึง 1';
-  if (/^legs\.\d+\.theta$/.test(path)) return 'Theta/day ต้องเป็นตัวเลข finite และอนุญาตค่าติดลบ';
-  if (/^legs\.\d+\.expiration$/.test(path)) return 'Expiration ต้องอยู่หลัง Valuation Date';
-  if (/^legs\.\d+\.quantity$/.test(path)) return 'Quantity ต้องเป็นจำนวนเต็มที่มากกว่า 0';
-  if (/^scenarios\.\d+\.targetPrice$/.test(path)) return 'Target Stock Price ต้องเป็นตัวเลขที่มากกว่า 0';
-  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'Target Date ต้องอยู่หลัง Valuation Date และไม่เกิน Expiration';
+  if (path === 'underlyingPrice') return 'ราคาหุ้นปัจจุบันต้องมากกว่า 0';
+  if (/^legs\.\d+\.kind$/.test(path)) return 'ประเภทสัญญาต้องเป็น Call หรือ Put';
+  if (/^legs\.\d+\.side$/.test(path)) return 'ฝั่งซื้อ/ขายต้องเป็น Buy หรือ Sell';
+  if (/^legs\.\d+\.strike$/.test(path)) return 'ราคาใช้สิทธิต้องมากกว่า 0';
+  if (/^legs\.\d+\.entryPremium$/.test(path)) return 'ราคาสัญญาต่อหุ้นต้องไม่ติดลบ';
+  if (/^legs\.\d+\.impliedVolatility$/.test(path)) return 'ความผันผวนที่ตลาดคาดต้องมากกว่า 0% และไม่เกิน 1,000%';
+  if (/^legs\.\d+\.multiplier$/.test(path)) return 'จำนวนหุ้นต่อ 1 สัญญาต้องมากกว่า 0';
+  if (/^legs\.\d+\.delta$/.test(path)) return 'Delta ต้องอยู่ระหว่าง -1 ถึง 1';
+  if (/^legs\.\d+\.theta$/.test(path)) return 'มูลค่าที่ลดลงต่อวันต้องเป็นตัวเลข และติดลบได้';
+  if (/^legs\.\d+\.expiration$/.test(path)) return 'วันหมดอายุต้องอยู่หลังวันที่ใช้คำนวณ';
+  if (/^legs\.\d+\.quantity$/.test(path)) return 'จำนวนสัญญาต้องเป็นจำนวนเต็มที่มากกว่า 0';
+  if (/^scenarios\.\d+\.targetPrice$/.test(path)) return 'ราคาหุ้นที่อยากลองต้องมากกว่า 0';
+  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และไม่เกินวันหมดอายุ';
   if (path === 'legs') return 'ต้องมีสัญญาอย่างน้อย 1 รายการ';
-  if (path === 'scenarios') return 'ต้องมี What-If scenario อย่างน้อย 1 รายการ';
-  return 'ค่าที่กรอกไม่ถูกต้อง';
+  if (path === 'scenarios') return 'ต้องมีสถานการณ์ที่ทดลองอย่างน้อย 1 รายการ';
+  return 'ค่าที่กรอกยังไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง';
 }
 
 export function calculationValidationMessages(input: unknown): string[] {

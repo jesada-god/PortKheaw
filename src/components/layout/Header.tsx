@@ -27,7 +27,10 @@ export default function Header({ title, subtitle, status }: HeaderProps) {
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_86%,transparent)] px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-md transition-colors duration-200 sm:px-6 lg:px-8">
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-mark-bg)] lg:hidden" aria-label={appConfig.name}>
+        {/* Below 360px the mark and the "PortKheaw" label under it say the same
+            thing twice, and together they leave the title 76px — not enough for
+            any page name, so every title ellipsed. The word stays; the icon goes. */}
+        <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-mark-bg)] min-[360px]:flex lg:hidden" aria-label={appConfig.name}>
           <BrandMark priority className="h-9 w-9" />
         </div>
         {/* min-w-0: without it this flex item refuses to shrink and `truncate`

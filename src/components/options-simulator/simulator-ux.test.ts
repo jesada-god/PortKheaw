@@ -40,7 +40,7 @@ describe('Options Simulator UX helpers', () => {
   it('clamps Target Date after valuation and no later than expiration', () => {
     expect(clampTargetDate('2026-07-19', '2026-07-19', '2026-08-19')).toBe('2026-07-20');
     expect(clampTargetDate('2026-09-01', '2026-07-19', '2026-08-19')).toBe('2026-08-19');
-    expect(targetDateError('2026-07-19', '2026-07-19', '2026-08-19')).toContain('หลังวันที่คำนวณ');
+    expect(targetDateError('2026-07-19', '2026-07-19', '2026-08-19')).toContain('หลังวันที่ใช้คำนวณ');
     expect(targetDateError('2026-08-20', '2026-07-19', '2026-08-19')).toContain('ไม่เกินวันหมดอายุ');
   });
 
@@ -75,9 +75,9 @@ describe('Options Simulator UX helpers', () => {
   });
 
   it('shows the real field name and exposes unit-safe development diagnostics', () => {
-    const message = 'legs.0.theta: Theta/day ต้องเป็นตัวเลข finite';
-    expect(displayValidationMessage(message)).toBe('Leg 1 Theta/day: Theta/day ต้องเป็นตัวเลข finite');
-    expect(validationMessageParts(message)).toEqual({ path: 'legs.0.theta', reason: 'Theta/day ต้องเป็นตัวเลข finite' });
+    const message = 'legs.0.theta: มูลค่าที่ลดลงต่อวันต้องเป็นตัวเลข';
+    expect(displayValidationMessage(message)).toBe('Leg 1 มูลค่าที่ลดลงต่อวัน (Theta): มูลค่าที่ลดลงต่อวันต้องเป็นตัวเลข');
+    expect(validationMessageParts(message)).toEqual({ path: 'legs.0.theta', reason: 'มูลค่าที่ลดลงต่อวันต้องเป็นตัวเลข' });
     expect(validationPathUnit('legs.0.entryPremium')).toBe('USD-per-share');
     expect(validationPathUnit('legs.0.impliedVolatility')).toBe('engine-decimal');
     expect(validationPathUnit('scenarios.0.valuationDate')).toBe('calendar-date');

@@ -32,6 +32,21 @@ describe('Home hydration contract', () => {
     expect(layout).not.toContain('suppressHydrationWarning');
   });
 
+  it('leaves the appearance attribute to the pre-paint script instead of guessing it', () => {
+    // The server has no way to know a reader's saved appearance. Rendering a fixed
+    // `dark` meant THEME_BOOTSTRAP had already rewritten <html> to `light` by the
+    // time React hydrated it — React #418 in production on every light device.
+    const layout = read('app/layout.tsx');
+    const bootstrap = read('src/themes/bootstrap.ts');
+    const dark = read('src/themes/portkheaw/dark.css');
+
+    expect(layout).toContain('<html lang="th" data-theme="portkheaw">');
+    expect(layout).not.toContain('data-appearance=');
+    expect(bootstrap).toContain('dataset.appearance');
+    // Dark stays the default before the script runs, so the markup is never token-less.
+    expect(dark).toContain('html[data-theme="portkheaw"]:not([data-appearance])');
+  });
+
   it('keeps Home render output free of host-time and browser-only initializers', () => {
     const dashboard = read('src/components/dashboard/DashboardClient.tsx');
     const watchlist = read('src/components/watchlist/WatchlistClient.tsx');

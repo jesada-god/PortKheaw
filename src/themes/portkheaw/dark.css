@@ -1,4 +1,12 @@
-html[data-theme="portkheaw"][data-appearance="dark"] {
+/*
+  The second selector is the pre-script state. `data-appearance` is written by
+  THEME_BOOTSTRAP rather than server-rendered — the server cannot know which
+  appearance a reader saved, and rendering a guess made React hydrate against a
+  root the script had already corrected. Dark is the product default, so an
+  element with no appearance yet resolves to dark instead of to no tokens at all.
+*/
+html[data-theme="portkheaw"][data-appearance="dark"],
+html[data-theme="portkheaw"]:not([data-appearance]) {
   --bg: #070A08;
   --surface: #0D120F;
   --surface-elevated: #121A15;

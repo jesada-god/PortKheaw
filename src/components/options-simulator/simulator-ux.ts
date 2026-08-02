@@ -114,9 +114,28 @@ export function clampTargetDate(value: string, valuationDate: string, expiration
 }
 
 export function targetDateError(value: string, valuationDate: string, expiration: string): string | null {
-  if (!calendarParts(value) || value <= valuationDate) return 'Target Date ต้องอยู่หลังวันที่คำนวณ';
-  if (value > expiration) return 'Target Date ต้องไม่เกินวันหมดอายุ';
+  if (!calendarParts(value) || value <= valuationDate) return 'วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ';
+  if (value > expiration) return 'วันที่ต้องการดูผลต้องไม่เกินวันหมดอายุ';
   return null;
+}
+
+/*
+  Every timestamp the simulator prints goes through here. A bare `toLocaleString()`
+  follows whichever locale the runtime happens to have — "8/2/2026, 2:58:54 AM" on
+  a US-defaulted server, Thai digits and a Buddhist year in a th-TH browser — so
+  the same instant rendered on two machines produced two different strings. The
+  locale and calendar are pinned instead; the zone stays the reader's own, because
+  an "as of" time is only meaningful in the clock they are looking at.
+*/
+const TIMESTAMP_LOCALE = 'th-TH-u-ca-gregory';
+
+export function formatTimestamp(value: string | number | Date | null | undefined, fallback = 'ไม่มีข้อมูล'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed.toLocaleString(TIMESTAMP_LOCALE, {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 export function parseFiniteDraft(value: string): number | null {
@@ -275,7 +294,7 @@ export function validationFieldLabel(path: string): string {
       impliedVolatility: 'ความผันผวนที่ตลาดคาด (IV)',
       multiplier: 'จำนวนหุ้นต่อ 1 สัญญา (Contract Multiplier)',
       delta: 'Delta',
-      theta: 'Theta/day',
+      theta: 'มูลค่าที่ลดลงต่อวัน (Theta)',
     };
     return `Leg ${legNumber} ${labels[legMatch[2]] ?? legMatch[2]}`;
   }

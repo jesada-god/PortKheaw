@@ -8,17 +8,17 @@ import { useRouter } from 'next/navigation';
 const toolsList = [
   {
     id: 'what-if',
-    title: 'จำลองสถานการณ์ (What-If Analysis)',
-    description: 'วิเคราะห์ผลกระทบหากต้นทุนหรือราคาขายเปลี่ยน',
+    title: 'ทดลองสถานการณ์ (What-If)',
+    description: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน แล้วดูว่ากำไรหรือขาดทุนของคุณจะเปลี่ยนไปเท่าไร',
     icon: Shuffle,
     tag: 'PRO',
-    category: 'จำลองสถานการณ์',
+    category: 'ทดลองสถานการณ์',
     route: '/tools/what-if'
   },
   {
     id: 'monte-carlo',
-    title: 'Monte Carlo Simulation',
-    description: 'พยากรณ์ความน่าจะเป็นของราคาในอนาคต',
+    title: 'จำลองความเป็นไปได้ (Monte Carlo)',
+    description: 'จำลองราคาหุ้นหลายพันสถานการณ์ เพื่อดูโอกาสได้กำไรและระดับความเสี่ยงของสถานะ',
     icon: TrendingUp,
     tag: 'PRO',
     category: 'วิเคราะห์ความเสี่ยง',
@@ -36,11 +36,11 @@ export default function ToolsPage() {
 
   return (
     <div>
-      <Header title="เครื่องมือวิเคราะห์ (Tools)" subtitle="เครื่องมือจำลองสถานการณ์และความเสี่ยง" />
+      <Header title="เครื่องมือ" subtitle="ทดลองสถานการณ์และดูความเสี่ยงก่อนตัดสินใจ" />
       
       <div className="p-4 md:p-8 space-y-6">
         <Tabs 
-          tabs={['ทั้งหมด', 'จำลองสถานการณ์', 'วิเคราะห์ความเสี่ยง']}
+          tabs={['ทั้งหมด', 'ทดลองสถานการณ์', 'วิเคราะห์ความเสี่ยง']}
           activeTab={activeTab} 
           onChange={setActiveTab} 
         />
