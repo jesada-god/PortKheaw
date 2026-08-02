@@ -35,6 +35,7 @@ import { TransactionFormModal, transactionLabels, type TransactionFormState } fr
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
+import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
 const OPTION_TYPES = new Set<PortfolioTransactionType>([
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
@@ -80,7 +81,7 @@ function editDateTime(value: string, timezone: string) {
   return formatted || `${value}T12:00`;
 }
 
-export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx, timezone }: {
+export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx, timezone, effectiveTier }: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
   marketPrices: Record<string, MarketPriceInput | null>;
@@ -88,6 +89,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   optionTargets: OptionTarget[];
   fx: FxResult;
   timezone: string;
+  effectiveTier: SubscriptionTier;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -341,6 +343,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       selectedPortfolioId={portfolio.id}
       optionTargetCounts={Object.fromEntries(portfolios.map((item) => [item.id, optionTargets.filter((target) => target.portfolioId === item.id).length]))}
       timezone={timezone}
+      effectiveTier={effectiveTier}
       showBalances={showBalances}
       isOnline={isOnline}
       money={money}

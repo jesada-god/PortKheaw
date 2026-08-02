@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Edit3, FolderOpen, Plus, RotateCcw, Target, Trash2 } from 'lucide-react';
+import { Archive, Edit3, FolderOpen, Lock, Plus, RotateCcw, Target, Trash2 } from 'lucide-react';
 import {
   archivePortfolioAction,
   createPortfolioAction,
@@ -29,6 +29,8 @@ import {
 } from '@/src/lib/portfolio/transaction-datetime';
 import { DecimalInput, Field } from './FormControls';
 import { PortfolioGoalCard } from './PortfolioGoalCard';
+import { portfolioCreationEntitlement } from '@/src/lib/subscription/subscription-limits';
+import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
 type Money = (value: number | string | null) => string;
 
@@ -54,6 +56,7 @@ export function PortfolioManager({
   selectedPortfolioId,
   optionTargetCounts,
   timezone,
+  effectiveTier,
   showBalances,
   isOnline,
   money,
@@ -68,6 +71,7 @@ export function PortfolioManager({
   selectedPortfolioId: string;
   optionTargetCounts: Record<string, number>;
   timezone: string;
+  effectiveTier: SubscriptionTier;
   showBalances: boolean;
   isOnline: boolean;
   money: Money;
@@ -108,6 +112,7 @@ export function PortfolioManager({
       : summary.holdings.length > 0 || summary.optionPositions.length === 0;
   });
   const active = portfolios.filter((portfolio) => portfolio.archivedAt === null);
+  const optionsEntitlement = portfolioCreationEntitlement(effectiveTier, 'OPTION');
   const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? portfolios[0];
   const goalSummary = goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id];
   const goal = goalScope === 'aggregate'
@@ -142,7 +147,7 @@ export function PortfolioManager({
 
   function openCreate(type: 'STOCK' | 'OPTION' = tab) {
     setCreateName('');
-    setCreateType(type);
+    setCreateType(type === 'OPTION' && !optionsEntitlement.canCreate ? 'STOCK' : type);
     setError('');
     setCreateOpen(true);
   }
@@ -319,7 +324,30 @@ export function PortfolioManager({
         event.preventDefault();
         run(() => createPortfolioAction({ name: createName, type: createType }), 'สร้างพอร์ตแล้ว', closeCreate);
       }}>
-        <Field label="ประเภทพอร์ต"><select className="form-input" value={createType} onChange={(event) => setCreateType(event.target.value as 'STOCK' | 'OPTION')}><option value="STOCK">พอร์ตหุ้น</option><option value="OPTION">พอร์ตออปชัน</option></select></Field>
+        <Field label="ประเภทพอร์ต">
+          <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="ประเภทพอร์ต">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={createType === 'STOCK'}
+              onClick={() => setCreateType('STOCK')}
+              className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm ${createType === 'STOCK' ? 'border-[#D4FF00] bg-[#D4FF00]/10 text-white' : 'border-slate-700 text-slate-300'}`}
+            >
+              <span className="block font-bold">พอร์ตหุ้น/ETF</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={createType === 'OPTION'}
+              disabled={!optionsEntitlement.canCreate}
+              onClick={() => setCreateType('OPTION')}
+              className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm ${!optionsEntitlement.canCreate ? 'cursor-not-allowed border-slate-800 bg-slate-900/60 text-slate-500' : createType === 'OPTION' ? 'border-[#D4FF00] bg-[#D4FF00]/10 text-white' : 'border-slate-700 text-slate-300'}`}
+            >
+              <span className="flex items-center gap-2 font-bold">{!optionsEntitlement.canCreate && <Lock size={14} aria-hidden="true" />} พอร์ต Options</span>
+              {!optionsEntitlement.canCreate && <span className="mt-1 block text-xs text-amber-300">ใช้ได้ใน Pro</span>}
+            </button>
+          </div>
+        </Field>
         <Field label="ชื่อพอร์ต" helper="1–40 ตัวอักษร และห้ามซ้ำในประเภทเดียวกัน"><input className="form-input" maxLength={40} value={createName} onChange={(event) => setCreateName(event.target.value)} /></Field>
         <ActionError value={error} />
         <ModalActions pending={pending} onCancel={closeCreate} submitLabel="สร้างพอร์ต" />

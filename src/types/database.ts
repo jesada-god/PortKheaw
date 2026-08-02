@@ -3,6 +3,8 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Currency = 'THB' | 'USD';
 export type AppLanguage = 'th' | 'en';
 export type PortfolioType = 'STOCK' | 'OPTION' | 'LEGACY';
+export type SubscriptionTier = 'basic' | 'pro' | 'elite';
+export type SubscriptionStatus = 'basic' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
 
 export interface Database {
   public: {
@@ -110,6 +112,58 @@ export interface Database {
         Update: {
           name?: string; base_currency?: Currency; portfolio_type?: PortfolioType; is_legacy?: boolean;
           archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null; updated_at?: string;
+        };
+        Relationships: [];
+      };
+      user_subscriptions: {
+        Row: {
+          user_id: string;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          current_period_start: string | null;
+          current_period_end: string | null;
+          cancel_at_period_end: boolean;
+          billing_customer_id: string | null;
+          billing_subscription_id: string | null;
+          billing_price_id: string | null;
+          founder_promo_applied: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          tier?: SubscriptionTier;
+          status?: SubscriptionStatus;
+          trial_started_at?: string | null;
+          trial_ends_at?: string | null;
+          trial_used_at?: string | null;
+          current_period_start?: string | null;
+          current_period_end?: string | null;
+          cancel_at_period_end?: boolean;
+          billing_customer_id?: string | null;
+          billing_subscription_id?: string | null;
+          billing_price_id?: string | null;
+          founder_promo_applied?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          tier?: SubscriptionTier;
+          status?: SubscriptionStatus;
+          trial_started_at?: string | null;
+          trial_ends_at?: string | null;
+          trial_used_at?: string | null;
+          current_period_start?: string | null;
+          current_period_end?: string | null;
+          cancel_at_period_end?: boolean;
+          billing_customer_id?: string | null;
+          billing_subscription_id?: string | null;
+          billing_price_id?: string | null;
+          founder_promo_applied?: boolean;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -342,6 +396,27 @@ export interface Database {
         Returns: string;
       };
       get_or_create_default_portfolio: { Args: Record<PropertyKey, never>; Returns: string };
+      get_my_subscription_snapshot: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          user_id: string;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          current_period_start: string | null;
+          current_period_end: string | null;
+          cancel_at_period_end: boolean;
+          billing_customer_id: string | null;
+          billing_subscription_id: string | null;
+          billing_price_id: string | null;
+          founder_promo_applied: boolean;
+          created_at: string | null;
+          updated_at: string | null;
+          database_now: string;
+        }>;
+      };
       create_portfolio: { Args: { input_name: string; input_type: 'STOCK' | 'OPTION' }; Returns: string };
       update_portfolio_details: { Args: { target_portfolio_id: string; input_name: string; input_type: PortfolioType }; Returns: undefined };
       set_portfolio_goal: { Args: { target_portfolio_id: string; input_target_value_usd: string | null; input_target_date: string | null }; Returns: undefined };

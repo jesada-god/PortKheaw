@@ -9,15 +9,18 @@ import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations'
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { optionPositionTitle } from '@/src/lib/portfolio/options/presentation';
+import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 
 export default async function PortfolioPage() {
   const client = await createClient();
   if (!client) return null;
   const portfolioRepository = new PortfolioRepository(client);
-  const [portfolios, aggregateGoal, timezone] = await Promise.all([
+  const subscriptionRepository = new SubscriptionRepository(client);
+  const [portfolios, aggregateGoal, timezone, effectiveTier] = await Promise.all([
     portfolioRepository.getAll(),
     portfolioRepository.getAggregateGoal(),
     portfolioRepository.getTimeZone(),
+    subscriptionRepository.getEffectiveTier(),
   ]);
   const targetRepository = new OptionTargetRepository(client);
   const [targets, fx] = await Promise.all([
@@ -77,6 +80,7 @@ export default async function PortfolioPage() {
       optionTargets={targets}
       fx={fx}
       timezone={timezone}
+      effectiveTier={effectiveTier}
     />
   </div>;
 }
