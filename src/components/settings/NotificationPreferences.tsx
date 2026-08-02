@@ -7,6 +7,7 @@ import {
   saveNotificationToggleAction,
 } from '@/app/settings/actions';
 import { Button } from '@/src/components/ui/Button';
+import { Switch } from '@/src/components/ui/Switch';
 import { PushPreferences } from './PushPreferences';
 
 type ToggleSetting =
@@ -30,25 +31,6 @@ type Retry =
   | { kind: 'toggle'; setting: ToggleSetting; enabled: boolean }
   | { kind: 'schedule' }
   | null;
-
-function Toggle({ checked, disabled, label, onChange }: {
-  checked: boolean;
-  disabled: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-}) {
-  return <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    aria-label={label}
-    disabled={disabled}
-    onClick={() => onChange(!checked)}
-    className={`relative h-11 w-14 shrink-0 rounded-full border transition-colors disabled:opacity-50 ${checked ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--border-strong)] bg-[var(--input-bg)]'}`}
-  >
-    <span className={`absolute top-1/2 h-6 w-6 -translate-y-1/2 rounded-full transition-transform ${checked ? 'translate-x-6 bg-[var(--accent)]' : 'translate-x-1 bg-[var(--text-muted)]'}`} />
-  </button>;
-}
 
 export function NotificationPreferences({ initial }: { initial: NotificationPreferenceValues }) {
   const [values, setValues] = useState(initial);
@@ -109,37 +91,37 @@ export function NotificationPreferences({ initial }: { initial: NotificationPref
       </div>
     </div>
 
-    <div className="space-y-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow)] sm:p-6">
+    <div className="box-border w-full min-w-0 space-y-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow)] sm:p-6">
       <PushPreferences />
 
       <div className="divide-y divide-[var(--border)]">
-        <div className="flex min-h-20 items-center justify-between gap-4 py-4">
-          <div>
-            <p className="font-medium text-[var(--text)]">แจ้งเตือนเมื่อราคาถึงเป้าหมาย</p>
-            <p className="text-xs text-[var(--text-muted)]">แสดงในกล่องการแจ้งเตือนเมื่อราคาข้ามเป้าหมายที่ตั้งไว้</p>
+        <div className="grid min-h-20 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 py-4 max-[360px]:grid-cols-1">
+          <div className="min-w-0">
+            <p className="break-words font-medium text-[var(--text)]">แจ้งเตือนเมื่อราคาถึงเป้าหมาย</p>
+            <p className="break-words text-xs text-[var(--text-muted)]">แสดงในกล่องการแจ้งเตือนเมื่อราคาข้ามเป้าหมายที่ตั้งไว้</p>
           </div>
-          <Toggle checked={values.priceAlertsEnabled} disabled={pending} label="แจ้งเตือนเมื่อราคาถึงเป้าหมาย" onChange={(enabled) => saveToggle('priceAlertsEnabled', enabled)} />
+          <Switch className="justify-self-end max-[360px]:justify-self-start" checked={values.priceAlertsEnabled} disabled={pending} label="แจ้งเตือนเมื่อราคาถึงเป้าหมาย" onCheckedChange={(enabled) => saveToggle('priceAlertsEnabled', enabled)} />
         </div>
-        <div className="flex min-h-20 items-center justify-between gap-4 py-4">
-          <div>
-            <p className="font-medium text-[var(--text)]">รวมก่อนและหลังตลาด</p>
-            <p className="text-xs text-[var(--text-muted)]">ค่าเริ่มต้นตรวจเฉพาะช่วงตลาดปกติ เปิดเมื่อต้องการรวมราคานอกเวลา</p>
+        <div className="grid min-h-20 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 py-4 max-[360px]:grid-cols-1">
+          <div className="min-w-0">
+            <p className="break-words font-medium text-[var(--text)]">รวมก่อนและหลังตลาด</p>
+            <p className="break-words text-xs text-[var(--text-muted)]">ค่าเริ่มต้นตรวจเฉพาะช่วงตลาดปกติ เปิดเมื่อต้องการรวมราคานอกเวลา</p>
           </div>
-          <Toggle checked={values.priceAlertExtendedHours} disabled={pending} label="รวมก่อนและหลังตลาด" onChange={(enabled) => saveToggle('priceAlertExtendedHours', enabled)} />
+          <Switch className="justify-self-end max-[360px]:justify-self-start" checked={values.priceAlertExtendedHours} disabled={pending} label="รวมก่อนและหลังตลาด" onCheckedChange={(enabled) => saveToggle('priceAlertExtendedHours', enabled)} />
         </div>
-        <div className="flex min-h-20 items-center justify-between gap-4 py-4">
-          <div>
-            <p className="font-medium text-[var(--text)]">สรุปพอร์ตรายวัน</p>
-            <p className="text-xs text-[var(--text-muted)]">รับมูลค่าพอร์ตรวม ผลของวันนี้ และสินทรัพย์ที่ส่งผลมากที่สุด</p>
+        <div className="grid min-h-20 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 py-4 max-[360px]:grid-cols-1">
+          <div className="min-w-0">
+            <p className="break-words font-medium text-[var(--text)]">สรุปพอร์ตรายวัน</p>
+            <p className="break-words text-xs text-[var(--text-muted)]">รับมูลค่าพอร์ตรวม ผลของวันนี้ และสินทรัพย์ที่ส่งผลมากที่สุด</p>
           </div>
-          <Toggle checked={values.dailySummaryEnabled} disabled={pending} label="สรุปพอร์ตรายวัน" onChange={(enabled) => saveToggle('dailySummaryEnabled', enabled)} />
+          <Switch className="justify-self-end max-[360px]:justify-self-start" checked={values.dailySummaryEnabled} disabled={pending} label="สรุปพอร์ตรายวัน" onCheckedChange={(enabled) => saveToggle('dailySummaryEnabled', enabled)} />
         </div>
-        <div className="flex min-h-20 items-center justify-between gap-4 py-4">
-          <div>
-            <p className="font-medium text-[var(--text)]">ช่วงเวลางดแจ้งเตือน</p>
-            <p className="text-xs text-[var(--text-muted)]">พักรายการไว้ก่อน แล้วส่งเป็นสรุปรวมเมื่อพ้นช่วงเวลานี้</p>
+        <div className="grid min-h-20 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 py-4 max-[360px]:grid-cols-1">
+          <div className="min-w-0">
+            <p className="break-words font-medium text-[var(--text)]">ช่วงเวลางดแจ้งเตือน</p>
+            <p className="break-words text-xs text-[var(--text-muted)]">พักรายการไว้ก่อน แล้วส่งเป็นสรุปรวมเมื่อพ้นช่วงเวลานี้</p>
           </div>
-          <Toggle checked={values.quietHoursEnabled} disabled={pending} label="ช่วงเวลางดแจ้งเตือน" onChange={(enabled) => saveToggle('quietHoursEnabled', enabled)} />
+          <Switch className="justify-self-end max-[360px]:justify-self-start" checked={values.quietHoursEnabled} disabled={pending} label="ช่วงเวลางดแจ้งเตือน" onCheckedChange={(enabled) => saveToggle('quietHoursEnabled', enabled)} />
         </div>
       </div>
 

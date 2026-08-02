@@ -44,6 +44,14 @@ npm run lint
 npm run build
 ```
 
+คำสั่ง QA หรือ server ที่ต้องมีเส้นตายให้เรียกผ่าน bounded runner เพื่อเก็บ PID/log, แสดง heartbeat ทุก 15 วินาที และปิดเฉพาะ process tree ที่ runner สร้างเมื่อ timeout หรือถูกขัดจังหวะ Logs จะอยู่ที่ `C:\tmp\portkheaw-qa\<run-id>\` และมี lock ป้องกัน QA ซ้อนกัน:
+
+```powershell
+npm run qa:bounded -- -Command "npm.cmd test -- src/components/ui/Modal.test.tsx" -TimeoutSeconds 600 -Step targeted-tests
+```
+
+กำหนด `-RetryCount 1` ได้เฉพาะคำสั่งที่คืน retryable exit code (ค่าเริ่มต้นคือ `75`) และเพิ่ม `-RetryOnTimeout` เฉพาะ workflow ที่ออกแบบให้ลองใหม่หลัง timeout ได้ ห้ามตั้ง retry เกิน 1 ครั้ง
+
 ข้อมูลตลาด ข่าว ผลวิเคราะห์ พอร์ต และการแจ้งเตือนในเวอร์ชันนี้เป็นข้อมูลจำลองและยังไม่ได้เชื่อมต่อ backend หรือ market-data API จริง
 
 ## Authentication

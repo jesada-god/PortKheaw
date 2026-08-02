@@ -28,9 +28,20 @@ describe('settings preferences contract', () => {
 
   it('saves notification switches immediately and exposes a retry state', () => {
     const notifications = read('src/components/settings/NotificationPreferences.tsx');
+    const devices = read('src/components/settings/DevicePreferences.tsx');
+    const sharedSwitch = read('src/components/ui/Switch.tsx');
     const push = read('src/components/settings/PushPreferences.tsx');
     expect(notifications).toContain('saveNotificationToggleAction');
     expect(notifications).toContain('<PushPreferences />');
+    expect(notifications).toContain("import { Switch } from '@/src/components/ui/Switch'");
+    expect(devices).toContain("import { Switch } from '@/src/components/ui/Switch'");
+    expect(notifications).toContain('grid-cols-[minmax(0,1fr)_auto]');
+    expect(notifications).toContain('max-[360px]:grid-cols-1');
+    expect(notifications).toContain('break-words');
+    expect(sharedSwitch).toContain('box-border');
+    expect(sharedSwitch).toContain('flex-none');
+    expect(sharedSwitch).not.toContain('absolute');
+    expect(sharedSwitch).not.toMatch(/-\w*margin|-[m][trblxy]?\-/);
     expect(notifications).toContain('บันทึกแล้ว');
     expect(notifications).toContain('ลองอีกครั้ง');
     expect(notifications).toContain('Asia/Bangkok (UTC+7)');
