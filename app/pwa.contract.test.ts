@@ -116,7 +116,7 @@ describe('installed app (Home Screen / standalone)', () => {
   it('renders the shell edge to edge and pads it back off the notch', () => {
     expect(layout).toContain("viewportFit: 'cover'");
     for (const [path, needle] of [
-      ['src/components/layout/BottomNav.tsx', 'env(safe-area-inset-bottom)'],
+      ['app/globals.css', 'env(safe-area-inset-bottom)'],
       ['src/components/layout/Header.tsx', 'env(safe-area-inset-top)'],
       ['src/components/auth/AuthShell.tsx', 'env(safe-area-inset-bottom)'],
     ] as const) {

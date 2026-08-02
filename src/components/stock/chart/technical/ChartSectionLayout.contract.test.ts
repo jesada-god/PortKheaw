@@ -63,7 +63,9 @@ describe('Responsive rules below the chart', () => {
 
   it('caps every popover at the viewport width and uses a bottom sheet on mobile', () => {
     expect(popover).toContain('max-w-[calc(100vw-2rem)]');
-    expect(popover).toContain('fixed inset-x-3 bottom-3');
+    // Pinned above the floating dock rather than at the viewport edge, which is
+    // where the capsule now sits.
+    expect(popover).toContain('fixed inset-x-3 bottom-[var(--dock-clearance)]');
     expect(popover).toContain('sm:absolute');
   });
 

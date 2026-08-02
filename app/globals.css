@@ -600,3 +600,354 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
 @media (min-width: 768px) {
   [class~="md:bg-[#D4FF00]/[0.04]"] { background-color: var(--accent-soft) !important; }
 }
+
+/* ==========================================================================
+ * App shell geometry
+ *
+ * The floating dock is `position: fixed`, so it takes no space in flow and the
+ * page has to reserve it explicitly. Every surface that must stay clear of the
+ * capsule — the shell's bottom padding, the simulator's sticky Calculate bar,
+ * toasts — reads --dock-clearance rather than repeating the arithmetic, so the
+ * dock can change height in one place.
+ * ========================================================================== */
+:root {
+  --dock-height: 62px;
+  /* The gap the capsule floats above the viewport edge, pushed clear of the
+     home indicator on a notched handset. */
+  --dock-inset: max(12px, env(safe-area-inset-bottom));
+  --dock-clearance: calc(var(--dock-height) + var(--dock-inset) + 20px);
+}
+
+@media (min-width: 1024px) {
+  :root { --dock-height: 70px; }
+}
+
+/* ==========================================================================
+ * Floating dock
+ *
+ * Written as CSS rather than utilities for three reasons: the label's fluid
+ * size needs `clamp()`, the tooltip must be gated behind a compound
+ * `(hover: hover) and (pointer: fine)` query so a tap can never leave it stuck
+ * open, and the compat layer further up this file rewrites Tailwind's slate and
+ * `text-[10px]` classes — none of which this component wants applied to it.
+ * ========================================================================== */
+.dock {
+  position: fixed;
+  z-index: 50;
+  bottom: var(--dock-inset);
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: calc(100% - 24px);
+  max-width: 430px;
+  height: var(--dock-height);
+  padding-inline: 6px;
+  border: 1px solid var(--dock-border);
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--dock-bg) 86%, transparent);
+  box-shadow: var(--dock-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+/* From lg the capsule is only as wide as its five destinations. */
+@media (min-width: 1024px) {
+  .dock {
+    width: auto;
+    max-width: none;
+    padding-inline: 8px;
+  }
+}
+
+.dock__list {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 1024px) {
+  .dock__list { width: auto; gap: 4px; }
+}
+
+/*
+ * On a handset the four other destinations hold a 44px touch square each and the
+ * current one takes everything left over, which is what gives its name room to
+ * be read in full. Five equal shares would leave 54px apiece at 320px, and
+ * "รายการติดตาม" needs 60 — measured, and the reason this is not an even split.
+ *
+ * From lg every slot is a fixed 60px: a magnified icon grows inside its slot and
+ * never pushes its neighbours around.
+ */
+.dock__slot {
+  display: flex;
+  flex: 0 0 44px;
+  min-width: 0;
+}
+
+.dock__slot[data-active="true"] {
+  flex: 1 1 auto;
+}
+
+@media (min-width: 1024px) {
+  .dock__slot,
+  .dock__slot[data-active="true"] { flex: 0 0 60px; }
+}
+
+.dock__item {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: calc(var(--dock-height) - 12px);
+  min-height: 44px;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 180ms ease;
+}
+
+@media (min-width: 1024px) {
+  .dock__item { gap: 0; height: calc(var(--dock-height) - 8px); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dock__item:hover { color: var(--text); }
+}
+
+.dock__item[aria-current="page"] { color: var(--accent); }
+
+/*
+ * The active marker: a soft radial bloom of the brand accent, painted in its own
+ * absolutely positioned layer so switching pages cannot move anything. Two stops
+ * rather than one — a single stop gives a hard-edged disc; this fades out well
+ * before the capsule wall.
+ */
+.dock__glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle at 50% 45%,
+      color-mix(in srgb, var(--accent) 32%, transparent) 0%,
+      color-mix(in srgb, var(--accent) 11%, transparent) 46%,
+      transparent 72%
+    );
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+
+.dock__item[aria-current="page"] .dock__glow { opacity: 1; }
+
+.dock__bubble {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9999px;
+  transition: transform 220ms ease;
+}
+
+.dock__bubble > svg {
+  width: 20px;
+  height: 20px;
+}
+
+/*
+ * From lg the icon rests at 48px and the pointer lifts it to 60px. Both numbers
+ * live in FloatingDock.tsx as well, because the magnification writes them as
+ * inline sizes; this rule is what the server renders and what a magnified item
+ * springs back to, so the two must agree.
+ */
+@media (min-width: 1024px) {
+  .dock__bubble { width: 48px; height: 48px; }
+  /* Proportional, so the glyph grows with the bubble without a second animation
+     to keep in step with the first. */
+  .dock__bubble > svg { width: 42%; height: 42%; }
+}
+
+.dock__item[aria-current="page"] .dock__bubble { transform: scale(1.06); }
+
+/*
+ * Clipped rather than `display: none`, so every name stays in the accessibility
+ * tree as its link's accessible name whether or not it is painted. That is what
+ * keeps the tooltip from being the only thing that says where a link goes.
+ */
+.dock__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+/*
+ * Painted for the current destination only, and only below lg — where there is
+ * no tooltip to name things and where five full labels cannot fit a 320px
+ * capsule without one of them ellipsing.
+ */
+@media (max-width: 1023px) {
+  .dock__slot[data-active="true"] .dock__label {
+    position: static;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+}
+
+.dock__tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  display: none;
+  transform: translateX(-50%) translateY(4px);
+  white-space: nowrap;
+  border: 1px solid var(--dock-border);
+  border-radius: 9999px;
+  background: var(--dock-bg);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  box-shadow: var(--dock-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+/*
+ * Only ever rendered where a cursor exists. A touch device keeps `:hover` on the
+ * last-tapped element until something else is tapped, which is exactly how a
+ * tooltip ends up stranded over a phone's navigation.
+ */
+@media (hover: hover) and (pointer: fine) and (min-width: 1024px) {
+  .dock__tip { display: block; }
+
+  .dock__item:hover .dock__tip,
+  .dock__item:focus-visible .dock__tip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ==========================================================================
+ * Brand lockup
+ * ========================================================================== */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  text-decoration: none;
+  border-radius: 0.75rem;
+}
+
+.brand-lockup__plate {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 0.625rem;
+}
+
+.brand-lockup__mascot {
+  width: 28px;
+  height: 28px;
+}
+
+@media (min-width: 1024px) {
+  .brand-lockup__plate { width: 38px; height: 38px; border-radius: 0.75rem; }
+  .brand-lockup__mascot { width: 35px; height: 35px; }
+}
+
+/*
+ * Below 360px the plate costs 30px that the wordmark and the page title beside
+ * it both need — and the mark and the word say the same thing. The word stays,
+ * because "PortKheaw" has to stay readable on every handset; the mark goes.
+ */
+@media (max-width: 359px) {
+  .brand-lockup__plate { display: none; }
+}
+
+/*
+ * Tightened tracking and a heavy weight are what turn the product's own type
+ * into a wordmark; no font is added for it. `baseline` keeps the two halves on
+ * one line so they read as a single word.
+ */
+.brand-lockup__word {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+@media (min-width: 1024px) {
+  .brand-lockup__word { font-size: 1.1875rem; }
+}
+
+.brand-lockup__port { color: var(--text); }
+
+/*
+ * Flat brand green first — that is what prints, what a forced-colours mode
+ * keeps, and what shows if the gradient ever fails. The gradient only replaces
+ * it where clipping text is actually supported, so "Kheaw" can never come out
+ * invisible.
+ */
+.brand-lockup__kheaw { color: var(--brand-green); }
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .brand-lockup__kheaw {
+    background-image: linear-gradient(100deg, var(--brand-green) 12%, var(--brand-green-deep) 92%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+.brand-lockup__arrow {
+  flex: none;
+  width: 0.72em;
+  height: 0.72em;
+  margin-inline-start: 0.18em;
+  color: var(--brand-green);
+  /* Lifted to the cap height of the word it follows, so it rides the top of the
+     lettering rather than sitting on the baseline like a sixth letter. */
+  transform: translateY(-0.32em);
+  transition: transform 200ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .brand-lockup:hover .brand-lockup__arrow { transform: translateY(-0.46em); }
+}

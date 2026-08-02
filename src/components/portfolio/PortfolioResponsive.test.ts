@@ -22,8 +22,21 @@ describe('portfolio responsive and accessibility contract', () => {
   it('keeps forms inside the viewport and preserves keyboard dialog semantics', () => {
     expect(modal).toContain('role="dialog"');
     expect(modal).toContain('aria-modal="true"');
-    expect(modal).toContain('max-h-dvh');
-    expect(modal).toContain('overflow-y-auto');
+    /*
+     * The dialog is capped to the viewport and its BODY is what scrolls, so a
+     * long form can never push the title bar or the confirm row off screen.
+     *
+     * This used to read `max-h-dvh` against a modal that was one scrolling box.
+     * The modal is now a flex column — capped shell, scrolling body, sticky
+     * footer — and the cap is spelled `max-h-[100dvh]`, so the old literal
+     * failed while the property it stood for was not only intact but stronger.
+     * Asserting the shape rather than one class name is what stops that from
+     * happening again.
+     */
+    expect(modal).toMatch(/max-h-\[100dvh\]|max-h-dvh/);
+    expect(modal).toContain('sm:max-h-[calc(100dvh-2rem)]');
+    expect(modal).toMatch(/data-testid="modal-body"/);
+    expect(modal).toMatch(/min-h-0[^"]*flex-1[^"]*overflow-y-auto/);
     expect(modal).toContain('useDialogA11y');
     expect(portfolio).toContain('min-h-11');
     expect(options).toContain('min-h-11');

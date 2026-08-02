@@ -43,6 +43,19 @@ html[data-theme="portkheaw"]:not([data-appearance]) {
   --chart-grid: #223128;
   --chart-axis: #89958D;
   --brand-mark-bg: #000000;
+  /*
+   * Wordmark green, from the brand guide. Deliberately NOT --accent (lime is
+   * reserved for active state and single points of emphasis) and deliberately
+   * not --positive: at hue ~93° it sits about 67° off gain green, so "Kheaw"
+   * can never be misread as a price moving up.
+   */
+  --brand-green: #96DD5C;
+  --brand-green-deep: #7ECB3C;
+  /* Floating dock. A charcoal capsule one step above --surface, so it reads as
+     an object over the page rather than a panel welded to its edge. */
+  --dock-bg: #121A15;
+  --dock-border: #2B3B31;
+  --dock-shadow: 0 20px 48px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.42);
   --overlay: rgba(3, 7, 5, 0.76);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.30);
 }

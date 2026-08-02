@@ -46,6 +46,19 @@ html[data-theme="portkheaw"][data-appearance="light"] {
   /* The mascot never recolors with appearance; it keeps one black plate so the
      brand mark reads identically in light and dark. */
   --brand-mark-bg: #000000;
+  /*
+   * The same brand green, darkened for the light surface. The dark appearance's
+   * #96DD5C reads 1.6:1 on #F4F7F3 — a wordmark nobody can read. #38771B keeps
+   * the guide's yellow-green hue and clears AA (5.09:1) on every light surface.
+   */
+  --brand-green: #38771B;
+  --brand-green-deep: #2B6212;
+  /* The dock stays a light card in this appearance: a charcoal capsule would be
+     the one dark object on the page and would take --accent (a dark olive here)
+     below AA on its own surface. */
+  --dock-bg: #FFFFFF;
+  --dock-border: #D5DED5;
+  --dock-shadow: 0 20px 44px rgba(24, 39, 29, 0.16), 0 2px 8px rgba(24, 39, 29, 0.08);
   --overlay: rgba(11, 17, 13, 0.48);
   --shadow: 0 18px 45px rgba(24, 39, 29, 0.12);
 }

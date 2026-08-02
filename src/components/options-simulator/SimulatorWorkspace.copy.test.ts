@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./SimulatorWorkspace.tsx', import.meta.url), 'utf8');
 const validationSource = readFileSync(new URL('../../lib/options-simulator/validation.ts', import.meta.url), 'utf8');
-const bottomNavSource = readFileSync(new URL('../layout/BottomNav.tsx', import.meta.url), 'utf8');
+const shellStylesSource = readFileSync(new URL('../../../app/globals.css', import.meta.url), 'utf8');
 const workerSource = readFileSync(new URL('../../workers/optionsMonteCarlo.worker.ts', import.meta.url), 'utf8');
 const tabsSource = readFileSync(new URL('../ui/Tabs.tsx', import.meta.url), 'utf8');
 const disclosureSource = readFileSync(new URL('./MetricDisclosure.tsx', import.meta.url), 'utf8');
@@ -461,12 +461,14 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).not.toContain('md:left-auto md:right-6');
   });
 
-  it('positions the sticky mobile action above bottom navigation and reserves content space', () => {
-    expect(bottomNavSource).toContain('h-16');
-    expect(bottomNavSource).toContain('z-50');
-    expect(source).toContain('bottom-[calc(4rem+env(safe-area-inset-bottom))]');
+  it('positions the sticky mobile action above the dock and reserves content space', () => {
+    // Both offsets read the shell's own clearance token rather than restating
+    // the navigation's height, so the bar cannot drift out from under the dock.
+    expect(shellStylesSource).toContain('--dock-clearance:');
+    expect(shellStylesSource).toContain('z-index: 50;');
+    expect(source).toContain('bottom-[var(--dock-clearance)]');
     expect(source).toContain('z-40');
-    expect(source).toContain('pb-[calc(9rem+env(safe-area-inset-bottom))]');
+    expect(source).toContain('pb-[calc(var(--dock-clearance)+5rem)]');
     expect(source).toContain('mobile-calculate-disabled-reason');
     expect(source).toContain('aria-describedby={calculateDisabledReason');
   });

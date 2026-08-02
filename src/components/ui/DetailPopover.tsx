@@ -69,13 +69,15 @@ export function DetailPopover({
       </button>
       {open && (
         <>
-          {/* Mobile: a dismiss layer behind the content-height sheet. */}
+          {/* Mobile: a dismiss layer behind the content-height sheet. The sheet
+              itself stops above the dock rather than at the viewport edge,
+              where the capsule would sit over its last rows. */}
           <button type="button" aria-label="ปิดรายละเอียด" onClick={close} className="fixed inset-0 z-40 bg-black/50 sm:hidden" />
           <div
             role="dialog"
             aria-modal="true"
             aria-label={dialogLabel ?? (typeof title === 'string' ? title : triggerLabel)}
-            className={`fixed inset-x-3 bottom-3 z-50 max-h-[70vh] overflow-y-auto overscroll-contain rounded-xl border border-slate-700 bg-[#0F1420] p-3 text-left shadow-2xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-7 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${align === 'end' ? 'sm:right-0' : 'sm:left-0'}`}
+            className={`fixed inset-x-3 bottom-[var(--dock-clearance)] z-50 max-h-[70vh] overflow-y-auto overscroll-contain rounded-xl border border-slate-700 bg-[#0F1420] p-3 text-left shadow-2xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-7 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${align === 'end' ? 'sm:right-0' : 'sm:left-0'}`}
           >
             <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-2">
               <b className="min-w-0 text-sm text-slate-100">{title}</b>

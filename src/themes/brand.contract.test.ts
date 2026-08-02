@@ -10,7 +10,9 @@ const manifest = buildManifest();
 
 describe('PortKheaw brand and Display contracts', () => {
   it('ships Kheaw in the app shell and all declared manifest assets exist', () => {
-    const sidebar = readFileSync(resolve('src/components/layout/Sidebar.tsx'), 'utf8');
+    // The shell carries Kheaw through one lockup now that the sidebar is gone:
+    // the header renders it, and the lockup is what holds the official mark.
+    const lockup = readFileSync(resolve('src/components/brand/BrandLockup.tsx'), 'utf8');
     const header = readFileSync(resolve('src/components/layout/Header.tsx'), 'utf8');
     const icon = readFileSync(resolve('app/icon.svg'), 'utf8');
 
@@ -19,8 +21,8 @@ describe('PortKheaw brand and Display contracts', () => {
     const mascot = readFileSync(resolve('src/components/auth/KheawMascot.tsx'), 'utf8');
     const welcome = readFileSync(resolve('app/auth/welcome/page.tsx'), 'utf8');
 
-    expect(sidebar).toContain('<BrandMark');
-    expect(header).toContain('<BrandMark');
+    expect(lockup).toContain('<BrandMark');
+    expect(header).toContain('<BrandLockup');
     expect(mascot).toContain('/brand/kheaw-mark.png');
     expect(welcome).toContain('<KheawMascot');
     for (const source of [mascot, welcome]) {
@@ -74,9 +76,8 @@ describe('PortKheaw brand and Display contracts', () => {
     for (const file of ['src/themes/portkheaw/dark.css', 'src/themes/portkheaw/light.css']) {
       expect(readFileSync(resolve(file), 'utf8')).toContain('--brand-mark-bg: #000000;');
     }
-    for (const file of ['src/components/layout/Sidebar.tsx', 'src/components/layout/Header.tsx']) {
-      expect(readFileSync(resolve(file), 'utf8')).toContain('bg-[var(--brand-mark-bg)]');
-    }
+    expect(readFileSync(resolve('src/components/brand/BrandLockup.tsx'), 'utf8'))
+      .toContain('bg-[var(--brand-mark-bg)]');
     expect(readFileSync(resolve('scripts/build-kheaw-assets.mjs'), 'utf8'))
       .toContain("background: '#000000'");
   });

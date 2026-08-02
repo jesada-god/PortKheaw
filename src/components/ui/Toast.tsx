@@ -30,8 +30,13 @@ export const useToast = create<ToastStore>((set) => ({
 export function Toaster() {
   const { toasts, removeToast } = useToast()
 
+  /*
+   * Above the dock at every width. The old `sm:bottom-4` assumed the bottom
+   * strip was a mobile-only navigation; the capsule is there on desktop too, and
+   * a toast pinned to the viewport edge would sit behind it.
+   */
   return (
-    <div aria-live="polite" className="fixed left-4 right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] sm:left-auto sm:bottom-4 sm:right-4 z-50 flex flex-col gap-2 pointer-events-none">
+    <div aria-live="polite" className="fixed left-4 right-4 bottom-[calc(var(--dock-clearance)+0.25rem)] sm:left-auto sm:right-4 z-50 flex flex-col gap-2 pointer-events-none">
       {toasts.map((toast) => (
         <div
           key={toast.id}

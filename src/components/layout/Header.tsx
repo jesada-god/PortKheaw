@@ -1,10 +1,8 @@
 'use client';
 import { ArrowLeft, Search, Bell, User } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { appConfig } from '@/src/config/app';
 import { useEffect, useState } from 'react';
-import { BrandMark } from '@/src/components/brand/BrandMark';
+import { BrandLockup } from '@/src/components/brand/BrandLockup';
 
 interface HeaderProps {
   title: string;
@@ -48,26 +46,37 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
             <ArrowLeft aria-hidden="true" size={21} />
           </button>
         )}
-        {!backFallbackHref && (
-          <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-mark-bg)] min-[360px]:flex lg:hidden" aria-label={appConfig.name}>
-            <BrandMark priority className="h-9 w-9" />
+        {/*
+          The lockup sits above the page title on a handset and beside it from
+          lg. Stacked is what makes both fit at 320px: the three header actions
+          take a fixed 148px on the right, which leaves the brand and a page
+          title no room to share a row.
+        */}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:gap-4">
+          {!backFallbackHref && (
+            <>
+              <BrandLockup priority />
+              <span aria-hidden="true" className="hidden h-7 w-px flex-none bg-[var(--border)] md:block" />
+            </>
+          )}
+          {/* min-w-0: without it this flex item refuses to shrink and `truncate`
+              below never engages, so a long title runs under the header actions
+              at 320px instead of ellipsing. */}
+          <div className="min-w-0">
+            <h2 className={backFallbackHref ? 'whitespace-nowrap text-base font-semibold text-[var(--text)] sm:text-lg' : 'truncate text-base font-semibold text-[var(--text)] sm:text-lg'}>{title}</h2>
+            {subtitle && <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block">{subtitle}</p>}
           </div>
-        )}
-        <div className="min-w-0 flex-1">
-          {!backFallbackHref && <p className="mb-1 truncate text-xs font-semibold leading-none text-[var(--accent)] lg:hidden">{appConfig.name}</p>}
-          <h2 className={backFallbackHref ? 'whitespace-nowrap text-base font-semibold text-[var(--text)] sm:text-lg' : 'truncate text-base font-semibold text-[var(--text)] sm:text-lg'}>{title}</h2>
-          {subtitle && <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block">{subtitle}</p>}
         </div>
 
         {status && (
-          <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 px-2 py-1 rounded-full ml-4">
-            <span className={`w-2 h-2 rounded-full ${
-              status.indicator === 'green' ? 'bg-emerald-500 shadow-[0_0_8px_#10B981]' :
-              status.indicator === 'yellow' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+          <div className="ml-4 hidden items-center gap-2 rounded-full bg-[var(--surface-hover)] px-2 py-1 md:flex">
+            <span className={`h-2 w-2 rounded-full ${
+              status.indicator === 'green' ? 'bg-[var(--positive)]' :
+              status.indicator === 'yellow' ? 'bg-[var(--warning)]' : 'bg-[var(--negative)]'
             }`} />
             <span className={`text-[10px] font-bold uppercase tracking-tighter ${
-              status.indicator === 'green' ? 'text-emerald-500' :
-              status.indicator === 'yellow' ? 'text-[#F59E0B]' : 'text-[#EF4444]'
+              status.indicator === 'green' ? 'text-[var(--positive)]' :
+              status.indicator === 'yellow' ? 'text-[var(--warning)]' : 'text-[var(--negative)]'
             }`}>
               {status.text}
             </span>
@@ -90,24 +99,24 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
         </div>
         <div className="flex items-center gap-2 md:gap-3">
           <button
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-white md:hidden"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)] md:hidden"
             onClick={() => router.push('/search')}
             aria-label="ค้นหา"
           >
             <Search size={20} />
           </button>
           <button
-            className="relative flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+            className="relative flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
             onClick={() => router.push('/notifications')}
             aria-label={`การแจ้งเตือน${unreadCount > 0 ? `ที่ยังไม่ได้อ่าน ${unreadCount} รายการ` : ''}`}
           >
             <Bell size={20} />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#D4FF00] rounded-full border-2 border-[#0A0E17]" />
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border-2 border-[var(--bg)] bg-[var(--accent)]" />
             )}
           </button>
           <button
-            className="w-11 h-11 rounded-full border-2 border-[#D4FF00] bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-colors overflow-hidden"
+            className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border-2 border-[var(--accent)] bg-[var(--surface-hover)] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
             onClick={() => router.push('/profile')}
             aria-label="โปรไฟล์"
           >
