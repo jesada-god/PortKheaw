@@ -49,4 +49,11 @@ describe('settings preferences contract', () => {
     expect(actions).toContain('client.auth.getUser()');
     expect(actions).not.toContain('formData.get(\'userId\')');
   });
+
+  it('does not force the document wider than a 320px viewport', () => {
+    const globals = read('app/globals.css');
+    const bodyRule = globals.match(/body\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(bodyRule).toContain('overflow-x: hidden');
+    expect(bodyRule).not.toMatch(/min-width:\s*320px/);
+  });
 });
