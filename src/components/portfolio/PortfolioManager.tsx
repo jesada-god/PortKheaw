@@ -30,6 +30,11 @@ import {
 import { DecimalInput, Field } from './FormControls';
 import { PortfolioGoalCard } from './PortfolioGoalCard';
 import { portfolioCreationEntitlement } from '@/src/lib/subscription/subscription-limits';
+import { READ_ONLY_PORTFOLIO_MESSAGE } from '@/src/lib/subscription/entitlement-errors';
+import {
+  basicWritableStockPortfolioId,
+  portfolioWriteBlock,
+} from '@/src/lib/subscription/portfolio-write-access';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
 type Money = (value: number | string | null) => string;
@@ -113,6 +118,12 @@ export function PortfolioManager({
   });
   const active = portfolios.filter((portfolio) => portfolio.archivedAt === null);
   const optionsEntitlement = portfolioCreationEntitlement(effectiveTier, 'OPTION');
+  /*
+   * The list is rendered in the repository's (created_at, id) order, which is
+   * the order the database itself picks the one writable Basic stock portfolio
+   * in. Reading it as given keeps the badge and the server's answer in step.
+   */
+  const writableStockId = basicWritableStockPortfolioId(portfolios);
   const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? portfolios[0];
   const goalSummary = goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id];
   const goal = goalScope === 'aggregate'
@@ -288,10 +299,11 @@ export function PortfolioManager({
           && (optionTargetCounts[portfolio.id] ?? 0) === 0
           && summary.cashBalance === 0
           && positions === 0;
+        const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
         return <article key={portfolio.id} className={`min-w-0 rounded-2xl border p-4 ${portfolio.id === selectedPortfolioId ? 'border-[#D4FF00]/50 bg-[#D4FF00]/5' : 'border-slate-800 bg-slate-950/35'} ${portfolio.archivedAt ? 'opacity-75' : ''}`}>
           <button type="button" onClick={() => onSelect(portfolio.id)} className="min-h-11 w-full text-left focus-visible:rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
             <span className="flex items-start justify-between gap-2">
-              <span className="min-w-0"><strong className="block break-words text-white">{portfolio.name}</strong><span className="mt-1 block text-xs text-slate-400">{typeLabel(portfolio.type)}{portfolio.archivedAt ? ' · Archived' : ''}</span></span>
+              <span className="min-w-0"><strong className="block break-words text-white">{portfolio.name}</strong><span className="mt-1 block text-xs text-slate-400">{typeLabel(portfolio.type)}{portfolio.archivedAt ? ' · Archived' : ''}{writeBlock ? ' · อ่านอย่างเดียว' : ''}</span></span>
               <FolderOpen className="shrink-0 text-[#D4FF00]" size={18} />
             </span>
           </button>
@@ -307,13 +319,17 @@ export function PortfolioManager({
             {goalProgress.reason && <p className="mt-1 text-amber-300">{goalProgress.reason}</p>}
           </div>}
           <p className="mt-3 text-[11px] text-slate-500">{updated ? `ราคาล่าสุด ${displayTime(updated)}` : positions ? 'ยังไม่มีเวลาราคาที่ตรวจสอบได้' : 'ยังไม่มีสถานะเปิด'}</p>
+          {writeBlock && <p className="mt-3 flex items-start gap-1.5 text-[11px] text-amber-300">
+            <Lock aria-hidden="true" size={12} className="mt-0.5 shrink-0" />
+            <span>{READ_ONLY_PORTFOLIO_MESSAGE}</span>
+          </p>}
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Button size="sm" variant="outline" onClick={() => onSelect(portfolio.id)}>เปิดดู</Button>
-            <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
-            <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
+            <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
+            <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
             {portfolio.archivedAt
               ? <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> คืนค่า</Button>
-              : <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => { setError(''); setConfirming(portfolio); }}>{canDelete ? <Trash2 size={14} /> : <Archive size={14} />}{canDelete ? 'ลบ' : 'Archive'}</Button>}
+              : <Button size="sm" variant="outline" disabled={!isOnline || (canDelete && Boolean(writeBlock))} onClick={() => { setError(''); setConfirming(portfolio); }}>{canDelete ? <Trash2 size={14} /> : <Archive size={14} />}{canDelete ? 'ลบ' : 'Archive'}</Button>}
           </div>
         </article>;
       })}

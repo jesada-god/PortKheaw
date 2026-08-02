@@ -417,6 +417,23 @@ export interface Database {
           database_now: string;
         }>;
       };
+      /**
+       * Takes no arguments on purpose: identity, clock and current subscription
+       * are all read inside the database, and billing identifiers are never
+       * part of the projection it returns.
+       */
+      start_elite_trial: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          user_id: string;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          database_now: string;
+        }>;
+      };
       create_portfolio: { Args: { input_name: string; input_type: 'STOCK' | 'OPTION' }; Returns: string };
       update_portfolio_details: { Args: { target_portfolio_id: string; input_name: string; input_type: PortfolioType }; Returns: undefined };
       set_portfolio_goal: { Args: { target_portfolio_id: string; input_target_value_usd: string | null; input_target_date: string | null }; Returns: undefined };

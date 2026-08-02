@@ -82,7 +82,7 @@ function quoteNumber(value: number | null, digits?: number) {
   }).format(value);
 }
 
-export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone }: {
+export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false }: {
   portfolio: PortfolioRecord;
   portfolios: PortfolioRecord[];
   positions: OptionPositionSummary[];
@@ -93,6 +93,8 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   showBalances: boolean;
   isOnline: boolean;
   timezone: string;
+  /** True when the subscription may read this portfolio but not write to it. */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -280,14 +282,14 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
         <h3 className="font-bold text-white">สัญญาออปชันที่ถืออยู่</h3>
         <p className="mt-1 text-xs text-slate-500">ทุก Action เป็นรายการใน Transaction Ledger และไม่ส่ง Order ไปโบรกเกอร์</p>
       </div>
-      <Button size="sm" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
+      <Button size="sm" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
     </div>
     <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
       ราคาและมูลค่าปิดเป็นการประเมินจากข้อมูลตลาดจริง ไม่ใช่ราคาที่รับประกัน: Long ใช้ Bid สำหรับประมาณการปิด และ Short ใช้ Ask สำหรับประมาณการซื้อคืน
     </div>
 
     {positions.length === 0
-      ? <div className="p-8 text-center"><p className="font-semibold text-white">ยังไม่มีรายการออปชันใน Ledger</p><Button className="mt-4" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button></div>
+      ? <div className="p-8 text-center"><p className="font-semibold text-white">ยังไม่มีรายการออปชันใน Ledger</p><Button className="mt-4" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button></div>
       : <>
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[1180px] text-left text-xs" data-testid="options-desktop-table">
@@ -348,7 +350,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     />
     <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบ ${deleting ? transactionLabels[deleting.type] : 'รายการออปชัน'} หรือไม่`}>
       <p className="text-sm text-slate-300">การลบจะคำนวณเงินสด จำนวนสัญญา ต้นทุน และ P&amp;L ใหม่จาก Ledger ทั้งหมด และอาจถูกปฏิเสธหากทำให้รายการปิดภายหลังเกินจำนวนที่มี</p>
-      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmDelete}>ยืนยันการลบ</Button></div>
+      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline || readOnly} onClick={confirmDelete}>ยืนยันการลบ</Button></div>
     </Modal>
     <Modal isOpen={Boolean(targetPosition)} onClose={() => !pending && setTargetPosition(null)} title={`เป้าหมายขาย ${targetPosition ? optionPositionTitle(targetPosition) : ''}`}>
       <form className="space-y-4" onSubmit={submitTarget}>
@@ -374,12 +376,12 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
         </dl>}
         {targetError && <p role="alert" className="text-xs text-red-400">{targetError}</p>}
         <p className="text-xs text-slate-500">ติดตามในแอปเมื่อเปิดหรือรีเฟรชพอร์ต ไม่รับประกัน Push Notification และไม่ส่ง Order</p>
-        <div className="flex gap-2"><Button type="button" variant="outline" className="flex-1" onClick={() => setTargetPosition(null)}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending || !targetPreview}>บันทึกเป้าหมาย</Button></div>
+        <div className="flex gap-2"><Button type="button" variant="outline" className="flex-1" onClick={() => setTargetPosition(null)}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending || readOnly || !targetPreview}>บันทึกเป้าหมาย</Button></div>
       </form>
     </Modal>
     <Modal isOpen={Boolean(targetDeleting)} onClose={() => !pending && setTargetDeleting(null)} title="ลบเป้าหมายขายหรือไม่">
       <p className="text-sm text-slate-300">ระบบจะหยุดติดตามเป้าหมายของ {targetDeletingPosition ? optionPositionTitle(targetDeletingPosition) : 'สัญญาออปชันนี้'}</p>
-      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setTargetDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmTargetDelete}>ยืนยันการลบ</Button></div>
+      <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setTargetDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline || readOnly} onClick={confirmTargetDelete}>ยืนยันการลบ</Button></div>
     </Modal>
   </section>;
 }

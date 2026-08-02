@@ -1,4 +1,6 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { ChevronRight, Sparkles } from 'lucide-react';
 import Header from '@/src/components/layout/Header';
 import { AuthMessage } from '@/src/components/auth/AuthMessage';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
@@ -9,6 +11,10 @@ import { saveSettingsAction } from './actions';
 import { DevicePreferences } from '@/src/components/settings/DevicePreferences';
 import { NotificationPreferences } from '@/src/components/settings/NotificationPreferences';
 import { ThemeControls } from '@/src/themes/ThemeControls';
+import { SubscriptionRepository } from '@/src/lib/subscription/repository';
+import { resolveEffectiveTier } from '@/src/lib/subscription/resolve-effective-tier';
+import { planDescriptor } from '@/src/lib/subscription/plan-catalog';
+import { resolveTrialState } from '@/src/lib/subscription/trial';
 
 export default async function SettingsPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -23,7 +29,12 @@ export default async function SettingsPage({ searchParams }: {
   }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/sign-in?next=/settings');
-  const { data } = await supabase.from('user_settings').select('*').eq('user_id', user.id).maybeSingle();
+  const [{ data }, subscription] = await Promise.all([
+    supabase.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
+    new SubscriptionRepository(supabase).getSnapshot(),
+  ]);
+  const effectiveTier = resolveEffectiveTier(subscription, subscription.databaseNow);
+  const trialState = resolveTrialState(subscription, Boolean(user.email_confirmed_at));
   const settings = data ?? {
     base_currency: 'USD' as const,
     language: 'th' as const,
@@ -42,6 +53,29 @@ export default async function SettingsPage({ searchParams }: {
   return <div>
     <Header title="การตั้งค่า" subtitle="เลือกการแสดงผลและการแจ้งเตือนที่เหมาะกับคุณ" />
     <main className="mx-auto max-w-2xl space-y-8 p-4 md:p-8">
+      {/* The one route into the subscription centre. The dock's five primary
+          destinations are unchanged — a plan page is something a reader visits
+          occasionally, from Settings, not a peer of Portfolio or Watchlist. */}
+      <Link
+        href="/settings/subscription"
+        className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] sm:p-5"
+      >
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
+          <Sparkles aria-hidden="true" size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-[var(--text)]">แพ็กเกจของคุณ</span>
+          <span className="block text-xs text-[var(--text-muted)]">
+            {trialState.kind === 'trialing'
+              ? 'กำลังทดลอง Elite อยู่'
+              : trialState.kind === 'eligible'
+                ? `ตอนนี้ใช้ ${planDescriptor(effectiveTier).name} · ทดลอง Elite ฟรี 7 วันได้`
+                : `ตอนนี้ใช้ ${planDescriptor(effectiveTier).name}`}
+          </span>
+        </span>
+        <ChevronRight aria-hidden="true" size={18} className="shrink-0 text-[var(--text-muted)]" />
+      </Link>
+
       <form action={saveSettingsAction} className="space-y-5">
         <AuthMessage error={error} message={message} />
         <section className="space-y-4">

@@ -3,9 +3,24 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
 import { resolveEffectiveTier } from './resolve-effective-tier';
-import type { SubscriptionSnapshot, SubscriptionTier } from './subscription-types';
+import type {
+  SubscriptionSnapshot,
+  SubscriptionStatus,
+  SubscriptionTier,
+} from './subscription-types';
 
 type SnapshotRow = Database['public']['Functions']['get_my_subscription_snapshot']['Returns'][number];
+
+/** The sanitized projection `start_elite_trial()` returns — no billing identifiers. */
+export interface TrialGrant {
+  userId: string;
+  tier: SubscriptionTier;
+  status: SubscriptionStatus;
+  trialStartedAt: string | null;
+  trialEndsAt: string | null;
+  trialUsedAt: string | null;
+  databaseNow: string;
+}
 
 function mapSnapshot(row: SnapshotRow): SubscriptionSnapshot {
   return {
@@ -42,5 +57,26 @@ export class SubscriptionRepository {
   async getEffectiveTier(): Promise<SubscriptionTier> {
     const snapshot = await this.getSnapshot();
     return resolveEffectiveTier(snapshot, snapshot.databaseNow);
+  }
+
+  /**
+   * Starts the seven-day Elite trial. Nothing is passed in: the database reads
+   * the caller from `auth.uid()`, the clock from `now()`, and refuses on its own
+   * terms. Errors surface unchanged so the caller can map the typed code.
+   */
+  async startEliteTrial(): Promise<TrialGrant> {
+    const { data, error } = await this.client.rpc('start_elite_trial');
+    if (error) throw error;
+    const row = data?.[0];
+    if (!row) throw new Error('Elite trial did not return a subscription snapshot');
+    return {
+      userId: row.user_id,
+      tier: row.tier,
+      status: row.status,
+      trialStartedAt: row.trial_started_at,
+      trialEndsAt: row.trial_ends_at,
+      trialUsedAt: row.trial_used_at,
+      databaseNow: row.database_now,
+    };
   }
 }

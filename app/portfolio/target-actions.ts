@@ -6,6 +6,7 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { calculateOptionLedger, calculateOptionTarget } from '@/src/lib/portfolio/options/calculations';
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
+import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
 import type { PortfolioActionResult } from './actions';
 
 const targetSchema = z.object({
@@ -48,7 +49,11 @@ export async function upsertOptionTargetAction(raw: unknown): Promise<PortfolioA
     });
     revalidatePath('/portfolio');
     return { ok: true };
-  } catch {
+  } catch (error) {
+    // An entitlement refusal is a specific, actionable answer; losing it inside
+    // a generic "try again" would tell the reader nothing they can act on.
+    const entitlement = entitlementFailure(error);
+    if (entitlement) return { ok: false, ...entitlement };
     return { ok: false, code: 'database', message: 'บันทึกเป้าหมายขายไม่สำเร็จ กรุณาลองอีกครั้ง' };
   }
 }
@@ -61,7 +66,9 @@ export async function deleteOptionTargetAction(id: string): Promise<PortfolioAct
     await ctx.targets.delete(id);
     revalidatePath('/portfolio');
     return { ok: true };
-  } catch {
+  } catch (error) {
+    const entitlement = entitlementFailure(error);
+    if (entitlement) return { ok: false, ...entitlement };
     return { ok: false, code: 'database', message: 'ลบเป้าหมายขายไม่สำเร็จ กรุณาลองอีกครั้ง' };
   }
 }

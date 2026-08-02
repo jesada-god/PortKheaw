@@ -20,8 +20,15 @@ describe('portfolio entitlement vertical slice', () => {
     expect(page).toContain('subscriptionRepository.getEffectiveTier()');
     expect(repository).toContain("this.client.rpc('get_my_subscription_snapshot')");
     expect(repository).toContain('resolveEffectiveTier(snapshot, snapshot.databaseNow)');
-    expect(actions).toContain("code: 'UPGRADE_REQUIRED'");
-    expect(actions).toContain("code: 'LIMIT_REACHED'");
+    /*
+     * The typed codes moved into one shared mapper when the read-only refusal
+     * joined them, so the action module is checked for routing through it and
+     * the codes themselves are checked where they are now defined.
+     */
+    expect(actions).toContain('entitlementFailure(error)');
+    const entitlementErrors = read('src/lib/subscription/entitlement-errors.ts');
+    expect(entitlementErrors).toContain("'UPGRADE_REQUIRED'");
+    expect(entitlementErrors).toContain("'LIMIT_REACHED'");
   });
 
   it('does not perform local-clock entitlement checks in render components', () => {

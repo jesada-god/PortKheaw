@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle, Briefcase, ChevronDown, ChevronUp, Edit3, Eye, EyeOff,
-  History, LoaderCircle, Plus, RefreshCw, Trash2,
+  History, Lock, LoaderCircle, Plus, RefreshCw, Trash2,
 } from 'lucide-react';
 import {
   createPortfolioTransactionAction,
@@ -36,6 +37,11 @@ import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
+import { READ_ONLY_PORTFOLIO_MESSAGE } from '@/src/lib/subscription/entitlement-errors';
+import {
+  basicWritableStockPortfolioId,
+  portfolioWriteBlock,
+} from '@/src/lib/subscription/portfolio-write-access';
 
 const OPTION_TYPES = new Set<PortfolioTransactionType>([
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
@@ -122,6 +128,13 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     [optionQuotes, portfolios, prices],
   );
   const summary = summaries[portfolio.id];
+  /*
+   * `portfolios` arrives ordered by (created_at, id) from the repository, which
+   * is the same order the database resolves its writable choice in — so the
+   * list must be read as given, not re-sorted.
+   */
+  const writableStockId = useMemo(() => basicWritableStockPortfolioId(portfolios), [portfolios]);
+  const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
   const aggregateSummary = useMemo(
     () => aggregatePortfolioSummaries(portfolios.map((item) => summaries[item.id])),
     [portfolios, summaries],
@@ -308,7 +321,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
           {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-amber-300">Today P&amp;L ยังไม่พร้อม: ไม่มีราคาปิดวันก่อนสำหรับบางสถานะ</p>}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto">
-          <Button disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate(portfolio.type === 'OPTION' ? 'deposit' : 'acquisition')}><Plus size={17} /> เพิ่มรายการใน {portfolio.name}</Button>
+          <Button disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate(portfolio.type === 'OPTION' ? 'deposit' : 'acquisition')}><Plus size={17} /> เพิ่มรายการใน {portfolio.name}</Button>
           <Button variant="outline" onClick={() => openHistory()}><History size={17} /> ประวัติพอร์ตที่เลือก</Button>
         </div>
       </div>
@@ -367,6 +380,23 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
         </div>
       </div>
       {portfolio.archivedAt && <p className="mt-3 text-xs text-amber-300">พอร์ตนี้ถูก Archive แล้ว จึงรับ transaction ใหม่ไม่ได้ แต่ยังรวมในพอร์ตรวมและเก็บ history ครบถ้วน</p>}
+      {/*
+        Says what is still possible before what is not: the history below is
+        fully readable, and only writing needs a higher tier. The database is
+        what actually refuses the write; this only explains it in advance.
+      */}
+      {writeBlock && <p className="mt-3 flex items-start gap-2 text-xs text-[var(--warning)]">
+        <Lock aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
+        <span>
+          {writeBlock === 'upgrade'
+            ? 'พอร์ต Options นี้ยังเปิดดูได้ครบ แต่ต้องใช้ Pro เพื่อแก้ไขต่อ'
+            : READ_ONLY_PORTFOLIO_MESSAGE}
+          {' '}
+          <Link href="/settings/subscription" className="font-medium underline underline-offset-2">
+            ดูแพ็กเกจ
+          </Link>
+        </span>
+      </p>}
     </section>
 
     {portfolio.type !== 'OPTION' && <>
@@ -376,13 +406,13 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
           <Briefcase aria-hidden="true" className="shrink-0 text-[#D4FF00]" size={20} />
           <h3 className="min-w-0 font-bold text-white">สินทรัพย์ที่ถืออยู่</h3>
         </div>
-        <Button size="sm" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={16} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
+        <Button size="sm" disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={16} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
       </div>
       {summary.holdings.length === 0
         ? <div className="p-8 text-center sm:p-10">
           <p className="font-semibold text-white">ยังไม่มีหุ้นหรือ ETF ในพอร์ต</p>
           <p className="mt-1 text-sm text-slate-400">เพิ่มรายการซื้อ หรือนำเข้าสถานะตั้งต้นเพื่อเริ่มคำนวณ</p>
-          <Button className="mt-5" disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={17} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
+          <Button className="mt-5" disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={17} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
         </div>
         : <>
           <div className="hidden overflow-x-auto md:block">
@@ -444,6 +474,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       showBalances={showBalances}
       isOnline={isOnline}
       timezone={timezone}
+      readOnly={Boolean(writeBlock)}
     />}
 
     <TransactionFormModal

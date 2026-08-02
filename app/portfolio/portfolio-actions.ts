@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { createClient } from '@/src/lib/supabase/server';
+import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
 import type { PortfolioActionResult } from './actions';
 import {
   DEFAULT_TRANSACTION_TIME_ZONE,
@@ -24,13 +25,8 @@ async function repository() {
 
 function resultFor(error: unknown): PortfolioActionResult {
   const value = error as { code?: string; message?: string } | null;
-  if (value?.message?.includes('UPGRADE_REQUIRED')) {
-    return { ok: false, code: 'UPGRADE_REQUIRED', message: 'พอร์ต Options ใช้ได้ใน Pro' };
-  }
-  if (value?.message?.includes('LIMIT_REACHED')) {
-    const maximum = value.message.match(/LIMIT_REACHED:[A-Z]+:(\d+)/)?.[1] ?? '10';
-    return { ok: false, code: 'LIMIT_REACHED', message: `สร้างพอร์ตประเภทนี้ได้สูงสุด ${maximum} พอร์ต` };
-  }
+  const entitlement = entitlementFailure(error);
+  if (entitlement) return { ok: false, ...entitlement };
   if (value?.code === '23505') return { ok: false, code: 'duplicate', message: 'ชื่อพอร์ตนี้ซ้ำกับพอร์ตประเภทเดียวกัน (ระบบไม่แยกตัวพิมพ์เล็ก/ใหญ่)' };
   if (value?.code === '42501') return { ok: false, code: 'unauthorized', message: 'ไม่พบพอร์ตหรือคุณไม่มีสิทธิ์จัดการพอร์ตนี้' };
   if (value?.code === '23514') {

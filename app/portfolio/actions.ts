@@ -5,6 +5,7 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { portfolioTransactionSchema } from '@/src/lib/portfolio/validation';
 import { getInstrumentStatus } from '@/src/lib/instruments/status';
+import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
 import {
   preparePortfolioTransactionForCreate,
   preparePortfolioTransactionForUpdate,
@@ -21,6 +22,10 @@ async function repository() {
 
 function failure(error: unknown): PortfolioActionResult {
   const value = error as { code?: string; message?: string } | null;
+  // Entitlement refusals arrive as a typed message from the ledger RPCs and
+  // must be told apart from the ledger's own constraint failures below.
+  const entitlement = entitlementFailure(error);
+  if (entitlement) return { ok: false, ...entitlement };
   if (value?.code === '23505') return { ok: false, code: 'duplicate', message: 'ชื่อพอร์ตนี้มีอยู่แล้วในประเภทเดียวกัน' };
   if (value?.code === '23514' && value.message?.includes('Portfolio limit')) {
     return { ok: false, code: 'limit', message: 'สร้างพอร์ตประเภทนี้ได้สูงสุด 10 พอร์ต' };
