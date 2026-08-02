@@ -38,4 +38,20 @@ describe('server environment parsing', () => {
     expect(parsed.data.MARKET_DATA_PROVIDER).toBeUndefined();
     expect(parsed.issues).toEqual([]);
   });
+
+  it('parses only the explicit public/private push variable boundary', () => {
+    const parsed = parseServerEnv({
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: 'browser-safe-key',
+      VAPID_PRIVATE_KEY: 'server-secret-key',
+      VAPID_SUBJECT: 'https://portkheaw.vercel.app',
+    });
+
+    expect(parsed.data.NEXT_PUBLIC_VAPID_PUBLIC_KEY)
+      .toBe('browser-safe-key');
+    expect(parsed.data.VAPID_PRIVATE_KEY).toBe('server-secret-key');
+    expect(parsed.data.VAPID_SUBJECT)
+      .toBe('https://portkheaw.vercel.app');
+    expect(parsed.data).not.toHaveProperty('WEB_PUSH_VAPID_PRIVATE_KEY');
+    expect(parsed.issues).toEqual([]);
+  });
 });

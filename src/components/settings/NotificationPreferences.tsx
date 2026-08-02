@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Bell, Clock3, RotateCcw } from 'lucide-react';
+import { Clock3, RotateCcw } from 'lucide-react';
 import {
   saveNotificationScheduleAction,
   saveNotificationToggleAction,
 } from '@/app/settings/actions';
 import { Button } from '@/src/components/ui/Button';
+import { PushPreferences } from './PushPreferences';
 
 type ToggleSetting =
   | 'priceAlertsEnabled'
@@ -109,10 +110,7 @@ export function NotificationPreferences({ initial }: { initial: NotificationPref
     </div>
 
     <div className="space-y-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow)] sm:p-6">
-      <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-4">
-        <Bell className="shrink-0 text-[var(--text-muted)]" size={20} />
-        <p className="text-sm text-[var(--text-secondary)]">การแจ้งเตือนบนอุปกรณ์นี้ยังไม่เปิดใช้งาน</p>
-      </div>
+      <PushPreferences />
 
       <div className="divide-y divide-[var(--border)]">
         <div className="flex min-h-20 items-center justify-between gap-4 py-4">

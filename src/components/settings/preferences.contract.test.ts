@@ -28,10 +28,19 @@ describe('settings preferences contract', () => {
 
   it('saves notification switches immediately and exposes a retry state', () => {
     const notifications = read('src/components/settings/NotificationPreferences.tsx');
+    const push = read('src/components/settings/PushPreferences.tsx');
     expect(notifications).toContain('saveNotificationToggleAction');
+    expect(notifications).toContain('<PushPreferences />');
     expect(notifications).toContain('บันทึกแล้ว');
     expect(notifications).toContain('ลองอีกครั้ง');
     expect(notifications).toContain('Asia/Bangkok (UTC+7)');
+    expect(push).toContain('การแจ้งเตือนบนอุปกรณ์นี้');
+    expect(push).toContain('เปิดการแจ้งเตือน');
+    expect(push).toContain('ส่งการแจ้งเตือนทดสอบ');
+    expect(push).toContain('พร้อมรับการแจ้งเตือน');
+    expect(push).toContain('aria-live="polite"');
+    expect(push).not.toContain('Web Push');
+    expect(push).not.toContain('Browser Settings');
   });
 
   it('authenticates and validates every account-setting write', () => {

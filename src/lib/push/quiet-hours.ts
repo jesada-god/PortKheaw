@@ -19,3 +19,20 @@ export function isQuietHour(now: Date, timezone: string, start: string, end: str
   if (from === until) return true;
   return from < until ? current >= from && current < until : current >= from || current < until;
 }
+
+export function nextQuietHoursEnd(
+  now: Date,
+  timezone: string,
+  start: string,
+  end: string,
+): Date {
+  if (!isQuietHour(now, timezone, start, end)) return now;
+  // Search by absolute minutes so daylight-saving transitions remain correct
+  // for every timezone offered in Settings. The longest civil day is bounded
+  // well below this 26-hour window.
+  for (let minutes = 1; minutes <= 26 * 60; minutes += 1) {
+    const candidate = new Date(now.getTime() + minutes * 60_000);
+    if (!isQuietHour(candidate, timezone, start, end)) return candidate;
+  }
+  return new Date(now.getTime() + 26 * 60 * 60_000);
+}

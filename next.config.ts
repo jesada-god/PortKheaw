@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   // constant when a cached production compilation is reused.
   env: {
     NEXT_PUBLIC_MARKET_WS_URL: process.env.NEXT_PUBLIC_MARKET_WS_URL ?? '',
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '',
   },
   eslint: {
     ignoreDuringBuilds: true,

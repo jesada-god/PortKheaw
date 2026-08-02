@@ -71,9 +71,9 @@ export function parseServerEnv(input: Record<string, unknown>) {
       NEWS_API_KEY: read('NEWS_API_KEY', optionalSecret, undefined),
       SUPABASE_SERVICE_ROLE_KEY: read('SUPABASE_SERVICE_ROLE_KEY', optionalSecret, undefined),
       CRON_SECRET: read('CRON_SECRET', optionalSecret, undefined),
-      WEB_PUSH_VAPID_PUBLIC_KEY: read('WEB_PUSH_VAPID_PUBLIC_KEY', optionalSecret, undefined),
-      WEB_PUSH_VAPID_PRIVATE_KEY: read('WEB_PUSH_VAPID_PRIVATE_KEY', optionalSecret, undefined),
-      WEB_PUSH_SUBJECT: read('WEB_PUSH_SUBJECT', optionalSubject, undefined),
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: read('NEXT_PUBLIC_VAPID_PUBLIC_KEY', optionalSecret, undefined),
+      VAPID_PRIVATE_KEY: read('VAPID_PRIVATE_KEY', optionalSecret, undefined),
+      VAPID_SUBJECT: read('VAPID_SUBJECT', optionalSubject, undefined),
     },
     issues,
   };

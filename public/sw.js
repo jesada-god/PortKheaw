@@ -2,7 +2,7 @@
  * Account, authentication, market data, and API responses are never cached here.
  */
 
-const CACHE_NAME = 'nexora-shell-v2';
+const CACHE_NAME = 'nexora-shell-v3';
 
 const SHELL = [
   '/offline',
@@ -131,25 +131,34 @@ self.addEventListener('push', (event) => {
   let payload = {};
 
   try {
-    payload = event.data ? event.data.json() : {};
+    const parsed = event.data ? event.data.json() : {};
+    payload = parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     payload = {};
   }
 
   const notificationOptions = {
-    body: payload.body || 'มีการแจ้งเตือนใหม่',
+    body: typeof payload.body === 'string'
+      ? payload.body.slice(0, 1000)
+      : 'มีการแจ้งเตือนใหม่',
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    tag: payload.tag || 'nexora-alert',
+    tag: typeof payload.tag === 'string'
+      ? payload.tag.slice(0, 200)
+      : 'portkheaw-alert',
     renotify: false,
     data: {
-      url: payload.url || '/notifications',
+      url: typeof payload.url === 'string'
+        ? payload.url.slice(0, 500)
+        : '/notifications',
     },
   };
 
   event.waitUntil(
     self.registration.showNotification(
-      payload.title || 'PortKheaw',
+      typeof payload.title === 'string'
+        ? payload.title.slice(0, 160)
+        : 'PortKheaw',
       notificationOptions,
     ),
   );
@@ -158,10 +167,18 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = new URL(
-    event.notification.data?.url || '/notifications',
-    self.location.origin,
-  ).href;
+  let targetUrl = new URL('/notifications', self.location.origin).href;
+  try {
+    const requestedUrl = new URL(
+      event.notification.data?.url || '/notifications',
+      self.location.origin,
+    );
+    if (requestedUrl.origin === self.location.origin) {
+      targetUrl = requestedUrl.href;
+    }
+  } catch {
+    // Keep the safe Inbox fallback for malformed legacy payloads.
+  }
 
   event.waitUntil(
     self.clients
@@ -175,8 +192,13 @@ self.addEventListener('notificationclick', (event) => {
         );
 
         if (existingClient) {
-          await existingClient.navigate(targetUrl);
-          return existingClient.focus();
+          try {
+            await existingClient.navigate(targetUrl);
+            return await existingClient.focus();
+          } catch {
+            // A tab can close between matchAll() and navigate().
+            return self.clients.openWindow(targetUrl);
+          }
         }
 
         return self.clients.openWindow(targetUrl);

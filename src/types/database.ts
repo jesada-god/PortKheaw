@@ -295,14 +295,14 @@ export interface Database {
         Relationships: [];
       };
       push_subscriptions: {
-        Row: { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; expiration_time: number | null; user_agent: string | null; last_seen_at: string; failure_count: number; disabled_at: string | null; created_at: string; updated_at: string };
-        Insert: { id?: string; user_id: string; endpoint: string; p256dh: string; auth: string; expiration_time?: number | null; user_agent?: string | null; last_seen_at?: string; failure_count?: number; disabled_at?: string | null; created_at?: string; updated_at?: string };
+        Row: { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; expiration_time: number | null; user_agent: string | null; device_label: string | null; enabled: boolean; last_seen_at: string; last_success_at: string | null; last_test_at: string | null; failure_count: number; disabled_at: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; endpoint: string; p256dh: string; auth: string; expiration_time?: number | null; user_agent?: string | null; device_label?: string | null; enabled?: boolean; last_seen_at?: string; last_success_at?: string | null; last_test_at?: string | null; failure_count?: number; disabled_at?: string | null; created_at?: string; updated_at?: string };
         Update: Partial<Database['public']['Tables']['push_subscriptions']['Insert']>;
         Relationships: [];
       };
       push_deliveries: {
-        Row: { id: string; notification_id: string; subscription_id: string; status: 'pending' | 'retrying' | 'sent' | 'failed' | 'skipped'; attempt_count: number; next_attempt_at: string; last_error_code: string | null; sent_at: string | null; created_at: string; updated_at: string };
-        Insert: { id?: string; notification_id: string; subscription_id: string; status?: 'pending' | 'retrying' | 'sent' | 'failed' | 'skipped'; attempt_count?: number; next_attempt_at?: string; last_error_code?: string | null; sent_at?: string | null; created_at?: string; updated_at?: string };
+        Row: { id: string; notification_id: string; subscription_id: string | null; channel: 'web_push'; status: 'pending' | 'processing' | 'retrying' | 'sent' | 'failed' | 'skipped'; attempt_count: number; next_attempt_at: string; provider_status: string | null; last_error_code: string | null; claim_token: string | null; claimed_at: string | null; sent_at: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; notification_id: string; subscription_id?: string | null; channel?: 'web_push'; status?: 'pending' | 'processing' | 'retrying' | 'sent' | 'failed' | 'skipped'; attempt_count?: number; next_attempt_at?: string; provider_status?: string | null; last_error_code?: string | null; claim_token?: string | null; claimed_at?: string | null; sent_at?: string | null; created_at?: string; updated_at?: string };
         Update: Partial<Database['public']['Tables']['push_deliveries']['Insert']>;
         Relationships: [];
       };
@@ -421,6 +421,9 @@ export interface Database {
       trigger_price_alert_service: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; observed_session: string; observed_source: string; notification_title: string; notification_message: string; input_idempotency_key: string }; Returns: string | null };
       enqueue_account_notification_service: { Args: { input_user_id: string; input_type: string; input_title: string; input_message: string; input_metadata: Json; input_idempotency_key: string; input_observed_at: string }; Returns: string };
       flush_queued_notifications_service: { Args: { input_now: string }; Returns: number };
+      upsert_push_subscription: { Args: { input_endpoint: string; input_expiration_time: number | null; input_p256dh: string; input_auth: string; input_user_agent: string | null; input_device_label: string | null; input_now: string }; Returns: string };
+      claim_push_test: { Args: { input_endpoint: string; input_now: string }; Returns: Array<{ subscription_id: string; allowed: boolean; retry_after_seconds: number }> };
+      claim_push_deliveries_service: { Args: { input_limit: number; input_now: string; input_claim_token: string }; Returns: Array<Database['public']['Tables']['push_deliveries']['Row']> };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

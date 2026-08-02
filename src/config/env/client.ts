@@ -10,12 +10,17 @@ const clientEnvSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(1).optional(),
   ),
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(1).optional(),
+  ),
 });
 
 const parsedClientEnv = clientEnvSchema.safeParse({
   NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
 });
 
 export const clientEnv = parsedClientEnv.success
