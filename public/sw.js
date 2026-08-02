@@ -2,14 +2,18 @@
  * Account, authentication, market data, and API responses are never cached here.
  */
 
-const CACHE_NAME = 'nexora-shell-v3';
+/* Bumped to v4 with the manifest move: the `activate` handler below deletes
+ * every cache that is not the current name, which is what evicts the old
+ * `/manifest.json` entry from installs made before the change. */
+const CACHE_NAME = 'nexora-shell-v4';
 
 const SHELL = [
   '/offline',
-  '/manifest.json',
+  '/manifest.webmanifest',
   '/icon.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/apple-touch-icon-180.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -88,7 +92,7 @@ self.addEventListener('fetch', (event) => {
     url.pathname.startsWith('/_next/static/') ||
     url.pathname.startsWith('/icons/') ||
     url.pathname === '/icon.svg' ||
-    url.pathname === '/manifest.json';
+    url.pathname === '/manifest.webmanifest';
 
   if (!isStaticAsset) {
     return;

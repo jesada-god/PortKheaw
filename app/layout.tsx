@@ -13,18 +13,49 @@ export const metadata: Metadata = {
     template: `%s | ${appConfig.name}`,
   },
   description: appConfig.description,
-  manifest: '/manifest.json',
+  manifest: '/manifest.webmanifest',
   icons: {
     icon: [{ url: '/icon.svg', type: 'image/svg+xml' }, { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
-    apple: [{ url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+    // iOS never reads the manifest for this one — it takes `apple-touch-icon`
+    // at its own 180 and resamples anything else, so it gets the real 180.
+    apple: [{ url: '/icons/apple-touch-icon-180.png', sizes: '180x180', type: 'image/png' }],
   },
-  appleWebApp: { capable: true, title: appConfig.shortName, statusBarStyle: 'black-translucent' },
+  /*
+   * `statusBarStyle` is deliberately `default`, not `black-translucent`.
+   * Translucent paints the status bar text a fixed white and lets content run
+   * underneath it: correct on the dark appearance, invisible on the light one,
+   * where the bar sits on `#F4F7F3`. `default` hands the bar to iOS, which
+   * fills it from `themeColor` below and picks a readable text colour for it —
+   * so the one setting tracks both appearances instead of hard-coding one.
+   */
+  appleWebApp: { capable: true, title: appConfig.shortName, statusBarStyle: 'default' },
+  /*
+   * `capable: true` above renders only the standardised `mobile-web-app-capable`
+   * — Next dropped the Apple-prefixed spelling because Chrome deprecated it.
+   * iOS never followed: Safari reads `apple-mobile-web-app-capable` and nothing
+   * else to decide whether a Home Screen launch opens standalone, and unlike
+   * Android it does not consult the manifest's `display` at all. Without this
+   * line the app installs on iOS and then opens inside Safari, address bar and
+   * toolbar included — which is the whole thing this is meant to remove.
+   *
+   * Verified against the emitted <head>, not assumed; `mobile-web-app-capable`
+   * is left to `capable` above so it is not printed twice.
+   */
+  other: { 'apple-mobile-web-app-capable': 'yes' },
   formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  /*
+   * No `maximumScale`/`userScalable: false`. Pinch zoom is an accessibility
+   * affordance and stays available; the accidental zoom this app used to suffer
+   * came from two other causes, both fixed at the source in `globals.css` —
+   * form controls under 16px (which iOS answers by zooming the page on focus)
+   * and controls without `touch-action: manipulation` (which reserve a
+   * double-tap-to-zoom gesture on every tap).
+   */
   viewportFit: 'cover',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#F4F7F3' },

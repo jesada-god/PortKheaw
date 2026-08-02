@@ -1,16 +1,18 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import buildManifest from '@/app/manifest';
+
+// The manifest is now the typed `app/manifest.ts` route rather than a static
+// JSON file, so these contracts assert against the value Next actually serves
+// at /manifest.webmanifest instead of a parsed copy of it.
+const manifest = buildManifest();
 
 describe('PortKheaw brand and Display contracts', () => {
   it('ships Kheaw in the app shell and all declared manifest assets exist', () => {
     const sidebar = readFileSync(resolve('src/components/layout/Sidebar.tsx'), 'utf8');
     const header = readFileSync(resolve('src/components/layout/Header.tsx'), 'utf8');
     const icon = readFileSync(resolve('app/icon.svg'), 'utf8');
-    const manifest = JSON.parse(readFileSync(resolve('app/manifest.json'), 'utf8')) as {
-      name: string;
-      icons: Array<{ src: string; purpose?: string }>;
-    };
 
     // The auth pages carry Kheaw as the mascot itself rather than the small
     // header mark, and it comes from the same committed artwork.
@@ -29,8 +31,8 @@ describe('PortKheaw brand and Display contracts', () => {
     }
     expect(icon).toContain('aria-label="PortKheaw"');
     expect(manifest.name).toBe('PortKheaw');
-    expect(manifest.icons.some(({ purpose }) => purpose === 'maskable')).toBe(true);
-    manifest.icons.forEach(({ src }) => {
+    expect(manifest.icons?.some(({ purpose }) => purpose === 'maskable')).toBe(true);
+    manifest.icons?.forEach(({ src }) => {
       expect(existsSync(resolve(src.replace(/^\//, 'public/').replace('public/icon.svg', 'app/icon.svg')))).toBe(true);
     });
   });
@@ -48,13 +50,9 @@ describe('PortKheaw brand and Display contracts', () => {
         colorType: bytes[25],
       };
     };
-    const manifest = JSON.parse(readFileSync(resolve('app/manifest.json'), 'utf8')) as {
-      background_color: string;
-      icons: Array<{ src: string; sizes: string; type: string }>;
-    };
-
-    for (const { src, sizes, type } of manifest.icons.filter((entry) => entry.src.endsWith('.png'))) {
-      const [declared] = sizes.split('x').map(Number);
+    const pngIcons = (manifest.icons ?? []).filter((entry) => entry.src.endsWith('.png'));
+    for (const { src, sizes, type } of pngIcons) {
+      const [declared] = (sizes ?? '').split('x').map(Number);
       const actual = header(src.replace(/^\//, 'public/'));
       expect(`${src} ${actual.width}x${actual.height} ${type}`)
         .toBe(`${src} ${declared}x${declared} image/png`);

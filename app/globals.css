@@ -37,6 +37,15 @@
   html {
     background-color: var(--bg);
     color-scheme: dark;
+    /*
+     * Mobile browsers inflate text on pages they judge "not mobile-ready",
+     * which silently scales type past what the layout was measured against and
+     * is a cause of a grid that fits at 320px breaking on a real phone. This
+     * turns off that autosizing only — page zoom is a separate mechanism and
+     * stays fully available.
+     */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   body {
@@ -52,6 +61,25 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /*
+   * Removes double-tap-to-zoom from controls, and nothing else.
+   *
+   * A browser cannot fire a tap immediately unless it knows a second tap will
+   * not arrive to mean "zoom", so on every one of these elements it waits, and
+   * an impatient second tap zooms the page instead of pressing the control
+   * again — the accidental zoom people hit on tabs and list rows. `manipulation`
+   * declares that this element has no double-tap gesture, so taps fire at once.
+   *
+   * `manipulation`, never `none`: panning and pinch zoom are explicitly kept.
+   * Pinch zoom is an accessibility affordance and this app does not take it
+   * away — not here, and not via the viewport tag.
+   */
+  button, a, label, summary, input, select, textarea,
+  [role="button"], [role="tab"], [role="link"], [role="switch"],
+  [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"] {
+    touch-action: manipulation;
+  }
+
   button {
     min-height: 44px;
   }
@@ -63,6 +91,40 @@
 
   img, svg, canvas {
     max-width: 100%;
+  }
+}
+
+/*
+ * The other half of the accidental-zoom fix, and the bigger one.
+ *
+ * iOS Safari zooms the entire page in when a text-entry control whose computed
+ * font-size is under 16px receives focus — and it does not zoom back out when
+ * the control blurs. Every `text-xs`/`text-sm` filter select, search field and
+ * amount input in this app was a tap away from leaving the reader stuck on a
+ * magnified, horizontally-scrolling page. The cause is the font size, so the
+ * font size is what this fixes. The alternative — `maximum-scale=1` on the
+ * viewport — would work by removing pinch zoom from every user, which is not a
+ * trade this app makes.
+ *
+ * `max(16px, 1em)` raises only what is below the threshold: `1em` resolves
+ * against the parent, so a control deliberately larger than 16px keeps its size.
+ *
+ * DELIBERATELY UNLAYERED. Tailwind v4 emits `text-xs`/`text-sm` into
+ * `@layer utilities`, which outranks `@layer base` no matter how specific the
+ * base selector is — the rule would be dead on exactly the controls it exists
+ * for. Unlayered declarations beat all layered ones, which is why this sits
+ * outside the cascade layers rather than carrying `!important`.
+ *
+ * Scoped to touch devices: the desktop UI keeps its dense 12/14px controls,
+ * where no browser zooms on focus and pointer accuracy is not the constraint.
+ * Controls with no text to read (checkbox, radio, range, colour) are excluded —
+ * font-size does not govern their hit area and iOS does not zoom for them.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: max(16px, 1em);
   }
 }
 

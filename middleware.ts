@@ -128,6 +128,13 @@ export async function middleware(request: NextRequest) {
   return withSecurityHeaders(response);
 }
 
+/*
+ * `manifest.webmanifest` is the URL `app/manifest.ts` is served from and joins
+ * the existing static exclusions: it is fetched on every Home Screen launch and
+ * carries nothing account-specific, so putting a session refresh in front of it
+ * only adds a Supabase round trip to the install. `manifest.json` stays listed
+ * so the compatibility redirect in `next.config.ts` is reached the same way.
+ */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|icon.svg|manifest.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|icon.svg|manifest.json|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 };

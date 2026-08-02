@@ -13,6 +13,18 @@ async function rules() {
   return nextConfig.redirects();
 }
 
+/**
+ * The auth aliases specifically. `next.config.ts` is not exclusively theirs —
+ * it also carries unrelated compatibility redirects, such as the `/manifest.json`
+ * to `/manifest.webmanifest` move that keeps pre-existing Home Screen installs
+ * working. Those are not auth entry paths and must not be asserted as such; the
+ * invariants that *are* global (reversible, same-origin) keep iterating
+ * everything below.
+ */
+async function authRules() {
+  return (await rules()).filter((entry) => entry.source.startsWith('/auth/'));
+}
+
 describe('auth route aliases', () => {
   it('forwards /auth/login to the real sign-in page', async () => {
     const rule = (await rules()).find((entry) => entry.source === '/auth/login');
@@ -53,7 +65,11 @@ describe('auth route aliases', () => {
   });
 
   it('lists every alias as an auth entry path', async () => {
-    for (const rule of await rules()) {
+    const aliases = await authRules();
+    // Guards the filter itself: if the sources are ever renamed out of `/auth/`,
+    // this must fail rather than pass by matching nothing.
+    expect(aliases.length).toBe(2);
+    for (const rule of aliases) {
       expect(AUTH_ENTRY_PATHS).toContain(rule.source);
     }
   });

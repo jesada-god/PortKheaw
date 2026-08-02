@@ -114,6 +114,11 @@ await Promise.all([
   appIcon(192, 'icon-192.png'),
   appIcon(512, 'icon-512.png'),
   appIcon(512, 'maskable-512.png', 0.64),
+  // iOS reads `apple-touch-icon` at its own size and does not consult the web
+  // app manifest for it. Handing it the 192 meant every Home Screen install
+  // resampled a 192 square down to 180 — the one icon a standalone install is
+  // judged by, rendered soft. This is that exact size, rendered not resampled.
+  appIcon(180, 'apple-touch-icon-180.png'),
 ]);
 
 console.log(`Built Kheaw assets from ${sourcePath}`);

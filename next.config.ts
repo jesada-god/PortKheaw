@@ -45,6 +45,15 @@ const nextConfig: NextConfig = {
     return [
       { source: '/auth/login', destination: '/auth/sign-in', permanent: false },
       { source: '/auth/register', destination: '/auth/sign-up', permanent: false },
+      /*
+       * The manifest moved from a static `app/manifest.json` to the typed
+       * `app/manifest.ts` route, which Next serves at `/manifest.webmanifest`.
+       * A Home Screen install made before that change recorded the old URL and
+       * re-fetches it on launch; answering with a 404 would strand it without
+       * a name, icon or `display: standalone`. Same reasoning as the auth
+       * aliases above — a real redirect, not a page that renders one.
+       */
+      { source: '/manifest.json', destination: '/manifest.webmanifest', permanent: false },
     ];
   },
   output: 'standalone',
