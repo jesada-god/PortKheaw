@@ -53,6 +53,27 @@ function clientWithClaim(claim: {
   retry_after_seconds: number;
 } | null) {
   const query = tableQuery();
+  const rpc = vi.fn(async (name: string) => {
+    if (name === 'claim_push_test') {
+      return {
+        data: claim ? [{
+          subscription_id: 'subscription-1',
+          ...claim,
+        }] : [],
+        error: null,
+      };
+    }
+    if (name === 'create_push_test_notification') {
+      return {
+        data: [{
+          notification_id: 'notification-1',
+          delivery_id: 'delivery-1',
+        }],
+        error: null,
+      };
+    }
+    return { data: [], error: null };
+  });
   return {
     query,
     client: {
@@ -61,13 +82,7 @@ function clientWithClaim(claim: {
           data: { user: { id: 'account-1' } },
         })),
       },
-      rpc: vi.fn(async () => ({
-        data: claim ? [{
-          subscription_id: 'subscription-1',
-          ...claim,
-        }] : [],
-        error: null,
-      })),
+      rpc,
       from: vi.fn(() => query),
     },
   };
@@ -90,7 +105,7 @@ describe('POST /api/push/test', () => {
   });
 
   it('sends immediately to the claimed device and opens the Inbox', async () => {
-    const { client } = clientWithClaim({
+    const { client, query } = clientWithClaim({
       allowed: true,
       retry_after_seconds: 0,
     });
@@ -106,6 +121,18 @@ describe('POST /api/push/test', () => {
         tag: 'portkheaw-test-subscription-1',
       },
     );
+    expect(client.rpc).toHaveBeenCalledWith(
+      'create_push_test_notification',
+      expect.objectContaining({
+        input_subscription_id: 'subscription-1',
+      }),
+    );
+    expect(query.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'sent',
+        provider_status: 'http-201',
+      }),
+    );
   });
 
   it('enforces the atomic per-device rate limit', async () => {
@@ -118,6 +145,10 @@ describe('POST /api/push/test', () => {
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('18');
     expect(mocks.sendWebPush).not.toHaveBeenCalled();
+    expect(client.rpc).not.toHaveBeenCalledWith(
+      'create_push_test_notification',
+      expect.anything(),
+    );
   });
 
   it('deletes an endpoint rejected as expired by the provider', async () => {
@@ -136,5 +167,11 @@ describe('POST /api/push/test', () => {
     const response = await POST(request());
     expect(response.status).toBe(404);
     expect(query.delete).toHaveBeenCalledOnce();
+    expect(query.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        provider_status: 'http-410',
+      }),
+    );
   });
 });

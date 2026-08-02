@@ -423,6 +423,7 @@ export interface Database {
       flush_queued_notifications_service: { Args: { input_now: string }; Returns: number };
       upsert_push_subscription: { Args: { input_endpoint: string; input_expiration_time: number | null; input_p256dh: string; input_auth: string; input_user_agent: string | null; input_device_label: string | null; input_now: string }; Returns: string };
       claim_push_test: { Args: { input_endpoint: string; input_now: string }; Returns: Array<{ subscription_id: string; allowed: boolean; retry_after_seconds: number }> };
+      create_push_test_notification: { Args: { input_subscription_id: string; input_now: string }; Returns: Array<{ notification_id: string; delivery_id: string }> };
       claim_push_deliveries_service: { Args: { input_limit: number; input_now: string; input_claim_token: string }; Returns: Array<Database['public']['Tables']['push_deliveries']['Row']> };
     };
     Enums: Record<string, never>;

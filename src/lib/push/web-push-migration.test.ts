@@ -13,6 +13,12 @@ const phase9 = readSql(
 const push = readSql(
   'supabase/migrations/202608020005_web_push_delivery.sql',
 );
+const testAudit = readSql(
+  'supabase/migrations/202608020006_push_test_audit.sql',
+);
+const testAuditFix = readSql(
+  'supabase/migrations/202608020007_fix_push_test_audit_lookup.sql',
+);
 
 describe('production web push migration', () => {
   it('keeps subscriptions owner-scoped and supports multiple devices', () => {
@@ -62,5 +68,23 @@ describe('production web push migration', () => {
     expect(push).toContain('on delete set null');
     expect(push).toContain('provider_status text');
     expect(`${phase9} ${push}`).toContain('last_error_code');
+  });
+
+  it('records a user-triggered test in the Inbox and targets one delivery', () => {
+    expect(testAudit).toContain(
+      'create or replace function public.create_push_test_notification',
+    );
+    expect(testAudit).toContain("'push_target_subscription_id'");
+    expect(testAudit).toContain("'push_test', true");
+    expect(testAudit).toContain(
+      "case when is_test_push then 'processing' else 'pending' end",
+    );
+    expect(testAudit).toContain(
+      'grant execute on function public.create_push_test_notification',
+    );
+    expect(testAudit).toContain('to authenticated');
+    expect(testAuditFix).toContain(
+      'where delivery.notification_id = notification_uuid',
+    );
   });
 });
