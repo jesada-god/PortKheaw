@@ -868,6 +868,23 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   border-radius: 0.75rem;
 }
 
+/*
+ * Utilities CANNOT hide this element.
+ *
+ * `.brand-lockup` above sets `display` from an unlayered rule, and unlayered
+ * declarations outrank every `@layer utilities` one however specific — so
+ * `hidden lg:inline-flex` leaves the lockup on screen at all widths. Stock
+ * detail found this the hard way: the brand appeared in a 320px header that had
+ * no room for it and pushed the symbol into an ellipsis. Surfaces that want the
+ * lockup only on wide viewports use this modifier, which sits in the same
+ * unlayered block and therefore actually wins.
+ */
+.brand-lockup--from-lg { display: none; }
+
+@media (min-width: 1024px) {
+  .brand-lockup--from-lg { display: inline-flex; }
+}
+
 .brand-lockup__plate {
   display: flex;
   flex: none;

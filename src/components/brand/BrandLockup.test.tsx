@@ -107,12 +107,33 @@ describe('BrandLockup styling contract', () => {
 
 describe('the header that carries it', () => {
   const header = readFileSync(resolve('src/components/layout/Header.tsx'), 'utf8');
+  const globalStyles = readFileSync(resolve('app/globals.css'), 'utf8');
 
   it('shows the lockup and keeps every control it had', () => {
     expect(header).toContain('<BrandLockup');
     for (const control of ['aria-label="ค้นหา"', 'aria-label="โปรไฟล์"', '/api/notifications/unread-count', "router.push('/notifications')"]) {
       expect(header).toContain(control);
     }
+  });
+
+  it('reaches the one route that renders its own header', () => {
+    /*
+     * Stock detail does not use the shared Header, so before the dock replaced
+     * the sidebar the brand reached it through the sidebar. It has to come from
+     * the page's own header now — from lg, which is exactly where the sidebar
+     * used to be, and never on a handset whose header is already full.
+     */
+    const stockDetail = readFileSync(resolve('src/components/stock/StockDetailClient.tsx'), 'utf8');
+    expect(stockDetail).toContain("import { BrandLockup } from '@/src/components/brand/BrandLockup'");
+    expect(stockDetail).toContain('<BrandLockup className="brand-lockup--from-lg" />');
+    /*
+     * Deliberately NOT Tailwind's `hidden lg:inline-flex`. `.brand-lockup` sets
+     * `display` unlayered, which outranks every utility, so `hidden` silently
+     * does nothing and the brand lands in a 320px header with no room for it.
+     */
+    const [lockupTag] = stockDetail.match(/<BrandLockup\b[^>]*>/)!;
+    expect(lockupTag).not.toContain('hidden');
+    expect(globalStyles).toContain('.brand-lockup--from-lg { display: none; }');
   });
 
   it('keeps the brand out of the way of a back-navigable page title', () => {

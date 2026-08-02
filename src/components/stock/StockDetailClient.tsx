@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Activity, ArrowLeft, Bell, Share2, Star } from 'lucide-react';
 import { addWatchlistItemAction, removeWatchlistItemAction } from '@/app/watchlist/actions';
+import { BrandLockup } from '@/src/components/brand/BrandLockup';
 import { Tabs } from '@/src/components/ui/Tabs';
 import { useToast } from '@/src/components/ui/Toast';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
@@ -463,6 +464,17 @@ export function StockDetailClient({
     <div className="pb-20">
       <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-slate-800 bg-[#0A0E17]/95 px-3 backdrop-blur-md">
         <div className="flex min-w-0 items-center gap-2">
+          {/*
+            This page owns its header rather than using the shared one, so the
+            brand used to reach it through the desktop sidebar. With the sidebar
+            replaced by the dock, nothing carried it here and PortKheaw vanished
+            from the one route people spend the longest on. The lockup takes the
+            sidebar's old place from lg only: the handset header already packs a
+            back control, the instrument logo, the symbol and three actions into
+            320px, and it has never shown the brand.
+          */}
+          <BrandLockup className="brand-lockup--from-lg" />
+          <span aria-hidden="true" className="hidden h-7 w-px flex-none bg-slate-800 lg:block" />
           <button
             aria-label="กลับ"
             onClick={() => {
