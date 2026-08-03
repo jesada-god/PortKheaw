@@ -9,19 +9,31 @@ import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations'
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { optionPositionTitle } from '@/src/lib/portfolio/options/presentation';
-import { SubscriptionRepository } from '@/src/lib/subscription/repository';
+import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 
 export default async function PortfolioPage() {
   const client = await createClient();
   if (!client) return null;
   const portfolioRepository = new PortfolioRepository(client);
-  const subscriptionRepository = new SubscriptionRepository(client);
-  const [portfolios, aggregateGoal, timezone, effectiveTier] = await Promise.all([
+  /*
+   * The *access* tier, not the subscription tier.
+   *
+   * This page used to read the subscription snapshot directly, which meant the
+   * portfolio surface was the one place that judged a reader by what they had
+   * paid for rather than by what they may open. An administrator — whose plan is
+   * Basic and whose access is Elite — saw Options locked here while every other
+   * gate on the site let them through, and an administrator previewing Pro saw
+   * their real access rather than the plan under test. `resolvePageEntitlement`
+   * is the same resolver the root layout and every API guard read, and it is
+   * request-cached, so agreeing with them costs no extra round trip.
+   */
+  const [portfolios, aggregateGoal, timezone, entitlement] = await Promise.all([
     portfolioRepository.getAll(),
     portfolioRepository.getAggregateGoal(),
     portfolioRepository.getTimeZone(),
-    subscriptionRepository.getEffectiveTier(),
+    resolvePageEntitlement(),
   ]);
+  const effectiveTier = entitlement.effectiveAccessTier;
   const targetRepository = new OptionTargetRepository(client);
   const [targets, fx] = await Promise.all([
     targetRepository.getAll(),

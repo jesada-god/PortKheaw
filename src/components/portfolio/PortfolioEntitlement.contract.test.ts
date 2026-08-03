@@ -13,13 +13,19 @@ describe('portfolio entitlement vertical slice', () => {
     expect(manager).toContain('disabled={!optionsEntitlement.canCreate}');
   });
 
-  it('derives UI tier from the server subscription snapshot and returns typed server errors', () => {
+  it('derives UI tier from the one effective-access resolver and returns typed server errors', () => {
     const page = read('app/portfolio/page.tsx');
-    const repository = read('src/lib/subscription/repository.ts');
     const actions = read('app/portfolio/portfolio-actions.ts');
-    expect(page).toContain('subscriptionRepository.getEffectiveTier()');
-    expect(repository).toContain("this.client.rpc('get_my_subscription_snapshot')");
-    expect(repository).toContain('resolveEffectiveTier(snapshot, snapshot.databaseNow)');
+    /*
+     * Phase 3.2: this page read the subscription snapshot directly, so it was
+     * the one surface that gated on what a reader had paid for rather than on
+     * what they may open. It must now read the same resolver as the root layout
+     * and every API guard, and must not reach for the plan snapshot again.
+     */
+    expect(page).toContain('resolvePageEntitlement()');
+    expect(page).toContain('entitlement.effectiveAccessTier');
+    expect(page).not.toContain('SubscriptionRepository');
+    expect(page).not.toContain('getEffectiveTier');
     /*
      * The typed codes moved into one shared mapper when the read-only refusal
      * joined them, so the action module is checked for routing through it and

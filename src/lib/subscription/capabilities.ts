@@ -28,65 +28,117 @@ export interface SubscriptionCapabilities {
 
 export type SubscriptionCapability = keyof SubscriptionCapabilities;
 
-export const subscriptionCapabilities: Readonly<Record<SubscriptionTier, Readonly<SubscriptionCapabilities>>> = {
+/** The keys a tier either has or does not have. */
+export type BooleanCapability = {
+  [K in SubscriptionCapability]: SubscriptionCapabilities[K] extends boolean ? K : never;
+}[SubscriptionCapability];
+
+/** The keys that carry an allowance rather than a yes/no. */
+export type CountCapability = Exclude<SubscriptionCapability, BooleanCapability>;
+
+/**
+ * Every capability at its locked value: the floor a plan is built up from, and
+ * the value an unrecognised state can only ever fall back to.
+ */
+const LOCKED: Readonly<SubscriptionCapabilities> = {
+  'portfolio.stock.create': false,
+  'portfolio.stock.max_count': 0,
+  'portfolio.options.create': false,
+  'portfolio.options.max_count': 0,
+  'chart.sr.levels': false,
+  'chart.sr.context': false,
+  'chart.vpvr': false,
+  'simulator.what_if': false,
+  'simulator.monte_carlo': false,
+  'options.analytics.walls': false,
+  'options.chain.basic': false,
+  'options.chain.advanced': false,
+  'options.greeks.full': false,
+  'options.expected_move': false,
+  'options.signal.summary': false,
+  'options.signal.breakdown': false,
+  'technical.outlook': false,
+};
+
+/**
+ * What one plan adds to the plan below it. Only ever an addition: `unlocks`
+ * turns keys on and `raises` lifts an allowance, and neither can express taking
+ * something away.
+ */
+interface TierGrant {
+  unlocks: readonly BooleanCapability[];
+  raises?: Partial<Readonly<Record<CountCapability, number>>>;
+}
+
+/**
+ * The product ladder, written once as a table of *additions* in tier order.
+ *
+ * Phase 3.2 replaced three independently written per-tier records with this.
+ * They agreed at the time, but nothing made them agree: a row could be flipped
+ * off in Pro while staying on in Basic, and the plan comparison, the paywall and
+ * the API guard would all faithfully reproduce a plan that loses a feature by
+ * paying for it. Folding the table below makes "Pro is Basic plus…" and "Elite
+ * is Pro plus…" structural rather than something a test has to keep watch over —
+ * and the test still watches, because the fold is only as good as its own proof.
+ */
+const TIER_GRANTS: Readonly<Record<SubscriptionTier, TierGrant>> = {
   basic: {
-    'portfolio.stock.create': true,
-    'portfolio.stock.max_count': 1,
-    'portfolio.options.create': false,
-    'portfolio.options.max_count': 0,
-    'chart.sr.levels': true,
-    'chart.sr.context': false,
-    'chart.vpvr': false,
-    'simulator.what_if': false,
-    'simulator.monte_carlo': false,
-    'options.analytics.walls': false,
-    'options.chain.basic': false,
-    'options.chain.advanced': false,
-    'options.greeks.full': false,
-    'options.expected_move': false,
-    'options.signal.summary': false,
-    'options.signal.breakdown': false,
-    'technical.outlook': false,
+    unlocks: ['portfolio.stock.create', 'chart.sr.levels'],
+    raises: { 'portfolio.stock.max_count': 1 },
   },
   pro: {
-    'portfolio.stock.create': true,
-    'portfolio.stock.max_count': 10,
-    'portfolio.options.create': true,
-    'portfolio.options.max_count': 10,
-    'chart.sr.levels': true,
-    'chart.sr.context': true,
-    'chart.vpvr': true,
-    'simulator.what_if': true,
-    'simulator.monte_carlo': false,
-    'options.analytics.walls': false,
-    'options.chain.basic': true,
-    'options.chain.advanced': false,
-    'options.greeks.full': false,
-    'options.expected_move': false,
-    'options.signal.summary': true,
-    'options.signal.breakdown': false,
-    'technical.outlook': false,
+    unlocks: [
+      'portfolio.options.create',
+      'chart.sr.context',
+      'chart.vpvr',
+      'simulator.what_if',
+      'options.chain.basic',
+      'options.signal.summary',
+    ],
+    raises: { 'portfolio.stock.max_count': 10, 'portfolio.options.max_count': 10 },
   },
   elite: {
-    'portfolio.stock.create': true,
-    'portfolio.stock.max_count': 10,
-    'portfolio.options.create': true,
-    'portfolio.options.max_count': 10,
-    'chart.sr.levels': true,
-    'chart.sr.context': true,
-    'chart.vpvr': true,
-    'simulator.what_if': true,
-    'simulator.monte_carlo': true,
-    'options.analytics.walls': true,
-    'options.chain.basic': true,
-    'options.chain.advanced': true,
-    'options.greeks.full': true,
-    'options.expected_move': true,
-    'options.signal.summary': true,
-    'options.signal.breakdown': true,
-    'technical.outlook': true,
+    unlocks: [
+      'simulator.monte_carlo',
+      'options.analytics.walls',
+      'options.chain.advanced',
+      'options.greeks.full',
+      'options.expected_move',
+      'options.signal.breakdown',
+      'technical.outlook',
+    ],
   },
 };
+
+/**
+ * Fold the additions in `subscriptionTiers` order, each tier starting from the
+ * previous tier's complete set. An allowance that a table entry tried to lower
+ * is a catalog mistake rather than a runtime state, so it throws at import
+ * instead of quietly shipping a plan that shrinks.
+ */
+function buildCapabilityMatrix(): Record<SubscriptionTier, Readonly<SubscriptionCapabilities>> {
+  const matrix = {} as Record<SubscriptionTier, Readonly<SubscriptionCapabilities>>;
+  let inherited: SubscriptionCapabilities = { ...LOCKED };
+
+  for (const tier of subscriptionTiers) {
+    const grant = TIER_GRANTS[tier];
+    const next: SubscriptionCapabilities = { ...inherited };
+    for (const capability of grant.unlocks) next[capability] = true;
+    for (const [capability, value] of Object.entries(grant.raises ?? {}) as [CountCapability, number][]) {
+      if (value < next[capability]) {
+        throw new Error(`Tier ${tier} lowers ${capability} from ${next[capability]} to ${value}`);
+      }
+      next[capability] = value;
+    }
+    inherited = next;
+    matrix[tier] = Object.freeze(next);
+  }
+
+  return matrix;
+}
+
+export const subscriptionCapabilities: Readonly<Record<SubscriptionTier, Readonly<SubscriptionCapabilities>>> =
+  Object.freeze(buildCapabilityMatrix());
 
 export function capabilityValue<K extends SubscriptionCapability>(
   tier: SubscriptionTier,
