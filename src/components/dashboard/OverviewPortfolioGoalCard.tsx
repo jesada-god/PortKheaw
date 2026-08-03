@@ -8,6 +8,8 @@ import {
 import {
   PortfolioGoalMascot,
   portfolioGoalAppearance,
+  portfolioGoalReturnTone,
+  portfolioGoalReturnToneClass,
 } from '@/src/components/portfolio/PortfolioGoalMascot';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
@@ -87,13 +89,21 @@ export function OverviewPortfolioGoalCard({
     <div className="relative mt-3 min-h-[6.5rem] rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
       {model.mascot.source === 'today' && model.today.kind === 'ready' && <>
         <p className="text-[10px] text-[var(--text-muted)]">Today P/L</p>
-        <p className="mt-0.5 break-words font-mono text-sm font-bold text-[var(--text)]">
+        <p
+          className={`mt-0.5 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.today.percent : null, 'text-[var(--text)]')}`}
+          data-return-tone={portfolioGoalReturnTone(showBalances ? model.today.percent : null)}
+          data-testid="overview-portfolio-goal-return"
+        >
           {signed(model.today.amount)} ({percent(model.today.percent)})
         </p>
       </>}
       {model.mascot.source === 'total' && <>
         <p className="text-[10px] text-[var(--text-muted)]">ผลตอบแทนรวม</p>
-        <p className="mt-0.5 break-words font-mono text-sm font-bold text-[var(--text)]">
+        <p
+          className={`mt-0.5 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.mascot.percent : null, 'text-[var(--text)]')}`}
+          data-return-tone={portfolioGoalReturnTone(showBalances ? model.mascot.percent : null)}
+          data-testid="overview-portfolio-goal-return"
+        >
           {percent(model.mascot.percent)}
         </p>
       </>}

@@ -60,6 +60,20 @@ const specialEventAssets: Record<PortfolioMascotSpecialEvent, string> = {
   gainOver100: '/brand/kheaw-goal-event-gain-over-100.png',
 };
 
+export type PortfolioGoalReturnTone = 'positive' | 'negative' | 'neutral';
+
+export function portfolioGoalReturnTone(value: number | null): PortfolioGoalReturnTone {
+  if (value === null || !Number.isFinite(value) || value === 0) return 'neutral';
+  return value > 0 ? 'positive' : 'negative';
+}
+
+export function portfolioGoalReturnToneClass(value: number | null, neutralClass: string): string {
+  const tone = portfolioGoalReturnTone(value);
+  if (tone === 'positive') return 'text-positive';
+  if (tone === 'negative') return 'text-negative';
+  return neutralClass;
+}
+
 export function portfolioGoalMascotAsset(state: PortfolioMascotState): string {
   return state.specialEvent
     ? specialEventAssets[state.specialEvent]

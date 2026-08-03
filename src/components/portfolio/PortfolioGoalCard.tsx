@@ -11,6 +11,8 @@ import {
 import {
   PortfolioGoalMascot,
   portfolioGoalAppearance,
+  portfolioGoalReturnTone,
+  portfolioGoalReturnToneClass,
 } from './PortfolioGoalMascot';
 import styles from './PortfolioGoalCard.module.css';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -123,12 +125,20 @@ export function PortfolioGoalCard({
         </div>
         <div className="min-h-24">
           {model.mascot.source === 'today' && model.today.kind === 'ready' && (
-            <p className="mt-3 break-words font-mono text-sm font-bold text-white">
+            <p
+              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.today.percent : null, 'text-white')}`}
+              data-return-tone={portfolioGoalReturnTone(showBalances ? model.today.percent : null)}
+              data-testid="portfolio-goal-return"
+            >
               วันนี้ {signed(model.today.amount)} ({percent(model.today.percent)})
             </p>
           )}
           {model.mascot.source === 'total' && (
-            <p className="mt-3 break-words font-mono text-sm font-bold text-white">
+            <p
+              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.mascot.percent : null, 'text-white')}`}
+              data-return-tone={portfolioGoalReturnTone(showBalances ? model.mascot.percent : null)}
+              data-testid="portfolio-goal-return"
+            >
               ผลตอบแทนรวม ({percent(model.mascot.percent)})
             </p>
           )}
