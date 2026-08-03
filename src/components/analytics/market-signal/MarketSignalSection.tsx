@@ -6,6 +6,8 @@ import type { MarketSignalBias, MarketSignalResult, MarketSignalState } from '@/
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 
 const DISCLAIMER = 'Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย';
 
@@ -67,12 +69,45 @@ const BREAKDOWN_COPY = {
   priceStructure: { label: 'Price Structure', helper: 'ดูโครงสร้างราคาและการยืนยันจากแนวรับ/แนวต้าน' },
 } as const;
 
-export function MarketSignalSection({ result }: { result: MarketSignalResult }) {
-  return <MarketSignalContent key={result.symbol} result={result} />;
+export function MarketSignalSection({ result }: { result: MarketSignalResult | null }) {
+  const { can } = useEntitlement();
+  const entitled = can('technical.outlook');
+  return <MarketSignalContent key={`${result?.symbol ?? 'none'}:${entitled ? 'full' : 'locked'}`} result={result} entitled={entitled} />;
 }
 
-function MarketSignalContent({ result }: { result: MarketSignalResult }) {
+function MarketSignalContent({ result, entitled }: { result: MarketSignalResult | null; entitled: boolean }) {
   const [open, setOpen] = useState(false);
+  if (!entitled) {
+    return (
+      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5" data-testid="technical-outlook-locked">
+        <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
+        <div className="mt-2 flex items-center gap-2 text-slate-300">
+          <Info aria-hidden="true" size={18} />
+          <h2 className="font-bold">Technical Outlook · Market Signal</h2>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-slate-400">สรุปแนวโน้ม คะแนนทิศทาง และความมั่นใจจากข้อมูลทางเทคนิคจริง</p>
+        <div className="mt-3">
+          <LockedNotice capability="technical.outlook" source="financials.technical-outlook" />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+      </section>
+    );
+  }
+
+  if (!result) {
+    return (
+      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
+        <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
+        <div className="mt-2 flex items-center gap-2 text-slate-300">
+          <Info aria-hidden="true" size={18} />
+          <h2 className="font-bold">Technical Outlook · Market Signal</h2>
+        </div>
+        <p className="mt-3 text-sm text-slate-400">ยังโหลดข้อมูล Technical Outlook ไม่สำเร็จ จึงไม่แสดงผลลัพธ์ที่เดาขึ้นเอง</p>
+        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+      </section>
+    );
+  }
+
   if (result.status === 'insufficient-data') {
     return (
       <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">

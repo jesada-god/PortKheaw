@@ -42,9 +42,12 @@ describe('planOptionsRequest — lazy-load, single-flight, entitlement-stop', ()
 });
 
 describe('optionsRequestKey — viewport-independence', () => {
-  it('keys only on symbol + expiration, so a pan/zoom can never change the key', () => {
-    expect(optionsRequestKey('rklb', '2026-08-21')).toBe('RKLB::2026-08-21');
+  it('keys on symbol + expiration + walls entitlement, never viewport state', () => {
+    expect(optionsRequestKey('rklb', '2026-08-21')).toBe('RKLB::2026-08-21::walls-on');
     expect(optionsRequestKey('RKLB', '2026-08-21')).toBe(optionsRequestKey('rklb', '2026-08-21'));
+    expect(optionsRequestKey('RKLB', '2026-08-21', false)).toBe('RKLB::2026-08-21::walls-off');
+    expect(optionsRequestKey('RKLB', '2026-08-21', false))
+      .not.toBe(optionsRequestKey('RKLB', '2026-08-21', true));
   });
 });
 

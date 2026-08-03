@@ -3,7 +3,9 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/market-signal/types';
+import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import { MARKET_SIGNAL_PRESENTATION, MarketSignalSection } from './MarketSignalSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -93,8 +95,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(value: MarketSignalResult = result) {
-  await act(async () => root.render(<MarketSignalSection result={value} />));
+async function render(value: MarketSignalResult | null = result, tier: SubscriptionTier = 'elite') {
+  await act(async () => root.render(
+    <EntitlementProvider tier={tier} authenticated trialOffer="used">
+      <MarketSignalSection result={value} />
+    </EntitlementProvider>,
+  ));
 }
 
 function buttonContaining(text: string): HTMLButtonElement {
@@ -102,6 +108,18 @@ function buttonContaining(text: string): HTMLButtonElement {
 }
 
 describe('MarketSignalSection', () => {
+  it.each(['basic', 'pro'] as const)('shows only a locked preview for %s', async (tier) => {
+    await render(result, tier);
+
+    expect(container.querySelector('[data-testid="technical-outlook-locked"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="locked-technical.outlook"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('SQUEEZE');
+    expect(container.textContent).not.toContain('Score +31');
+    expect(container.textContent).not.toContain('Confidence 67%');
+    expect(container.textContent).not.toContain('ราคาและ EMA เรียงตัวเอนขึ้น');
+    expect(container.textContent).not.toContain('206.84');
+  });
+
   it('shows state, independent bias, beginner copy, score/confidence, flags, and the exact disclaimer', async () => {
     await render();
     expect(container.textContent).toContain('SQUEEZE • Bullish Bias');

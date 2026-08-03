@@ -4,6 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useRouter } from 'next/navigation';
 import { Activity, RefreshCw } from 'lucide-react';
 import { DataProvenance } from '@/src/components/market-data/DataProvenance';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { Button } from '@/src/components/ui/Button';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { Select } from '@/src/components/ui/Select';
@@ -92,11 +94,13 @@ function MetricGrid({ metrics, label }: { metrics: OptionMetric[]; label: string
  * on top of another. The contract symbol truncates with the full value kept in
  * `title` and in the DOM; it is never abbreviated away.
  */
-function ContractBlock({ contract, side, spot, className, onOpen, onStrike }: {
+function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen, onStrike }: {
   contract: OptionContract | null;
   side: 'call' | 'put';
   spot: number;
   className?: string;
+  /** False strips the Greeks row entirely; the server sent no Greeks either. */
+  greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
@@ -148,14 +152,16 @@ function ContractBlock({ contract, side, spot, className, onOpen, onStrike }: {
       <MetricGrid label={`ราคา ${sideLabel}`} metrics={priceMetrics(contract)} />
       <MetricGrid label={`สภาพคล่อง ${sideLabel}`} metrics={activityMetrics(contract, spot)} />
 
-      <dl aria-label={`Greeks ${sideLabel}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-slate-800/60 pt-1.5">
-        {greekMetrics(contract).map((metric) => (
-          <div key={metric.key} className="flex items-baseline gap-1 text-[10px]" title={metric.title}>
-            <dt className="text-slate-500">{metric.label}</dt>
-            <dd className="font-mono tabular-nums text-slate-300">{metric.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {greeksEntitled && (
+        <dl aria-label={`Greeks ${sideLabel}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-slate-800/60 pt-1.5">
+          {greekMetrics(contract).map((metric) => (
+            <div key={metric.key} className="flex items-baseline gap-1 text-[10px]" title={metric.title}>
+              <dt className="text-slate-500">{metric.label}</dt>
+              <dd className="font-mono tabular-nums text-slate-300">{metric.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       {/*
         Actions live in their own row at the end of the stack — never overlaid on
@@ -193,10 +199,11 @@ function ContractBlock({ contract, side, spot, className, onOpen, onStrike }: {
  *  - **≥ md** the same three children become the Call | Strike | Put columns
  *    (`order-*` puts the strike back in the middle) of an auto-height grid row.
  */
-function StrikeRowView({ row, spot, outsideExpectedMove, onOpen, onStrike }: {
+function StrikeRowView({ row, spot, outsideExpectedMove, greeksEntitled, onOpen, onStrike }: {
   row: StrikeRow;
   spot: number;
   outsideExpectedMove: boolean;
+  greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
@@ -229,8 +236,8 @@ function StrikeRowView({ row, spot, outsideExpectedMove, onOpen, onStrike }: {
           </span>
         )}
       </div>
-      <ContractBlock contract={row.call} side="call" spot={spot} className="md:order-1" onOpen={onOpen} onStrike={onStrike} />
-      <ContractBlock contract={row.put} side="put" spot={spot} className="md:order-3" onOpen={onOpen} onStrike={onStrike} />
+      <ContractBlock contract={row.call} side="call" spot={spot} className="md:order-1" greeksEntitled={greeksEntitled} onOpen={onOpen} onStrike={onStrike} />
+      <ContractBlock contract={row.put} side="put" spot={spot} className="md:order-3" greeksEntitled={greeksEntitled} onOpen={onOpen} onStrike={onStrike} />
     </article>
   );
 }
@@ -242,10 +249,11 @@ function StrikeRowView({ row, spot, outsideExpectedMove, onOpen, onStrike }: {
  * computed from real heights rather than a constant. One scroll container owns
  * both axes: the page itself never scrolls sideways.
  */
-function VirtualOptionsTable({ rows, spot, expectedMove, onOpen, onStrike }: {
+function VirtualOptionsTable({ rows, spot, expectedMove, greeksEntitled, onOpen, onStrike }: {
   rows: StrikeRow[];
   spot: number;
   expectedMove?: { lower: number | null; upper: number | null };
+  greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
@@ -357,6 +365,7 @@ function VirtualOptionsTable({ rows, spot, expectedMove, onOpen, onStrike }: {
                     row={row}
                     spot={spot}
                     outsideExpectedMove={isOutsideExpectedMove(row.strike, expectedMove)}
+                    greeksEntitled={greeksEntitled}
                     onOpen={onOpen}
                     onStrike={onStrike}
                   />
@@ -432,6 +441,16 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
 }) {
   const router = useRouter();
   const appActive = useAppActive();
+  const { can } = useEntitlement();
+  /*
+   * Reading the ledger at all is a Pro capability, and the three analytics on
+   * top of it are Elite. `chainEntitled` gates the LOADER, so a Basic reader
+   * issues no expirations request, no chain request and holds no contract.
+   */
+  const chainEntitled = can('options.chain.basic');
+  const advancedEntitled = can('options.chain.advanced');
+  const greeksEntitled = can('options.greeks.full');
+  const expectedMoveEntitled = can('options.expected_move');
   const [expirations, setExpirations] = useState<OptionsExpirations | null>(null);
   const [expiration, setExpiration] = useState('');
   const [chain, setChain] = useState<OptionsChain | null>(null);
@@ -482,8 +501,16 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     const requestGeneration = ++generation.current;
     setLoading(true); setError(null); setChain(null);
     try {
-      if (force && !optionsChainCoordinator.reset(symbol, targetExpiration)) return;
-      const outcome = await optionsChainCoordinator.load(symbol, targetExpiration, acceptedPrice);
+      // This ledger never consumes Options Walls. Keep that Elite-only request
+      // out of this path so a Pro reader receives the chain without generating
+      // a predictable Walls refusal (the chart owns the Walls consumer).
+      if (force && !optionsChainCoordinator.reset(symbol, targetExpiration, false)) return;
+      const outcome = await optionsChainCoordinator.load(
+        symbol,
+        targetExpiration,
+        acceptedPrice,
+        { wallsEntitled: false },
+      );
       if (!outcome.ok || !outcome.chain) {
         const retry = optionsPanelRetrySeconds(
           outcome.classification?.reason,
@@ -502,17 +529,17 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   }, [acceptedPrice, cooldownUntil, symbol]);
 
   useEffect(() => {
-    if (!appActive || (saveData && !userStarted) || expirations || error) return;
+    if (!chainEntitled || !appActive || (saveData && !userStarted) || expirations || error) return;
     let cancelled = false;
     queueMicrotask(() => { if (!cancelled) void requestExpirations(); });
     return () => { cancelled = true; };
-  }, [appActive, error, expirations, requestExpirations, saveData, userStarted]);
+  }, [chainEntitled, appActive, error, expirations, requestExpirations, saveData, userStarted]);
   useEffect(() => {
-    if (!appActive || !expiration || chain?.expiration === expiration || error) return;
+    if (!chainEntitled || !appActive || !expiration || chain?.expiration === expiration || error) return;
     let cancelled = false;
     queueMicrotask(() => { if (!cancelled) void requestChain(expiration); });
     return () => { cancelled = true; };
-  }, [appActive, chain?.expiration, error, expiration, now, requestChain]);
+  }, [chainEntitled, appActive, chain?.expiration, error, expiration, now, requestChain]);
 
   const spot = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0
     ? acceptedPrice
@@ -583,6 +610,20 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     router.push(`/tools/monte-carlo?${query.toString()}`);
   };
 
+  if (!chainEntitled) {
+    return (
+      <section className="space-y-3 rounded-2xl border border-slate-800 bg-[#151B28] p-5" data-testid="options-chain-panel-locked">
+        <div>
+          <h2 className="font-bold text-white">Options Chain · {symbol}</h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate-400">
+            สัญญาจริงรายแถว ทั้ง strike, วันหมดอายุ, Bid/Ask, Volume และ Open Interest
+          </p>
+        </div>
+        <LockedNotice capability="options.chain.basic" source="analysis.options-chain" />
+      </section>
+    );
+  }
+
   if (saveData && !userStarted) {
     return (
       <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
@@ -599,7 +640,11 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="font-bold text-white">Options Chain · {symbol}</h2>
-          <p className="mt-1 text-xs leading-relaxed text-slate-400">ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว พร้อม ATM IV, Expected Move และ OI concentration</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-400">
+            {advancedEntitled
+              ? 'ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว พร้อม ATM IV, Expected Move และ OI concentration'
+              : 'ข้อมูลสัญญาจริงแบบอ่านอย่างเดียว: strike, วันหมดอายุ, Bid/Ask, Volume และ Open Interest'}
+          </p>
         </div>
         <Button
           variant="outline"
@@ -659,49 +704,73 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
       )}
 
       {chain && analytics && <>
+        {/*
+          ATM IV and Expected Move are both solved from implied volatility, which
+          the server withholds below Elite — so for a Pro reader these cards are
+          not rendered empty, they are not rendered at all, and the ledger below
+          keeps its full width.
+        */}
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-          <SummaryCard
-            title="ATM IV"
-            value={analytics.atm.iv === null ? UNAVAILABLE : formatPercent(analytics.atm.iv)}
-            detail={`robust median · ${analytics.atm.sampledContracts.length} contracts · DTE ${analytics.atm.dte} · confidence ${formatNumber(analytics.atm.confidence)}%`}
-          />
-          <SummaryCard
-            title="Expected Move"
-            value={analytics.expectedMove.move === null ? UNAVAILABLE : `±${formatMoney(analytics.expectedMove.move)} (${formatPercent(analytics.expectedMove.movePercent)})`}
-            detail={analytics.expectedMove.lower === null
-              ? 'ผู้ให้บริการไม่มี IV ที่ใช้คำนวณกรอบได้'
-              : `${formatMoney(analytics.expectedMove.lower)} – ${formatMoney(analytics.expectedMove.upper)}`}
-          >
-            {analytics.expectedMove.move !== null && (
-              <button
-                type="button"
-                onClick={addExpectedMove}
-                className="mt-2 min-h-11 rounded-md border border-sky-500/30 px-2 text-xs text-sky-300 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 md:min-h-9"
-              >
-                เพิ่มกรอบลงกราฟ
-              </button>
-            )}
-          </SummaryCard>
+          {advancedEntitled && (
+            <SummaryCard
+              title="ATM IV"
+              value={analytics.atm.iv === null ? UNAVAILABLE : formatPercent(analytics.atm.iv)}
+              detail={`robust median · ${analytics.atm.sampledContracts.length} contracts · DTE ${analytics.atm.dte} · confidence ${formatNumber(analytics.atm.confidence)}%`}
+            />
+          )}
+          {expectedMoveEntitled ? (
+            <SummaryCard
+              title="Expected Move"
+              value={analytics.expectedMove.move === null ? UNAVAILABLE : `±${formatMoney(analytics.expectedMove.move)} (${formatPercent(analytics.expectedMove.movePercent)})`}
+              detail={analytics.expectedMove.lower === null
+                ? 'ผู้ให้บริการไม่มี IV ที่ใช้คำนวณกรอบได้'
+                : `${formatMoney(analytics.expectedMove.lower)} – ${formatMoney(analytics.expectedMove.upper)}`}
+            >
+              {analytics.expectedMove.move !== null && (
+                <button
+                  type="button"
+                  onClick={addExpectedMove}
+                  className="mt-2 min-h-11 rounded-md border border-sky-500/30 px-2 text-xs text-sky-300 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 md:min-h-9"
+                >
+                  เพิ่มกรอบลงกราฟ
+                </button>
+              )}
+            </SummaryCard>
+          ) : (
+            <article className="flex min-w-0 flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/30 p-3">
+              <h3 className="text-xs text-slate-500">Expected Move</h3>
+              <p className="text-[10px] leading-snug text-slate-400">กรอบความผันผวนที่ตลาดคาดถึงวันหมดอายุ</p>
+              <LockedNotice capability="options.expected_move" source="analysis.expected-move" variant="row" />
+            </article>
+          )}
           <SummaryCard
             title="Spot / Expiration"
             value={formatMoney(spot)}
             detail={`${chain.expiration} · completeness ${formatPercent(chain.completeness, 0)}`}
           />
         </div>
-        <p className="rounded-lg bg-sky-500/5 p-3 text-xs leading-relaxed text-sky-200">Expected Move เป็นกรอบความผันผวนเชิงสถิติ ราคาอาจอยู่นอกกรอบได้ และกรอบนี้ไม่ใช่การรับประกัน</p>
+        {expectedMoveEntitled && (
+          <p className="rounded-lg bg-sky-500/5 p-3 text-xs leading-relaxed text-sky-200">Expected Move เป็นกรอบความผันผวนเชิงสถิติ ราคาอาจอยู่นอกกรอบได้ และกรอบนี้ไม่ใช่การรับประกัน</p>
+        )}
 
         {rows.length > 0
           // Keyed by the selection: a new expiration or strike range is a new
           // list, so it remounts at the top with fresh measurements instead of
           // leaving the reader parked among unrelated strikes.
-          ? <VirtualOptionsTable key={`${chain.expiration}:${strikeRange}`} rows={rows} spot={spot!} expectedMove={analytics.expectedMove} onOpen={openSimulator} onStrike={addStrike} />
+          ? <VirtualOptionsTable key={`${chain.expiration}:${strikeRange}`} rows={rows} spot={spot!} expectedMove={expectedMoveEntitled ? analytics.expectedMove : undefined} greeksEntitled={greeksEntitled} onOpen={openSimulator} onStrike={addStrike} />
           : <p className="rounded-lg border border-amber-500/20 p-3 text-sm text-amber-200">ไม่มีสัญญาจริงในช่วง strike ที่เลือก</p>}
-        {greeksMissing && (
+        {greeksEntitled && greeksMissing && (
           <p className="text-[11px] leading-relaxed text-slate-500" data-testid="options-greeks-missing">
             ผู้ให้บริการไม่ได้ส่งค่า IV/Greeks สำหรับสัญญาชุดนี้ ช่องที่ไม่มีข้อมูลจึงแสดงเป็น “{UNAVAILABLE}” และระบบไม่คำนวณแทน
           </p>
         )}
+        {!greeksEntitled && (
+          <div data-testid="options-greeks-locked">
+            <LockedNotice capability="options.greeks.full" source="analysis.chain-greeks" />
+          </div>
+        )}
 
+        {advancedEntitled ? (
         <div className="grid gap-3 lg:grid-cols-2">
           {([['Call OI Concentration', analytics.oi.calls], ['Put OI Concentration', analytics.oi.puts]] as const).map(([title, levels]) => (
             <article key={title} className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/30 p-3">
@@ -733,13 +802,22 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
             </article>
           ))}
         </div>
+        ) : (
+          <div data-testid="options-oi-concentration-locked">
+            <LockedNotice capability="options.chain.advanced" source="analysis.oi-concentration" />
+          </div>
+        )}
 
         <details className="rounded-xl border border-slate-800 p-3 text-xs leading-relaxed text-slate-400">
           <summary className="cursor-pointer text-slate-200">Methodology / warnings</summary>
-          <p className="mt-2 break-words">{analytics.oi.methodology}</p>
-          <p className="mt-1 break-words">ATM samples: {analytics.atm.sampledContracts.map((item) => `${item.type} ${item.strike}`).join(', ') || 'none'}</p>
+          {advancedEntitled && <>
+            <p className="mt-2 break-words">{analytics.oi.methodology}</p>
+            <p className="mt-1 break-words">ATM samples: {analytics.atm.sampledContracts.map((item) => `${item.type} ${item.strike}`).join(', ') || 'none'}</p>
+          </>}
           <ul className="mt-2 list-disc pl-5">
-            {[...new Set([...chain.warnings, ...analytics.atm.warnings, ...analytics.oi.warnings])].map((warning) => <li key={warning} className="break-words">{warning}</li>)}
+            {[...new Set(advancedEntitled
+              ? [...chain.warnings, ...analytics.atm.warnings, ...analytics.oi.warnings]
+              : chain.warnings)].map((warning) => <li key={warning} className="break-words">{warning}</li>)}
           </ul>
         </details>
       </>}

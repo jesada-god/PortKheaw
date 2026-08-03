@@ -35,6 +35,7 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 const workspaceSource = read('./SimulatorWorkspace.tsx');
 const validationSource = read('../../lib/options-simulator/validation.ts');
 const scenarioScoreSource = read('../../lib/options-simulator/scenario-score.ts');
+const serverComputeSource = read('../../lib/options-simulator/server-compute.ts');
 const toolsPageSource = read('../../../app/tools/page.tsx');
 
 /*
@@ -166,11 +167,13 @@ describe('Tools copy leaves the numbers alone', () => {
     // These are the strings and constants the presentation layer reads; it never edits them.
     expect(scenarioScoreSource).toContain("if (!(metrics.evr > 0)) reasons.push('EVR must be greater than 0');");
     expect(scenarioScoreSource).toContain('if (confidenceScore < 60)');
-    expect(workspaceSource).toContain('priceImpact: afterPrice.theoreticalValue - current.theoreticalValue');
-    expect(workspaceSource).toContain('timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue');
-    expect(workspaceSource).toContain('ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue');
+    expect(serverComputeSource).toContain('priceImpact: afterPrice.theoreticalValue - current.theoreticalValue');
+    expect(serverComputeSource).toContain('timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue');
+    expect(serverComputeSource).toContain('ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue');
+    expect(workspaceSource).not.toContain('valuePortfolio(');
     expect(workspaceSource).toContain('deltaEstimate: sensitivity.delta');
-    expect(workspaceSource).toContain('instance.postMessage({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
+    expect(workspaceSource).toContain('body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
+    expect(serverComputeSource).toContain('generateMonteCarloPathSet(workspace, settings, { targetPrice })');
     expect(workspaceSource).toContain("methodologyVersion: 'options-simulator-v1'");
   });
 });
@@ -224,7 +227,7 @@ describe('Tools error presentation', () => {
     expect(workspaceSource).toContain('presentEdgeGate(strategy.positiveEdgeReasons)');
     expect(workspaceSource).toContain('presentUnavailableReason(strategy.reason)');
     expect(workspaceSource).toContain('setOperationError(presentError(cause).message)');
-    expect(workspaceSource).toContain('setOperationError(presentError(event.data.error).message)');
+    expect(workspaceSource).toContain('calculationPayloadMessage(payload');
     expect(workspaceSource).not.toContain('{strategy.positiveEdgeReasons.join');
     expect(workspaceSource).not.toContain('{strategy.reason}</p>');
   });

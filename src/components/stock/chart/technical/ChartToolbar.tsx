@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { InfoHint } from '@/src/components/ui/InfoHint';
+import { LockedFeatureButton } from '@/src/components/subscription/LockedFeatureButton';
 import { resolveAnchoredPanel, type AnchoredPanelPlacement } from '@/src/components/ui/anchored-panel';
 import { useHydrated } from '@/src/hooks/useHydrated';
 import type { CandleInterval, CandleRange } from '@/src/lib/market-data/candles/contracts';
@@ -258,6 +259,12 @@ export function ChartToolbar({
         </div>
       </Menu>
 
+      {/*
+        A locked overlay keeps its button rather than losing it. The control is
+        still there, still labelled, and carries a padlock; pressing it opens the
+        upgrade prompt instead of switching the overlay on. Because the toggle
+        never flips, the calculation behind it never runs.
+      */}
       <div className="flex shrink-0 items-center gap-1" data-testid="overlay-toggles">
         <button
           type="button"
@@ -268,25 +275,27 @@ export function ChartToolbar({
         >
           S/R
         </button>
-        <button
-          type="button"
-          aria-pressed={preferences.vpvr}
-          onClick={() => onToggle('vpvr')}
+        <LockedFeatureButton
+          capability="chart.vpvr"
+          source="chart.toolbar-vpvr"
+          pressed={preferences.vpvr}
+          onActivate={() => onToggle('vpvr')}
           className={`${TOGGLE_BASE} px-2.5 ${preferences.vpvr ? ON : OFF}`}
           data-testid="toggle-vpvr"
         >
           VPVR
-        </button>
-        <button
-          type="button"
-          aria-pressed={preferences.options}
+        </LockedFeatureButton>
+        <LockedFeatureButton
+          capability="options.chain.basic"
+          source="chart.toolbar-options"
+          pressed={preferences.options}
           disabled={!optionsAvailable}
-          onClick={() => onToggle('options')}
+          onActivate={() => onToggle('options')}
           className={`${TOGGLE_BASE} px-2.5 ${preferences.options ? OPTIONS_ON : OFF} disabled:cursor-not-allowed disabled:opacity-40`}
           data-testid="toggle-options"
         >
           Options
-        </button>
+        </LockedFeatureButton>
       </div>
       <button
         type="button"

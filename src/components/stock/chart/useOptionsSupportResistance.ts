@@ -8,6 +8,7 @@ import {
   optionsChainCoordinator,
   optionsExpirationsCoordinator,
 } from '@/src/lib/stock-detail/options-source';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 
 export interface UseOptionsSupportResistanceOptions {
   symbol: string;
@@ -42,7 +43,17 @@ export interface UseOptionsSupportResistanceResult {
  * creating new provider work. Each effect generation ignores stale responses;
  * the coordinators own AbortControllers, fresh caches, and negative cooldowns.
  */
-export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, active }: UseOptionsSupportResistanceOptions): UseOptionsSupportResistanceResult {
+export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled: requested, active }: UseOptionsSupportResistanceOptions): UseOptionsSupportResistanceResult {
+  const { can } = useEntitlement();
+  /*
+   * Reading the chain at all needs the Pro ledger, and the walls on top of it
+   * need Elite. A reader without the ledger issues zero requests: the gate is on
+   * the loader, not on the rendering, so a locked section costs the provider
+   * nothing and puts nothing in memory to leak.
+   */
+  const chainEntitled = can('options.chain.basic');
+  const wallsEntitled = can('options.analytics.walls');
+  const enabled = requested && chainEntitled;
   const [expirations, setExpirations] = useState<string[]>([]);
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const [result, setResult] = useState<OptionsSrResult | null>(null);
@@ -134,12 +145,12 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
       setChainLoading(true);
       void (async () => {
       try {
-        const outcome = await optionsChainCoordinator.load(symbol, selectedExpiration, acceptedPriceRef.current);
+        const outcome = await optionsChainCoordinator.load(symbol, selectedExpiration, acceptedPriceRef.current, { wallsEntitled });
         if (cancelled || chainGeneration.current !== requestGeneration) return;
         setResult(outcome.result);
         setChain(outcome.chain);
         setStaleFallback(outcome.staleFallback ?? null);
-        const cooldownMs = optionsChainCoordinator.cooldownRemainingMs(symbol, selectedExpiration);
+        const cooldownMs = optionsChainCoordinator.cooldownRemainingMs(symbol, selectedExpiration, wallsEntitled);
         setRetryAt(Number.isFinite(cooldownMs) && cooldownMs > 0 ? Date.now() + cooldownMs : null);
       } catch (cause) {
         if (cancelled || chainGeneration.current !== requestGeneration) return;
@@ -153,7 +164,7 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
       })();
     });
     return () => { cancelled = true; };
-  }, [symbol, selectedExpiration, enabled, active, refreshToken]);
+  }, [symbol, selectedExpiration, enabled, active, refreshToken, wallsEntitled]);
 
   const setExpiration = useCallback((expiration: string) => {
     if (!expiration) return;
@@ -163,12 +174,12 @@ export function useOptionsSupportResistance({ symbol, acceptedPrice, enabled, ac
   const refresh = useCallback(() => {
     if (retryAt && Date.now() < retryAt) return;
     const ready = selectedExpiration
-      ? optionsChainCoordinator.reset(symbol, selectedExpiration)
+      ? optionsChainCoordinator.reset(symbol, selectedExpiration, wallsEntitled)
       : optionsExpirationsCoordinator.reset(symbol);
     if (!ready) return;
     setRetryAt(null);
     setRefreshToken((token) => token + 1);
-  }, [retryAt, selectedExpiration, symbol]);
+  }, [retryAt, selectedExpiration, symbol, wallsEntitled]);
 
   return { result, chain, staleFallback, loading: enabled && active && (expirationsLoading || chainLoading), expirations, selectedExpiration, retryAt, setExpiration, refresh };
 }

@@ -1,23 +1,24 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Info, Loader2 } from 'lucide-react';
 import { DataStatusBadge } from '@/src/components/market-data/DataProvenance';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
-import { useOptionsSupportResistance } from '@/src/components/stock/chart/useOptionsSupportResistance';
-import {
-  assembleOptionsSignalInput,
-  type OptionsSignalServerContext,
-} from '@/src/lib/analytics/options-signal/assemble';
-import { calculateOptionsSignal } from '@/src/lib/analytics/options-signal/calculations';
+import type {
+  OptionsSignalBreakdownDto,
+  OptionsSignalDto,
+  OptionsSignalSummaryDto,
+} from '@/src/lib/analytics/options-signal/dto';
 import type {
   OptionsSignalFactorId,
   OptionsSignalFactorScore,
-  OptionsSignalResult,
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { requestOptionsSignal, type OptionsSignalOutcome } from './signal-client';
 import {
   DATA_STATE_LABEL,
   FACTOR_COPY,
@@ -34,79 +35,160 @@ const FACTOR_ORDER: OptionsSignalFactorId[] = ['macro', 'trend', 'momentum', 'se
 
 export interface OptionsSignalSectionProps {
   symbol: string;
-  /** Candle/earnings-derived inputs computed on the server. */
-  context: OptionsSignalServerContext | null;
-  /** The single accepted underlying price shared with the header and chart. */
-  acceptedPrice: number | null;
-  /** True only while the Analysis tab is mounted, so the chain loads lazily. */
+  /** True only while the Analysis tab is mounted, so the signal loads lazily. */
   active: boolean;
 }
 
 /**
  * Options Signal Engine card.
  *
- * The options half of the input comes from the browser-wide options
- * coordinators, so it joins the request the Options Chain panel already makes
- * instead of issuing another one. The scoring itself lives entirely in the pure
- * engine — this component only renders what the engine returned.
+ * Everything is computed on the server and served already projected onto the
+ * reader's plan: the gauge needs `options.signal.summary`, the numbers behind it
+ * need `options.signal.breakdown`. This component renders what arrived and
+ * nothing else — when the breakdown is absent from the payload, it is absent
+ * from the page too, and the locked control explains why.
  */
 export function OptionsSignalSection(props: OptionsSignalSectionProps) {
-  return <OptionsSignalContent key={props.symbol} {...props} />;
+  const { can } = useEntitlement();
+  const summaryEntitled = can('options.signal.summary');
+  const breakdownEntitled = can('options.signal.breakdown');
+  const projection = summaryEntitled
+    ? (breakdownEntitled ? 'breakdown' : 'summary')
+    : 'locked';
+
+  return (
+    <OptionsSignalContent
+      key={`${props.symbol}:${projection}`}
+      {...props}
+      summaryEntitled={summaryEntitled}
+      breakdownEntitled={breakdownEntitled}
+    />
+  );
 }
 
-function OptionsSignalContent({ symbol, context, acceptedPrice, active }: OptionsSignalSectionProps) {
+function OptionsSignalContent({
+  symbol,
+  active,
+  summaryEntitled,
+  breakdownEntitled,
+}: OptionsSignalSectionProps & {
+  summaryEntitled: boolean;
+  breakdownEntitled: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  const options = useOptionsSupportResistance({ symbol, acceptedPrice, enabled: Boolean(context), active });
+  const [outcome, setOutcome] = useState<OptionsSignalOutcome | null>(null);
 
-  const result = useMemo<OptionsSignalResult | null>(() => {
-    if (!context) return null;
-    return calculateOptionsSignal(assembleOptionsSignalInput(context, {
-      chain: options.chain,
-      optionsSr: options.result,
-      // Stale-if-error: a transient 429 keeps Put/Call and IV readable, labelled STALE.
-      staleFallback: options.staleFallback,
-      acceptedPrice,
-    }));
-  }, [context, options.chain, options.result, options.staleFallback, acceptedPrice]);
+  useEffect(() => {
+    if (!active || !summaryEntitled) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        setOutcome(await requestOptionsSignal(symbol, controller.signal));
+      } catch {
+        if (!controller.signal.aborted) {
+          setOutcome({ status: 'unavailable', message: 'ยังโหลดข้อมูลพื้นฐานของสัญญาณไม่สำเร็จ จึงไม่แสดงผลลัพธ์ที่เดาขึ้นเอง' });
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [symbol, active, summaryEntitled]);
 
-  if (!context || !result) {
+  if (!summaryEntitled) {
+    return (
+      <section aria-label="Options Signal Engine" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5" data-testid="options-signal-locked">
+        <Header timeframe="1D" />
+        <p className="mt-3 text-sm leading-6 text-slate-400">
+          สรุปทิศทางจากข้อมูลตลาดจริง พร้อมคะแนนความมั่นใจ
+        </p>
+        <div className="mt-3">
+          <LockedNotice capability="options.signal.summary" source="analysis.options-signal" />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+      </section>
+    );
+  }
+
+  if (!outcome) {
     return (
       <section aria-label="Options Signal Engine" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
         <Header timeframe="1D" />
-        <p className="mt-3 text-sm text-slate-400">
-          ยังโหลดข้อมูลพื้นฐานของสัญญาณไม่สำเร็จ จึงไม่แสดงผลลัพธ์ที่เดาขึ้นเอง
+        <p className="mt-3 flex items-center gap-2 text-sm text-slate-400">
+          <Loader2 aria-hidden="true" size={15} className="motion-safe:animate-spin" />
+          {active ? 'กำลังคำนวณสัญญาณจากข้อมูลตลาดจริง' : 'กำลังเตรียมข้อมูลสัญญาณ'}
         </p>
         <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
       </section>
     );
   }
 
-  if (result.status === 'insufficient-data') {
+  if (outcome.status === 'locked') {
     return (
-      <section aria-label="Options Signal Engine" data-signal="insufficient-data" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
-        <Header timeframe={result.timeframe} />
-        <p className="mt-3 text-sm text-slate-300">ข้อมูลไม่เพียงพอ · {result.reason}</p>
-        <SourceStates result={result} />
+      <section aria-label="Options Signal Engine" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5" data-testid="options-signal-locked">
+        <Header timeframe="1D" />
+        <p className="mt-3 text-sm text-slate-400">{outcome.message}</p>
+        <div className="mt-3">
+          <LockedNotice capability="options.signal.summary" source="analysis.options-signal.server-denial" />
+        </div>
         <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
       </section>
     );
   }
 
-  const presentation = OPTIONS_SIGNAL_PRESENTATION[result.signalType];
-  const diagnostics = result.diagnostics;
-  const iv = diagnostics.iv;
-  const event = diagnostics.event;
-  const highlights = result.reasoning
+  if (outcome.status !== 'ready') {
+    return (
+      <section aria-label="Options Signal Engine" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
+        <Header timeframe="1D" />
+        <p className="mt-3 text-sm text-slate-400">{outcome.message}</p>
+        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+      </section>
+    );
+  }
+
+  return (
+    <SignalCard
+      signal={outcome.signal}
+      breakdownEntitled={breakdownEntitled}
+      open={open}
+      onOpenChange={setOpen}
+    />
+  );
+}
+
+function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
+  signal: OptionsSignalDto;
+  breakdownEntitled: boolean;
+  open: boolean;
+  onOpenChange(next: boolean): void;
+}) {
+  const summary = signal.summary;
+  // The endpoint is the security boundary. This local check also prevents a
+  // just-expired Elite view from rendering its previous in-memory breakdown
+  // during the first client render after the page entitlement drops to Pro.
+  const breakdown = breakdownEntitled ? signal.breakdown : null;
+
+  if (summary.status === 'insufficient-data' || summary.signalType === null) {
+    return (
+      <section aria-label="Options Signal Engine" data-signal="insufficient-data" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
+        <Header timeframe={summary.timeframe} />
+        <p className="mt-3 text-sm text-slate-300">ข้อมูลไม่เพียงพอ · {summary.reason ?? 'ปัจจัยหลักยังไม่พร้อม'}</p>
+        {breakdown && <SourceStates breakdown={breakdown} />}
+        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+      </section>
+    );
+  }
+
+  const presentation = OPTIONS_SIGNAL_PRESENTATION[summary.signalType];
+  const highlights = (breakdown?.reasoning ?? [])
     .filter((reason) => reason.polarity === 'positive' || reason.polarity === 'caution')
     .slice(0, 4);
 
   return (
     <section
       aria-label="Options Signal Engine"
-      data-signal={result.signalType}
+      data-signal={summary.signalType}
       className={`rounded-2xl border p-5 ${presentation.tone}`}
     >
-      <Header timeframe={result.timeframe} />
+      <Header timeframe={summary.timeframe} />
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-mono text-base font-bold sm:text-lg ${presentation.badgeTone}`}>
@@ -114,12 +196,44 @@ function OptionsSignalContent({ symbol, context, acceptedPrice, active }: Option
           {presentation.title}
         </p>
         <p className="inline-flex items-center gap-2 font-mono text-lg font-bold text-white">
-          {result.confidenceScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
+          {summary.confidenceScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
           <InfoHint term="optionsSignalConfidence" align="end" />
         </p>
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-300">{presentation.headline}</p>
 
+      {breakdown ? (
+        <EliteBody breakdown={breakdown} summary={summary} highlights={highlights} open={open} onOpenChange={onOpenChange} />
+      ) : (
+        <div className="mt-4 space-y-2" data-testid="options-signal-breakdown-locked">
+          <p className="text-xs leading-5 text-slate-400">
+            คะแนนรายปัจจัย เหตุผล Risk:Reward และ Trade Setup อยู่ในแพ็กเกจที่สูงขึ้น
+          </p>
+          <LockedNotice capability="options.signal.breakdown" source="analysis.signal-breakdown" />
+        </div>
+      )}
+
+      <p className="mt-3 text-xs leading-5 text-slate-400">{DISCLAIMER}</p>
+    </section>
+  );
+}
+
+function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
+  breakdown: OptionsSignalBreakdownDto;
+  summary: OptionsSignalSummaryDto;
+  highlights: OptionsSignalBreakdownDto['reasoning'];
+  open: boolean;
+  onOpenChange(next: boolean): void;
+}) {
+  const diagnostics = breakdown.diagnostics;
+  const iv = diagnostics.iv;
+  const event = diagnostics.event;
+  const presentationTitle = summary.signalType
+    ? OPTIONS_SIGNAL_PRESENTATION[summary.signalType].title
+    : 'Options Signal';
+
+  return (
+    <>
       <dl className="mt-4 space-y-1.5" aria-label="คะแนนแต่ละปัจจัย">
         {FACTOR_ORDER.map((id) => (
           <FactorRow key={id} factor={diagnostics.factors[id]} />
@@ -166,36 +280,27 @@ function OptionsSignalContent({ symbol, context, acceptedPrice, active }: Option
         </ul>
       </div>
 
-      <SetupBlock setup={result.suggestedOptionsSetup} />
-
-      {options.loading && (
-        <p className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-          <Loader2 aria-hidden="true" size={14} className="motion-safe:animate-spin" />
-          กำลังโหลดข้อมูล options chain เพื่อเติมปัจจัย IV และ Put/Call
-        </p>
-      )}
+      <SetupBlock setup={breakdown.suggestedOptionsSetup} />
 
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen(true)}
+        onClick={() => onOpenChange(true)}
         className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/20 px-3 text-sm font-semibold text-white hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00] sm:w-auto"
       >
         <Info aria-hidden="true" size={17} />
         ดูรายละเอียดการคำนวณ
       </button>
 
-      <p className="mt-3 text-xs leading-5 text-slate-400">{DISCLAIMER}</p>
-
       <ResponsiveDialog
         isOpen={open}
-        onClose={() => setOpen(false)}
-        title={`รายละเอียดการคำนวณ · ${presentation.title}`}
+        onClose={() => onOpenChange(false)}
+        title={`รายละเอียดการคำนวณ · ${presentationTitle}`}
       >
-        <DetailBody result={result} />
+        <DetailBody breakdown={breakdown} summary={summary} />
       </ResponsiveDialog>
-    </section>
+    </>
   );
 }
 
@@ -225,7 +330,7 @@ function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
   );
 }
 
-function SetupBlock({ setup }: { setup: OptionsSignalResult['suggestedOptionsSetup'] }) {
+function SetupBlock({ setup }: { setup: OptionsSignalBreakdownDto['suggestedOptionsSetup'] }) {
   return (
     <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Setup เพื่อการเรียนรู้</h3>
@@ -249,8 +354,8 @@ function SetupBlock({ setup }: { setup: OptionsSignalResult['suggestedOptionsSet
   );
 }
 
-function SourceStates({ result }: { result: OptionsSignalResult }) {
-  const factors = result.diagnostics.factors;
+function SourceStates({ breakdown }: { breakdown: OptionsSignalBreakdownDto }) {
+  const factors = breakdown.diagnostics.factors;
   return (
     <ul className="mt-3 space-y-1 text-xs text-slate-400">
       {FACTOR_ORDER.map((id) => (
@@ -264,8 +369,11 @@ function SourceStates({ result }: { result: OptionsSignalResult }) {
   );
 }
 
-function DetailBody({ result }: { result: OptionsSignalResult }) {
-  const diagnostics = result.diagnostics;
+function DetailBody({ breakdown, summary }: {
+  breakdown: OptionsSignalBreakdownDto;
+  summary: OptionsSignalSummaryDto;
+}) {
+  const diagnostics = breakdown.diagnostics;
   const squeeze = diagnostics.squeeze;
   const riskReward = diagnostics.riskReward;
   const iv = diagnostics.iv;
@@ -406,7 +514,7 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
       <section>
         <h3 className="font-semibold text-white">8. เหตุผลทั้งหมด</h3>
         <ul className="mt-2 space-y-1.5">
-          {result.reasoning.map((reason) => (
+          {breakdown.reasoning.map((reason) => (
             <li key={reason.id} className="flex gap-2">
               <span aria-hidden="true">{reason.polarity === 'caution' ? '⚠' : '•'}</span>
               <span>{reason.text}</span>
@@ -416,9 +524,9 @@ function DetailBody({ result }: { result: OptionsSignalResult }) {
       </section>
 
       <div className="rounded-xl border border-slate-800 p-3 text-xs leading-5 text-slate-400">
-        <p>Timeframe: {result.timeframe} · แท่งที่ปิดแล้ว: {result.finalizedCandles}</p>
-        <p>แท่งล่าสุดที่ใช้: {result.latestCandleAt ?? 'ไม่พร้อมใช้งาน'}</p>
-        <p>คำนวณเมื่อ: {formatBangkokDateTime(result.calculatedAt)}</p>
+        <p>Timeframe: {summary.timeframe} · แท่งที่ปิดแล้ว: {summary.finalizedCandles}</p>
+        <p>แท่งล่าสุดที่ใช้: {summary.latestCandleAt ?? 'ไม่พร้อมใช้งาน'}</p>
+        <p>คำนวณเมื่อ: {formatBangkokDateTime(summary.calculatedAt)}</p>
       </div>
       <p className="text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
     </div>

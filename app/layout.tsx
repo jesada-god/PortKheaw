@@ -5,6 +5,8 @@ import { Toaster } from '@/src/components/ui/Toast';
 import { appConfig } from '@/src/config/app';
 import { ThemeProvider } from '@/src/themes/ThemeProvider';
 import { THEME_BOOTSTRAP } from '@/src/themes/bootstrap';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
+import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 
 export const metadata: Metadata = {
   applicationName: appConfig.name,
@@ -87,7 +89,8 @@ const ZOD_JITLESS_BOOTSTRAP = '(globalThis.__zod_globalConfig=globalThis.__zod_g
   instead of suppressing the warning; `dark.css` styles the pre-script state so the
   markup is never token-less.
 */
-export default function RootLayout({children}: {children: React.ReactNode}) {
+export default async function RootLayout({children}: {children: React.ReactNode}) {
+  const entitlement = await resolvePageEntitlement();
   return (
     <html lang="th" data-theme="portkheaw">
       <head>
@@ -96,8 +99,14 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
       <body className="bg-[var(--bg)] text-[var(--text)] antialiased selection:bg-[var(--accent-soft)]">
         <script dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
         <ThemeProvider>
-          <MainLayout>{children}</MainLayout>
-          <Toaster />
+          <EntitlementProvider
+            tier={entitlement.tier}
+            authenticated={entitlement.authenticated}
+            trialOffer={entitlement.trialOffer}
+          >
+            <MainLayout>{children}</MainLayout>
+            <Toaster />
+          </EntitlementProvider>
         </ThemeProvider>
       </body>
     </html>

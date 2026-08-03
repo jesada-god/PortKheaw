@@ -11,6 +11,7 @@ export {
   fetchOptionsExpirations,
   fetchOptionsChainOutcome,
   fetchOptionsSr,
+  fetchOptionsWalls,
   type OptionsChainOutcome,
   type OptionsChainStaleFallback,
   type ExpirationsOutcome,

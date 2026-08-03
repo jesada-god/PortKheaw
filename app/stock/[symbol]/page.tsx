@@ -4,11 +4,11 @@ import { getFxRate } from '@/src/lib/market-data/fx/service';
 import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { StockDetailClient } from '@/src/components/stock/StockDetailClient';
-import { loadMarketSignal } from '@/src/lib/analytics/market-signal/service';
-import { loadOptionsSignalContext } from '@/src/lib/analytics/options-signal/service';
+import { loadEntitledMarketSignal } from '@/src/lib/analytics/market-signal/entitled-service';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import { getInstrumentMetadata } from '@/src/lib/instruments/master';
+import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 import {
   advancedChartTypesEnabled,
   analystConsensusEnabled,
@@ -38,24 +38,19 @@ export default async function StockDetailPage({
   const parsed = symbolSchema.safeParse(rawSymbol);
   if (!parsed.success) notFound();
   const symbol = parsed.data;
+  const entitlement = await resolvePageEntitlement();
 
   const [
     marketResult,
     fxResult,
     watchResult,
     signalResult,
-    optionsSignalResult,
     instrumentMetadataResult,
   ] = await Promise.allSettled([
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
-    loadMarketSignal(symbol),
-    // Candle-derived Options Signal inputs. It reuses the same cached 1D dataset
-    // as the Market Signal above, so this costs no extra provider request for
-    // the symbol; only SPY/QQQ and the earnings calendar are additional, and
-    // both are shared across every stock page on the instance.
-    loadOptionsSignalContext(symbol),
+    loadEntitledMarketSignal(symbol, entitlement.tier),
     getInstrumentMetadata([symbol]),
   ]);
 
@@ -89,7 +84,6 @@ export default async function StockDetailPage({
       keyStatisticsEnabled={keyStatisticsEnabled()}
       analystConsensusEnabled={analystConsensusEnabled()}
       marketSignal={signalResult.status === 'fulfilled' ? signalResult.value : null}
-      optionsSignalContext={optionsSignalResult.status === 'fulfilled' ? optionsSignalResult.value : null}
     />
   );
 }

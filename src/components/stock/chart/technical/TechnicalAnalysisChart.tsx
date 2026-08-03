@@ -36,6 +36,7 @@ import type { CanonicalLiveUpdateSink } from '../../useMarketSource';
 import type { OptionToolPivotLevels } from '../../option-tool-chart/pivot-levels';
 import { useOptionsSupportResistance } from '../useOptionsSupportResistance';
 import { useChartThemeColors } from '../useChartThemeColors';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { levelsRequestKey, requestChartLevels } from './levels-client';
 import { buildPriceLineSpecs } from './level-lines';
 import { ChartToolbar, type ToolbarToggleKey } from './ChartToolbar';
@@ -128,6 +129,7 @@ export function TechnicalAnalysisChart({
   onToggle,
   liveUpdateSinkRef,
 }: TechnicalAnalysisChartProps) {
+  const { can } = useEntitlement();
   const [visibleRange, setVisibleRange] = useState<VisibleLogicalRange | null>(null);
   const [tooltipBar, setTooltipBar] = useState<DisplayBar | null>(null);
   const [levelState, setLevelState] = useState<LevelState>({ key: '', levels: null, error: null });
@@ -178,9 +180,16 @@ export function TechnicalAnalysisChart({
   }, [bars, preferences.macd]);
 
   // ── VPVR: visible slice of the already-loaded candles, never a fetch ────────
-  const visibleProfile = useMemo<VisibleRangeVolumeProfile>(
-    () => calculateVisibleRangeVolumeProfile(toVrvpCandles(sliceVisible(analysisBars, visibleRange))),
-    [analysisBars, visibleRange],
+  // The capability gates the CALCULATION, not just the drawing: without
+  // `chart.vpvr` the profile is never built, so there is no POC, VAH or VAL in
+  // memory, in the DOM or in a React tree a devtools reader could open.
+  const vpvrEntitled = can('chart.vpvr');
+  const showVpvr = preferences.vpvr && vpvrEntitled;
+  const visibleProfile = useMemo<VisibleRangeVolumeProfile | undefined>(
+    () => showVpvr
+      ? calculateVisibleRangeVolumeProfile(toVrvpCandles(sliceVisible(analysisBars, visibleRange)))
+      : undefined,
+    [showVpvr, analysisBars, visibleRange],
   );
 
   // ── S/R levels (existing classic-pivot engine) ─────────────────────────────
@@ -215,19 +224,24 @@ export function TechnicalAnalysisChart({
   const levelsError = levelState.key === levelKey ? levelState.error : null;
 
   // ── Touch / Hold / Break over the displayed canonical bars ─────────────────
+  // S/R Context — the touch/hold/break statistics and the VPVR confirmation —
+  // is the Pro half of this panel. Without `chart.sr.context` the statistics
+  // engine is never run, so the panel has no strength figures to withhold: the
+  // levels and their prices, which Basic includes, are all that exists.
+  const contextEntitled = can('chart.sr.context');
   const statistics = useMemo(() => {
-    if (!activeLevels) return null;
+    if (!activeLevels || !contextEntitled) return null;
     return calculateLevelStatistics(analysisBars, toLevelInputs(activeLevels));
-  }, [activeLevels, analysisBars]);
+  }, [activeLevels, analysisBars, contextEntitled]);
 
   const srRows = useMemo<SupportResistanceRow[]>(() => {
     if (!activeLevels) return [];
     return assembleLevelRows(activeLevels, statistics?.levels ?? [], acceptedPrice).map((row) => ({
       ...row,
       // VPVR is a confirmation layer only — it never changes a level's price.
-      confirmation: preferences.vpvr ? volumeProfileConfirmation(visibleProfile, row.price) : null,
+      confirmation: showVpvr && contextEntitled ? volumeProfileConfirmation(visibleProfile, row.price) : null,
     }));
-  }, [activeLevels, statistics, acceptedPrice, preferences.vpvr, visibleProfile]);
+  }, [activeLevels, statistics, acceptedPrice, showVpvr, contextEntitled, visibleProfile]);
   const nearest = useMemo(() => nearestLevel(srRows, acceptedPrice), [srRows, acceptedPrice]);
 
   // ── Options-driven levels (real open interest only) ────────────────────────
@@ -248,16 +262,16 @@ export function TechnicalAnalysisChart({
     const base = buildInstitutionalOverlaySpec({
       showZones: false,
       profile: visibleProfile,
-      showVolumeProfile: preferences.vpvr,
+      showVolumeProfile: showVpvr,
       showAnchoredVwap: false,
-      showVolumeProfileHistogram: preferences.vpvr,
+      showVolumeProfileHistogram: showVpvr,
     });
     return {
       bands: [...base.bands, ...optionsOverlay.bands],
       lines: [...base.lines, ...optionsOverlay.lines],
       ...(base.histogram ? { histogram: base.histogram } : {}),
     };
-  }, [visibleProfile, preferences.vpvr, optionsOverlay]);
+  }, [visibleProfile, showVpvr, optionsOverlay]);
 
   // Level and accepted-price colours come from the live appearance: the canvas
   // needs literal values, and the light tokens are much darker than the dark ones.
@@ -405,7 +419,7 @@ export function TechnicalAnalysisChart({
         </p>
       )}
 
-      {preferences.vpvr && (
+      {showVpvr && visibleProfile && (
         <p className="border-t border-[#242733] px-3 py-1.5 text-[11px] text-slate-500" data-testid="vpvr-summary">
           {visibleProfile.status === 'available'
             ? `VPVR (ช่วงที่มองเห็น ${visibleProfile.candleCount} แท่ง): POC ${currency}${visibleProfile.poc.toFixed(2)} · VAH ${currency}${visibleProfile.vah.toFixed(2)} · VAL ${currency}${visibleProfile.val.toFixed(2)}`
@@ -442,6 +456,7 @@ export function TechnicalAnalysisChart({
         statisticsReason={statistics?.status === 'unavailable' ? statistics.reason : null}
         levelsError={levelsError}
         currency={currency}
+        contextEntitled={contextEntitled}
       />
     </section>
   );

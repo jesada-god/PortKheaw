@@ -26,7 +26,14 @@ export type OptionsDataMode = 'DELAYED' | 'END-OF-DAY' | 'CACHED' | 'STALE';
 
 /** The typed reasons an Options S/R computation can be unavailable. */
 export type OptionsSrUnavailableReason =
+  /** Our own data contract with the provider does not cover options. */
   | 'entitlement-required'
+  /**
+   * The reader's PortKheaw plan does not include Options Walls. Kept distinct
+   * from `entitlement-required` because the two are fixed by different people:
+   * this one by the reader upgrading, the other by us.
+   */
+  | 'subscription-required'
   | 'no-expirations'
   | 'chain-unavailable'
   | 'insufficient-coverage'

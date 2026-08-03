@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import { computeOptionsSupportResistance, optionsUnavailable } from '@/src/lib/analytics/options-sr';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import { OptionsLevelsPanel } from './OptionsLevelsPanel';
 
 const EXPIRATION = '2026-08-21';
@@ -58,7 +59,14 @@ function baseProps() {
 function mount() {
   const host = document.createElement('div');
   document.body.append(host);
-  return { host, root: createRoot(host) };
+  const reactRoot = createRoot(host);
+  return {
+    host,
+    root: {
+      render: (node: React.ReactNode) => reactRoot.render(<EntitlementProvider tier="elite" authenticated trialOffer="used">{node}</EntitlementProvider>),
+      unmount: () => reactRoot.unmount(),
+    },
+  };
 }
 
 beforeEach(() => { vi.stubGlobal('React', React); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); });

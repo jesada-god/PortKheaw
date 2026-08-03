@@ -1,6 +1,6 @@
 import type { OptionsSrResult } from '@/src/lib/analytics/options-sr';
 import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
-import { fetchOptionsChainOutcome, type OptionsChainOutcome } from './client';
+import { fetchOptionsChainOutcome, type FetchOptionsSrOptions, type OptionsChainOutcome } from './client';
 import { optionsRequestKey } from './planner';
 
 type Fetcher = (
@@ -8,6 +8,7 @@ type Fetcher = (
   expiration: string,
   acceptedPrice: number | null,
   signal: AbortSignal,
+  options?: FetchOptionsSrOptions,
 ) => Promise<OptionsChainOutcome>;
 
 interface LastGoodChain {
@@ -82,8 +83,14 @@ export class OptionsChainCoordinator {
     };
   }
 
-  async load(symbol: string, expiration: string, acceptedPrice: number | null): Promise<OptionsChainOutcome> {
-    const key = optionsRequestKey(symbol, expiration);
+  async load(
+    symbol: string,
+    expiration: string,
+    acceptedPrice: number | null,
+    options: FetchOptionsSrOptions = {},
+  ): Promise<OptionsChainOutcome> {
+    const wallsEntitled = options.wallsEntitled !== false;
+    const key = optionsRequestKey(symbol, expiration, wallsEntitled);
     const state = this.ensure(key);
     const now = this.now();
     if (state.outcome?.ok && now < state.freshUntil) return state.outcome;
@@ -96,7 +103,7 @@ export class OptionsChainCoordinator {
     const controller = new AbortController();
     state.controller = controller;
     const request = (async () => {
-      const outcome = await this.fetcher(symbol.toUpperCase(), expiration, acceptedPrice, controller.signal);
+      const outcome = await this.fetcher(symbol.toUpperCase(), expiration, acceptedPrice, controller.signal, { wallsEntitled });
       const completedAt = this.now();
       state.outcome = outcome;
       if (outcome.ok) {
@@ -129,16 +136,16 @@ export class OptionsChainCoordinator {
     }
   }
 
-  cooldownRemainingMs(symbol: string, expiration: string): number {
-    const state = this.states.get(optionsRequestKey(symbol, expiration));
+  cooldownRemainingMs(symbol: string, expiration: string, wallsEntitled = true): number {
+    const state = this.states.get(optionsRequestKey(symbol, expiration, wallsEntitled));
     if (!state) return 0;
     if (state.blocked) return Number.POSITIVE_INFINITY;
     return Math.max(0, state.cooldownUntil - this.now());
   }
 
   /** Manual retry never bypasses Retry-After and never duplicates an in-flight request. */
-  reset(symbol: string, expiration: string): boolean {
-    const state = this.states.get(optionsRequestKey(symbol, expiration));
+  reset(symbol: string, expiration: string, wallsEntitled = true): boolean {
+    const state = this.states.get(optionsRequestKey(symbol, expiration, wallsEntitled));
     if (!state) return true;
     if (state.inflight || state.blocked || this.now() < state.cooldownUntil) return false;
     state.outcome = null;

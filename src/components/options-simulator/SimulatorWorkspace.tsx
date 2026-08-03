@@ -5,6 +5,9 @@ import { ArrowLeft, CalendarDays, Check, Copy, LoaderCircle, Plus, Save, Search,
 import { useRouter } from 'next/navigation';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import Header from '@/src/components/layout/Header';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
+import { LockedFeatureButton } from '@/src/components/subscription/LockedFeatureButton';
 import { Button } from '@/src/components/ui/Button';
 import { Input } from '@/src/components/ui/Input';
 import { Modal } from '@/src/components/ui/Modal';
@@ -13,11 +16,10 @@ import { useToast } from '@/src/components/ui/Toast';
 import { fetchFxRate } from '@/src/lib/market-data/fx/client';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import type { MarketDataEnvelope, Quote, SymbolSearchResult } from '@/src/lib/market-data/types';
-import { optionsChainSchema } from '@/src/lib/market-data/options/contracts';
-import { boundedExpirationProfitFloor } from '@/src/lib/options-simulator/monte-carlo';
+import { gatedOptionsChainSchema, normalizeGatedOptionsChain } from '@/src/lib/market-data/options/contracts';
 import { importOptionContract } from '@/src/lib/options-simulator/contract-import';
-import { detectStrategy, portfolioProfitLossBasis, valuePortfolio } from '@/src/lib/options-simulator/portfolio';
-import { priceOption } from '@/src/lib/options-simulator/pricing';
+import { detectStrategy, portfolioProfitLossBasis } from '@/src/lib/options-simulator/portfolio-inputs';
+import type { MonteCarloDisplayResult, WhatIfDecomposition } from '@/src/lib/options-simulator/compute-dto';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
 import type { DataStatus, MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace } from '@/src/lib/options-simulator/types';
 import { calculationValidationMessages } from '@/src/lib/options-simulator/validation';
@@ -27,22 +29,70 @@ import { MetricDisclosure } from './MetricDisclosure';
 import { addCalendarDays, aggregatePortfolioSensitivity, auditResultReconciliation, BASIC_PATH_OPTIONS, buildProfitLossSummary, calendarDaysBetween, clampTargetDate, convertUsdForDisplay, displayValidationMessage, engineVolatilityToPercent, formatPremiumDigits, formatResultMoney, formatResultNumber, formatSignedPercent, formatTimestamp, isBasicPathOption, normalizePercentDraft, parseFiniteDraft, parsePercentDraft, parsePremiumPaste, percentVolatilityToEngine, premiumDigitsFromValue, premiumFromDigitString, profitLossState, profitLossStateLabel, profitLossToneClass, safeProfitLossPercent, targetDateError, validationMessageParts, validationPathUnit, type ResultCurrency } from './simulator-ux';
 
 type Saved = SimulationWorkspace & { id: string; createdAt: string; updatedAt: string; version: number };
-type MonteCarloDisplayResult = MonteCarloResult & {
-  validPaths?: number;
-  discardedPaths?: number;
-  terminalPriceHistogram?: Array<{ lower: number; upper: number; count: number }>;
-};
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finiteValue(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function calculationPayloadData(payload: unknown): unknown {
+  return recordValue(payload) ? payload.data : null;
+}
+
+function calculationPayloadMessage(payload: unknown, fallback: string): string {
+  const error = recordValue(payload) && recordValue(payload.error) ? payload.error : null;
+  return error && typeof error.message === 'string' ? error.message : fallback;
+}
+
+function isPortfolioValuation(value: unknown): value is PortfolioValuation {
+  if (!recordValue(value) || !Array.isArray(value.legs) || !Array.isArray(value.breakEvens) || !Array.isArray(value.payoff)) return false;
+  if (!recordValue(value.greeks)) return false;
+  const greeks = value.greeks;
+  return ['theoreticalValue', 'profitLoss', 'netDebitCredit'].every((key) => finiteValue(value[key]))
+    && (value.profitLossPercent === null || finiteValue(value.profitLossPercent))
+    && value.breakEvens.every(finiteValue)
+    && value.payoff.every((point) => recordValue(point) && finiteValue(point.price) && finiteValue(point.profitLoss))
+    && ['delta', 'gamma', 'theta', 'vega', 'rho'].every((key) => finiteValue(greeks[key]))
+    && typeof value.unlimitedProfit === 'boolean'
+    && typeof value.unlimitedLoss === 'boolean';
+}
+
+function isMonteCarloDisplayResult(value: unknown): value is MonteCarloDisplayResult {
+  if (!recordValue(value) || !Array.isArray(value.histogram) || !Array.isArray(value.samplePaths)) return false;
+  return ['paths', 'seed', 'probabilityOfProfit', 'probabilityItm', 'probabilityOtm', 'expectedProfitLoss', 'medianProfitLoss', 'expectedDrawdown']
+    .every((key) => finiteValue(value[key]))
+    && value.histogram.every((bucket) => recordValue(bucket) && finiteValue(bucket.lower) && finiteValue(bucket.upper) && finiteValue(bucket.count))
+    && value.samplePaths.every((path) => Array.isArray(path) && path.every(finiteValue))
+    && (value.breakEvens === undefined || (Array.isArray(value.breakEvens) && value.breakEvens.every(finiteValue)))
+    && (value.expirationProfitFloor === undefined || value.expirationProfitFloor === null || finiteValue(value.expirationProfitFloor));
+}
+
+function isWhatIfDecomposition(value: unknown): value is WhatIfDecomposition {
+  return recordValue(value) && ['currentValue', 'priceImpact', 'timeImpact', 'ivImpact'].every((key) => finiteValue(value[key]));
+}
+
+function isCallPutScenarioScore(value: unknown): value is CallPutScenarioScore {
+  if (!recordValue(value) || (value.status !== 'available' && value.status !== 'unavailable')) return false;
+  if (value.status === 'unavailable') return typeof value.reason === 'string';
+  return Array.isArray(value.strategies) && recordValue(value.pathSet) && recordValue(value.assumptions);
+}
 
 function monteCarloSnapshot(result: MonteCarloDisplayResult): MonteCarloResult {
   const snapshot = { ...result };
   delete snapshot.validPaths;
   delete snapshot.discardedPaths;
   delete snapshot.terminalPriceHistogram;
+  delete snapshot.breakEvens;
+  delete snapshot.expirationProfitFloor;
   return snapshot;
 }
 
 const box = 'rounded-2xl border border-slate-800 bg-[#151B28] p-4 shadow-xl md:p-6';
 const label = 'mb-1 block text-xs text-slate-400';
+const calculateButtonClass = 'inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)] transition-colors hover:bg-[var(--accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50';
+const outlineButtonClass = 'inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md border border-[var(--border-strong)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50';
 
 /*
   The five tabs are one numbered walkthrough. The chips stay short so the row
@@ -210,35 +260,20 @@ function normalizeUiWorkspace(value: SimulationWorkspace): SimulationWorkspace {
   };
 }
 
-function modelGreeks(workspace: SimulationWorkspace, leg: OptionLeg) {
-  if (!workspace.underlyingPrice || leg.strike <= 0 || leg.impliedVolatility <= 0 || leg.expiration <= workspace.valuationDate) return null;
-  try {
-    return priceOption({
-      spot: workspace.underlyingPrice,
-      strike: leg.strike,
-      timeYears: calendarDaysBetween(workspace.valuationDate, leg.expiration) / 365,
-      volatility: leg.impliedVolatility,
-      rate: workspace.scenarios[0]?.rate ?? 0,
-      dividendYield: workspace.scenarios[0]?.dividendYield ?? 0,
-      kind: leg.kind,
-      style: leg.style,
-    }).greeks;
-  } catch { return null; }
-}
-
-function legSensitivity(workspace: SimulationWorkspace, leg: OptionLeg) {
-  const model = modelGreeks(workspace, leg);
+function legSensitivity(leg: OptionLeg) {
+  const delta = typeof leg.delta === 'number' && Number.isFinite(leg.delta) ? leg.delta : null;
+  const theta = typeof leg.theta === 'number' && Number.isFinite(leg.theta) ? leg.theta : null;
   return {
-    delta: Number.isFinite(leg.delta) ? leg.delta as number : model?.delta ?? null,
-    theta: Number.isFinite(leg.theta) ? leg.theta as number : model?.theta ?? null,
-    deltaSource: Number.isFinite(leg.delta) ? leg.deltaSource ?? 'manual' : 'model',
-    thetaSource: Number.isFinite(leg.theta) ? leg.thetaSource ?? 'manual' : 'model',
+    delta,
+    theta,
+    deltaSource: delta === null ? 'model' : leg.deltaSource ?? 'manual',
+    thetaSource: theta === null ? 'model' : leg.thetaSource ?? 'manual',
   } as const;
 }
 
 function aggregateSensitivity(workspace: SimulationWorkspace) {
   return aggregatePortfolioSensitivity(workspace.legs.map((leg) => {
-    const sensitivity = legSensitivity(workspace, leg);
+    const sensitivity = legSensitivity(leg);
     return {
       side: leg.side,
       quantity: leg.quantity,
@@ -252,6 +287,9 @@ function aggregateSensitivity(workspace: SimulationWorkspace) {
 export default function SimulatorWorkspace({ initialType }: { initialType: SimulationType }) {
   const router = useRouter();
   const { addToast } = useToast();
+  const { can } = useEntitlement();
+  const whatIfEntitled = can('simulator.what_if');
+  const monteCarloEntitled = can('simulator.monte_carlo');
   const [workspace, setWorkspace] = useState(() => seedWorkspace(initialType));
   const [tab, setTab] = useState(initialType === 'monte-carlo' ? 'Monte Carlo Simulation' : 'What-If Analysis');
   const [query, setQuery] = useState('');
@@ -260,6 +298,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [valuation, setValuation] = useState<PortfolioValuation | null>(null);
+  const [whatIfDecomposition, setWhatIfDecomposition] = useState<WhatIfDecomposition | null>(null);
   const [mc, setMc] = useState<MonteCarloDisplayResult | null>(null);
   const [callPutScore, setCallPutScore] = useState<CallPutScenarioScore | null>(null);
   const [running, setRunning] = useState(false);
@@ -276,8 +315,8 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const [resultCurrency, setResultCurrency] = useState<ResultCurrency>('USD');
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
   const [fxState, setFxState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
-  const worker = useRef<Worker | null>(null);
-  const workerRunId = useRef(0);
+  const calculationController = useRef<AbortController | null>(null);
+  const calculationRunId = useRef(0);
   const hasResults = useRef(false);
   const saveInFlight = useRef(false);
   const lastSaveMode = useRef<'save' | 'copy'>('save');
@@ -289,21 +328,26 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
       : { ...workspace, legs: workspace.legs.filter((leg) => leg.id === selectedLegId) }
   ), [selectedLegId, workspace]);
 
-  const cancelWorker = useCallback(() => {
-    workerRunId.current += 1;
-    worker.current?.terminate();
-    worker.current = null;
+  const cancelCalculation = useCallback(() => {
+    calculationRunId.current += 1;
+    calculationController.current?.abort();
+    calculationController.current = null;
     setRunning(false);
   }, []);
   const change = useCallback((patch: Partial<SimulationWorkspace>) => {
-    if (worker.current) cancelWorker();
+    if (calculationController.current) cancelCalculation();
     setWorkspace((current) => ({ ...current, ...patch }));
     setValidationErrors([]);
     setOperationError(null);
     setSaveStatus('Unsaved');
     if (hasResults.current) setResultsOutdated(true);
-  }, [cancelWorker]);
+  }, [cancelCalculation]);
   const loadSaved = useCallback(async () => {
+    if (!whatIfEntitled) {
+      setSaved([]);
+      setSavedState('ready');
+      return;
+    }
     setSavedState('loading');
     try {
       const response = await fetch('/api/option-simulations?page=1&pageSize=50');
@@ -311,7 +355,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
       if (!response.ok) throw new Error();
       const payload = await response.json() as { data: { items: Saved[] } }; setSaved(payload.data.items); setSavedState('ready');
     } catch { setSavedState('error'); }
-  }, []);
+  }, [whatIfEntitled]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadSaved(), 0);
@@ -377,11 +421,12 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         const response = await fetch(`/api/market/options/chain?${query.toString()}`, { signal: controller.signal, headers: { Accept: 'application/json' } });
         const payload = await response.json() as { data: unknown; error?: { code?: string } };
         if (!response.ok) throw new Error(`นำเข้าสัญญาไม่ได้ (${payload.error?.code ?? response.status})`);
-        const parsed = optionsChainSchema.safeParse(payload.data);
+        const parsed = gatedOptionsChainSchema.safeParse(payload.data);
         if (!parsed.success) throw new Error('Options chain response ไม่ผ่าน schema validation');
+        const chain = normalizeGatedOptionsChain(parsed.data);
         let imported = false;
         setWorkspace((current) => {
-          const next = importOptionContract(current, parsed.data, contractSymbol);
+          const next = importOptionContract(current, chain, contractSymbol);
           imported = Boolean(next);
           if (!next) return current;
           const canonicalUnderlying = hasAcceptedPrice && acceptedStatus ? {
@@ -398,9 +443,9 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         });
         if (!imported) throw new Error('ไม่พบ contract identity ที่เลือกใน chain snapshot นี้');
         setSelectedLegId('portfolio');
-        setValuation(null); setMc(null); setCallPutScore(null);
+        setValuation(null); setWhatIfDecomposition(null); setMc(null); setCallPutScore(null);
         setSaveStatus('Unsaved'); setTab('Inputs');
-        addToast({ title: 'นำเข้าสัญญาจริงแล้ว', message: `${contractSymbol} · ${parsed.data.provider}`, type: 'success' });
+        addToast({ title: 'นำเข้าสัญญาจริงแล้ว', message: `${contractSymbol} · ${chain.provider}`, type: 'success' });
       } catch (cause) {
         if (controller.signal.aborted) return;
         setOperationError(presentError(cause).message);
@@ -418,7 +463,23 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
     const guard = (event: BeforeUnloadEvent) => { if (saveStatus !== 'Saved') event.preventDefault(); };
     window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard);
   }, [saveStatus]);
-  useEffect(() => () => { worker.current?.terminate(); }, []);
+  useEffect(() => () => { calculationController.current?.abort(); }, []);
+  useEffect(() => {
+    if (whatIfEntitled && monteCarloEntitled) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (!whatIfEntitled) {
+        setValuation(null);
+        setWhatIfDecomposition(null);
+      }
+      if (!monteCarloEntitled) {
+        setMc(null);
+        setCallPutScore(null);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [monteCarloEntitled, whatIfEntitled]);
   useEffect(() => {
     if (!query.trim()) return;
     const controller = new AbortController();
@@ -496,35 +557,70 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   function analysisWorkspace(): SimulationWorkspace {
     return analysisWorkspaceValue;
   }
-  function analyze() {
+  async function analyze() {
+    const requiredCapability = tab === 'Monte Carlo Simulation' ? 'simulator.monte_carlo' : 'simulator.what_if';
+    if (!can(requiredCapability)) return;
     if (!validate()) return;
     if (analysisWorkspace().legs.some((leg) => leg.contractStatus === 'stale') && !confirm('ข้อมูลสัญญาที่นำเข้ามาเป็นข้อมูลเก่าแล้ว ต้องการคำนวณต่อด้วยข้อมูลชุดนี้หรือไม่?')) return;
-    if (tab === 'Monte Carlo Simulation') return runMonteCarlo();
-    const result = valuePortfolio(analysisWorkspace(), workspace.scenarios[0]);
-    hasResults.current = true; setResultsOutdated(false); setInputsOutdated(false); setScenarioDirty(false); setValuation(result); setWorkspace((current) => ({ ...current, resultSnapshot: { ...current.resultSnapshot, whatIf: result } })); setSaveStatus('Unsaved');
-  }
-  function runMonteCarlo() {
-    cancelWorker(); const runId = ++workerRunId.current; setRunning(true); setProgress(0); setValidationErrors([]); setOperationError(null); setCallPutScore(null);
-    const instance = new Worker(new URL('../../workers/optionsMonteCarlo.worker.ts', import.meta.url)); worker.current = instance;
-    instance.onmessage = (event: MessageEvent<{ result?: MonteCarloDisplayResult; scenarioScore?: CallPutScenarioScore; error?: string; progress?: { completed: number; total: number } }>) => {
-      if (runId !== workerRunId.current || worker.current !== instance) return;
-      if (event.data.progress) { setProgress(event.data.progress.completed); return; }
-      instance.terminate(); worker.current = null; setRunning(false);
-      if (event.data.result) {
-        hasResults.current = true; setResultsOutdated(false); setInputsOutdated(false); setScenarioDirty(false); setMc(event.data.result); setCallPutScore(event.data.scenarioScore ?? { status: 'unavailable', reason: 'ผลลัพธ์เดิมไม่มี Call/Put Scenario Score กรุณารัน Monte Carlo ใหม่', auditStatus: 'not-run' }); setWorkspace((current) => ({ ...current, monteCarlo: settings, resultSnapshot: { ...current.resultSnapshot, monteCarlo: monteCarloSnapshot(event.data.result as MonteCarloDisplayResult) } })); setSaveStatus('Unsaved');
-      } else setOperationError(presentError(event.data.error).message);
-    };
-    instance.onerror = () => { if (runId !== workerRunId.current) return; instance.terminate(); worker.current = null; setRunning(false); setOperationError('ระบบจำลองผลไม่สำเร็จ กรุณาลองกดจำลองใหม่อีกครั้ง'); };
-    const scoped = analysisWorkspace();
-    const targetDte = Math.max(1, calendarDaysBetween(workspace.valuationDate, workspace.scenarios[0].valuationDate));
-    const settings = { ...workspace.monteCarlo, horizonDays: targetDte, steps: Math.min(workspace.monteCarlo.steps, targetDte) };
-    instance.postMessage({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice: workspace.scenarios[0].targetPrice });
+    cancelCalculation();
+    const controller = new AbortController();
+    calculationController.current = controller;
+    const runId = ++calculationRunId.current;
+    setRunning(true); setProgress(0); setValidationErrors([]); setOperationError(null);
+
+    try {
+      if (tab === 'Monte Carlo Simulation') {
+        setCallPutScore(null);
+        const scoped = analysisWorkspace();
+        const targetDte = Math.max(1, calendarDaysBetween(workspace.valuationDate, workspace.scenarios[0].valuationDate));
+        const settings = { ...workspace.monteCarlo, horizonDays: targetDte, steps: Math.min(workspace.monteCarlo.steps, targetDte) };
+        const response = await fetch('/api/option-simulations/compute/monte-carlo', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice: workspace.scenarios[0].targetPrice }),
+          signal: controller.signal,
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(calculationPayloadMessage(payload, 'ระบบจำลองผลไม่สำเร็จ กรุณาลองกดจำลองใหม่อีกครั้ง'));
+        const data = calculationPayloadData(payload);
+        if (!recordValue(data) || !isMonteCarloDisplayResult(data.result) || !isCallPutScenarioScore(data.scenarioScore)) {
+          throw new Error('ผลการจำลองจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
+        }
+        const result = data.result;
+        const scenarioScore = data.scenarioScore;
+        if (runId !== calculationRunId.current) return;
+        setProgress(settings.paths);
+        hasResults.current = true; setResultsOutdated(false); setInputsOutdated(false); setScenarioDirty(false); setMc(result); setCallPutScore(scenarioScore); setWorkspace((current) => ({ ...current, monteCarlo: settings, resultSnapshot: { ...current.resultSnapshot, monteCarlo: monteCarloSnapshot(result) } })); setSaveStatus('Unsaved');
+      } else {
+        const response = await fetch('/api/option-simulations/compute/what-if', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspace: analysisWorkspace() }),
+          signal: controller.signal,
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(calculationPayloadMessage(payload, 'ระบบคำนวณผลไม่สำเร็จ กรุณาลองใหม่'));
+        const data = calculationPayloadData(payload);
+        if (!recordValue(data) || !isPortfolioValuation(data.valuation) || !isWhatIfDecomposition(data.decomposition)) throw new Error('ผลการคำนวณจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
+        const result = data.valuation;
+        const decomposition = data.decomposition;
+        if (runId !== calculationRunId.current) return;
+        hasResults.current = true; setResultsOutdated(false); setInputsOutdated(false); setScenarioDirty(false); setValuation(result); setWhatIfDecomposition(decomposition); setWorkspace((current) => ({ ...current, resultSnapshot: { ...current.resultSnapshot, whatIf: result } })); setSaveStatus('Unsaved');
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted && runId === calculationRunId.current) setOperationError(presentError(cause).message);
+    } finally {
+      if (runId === calculationRunId.current) {
+        calculationController.current = null;
+        setRunning(false);
+      }
+    }
   }
 
   function selectAnalysisContract(nextSelection: string) {
     if (nextSelection === analysisSelection) return;
     if (scenarioDirty && !confirm('ค่าจำลองที่ยังไม่ได้คำนวณจะถูกรีเซ็ต ต้องการเปลี่ยนสัญญาหรือไม่?')) return;
-    cancelWorker();
+    cancelCalculation();
     const nextLeg = workspace.legs.find((leg) => leg.id === nextSelection) ?? null;
     const nextLegs = nextLeg ? [nextLeg] : workspace.legs;
     const expiration = nextLegs.map((leg) => leg.expiration).sort()[0] ?? workspace.valuationDate;
@@ -588,11 +684,19 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const calendarText = (value: string) => value || UNDATED_TEXT;
   const dayCountText = (value: number) => datesReady ? `${value} วัน` : UNDATED_TEXT;
   const dateIssue = datesReady ? targetDateError(scenario.valuationDate, workspace.valuationDate, earliestExpiration) : null;
-  const sensitivity = useMemo(() => aggregateSensitivity(analysisWorkspaceValue), [analysisWorkspaceValue]);
+  const sensitivity = useMemo(() => (
+    whatIfEntitled
+      ? valuation ? { delta: valuation.greeks.delta, theta: valuation.greeks.theta } : aggregateSensitivity(analysisWorkspaceValue)
+      : { delta: 0, theta: 0 }
+  ), [analysisWorkspaceValue, valuation, whatIfEntitled]);
   const priceImpactApprox = workspace.underlyingPrice === null ? null : sensitivity.delta * (scenario.targetPrice - workspace.underlyingPrice);
   const timeImpactApprox = sensitivity.theta * Math.max(0, calendarDaysBetween(workspace.valuationDate, scenario.valuationDate));
   const progressPercent = workspace.monteCarlo.paths > 0 ? Math.min(100, progress / workspace.monteCarlo.paths * 100) : 0;
   const calculateLabel = tab === 'Monte Carlo Simulation' ? 'เริ่มจำลอง' : 'คำนวณผลลัพธ์';
+  const calculationCapability = tab === 'Monte Carlo Simulation' ? 'simulator.monte_carlo' as const : 'simulator.what_if' as const;
+  const saveCapability = workspace.simulationType === 'monte-carlo' || workspace.resultSnapshot?.monteCarlo !== undefined
+    ? 'simulator.monte_carlo' as const
+    : 'simulator.what_if' as const;
   const driftMode = workspace.monteCarlo.driftMode ?? 'forecast';
   const calculateDisabledReason = running ? 'กำลังคำนวณอยู่ กรุณารอให้เสร็จหรือกดยกเลิกก่อน' : null;
   const isSaving = saveStatus === 'Saving';
@@ -619,7 +723,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
       }} />
       <p className="text-sm text-slate-400" data-testid="tab-step-description">{stepDescriptions[tabKey]}</p>
       {(tab === 'What-If Analysis' || tab === 'Monte Carlo Simulation') && <>
-        <ContractSummary workspace={workspace} selectedLegId={analysisSelection} onSelect={selectAnalysisContract} onEdit={() => setTab('Inputs')} />
+        <ContractSummary workspace={workspace} selectedLegId={analysisSelection} sensitivityEntitled={whatIfEntitled} onSelect={selectAnalysisContract} onEdit={() => setTab('Inputs')} />
       </>}
       {tab === 'What-If Analysis' && <section className={box} data-testid="what-if-controls">
         <h1 className="text-xl font-bold">{stepHeadings['What-If']}</h1>
@@ -634,8 +738,8 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
             <input aria-label="ปรับความผันผวนที่ตลาดคาดเป็นเปอร์เซ็นต์" className="mt-3 w-full accent-[#D4FF00]" type="range" min="-90" max="200" value={Math.round(scenario.volatilityShift * 100)} onChange={(event) => scenarioChange(0, { volatilityShift: Number(event.target.value) / 100 })} />
             <p className="mt-1 text-xs text-slate-400">ความผันผวนปัจจุบัน {(currentIv * 100).toFixed(1)}% · ปรับไป {scenario.volatilityShift >= 0 ? '+' : ''}{(scenario.volatilityShift * 100).toFixed(1)}%</p></div>
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="sensitivity-summary"><Metric title="Delta ของทั้งสถานะ" value={`${formatResultMoney(sensitivity.delta, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1`} helper={DELTA_WHAT_IF_HELP} /><Metric title="มูลค่าที่ลดลงต่อวัน (Theta)" value={`${formatResultMoney(sensitivity.theta, 'USD', null, true)}/วัน`} helper={THETA_PER_DAY_HELP} /><Metric title="ผลจากราคาหุ้น" value={priceImpactApprox === null ? 'ไม่มีข้อมูล' : formatResultMoney(priceImpactApprox, 'USD', null, true)} helper={PRICE_IMPACT_HELP} /><Metric title="ผลจากเวลาที่ผ่านไป" value={formatResultMoney(timeImpactApprox, 'USD', null, true)} helper={TIME_IMPACT_HELP} /></div>
-        <div className="mt-5 hidden justify-end md:flex" data-testid="desktop-calculate-action"><div><Button disabled={running} aria-describedby={calculateDisabledReason ? 'desktop-calculate-disabled-reason' : undefined} onClick={analyze}>{calculateLabel}</Button>{calculateDisabledReason && <p id="desktop-calculate-disabled-reason" className="mt-1 text-xs text-amber-300">{calculateDisabledReason}</p>}</div></div>
+        {whatIfEntitled ? <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="sensitivity-summary"><Metric title="Delta ของทั้งสถานะ" value={`${formatResultMoney(sensitivity.delta, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1`} helper={DELTA_WHAT_IF_HELP} /><Metric title="มูลค่าที่ลดลงต่อวัน (Theta)" value={`${formatResultMoney(sensitivity.theta, 'USD', null, true)}/วัน`} helper={THETA_PER_DAY_HELP} /><Metric title="ผลจากราคาหุ้น" value={priceImpactApprox === null ? 'ไม่มีข้อมูล' : formatResultMoney(priceImpactApprox, 'USD', null, true)} helper={PRICE_IMPACT_HELP} /><Metric title="ผลจากเวลาที่ผ่านไป" value={formatResultMoney(timeImpactApprox, 'USD', null, true)} helper={TIME_IMPACT_HELP} /></div> : <LockedNotice capability="simulator.what_if" source="simulator.what-if-preview" className="mt-5" />}
+        <div className="mt-5 hidden justify-end md:flex" data-testid="desktop-calculate-action"><div><LockedFeatureButton capability="simulator.what_if" source="simulator.what-if-calculate-desktop" disabled={running} aria-describedby={calculateDisabledReason ? 'desktop-calculate-disabled-reason' : undefined} onActivate={() => void analyze()} className={calculateButtonClass}>{calculateLabel}</LockedFeatureButton>{calculateDisabledReason && <p id="desktop-calculate-disabled-reason" className="mt-1 text-xs text-amber-300">{calculateDisabledReason}</p>}</div></div>
       </section>}
       {tab === 'Monte Carlo Simulation' && <section className={box} data-testid="monte-carlo-controls">
         <h1 className="text-xl font-bold">{stepHeadings['Monte Carlo']}</h1><p className="mb-5 text-sm text-slate-400">ระบบจำลองราคาหุ้นหลายพันสถานการณ์ แล้วสรุปว่าสถานะของคุณมีโอกาสกำไรหรือขาดทุนแค่ไหน</p>
@@ -644,19 +748,19 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
           <PercentInput title="ความผันผวนที่ตลาดคาด (IV %)" placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" value={engineVolatilityToPercent(workspace.monteCarlo.volatility)} onChange={(value) => monteCarloChange({ volatility: percentVolatilityToEngine(value) })} />
           <div><FieldLabel title="รูปแบบการจำลอง" helper="เลือกวิธีที่ระบบใช้ประเมินผล" /><select aria-label="รูปแบบการจำลอง" className={select} value={driftMode} onChange={(event) => monteCarloChange({ driftMode: event.target.value as 'forecast' | 'risk-neutral' })}><option value="forecast">Forecast — คาดการณ์จากแนวโน้ม</option><option value="risk-neutral">Risk-neutral — มูลค่าตามมาตรฐานตลาด</option></select><p className="mt-1 text-[10px] leading-tight text-slate-500" data-testid="drift-mode-help">{driftModeHelp[driftMode]}</p></div>
           <div><FieldLabel title="จำนวนรอบจำลอง" helper="ยิ่งจำลองหลายรอบ ผลยิ่งนิ่ง แต่ใช้เวลานานขึ้น" /><select aria-label="จำนวนรอบจำลอง" className={select} value={workspace.monteCarlo.paths} data-validation-path="monteCarlo.paths" onChange={(event) => monteCarloChange({ paths: Number(event.target.value) })}>{BASIC_PATH_OPTIONS.map((value) => <option key={value} value={value}>{value.toLocaleString()}</option>)}</select>{fieldError('monteCarlo.paths') && <p role="alert" className="mt-1 text-xs text-red-300">{fieldError('monteCarlo.paths')}</p>}</div>
-          <Metric title="Delta ของทั้งสถานะ" value={`${formatResultMoney(sensitivity.delta, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1`} helper={DELTA_MONTE_CARLO_HELP} /><Metric title="มูลค่าที่ลดลงต่อวัน (Theta)" value={`${formatResultMoney(sensitivity.theta, 'USD', null, true)}/วัน`} helper={THETA_PER_DAY_HELP} /><Metric title="จำนวนวันที่เหลือก่อนหมดอายุ (DTE)" value={dayCountText(monteCarloDte)} helper="ดึงจากวันหมดอายุ (Expiration) ในหน้าข้อมูลสัญญา" /><Metric title="เงินที่จ่ายเป็นค่าสัญญา" value={formatResultMoney(scopedLegs.reduce((sum, leg) => sum + leg.entryPremium * leg.quantity * leg.multiplier + leg.fees, 0), 'USD', null)} helper="เงินที่คุณจ่ายไปทั้งหมดเพื่อเปิดสถานะนี้ รวมค่าธรรมเนียมแล้ว" /></div>
+          {monteCarloEntitled ? <><Metric title="Delta ของทั้งสถานะ" value={`${formatResultMoney(sensitivity.delta, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1`} helper={DELTA_MONTE_CARLO_HELP} /><Metric title="มูลค่าที่ลดลงต่อวัน (Theta)" value={`${formatResultMoney(sensitivity.theta, 'USD', null, true)}/วัน`} helper={THETA_PER_DAY_HELP} /><Metric title="จำนวนวันที่เหลือก่อนหมดอายุ (DTE)" value={dayCountText(monteCarloDte)} helper="ดึงจากวันหมดอายุ (Expiration) ในหน้าข้อมูลสัญญา" /><Metric title="เงินที่จ่ายเป็นค่าสัญญา" value={formatResultMoney(scopedLegs.reduce((sum, leg) => sum + leg.entryPremium * leg.quantity * leg.multiplier + leg.fees, 0), 'USD', null)} helper="เงินที่คุณจ่ายไปทั้งหมดเพื่อเปิดสถานะนี้ รวมค่าธรรมเนียมแล้ว" /></> : <div className="md:col-span-2 lg:col-span-3"><LockedNotice capability="simulator.monte_carlo" source="simulator.monte-carlo-preview" /></div>}</div>
         <p className="mt-4 text-xs text-slate-500">ค่าตั้งต้นอื่น ๆ ของการจำลอง ระบบกำหนดให้เอง เพื่อให้ผลแต่ละครั้งเทียบกันได้</p>
-        {running && <div className="mt-5"><div className="mb-1 flex justify-between text-xs text-slate-400"><span>{progress.toLocaleString()} / {workspace.monteCarlo.paths.toLocaleString()}</span><span>{progressPercent.toFixed(0)}%</span></div><div className="h-2 rounded bg-slate-800"><div className="h-2 rounded bg-[#D4FF00]" style={{ width: `${progressPercent}%` }} /></div><Button className="mt-3 min-h-11" variant="danger" onClick={cancelWorker}>ยกเลิก</Button></div>}
-        <div className="mt-5 hidden justify-end md:flex" data-testid="desktop-simulation-action"><div><Button disabled={running} aria-describedby={calculateDisabledReason ? 'desktop-simulation-disabled-reason' : undefined} onClick={analyze}>{calculateLabel}</Button>{calculateDisabledReason && <p id="desktop-simulation-disabled-reason" className="mt-1 text-xs text-amber-300">{calculateDisabledReason}</p>}</div></div>
+        {running && <div className="mt-5"><div className="mb-1 flex justify-between text-xs text-slate-400"><span>{progress.toLocaleString()} / {workspace.monteCarlo.paths.toLocaleString()}</span><span>{progressPercent.toFixed(0)}%</span></div><div className="h-2 rounded bg-slate-800"><div className="h-2 rounded bg-[#D4FF00]" style={{ width: `${progressPercent}%` }} /></div><Button className="mt-3 min-h-11" variant="danger" onClick={cancelCalculation}>ยกเลิก</Button></div>}
+        <div className="mt-5 hidden justify-end md:flex" data-testid="desktop-simulation-action"><div><LockedFeatureButton capability="simulator.monte_carlo" source="simulator.monte-carlo-calculate-desktop" disabled={running} aria-describedby={calculateDisabledReason ? 'desktop-simulation-disabled-reason' : undefined} onActivate={() => void analyze()} className={calculateButtonClass}>{calculateLabel}</LockedFeatureButton>{calculateDisabledReason && <p id="desktop-simulation-disabled-reason" className="mt-1 text-xs text-amber-300">{calculateDisabledReason}</p>}</div></div>
       </section>}
       {resultsOutdated && (valuation || mc) && <p role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">{inputsOutdated ? 'ข้อมูลสัญญามีการเปลี่ยนแปลง กรุณาคำนวณใหม่' : 'ข้อมูลมีการเปลี่ยนแปลง กรุณาคำนวณใหม่'}</p>}
-      {tab === 'What-If Analysis' && valuation && <WhatIfHighlights workspace={analysisWorkspace()} valuation={valuation} sensitivity={sensitivity} currency={resultCurrency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={setResultCurrency} />}
-      {tab === 'Monte Carlo Simulation' && mc && <MonteCarloHighlights workspace={analysisWorkspace()} result={mc} scenarioScore={callPutScore} currency={resultCurrency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={setResultCurrency} />}
+      {tab === 'What-If Analysis' && whatIfEntitled && valuation && <WhatIfHighlights workspace={analysisWorkspace()} valuation={valuation} decomposition={whatIfDecomposition} sensitivity={sensitivity} currency={resultCurrency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={setResultCurrency} />}
+      {tab === 'Monte Carlo Simulation' && monteCarloEntitled && mc && <MonteCarloHighlights workspace={analysisWorkspace()} result={mc} scenarioScore={callPutScore} currency={resultCurrency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={setResultCurrency} />}
       {tab === 'Inputs' && <section className={box} data-testid="option-legs-form">
         <div className="mb-4"><h1 className="text-xl font-bold">{stepHeadings.Inputs}</h1><p className="mt-1 text-sm text-slate-400">{stepDescriptions.Inputs}</p>{createdAt && <p className="mt-1 text-xs text-slate-500" data-testid="workspace-created-at">สร้างแบบจำลองเมื่อ {formatTimestamp(createdAt)}</p>}</div>
         <div className="grid gap-3 md:grid-cols-3"><Field title="ชื่อแบบจำลอง" placeholder="เช่น Earnings Call" helper="ชื่อสำหรับค้นหาแบบจำลองภายหลัง" value={workspace.name} onChange={(value) => change({ name: value })} /><Field title="รูปแบบกลยุทธ์ (Strategy)" placeholder="เช่น Long Call" helper="ชื่อกลยุทธ์ที่ตรวจจับจากรายละเอียดสัญญา" value={workspace.strategyType} onChange={(value) => change({ strategyType: value })} /><div><FieldLabel title="วันที่ใช้คำนวณ (Valuation Date)" helper="วันที่ฐานสำหรับการคำนวณ" /><Input type="date" aria-label="วันที่ใช้คำนวณ (Valuation Date)" value={workspace.valuationDate} onChange={(event) => { if (hasResults.current) setInputsOutdated(true); change({ valuationDate: event.target.value, scenarios: workspace.scenarios.map((item, index) => index === 0 ? { ...item, valuationDate: clampTargetDate(item.valuationDate, event.target.value, workspace.legs.map((leg) => leg.expiration).sort()[0] ?? item.valuationDate) } : item) }); }} /></div></div>
         <div className="my-4"><h2 className="text-lg font-bold">รายละเอียดสัญญา (Option Legs)</h2><p className="text-xs text-slate-400">กรอกและแก้ไขข้อมูลสัญญาได้ที่นี่ที่เดียว</p></div>
-        <div className="space-y-4">{workspace.legs.map((leg, index) => { const resolved = legSensitivity(workspace, leg); return <article key={leg.id} className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/20 p-4"><div className="mb-4 flex items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><strong>สัญญาที่ {index + 1}</strong><span className="rounded-full bg-violet-500/10 px-2 py-1 text-[10px] font-semibold text-violet-300">{leg.kind === 'call' ? 'Call' : 'Put'}</span><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.side === 'buy' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.side === 'buy' ? 'Buy' : 'Sell'}</span>{leg.inputMode && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.inputMode === 'provider' ? 'bg-sky-500/10 text-sky-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.inputMode === 'provider' ? 'ข้อมูลจริง' : 'กำหนดเอง'}</span>}</div><div className="flex shrink-0 gap-1"><Button className="min-h-11 px-3" variant="ghost" aria-label={`ทำสำเนาสัญญาที่ ${index + 1}`} onClick={() => change({ legs: [...workspace.legs.slice(0, index + 1), { ...leg, id: uid(), inputMode: 'custom' }, ...workspace.legs.slice(index + 1)] })}><Copy size={15} /><span className="sr-only sm:not-sr-only sm:ml-2">ทำสำเนา</span></Button><Button className="min-h-11 min-w-11" variant="danger" aria-label={`ลบสัญญาที่ ${index + 1}`} disabled={workspace.legs.length === 1} onClick={() => change({ legs: workspace.legs.filter((_, i) => i !== index) })}><Trash2 size={15} /></Button></div></div>
+        <div className="space-y-4">{workspace.legs.map((leg, index) => { const resolved = whatIfEntitled ? legSensitivity(leg) : { delta: null, theta: null, deltaSource: 'model' as const, thetaSource: 'model' as const }; return <article key={leg.id} className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/20 p-4"><div className="mb-4 flex items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><strong>สัญญาที่ {index + 1}</strong><span className="rounded-full bg-violet-500/10 px-2 py-1 text-[10px] font-semibold text-violet-300">{leg.kind === 'call' ? 'Call' : 'Put'}</span><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.side === 'buy' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.side === 'buy' ? 'Buy' : 'Sell'}</span>{leg.inputMode && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.inputMode === 'provider' ? 'bg-sky-500/10 text-sky-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.inputMode === 'provider' ? 'ข้อมูลจริง' : 'กำหนดเอง'}</span>}</div><div className="flex shrink-0 gap-1"><Button className="min-h-11 px-3" variant="ghost" aria-label={`ทำสำเนาสัญญาที่ ${index + 1}`} onClick={() => change({ legs: [...workspace.legs.slice(0, index + 1), { ...leg, id: uid(), inputMode: 'custom' }, ...workspace.legs.slice(index + 1)] })}><Copy size={15} /><span className="sr-only sm:not-sr-only sm:ml-2">ทำสำเนา</span></Button><Button className="min-h-11 min-w-11" variant="danger" aria-label={`ลบสัญญาที่ ${index + 1}`} disabled={workspace.legs.length === 1} onClick={() => change({ legs: workspace.legs.filter((_, i) => i !== index) })}><Trash2 size={15} /></Button></div></div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><Choice title="ประเภทสัญญา (Call/Put)" value={leg.kind} options={['call', 'put']} optionLabels={{ call: 'Call', put: 'Put' }} validationPath={`legs.${index}.kind`} onChange={(value) => legChange(index, { kind: value as OptionLeg['kind'] })} /><Choice title="ฝั่งซื้อ/ขาย (Buy/Sell)" value={leg.side} options={['buy', 'sell']} optionLabels={{ buy: 'Buy', sell: 'Sell' }} validationPath={`legs.${index}.side`} onChange={(value) => legChange(index, { side: value as OptionLeg['side'] })} /><Numeric title="จำนวนสัญญา (Quantity)" placeholder="เช่น 1" min={1} integer helper="จำนวนสัญญาที่ต้องการวิเคราะห์" externalError={fieldError(`legs.${index}.quantity`)} validationPath={`legs.${index}.quantity`} value={leg.quantity} onChange={(value) => legChange(index, { quantity: value })} /><Numeric title="ราคาใช้สิทธิ (Strike Price)" placeholder="เช่น 120" min={0.0000001} helper="ราคาใช้สิทธิตามสัญญา" externalError={fieldError(`legs.${index}.strike`)} validationPath={`legs.${index}.strike`} value={leg.strike} onChange={(value) => legChange(index, { strike: value })} /></div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><div><FieldLabel title="วันหมดอายุ (Expiration)" helper="วันหมดอายุของสัญญา" /><Input type="date" aria-label={`วันหมดอายุ ของสัญญาที่ ${index + 1}`} min={addCalendarDays(workspace.valuationDate, 1)} value={leg.expiration} data-validation-path={`legs.${index}.expiration`} onChange={(event) => legChange(index, { expiration: event.target.value })} />{fieldError(`legs.${index}.expiration`) && <p role="alert" className="mt-1 text-xs text-red-300">{fieldError(`legs.${index}.expiration`)}</p>}</div><PremiumInput value={leg.entryPremium} helper="ต้นทุนต่อหุ้น เช่น $1.40" externalError={fieldError(`legs.${index}.entryPremium`)} validationPath={`legs.${index}.entryPremium`} onChange={(value) => legChange(index, { entryPremium: value })} /><PercentInput title="ความผันผวนที่ตลาดคาด (IV %)" value={engineVolatilityToPercent(leg.impliedVolatility)} placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" externalError={fieldError(`legs.${index}.impliedVolatility`)} validationPath={`legs.${index}.impliedVolatility`} onChange={(value) => legChange(index, { impliedVolatility: percentVolatilityToEngine(value) })} /><Numeric title="จำนวนหุ้นต่อ 1 สัญญา (Contract Multiplier)" placeholder="เช่น 100" min={0.0000001} helper="หุ้นสหรัฐฯ ส่วนใหญ่ 1 สัญญา = 100 หุ้น" externalError={fieldError(`legs.${index}.multiplier`)} validationPath={`legs.${index}.multiplier`} value={leg.multiplier} onChange={(value) => legChange(index, { multiplier: value })} /></div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-[50%]"><GreekInput title="ราคาสัญญาเปลี่ยนโดยประมาณเมื่อหุ้นเปลี่ยน $1 (Delta)" invalidMessage="Delta ต้องอยู่ระหว่าง -1 ถึง 1" placeholder="เช่น 0.35" helper="ค่าบวกคือขึ้นตามหุ้น ค่าลบคือสวนทางหุ้น" value={leg.delta ?? null} fallbackValue={resolved.delta} source={leg.deltaSource ?? (leg.delta == null ? 'model' : 'manual')} timestamp={leg.deltaTimestamp} min={-1} max={1} externalError={fieldError(`legs.${index}.delta`)} validationPath={`legs.${index}.delta`} onChange={(value) => legChange(index, { delta: value, deltaSource: value === null ? 'model' : 'manual', deltaTimestamp: null })} /><GreekInput title="มูลค่าที่ลดลงโดยประมาณต่อวัน (Theta/day)" invalidMessage="Theta ต้องเป็นตัวเลขที่ถูกต้อง" placeholder="เช่น -0.04" helper="มูลค่าที่หายไปในแต่ละวันจาก Time Decay" value={leg.theta ?? null} fallbackValue={resolved.theta} source={leg.thetaSource ?? (leg.theta == null ? 'model' : 'manual')} timestamp={leg.thetaTimestamp} externalError={fieldError(`legs.${index}.theta`)} validationPath={`legs.${index}.theta`} onChange={(value) => legChange(index, { theta: value, thetaSource: value === null ? 'model' : 'manual', thetaTimestamp: null })} /></div>
@@ -665,17 +769,21 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
       {validationErrors.length > 0 && <section role="alert" data-testid="validation-warning" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4"><strong>กรุณาตรวจสอบข้อมูลก่อนคำนวณ:</strong><ul className="list-disc pl-5 text-sm">{[...new Set(validationErrors.map(displayValidationMessage))].map((error) => <li key={error}>{error}</li>)}</ul></section>}
       {operationError && <section role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm">{operationError}</section>}
       {/* Steps 4 and 5 read from the What-If valuation, so they still announce themselves and say what to do when it has not been run yet. */}
-      {tab === 'Payoff' && (valuation
-        ? <Payoff heading={stepHeadings.Payoff} valuation={valuation} spot={workspace.underlyingPrice} currency={resultCurrency} usdThbRate={fxQuote ? Number(fxQuote.rate) : null} />
-        : <StepPlaceholder heading={stepHeadings.Payoff} onGoToWhatIf={() => setTab('What-If Analysis')} />)}
-      {tab === 'Greeks' && (valuation
-        ? <section className={box}><h1 className="mb-3 text-xl font-bold">{stepHeadings.Greeks}</h1><div className="grid grid-cols-2 gap-3 md:grid-cols-5">{Object.entries(valuation.greeks).map(([key, value]) => <Metric key={key} title={key === 'delta' ? 'Delta (ทั้งสถานะ)' : key[0].toUpperCase() + key.slice(1)} value={key === 'delta' ? `${formatResultMoney(value, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1 USD` : formatResultNumber(value, 4)} helper={greekHelpers[key]} />)}</div></section>
-        : <StepPlaceholder heading={stepHeadings.Greeks} onGoToWhatIf={() => setTab('What-If Analysis')} />)}
+      {tab === 'Payoff' && (!whatIfEntitled
+        ? <section className={box}><LockedNotice capability="simulator.what_if" source="simulator.payoff" /></section>
+        : valuation
+          ? <Payoff heading={stepHeadings.Payoff} valuation={valuation} spot={workspace.underlyingPrice} currency={resultCurrency} usdThbRate={fxQuote ? Number(fxQuote.rate) : null} />
+          : <StepPlaceholder heading={stepHeadings.Payoff} onGoToWhatIf={() => setTab('What-If Analysis')} />)}
+      {tab === 'Greeks' && (!whatIfEntitled
+        ? <section className={box}><LockedNotice capability="simulator.what_if" source="simulator.greeks" /></section>
+        : valuation
+          ? <section className={box}><h1 className="mb-3 text-xl font-bold">{stepHeadings.Greeks}</h1><div className="grid grid-cols-2 gap-3 md:grid-cols-5">{Object.entries(valuation.greeks).map(([key, value]) => <Metric key={key} title={key === 'delta' ? 'Delta (ทั้งสถานะ)' : key[0].toUpperCase() + key.slice(1)} value={key === 'delta' ? `${formatResultMoney(value, 'USD', null, true)} ต่อราคาหุ้นเปลี่ยน $1 USD` : formatResultNumber(value, 4)} helper={greekHelpers[key]} />)}</div></section>
+          : <StepPlaceholder heading={stepHeadings.Greeks} onGoToWhatIf={() => setTab('What-If Analysis')} />)}
       <section className={box} data-testid="save-simulation-actions"><h2 className="text-lg font-bold">บันทึกแบบจำลอง</h2><p className="mt-1 text-xs text-slate-400">บันทึกทับของเดิม หรือบันทึกเป็นสำเนาเพื่อเก็บเวอร์ชันก่อนหน้าไว้</p>
-        <div className="mt-3 flex flex-wrap items-center gap-2"><Button variant="outline" disabled={isSaving} onClick={() => void save(true)}>{isSaving && savingMode === 'copy' ? <LoaderCircle aria-hidden="true" size={15} className="mr-2 animate-spin motion-reduce:animate-none" /> : <Copy aria-hidden="true" size={15} className="mr-2" />}บันทึกเป็นสำเนา</Button><Button disabled={isSaving} onClick={() => void save(saveStatus === 'Failed' && lastSaveMode.current === 'copy')}>{isSaving && savingMode === 'save' ? <LoaderCircle aria-hidden="true" size={15} className="mr-2 animate-spin motion-reduce:animate-none" /> : saveStatus === 'Saved' ? <Check aria-hidden="true" size={15} className="mr-2" /> : <Save aria-hidden="true" size={15} className="mr-2" />}{saveStatus === 'Failed' ? 'ลองบันทึกอีกครั้ง' : 'บันทึก'}</Button><span role="status" aria-live="polite" aria-atomic="true" className="inline-flex min-h-10 items-center gap-1.5 text-xs text-slate-400">{saveStatus === 'Saving' && <LoaderCircle aria-hidden="true" size={14} className="animate-spin motion-reduce:animate-none" />}{saveStatus === 'Saved' && <Check aria-hidden="true" size={14} className="text-emerald-400" />}{displayedSaveStatus[saveStatus] ?? saveStatus}</span></div></section>
-      <section className={box}><div className="mb-3 flex flex-wrap justify-between gap-2"><h2 className="text-lg font-bold">แบบจำลองของฉัน</h2><div className="flex gap-2"><Input className="w-56" value={savedQuery} onChange={(event) => setSavedQuery(event.target.value)} placeholder="ค้นหาชื่อ หุ้น หรือกลยุทธ์" /><Button size="sm" variant="outline" onClick={() => { if (saveStatus === 'Saved' || confirm('ข้อมูลที่ยังไม่ได้บันทึกจะหายไป ต้องการทำต่อหรือไม่?')) setWorkspace(fresh(initialType)); }}><Plus size={14} /> สร้างใหม่</Button><Button size="sm" variant="danger" onClick={() => { if (confirm('ล้างข้อมูลทั้งหมดของแบบจำลองนี้หรือไม่?')) { setWorkspace(fresh(initialType)); setSaveStatus('Unsaved'); } }}>ล้างข้อมูล</Button></div></div>{savedState === 'loading' ? <div className="h-20 animate-pulse rounded bg-slate-800" /> : savedState === 'error' ? <Button onClick={() => void loadSaved()}>ลองใหม่</Button> : saved.length === 0 ? <p className="text-sm text-slate-400">ยังไม่มีแบบจำลองบนเซิร์ฟเวอร์ เข้าสู่ระบบเพื่อบันทึก โดยระบบจะเก็บฉบับร่างไว้ในเครื่อง</p> : <div className="grid gap-3 md:grid-cols-2">{saved.filter((item) => `${item.name} ${item.symbol} ${item.strategyType} ${item.simulationType}`.toLowerCase().includes(savedQuery.toLowerCase())).map((item) => <article key={item.id} className="rounded-xl border border-slate-700 p-3"><strong>{item.name}</strong><p className="text-xs text-slate-400">{item.symbol} · {item.strategyType} · {simulationTypeLabels[item.simulationType] ?? item.simulationType} · {formatTimestamp(item.updatedAt)} · {dataStatusLabels[item.dataStatus] ?? 'ไม่มีข้อมูล'}</p><div className="mt-2 flex gap-2"><Button size="sm" onClick={() => { if (saveStatus === 'Saved' || confirm('ข้อมูลที่ยังไม่ได้บันทึกจะหายไป ต้องการทำต่อหรือไม่?')) { setWorkspace(normalizeUiWorkspace(item)); setValuation(item.resultSnapshot?.whatIf ?? null); setMc(item.resultSnapshot?.monteCarlo ?? null); setCallPutScore(null); setSaveStatus('Saved'); } }}>เปิด</Button><Button size="sm" variant="outline" onClick={() => { setWorkspace(normalizeUiWorkspace({ ...item, id: undefined, updatedAt: undefined, name: `${item.name} (copy)`, legs: item.legs.map((leg) => ({ ...leg, id: uid() })), scenarios: item.scenarios.map((scenario) => ({ ...scenario, id: uid() })) })); setSaveStatus('Unsaved'); }}>ทำสำเนา</Button><Button size="sm" variant="danger" onClick={() => void remove(item)}>ลบ</Button></div></article>)}</div>}</section>
+        <div className="mt-3 flex flex-wrap items-center gap-2"><LockedFeatureButton capability={saveCapability} source="simulator.save-copy" disabled={isSaving} onActivate={() => void save(true)} className={outlineButtonClass}>{isSaving && savingMode === 'copy' ? <LoaderCircle aria-hidden="true" size={15} className="mr-2 animate-spin motion-reduce:animate-none" /> : <Copy aria-hidden="true" size={15} className="mr-2" />}บันทึกเป็นสำเนา</LockedFeatureButton><LockedFeatureButton capability={saveCapability} source="simulator.save" disabled={isSaving} onActivate={() => void save(saveStatus === 'Failed' && lastSaveMode.current === 'copy')} className={calculateButtonClass}>{isSaving && savingMode === 'save' ? <LoaderCircle aria-hidden="true" size={15} className="mr-2 animate-spin motion-reduce:animate-none" /> : saveStatus === 'Saved' ? <Check aria-hidden="true" size={15} className="mr-2" /> : <Save aria-hidden="true" size={15} className="mr-2" />}{saveStatus === 'Failed' ? 'ลองบันทึกอีกครั้ง' : 'บันทึก'}</LockedFeatureButton><span role="status" aria-live="polite" aria-atomic="true" className="inline-flex min-h-10 items-center gap-1.5 text-xs text-slate-400">{saveStatus === 'Saving' && <LoaderCircle aria-hidden="true" size={14} className="animate-spin motion-reduce:animate-none" />}{saveStatus === 'Saved' && <Check aria-hidden="true" size={14} className="text-emerald-400" />}{displayedSaveStatus[saveStatus] ?? saveStatus}</span></div></section>
+      {whatIfEntitled ? <section className={box}><div className="mb-3 flex flex-wrap justify-between gap-2"><h2 className="text-lg font-bold">แบบจำลองของฉัน</h2><div className="flex gap-2"><Input className="w-56" value={savedQuery} onChange={(event) => setSavedQuery(event.target.value)} placeholder="ค้นหาชื่อ หุ้น หรือกลยุทธ์" /><Button size="sm" variant="outline" onClick={() => { if (saveStatus === 'Saved' || confirm('ข้อมูลที่ยังไม่ได้บันทึกจะหายไป ต้องการทำต่อหรือไม่?')) setWorkspace(fresh(initialType)); }}><Plus size={14} /> สร้างใหม่</Button><Button size="sm" variant="danger" onClick={() => { if (confirm('ล้างข้อมูลทั้งหมดของแบบจำลองนี้หรือไม่?')) { setWorkspace(fresh(initialType)); setSaveStatus('Unsaved'); } }}>ล้างข้อมูล</Button></div></div>{savedState === 'loading' ? <div className="h-20 animate-pulse rounded bg-slate-800" /> : savedState === 'error' ? <Button onClick={() => void loadSaved()}>ลองใหม่</Button> : saved.length === 0 ? <p className="text-sm text-slate-400">ยังไม่มีแบบจำลองบนเซิร์ฟเวอร์ เข้าสู่ระบบเพื่อบันทึก โดยระบบจะเก็บฉบับร่างไว้ในเครื่อง</p> : <div className="grid gap-3 md:grid-cols-2">{saved.filter((item) => `${item.name} ${item.symbol} ${item.strategyType} ${item.simulationType}`.toLowerCase().includes(savedQuery.toLowerCase())).map((item) => <article key={item.id} className="rounded-xl border border-slate-700 p-3"><strong>{item.name}</strong><p className="text-xs text-slate-400">{item.symbol} · {item.strategyType} · {simulationTypeLabels[item.simulationType] ?? item.simulationType} · {formatTimestamp(item.updatedAt)} · {dataStatusLabels[item.dataStatus] ?? 'ไม่มีข้อมูล'}</p><div className="mt-2 flex gap-2"><Button size="sm" onClick={() => { if (saveStatus === 'Saved' || confirm('ข้อมูลที่ยังไม่ได้บันทึกจะหายไป ต้องการทำต่อหรือไม่?')) { setWorkspace(normalizeUiWorkspace(item)); setValuation(item.resultSnapshot?.whatIf ?? null); setWhatIfDecomposition(null); setMc(item.resultSnapshot?.monteCarlo ?? null); setCallPutScore(null); setSaveStatus('Saved'); } }}>เปิด</Button><Button size="sm" variant="outline" onClick={() => { setWorkspace(normalizeUiWorkspace({ ...item, id: undefined, updatedAt: undefined, name: `${item.name} (copy)`, legs: item.legs.map((leg) => ({ ...leg, id: uid() })), scenarios: item.scenarios.map((scenario) => ({ ...scenario, id: uid() })) })); setSaveStatus('Unsaved'); }}>ทำสำเนา</Button><Button size="sm" variant="danger" onClick={() => void remove(item)}>ลบ</Button></div></article>)}</div>}</section> : <section className={box}><LockedNotice capability="simulator.what_if" source="simulator.saved-list" /></section>}
       <p className="rounded-xl border border-slate-800 p-4 text-xs text-slate-500"><strong>สิ่งที่ควรรู้ก่อนใช้ผลลัพธ์:</strong> ตัวเลขทั้งหมดมาจากแบบจำลองมาตรฐานของตลาดออปชัน (Black-Scholes และ binomial tree) ซึ่งตั้งสมมติฐานว่าความผันผวนและแนวโน้มคงที่ แบบจำลองยังไม่รวมการถูกใช้สิทธิก่อนกำหนด ภาษี ส่วนต่างราคาซื้อขาย และสภาพคล่องที่แท้จริง ผลลัพธ์จึงเป็นเครื่องมือประกอบการวิเคราะห์ ไม่ใช่คำแนะนำซื้อขายและไม่รับประกันผลตอบแทน</p>
-    </main>{(tab === 'What-If Analysis' || tab === 'Monte Carlo Simulation') && <div data-testid="mobile-calculate-action" className="fixed inset-x-0 bottom-[var(--dock-clearance)] z-40 border-t border-slate-800 bg-slate-950/95 p-3 backdrop-blur md:hidden"><Button className="min-h-11 w-full" disabled={running} aria-describedby={calculateDisabledReason ? 'mobile-calculate-disabled-reason' : undefined} onClick={analyze}>{calculateLabel}</Button>{calculateDisabledReason && <p id="mobile-calculate-disabled-reason" className="mt-1 text-center text-xs text-amber-300">{calculateDisabledReason}</p>}</div>}
+    </main>{(tab === 'What-If Analysis' || tab === 'Monte Carlo Simulation') && <div data-testid="mobile-calculate-action" className="fixed inset-x-0 bottom-[var(--dock-clearance)] z-40 border-t border-slate-800 bg-slate-950/95 p-3 backdrop-blur md:hidden"><LockedFeatureButton capability={calculationCapability} source="simulator.calculate-mobile" disabled={running} aria-describedby={calculateDisabledReason ? 'mobile-calculate-disabled-reason' : undefined} onActivate={() => void analyze()} className={`${calculateButtonClass} min-h-11 w-full`}>{calculateLabel}</LockedFeatureButton>{calculateDisabledReason && <p id="mobile-calculate-disabled-reason" className="mt-1 text-center text-xs text-amber-300">{calculateDisabledReason}</p>}</div>}
     <Modal isOpen={Boolean(pending)} onClose={() => setPending(null)} title="เปลี่ยนหุ้นอ้างอิงหรือไม่?"><p className="mb-3 text-sm">ราคาใช้สิทธิ วันหมดอายุ ราคาสัญญา และความผันผวนจะถูกล้าง เพราะค่าเหล่านี้ใช้กับหุ้นตัวใหม่ไม่ได้</p><div className="space-y-2"><Button className="w-full" onClick={() => pending && void setSymbol(pending)}>เริ่มใหม่ทั้งหมด</Button><Button className="w-full" variant="outline" onClick={() => pending && void setSymbol(pending, true)}>เก็บการตั้งค่าไว้ แต่ล้างข้อมูลสัญญา</Button><Button className="w-full" variant="ghost" onClick={() => setPending(null)}>ยกเลิก</Button></div></Modal>
   </div>;
 }
@@ -777,7 +885,7 @@ function Choice({ title, value, options, optionLabels = {}, helper, validationPa
   explanation was on screen before anyone pressed the icon.
 */
 function Metric({ title, value, helper }: { title: string; value: string; helper?: string }) { return <div className="min-w-0 rounded-xl bg-slate-900 p-3" data-metric={title}><small className="text-slate-500">{title}</small><p className="break-words font-mono font-bold">{value}</p>{helper && <MetricDisclosure summary="ดูคำอธิบาย" openSummary="ซ่อนคำอธิบาย" label={title} className="mt-2">{helper}</MetricDisclosure>}</div>; }
-function ContractSummary({ workspace, selectedLegId, onSelect, onEdit }: { workspace: SimulationWorkspace; selectedLegId: string; onSelect: (value: string) => void; onEdit: () => void }) {
+function ContractSummary({ workspace, selectedLegId, sensitivityEntitled, onSelect, onEdit }: { workspace: SimulationWorkspace; selectedLegId: string; sensitivityEntitled: boolean; onSelect: (value: string) => void; onEdit: () => void }) {
   const date = workspace.valuationDate;
   const selectorId = useId();
   const summaryLegs = useMemo(() => workspace.legs
@@ -786,8 +894,8 @@ function ContractSummary({ workspace, selectedLegId, onSelect, onEdit }: { works
       leg,
       dte: Math.max(0, calendarDaysBetween(date, leg.expiration)),
       legNumber: workspace.legs.findIndex((item) => item.id === leg.id) + 1,
-      resolved: legSensitivity(workspace, leg),
-    })), [date, selectedLegId, workspace]);
+      resolved: sensitivityEntitled ? legSensitivity(leg) : { delta: null, theta: null, deltaSource: 'model' as const, thetaSource: 'model' as const },
+    })), [date, selectedLegId, sensitivityEntitled, workspace]);
   return <section className={box} data-testid="contract-summary"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">เลือกสัญญาหรือทั้งพอร์ตที่ต้องการทดลอง</h2><p className="text-xs text-slate-400">เลือกทั้งพอร์ตหรือรายสัญญา ระบบจะดึงค่าจากหน้าข้อมูลสัญญาให้อัตโนมัติ</p></div><Button size="sm" variant="outline" onClick={onEdit}>แก้ไขข้อมูลสัญญา</Button></div>
     <div className="mb-4 max-w-md"><FieldLabel htmlFor={selectorId} title="สัญญา" helper="เปลี่ยนสัญญาแล้วจะรีเซ็ตเฉพาะค่าจำลองที่ขึ้นกับสัญญา" /><select id={selectorId} aria-label="เลือกสัญญาหรือทั้งพอร์ตที่ต้องการทดลอง" className={select} value={selectedLegId} onChange={(event) => onSelect(event.target.value)}><option value="portfolio">ทั้งพอร์ต</option>{workspace.legs.map((leg, index) => <option key={leg.id} value={leg.id}>สัญญาที่ {index + 1} · {leg.side === 'buy' ? 'Buy' : 'Sell'} {leg.kind === 'call' ? 'Call' : 'Put'} · ราคาใช้สิทธิ {leg.strike}</option>)}</select></div>
     <div className="space-y-3">{summaryLegs.map(({ leg, dte, legNumber, resolved }) => <article key={leg.id} className="grid grid-cols-2 gap-3 rounded-xl border border-slate-700 p-3 text-sm sm:grid-cols-3 lg:grid-cols-6"><span className="sr-only">สัญญาที่ {legNumber}</span><SummaryValue label="ประเภทสัญญา" value={leg.kind === 'call' ? 'Call' : 'Put'} /><SummaryValue label="ฝั่งซื้อ/ขาย" value={leg.side === 'buy' ? 'Buy' : 'Sell'} /><SummaryValue label="จำนวนสัญญา" value={leg.quantity.toString()} /><SummaryValue label="ราคาใช้สิทธิ (Strike)" value={leg.strike.toString()} /><SummaryValue label="วันหมดอายุ" value={leg.expiration || UNDATED_TEXT} /><SummaryValue label="ราคาสัญญาต่อหุ้น (Premium)" value={`$${leg.entryPremium.toFixed(2)}`} /><SummaryValue label="ความผันผวนที่ตลาดคาด (IV)" value={`${engineVolatilityToPercent(leg.impliedVolatility).toFixed(2)}%`} /><SummaryValue label="Delta ต่อหุ้น" value={resolved.delta === null ? 'ไม่มีข้อมูล' : `${formatResultMoney(resolved.delta, 'USD', null, true)}/หุ้น ต่อราคาหุ้นเปลี่ยน $1 USD · ${sourceLabel(resolved.deltaSource)}`} /><SummaryValue label="Theta/day ต่อหุ้น" value={resolved.theta === null ? 'ไม่มีข้อมูล' : `${formatResultMoney(resolved.theta, 'USD', null, true)}/หุ้น/วัน · ${sourceLabel(resolved.thetaSource)}`} /><SummaryValue label="จำนวนหุ้นต่อ 1 สัญญา" value={leg.multiplier.toString()} /><SummaryValue label="จำนวนวันที่เหลือก่อนหมดอายุ (DTE)" value={date ? `${dte} วัน` : UNDATED_TEXT} />{(leg.deltaSource === 'provider' || leg.thetaSource === 'provider') && <SummaryValue label="ข้อมูลราคา ณ เวลา" value={leg.deltaTimestamp ?? leg.thetaTimestamp ?? 'ไม่มีข้อมูล'} />}</article>)}</div></section>;
@@ -920,31 +1028,17 @@ function ResultGroup({ title, testId, summary, children }: { title: string; test
   </section>;
 }
 
-function WhatIfHighlights({ workspace, valuation, sensitivity, currency, fxQuote, fxState, onCurrencyChange }: { workspace: SimulationWorkspace; valuation: PortfolioValuation; sensitivity: { delta: number; theta: number } } & ResultDisplayProps) {
-  const scenario = workspace.scenarios[0];
-  const whatIfCalculation = useMemo(() => {
-    const currentScenario = { ...scenario, targetPrice: workspace.underlyingPrice ?? scenario.targetPrice, valuationDate: workspace.valuationDate, volatilityShift: 0 };
-    try {
-      const current = valuePortfolio(workspace, currentScenario);
-      const afterPrice = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice });
-      const afterTime = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice, valuationDate: scenario.valuationDate });
-      return {
-        current,
-        priceImpact: afterPrice.theoreticalValue - current.theoreticalValue,
-        timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue,
-        ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue,
-      };
-    } catch {
-      return { current: null, priceImpact: null, timeImpact: null, ivImpact: null };
-    }
-  }, [scenario, valuation, workspace]);
-  const { current, priceImpact, timeImpact, ivImpact } = whatIfCalculation;
+function WhatIfHighlights({ workspace, valuation, decomposition, sensitivity, currency, fxQuote, fxState, onCurrencyChange }: { workspace: SimulationWorkspace; valuation: PortfolioValuation; decomposition: WhatIfDecomposition | null; sensitivity: { delta: number; theta: number } } & ResultDisplayProps) {
+  const currentValue = decomposition?.currentValue ?? null;
+  const priceImpact = decomposition?.priceImpact ?? null;
+  const timeImpact = decomposition?.timeImpact ?? null;
+  const ivImpact = decomposition?.ivImpact ?? null;
   const usdThbRate = fxQuote ? Number(fxQuote.rate) : null;
   const basis = portfolioProfitLossBasis(workspace);
-  const difference = current ? valuation.theoreticalValue - current.theoreticalValue : null;
+  const difference = currentValue === null ? null : valuation.theoreticalValue - currentValue;
   const initialCostOrCredit = valuation.netDebitCredit + workspace.stockQuantity * (workspace.underlyingPrice ?? 0);
   const audit = auditResultReconciliation({
-    currentValue: current?.theoreticalValue ?? null,
+    currentValue,
     simulatedValue: valuation.theoreticalValue,
     changeFromCurrent: difference,
     initialCostOrCredit,
@@ -982,7 +1076,7 @@ function WhatIfHighlights({ workspace, valuation, sensitivity, currency, fxQuote
       </ResultGroup>
 
       <ResultGroup title="มูลค่าสถานะ" testId="result-group-position-value">
-        <ExplainedResultMetric title="มูลค่าปัจจุบัน (Current Value)" value={current ? formatResultMoney(current.theoreticalValue, currency, usdThbRate) : 'ไม่มีข้อมูล'} helper="มูลค่าของสถานะนี้ ณ ราคาหุ้นและวันที่ปัจจุบัน ค่าติดลบเกิดได้กับสถานะที่เป็นฝั่งขาย" />
+        <ExplainedResultMetric title="มูลค่าปัจจุบัน (Current Value)" value={currentValue === null ? 'ไม่มีข้อมูล' : formatResultMoney(currentValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้ ณ ราคาหุ้นและวันที่ปัจจุบัน ค่าติดลบเกิดได้กับสถานะที่เป็นฝั่งขาย" />
         <ExplainedResultMetric title="มูลค่าหลังทดลอง (Simulated Value)" value={formatResultMoney(valuation.theoreticalValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้หากสถานการณ์เป็นไปตามที่ทดลองไว้ ยังไม่ได้หักต้นทุนที่จ่ายไปตอนเปิดสถานะ" />
         <ExplainedResultMetric title="เพิ่ม/ลดจากปัจจุบัน (Change from Current)" value={difference === null ? 'ไม่มีข้อมูล' : formatResultMoney(difference, currency, usdThbRate, true)} toneClass={difference === null ? 'text-slate-100' : profitLossToneClass(profitLossState(difference))} helper="มูลค่าสถานะเพิ่มขึ้นหรือลดลงเท่าไร เมื่อเทียบกับตอนนี้" />
       </ResultGroup>
@@ -1119,15 +1213,15 @@ function MonteCarloHighlights({ workspace, result, scenarioScore, currency, fxQu
     upper: bucket.upper,
     count: bucket.count,
   })), [result.terminalPriceHistogram]);
-  const breakEvens = useMemo(() => {
-    try { return valuePortfolio(workspace, workspace.scenarios[0]).breakEvens; } catch { return []; }
-  }, [workspace]);
-  const terminalReferences = useMemo(() => [
-    ...(workspace.underlyingPrice === null ? [] : [{ value: workspace.underlyingPrice, label: 'ราคาปัจจุบัน', color: '#f59e0b', description: `ราคาปัจจุบัน $${formatResultNumber(workspace.underlyingPrice)}` }]),
-    ...workspace.legs.map((leg, index) => ({ value: leg.strike, label: `ราคาใช้สิทธิ ${index + 1}`, color: '#94a3b8', description: `ราคาใช้สิทธิของสัญญาที่ ${index + 1}: $${formatResultNumber(leg.strike)}` })),
-    ...breakEvens.map((value, index) => ({ value, label: breakEvens.length === 1 ? 'จุดคุ้มทุน' : `จุดคุ้มทุน ${index + 1}`, color: '#a78bfa', description: `จุดคุ้มทุน $${formatResultNumber(value)}` })),
-    ...(result.targetPrice === undefined ? [] : [{ value: result.targetPrice, label: 'ราคาเป้าหมาย', color: '#22d3ee', description: `ราคาเป้าหมาย $${formatResultNumber(result.targetPrice)}` }]),
-  ], [breakEvens, result.targetPrice, workspace.legs, workspace.underlyingPrice]);
+  const terminalReferences = useMemo(() => {
+    const breakEvens = result.breakEvens ?? [];
+    return [
+      ...(workspace.underlyingPrice === null ? [] : [{ value: workspace.underlyingPrice, label: 'ราคาปัจจุบัน', color: '#f59e0b', description: `ราคาปัจจุบัน $${formatResultNumber(workspace.underlyingPrice)}` }]),
+      ...workspace.legs.map((leg, index) => ({ value: leg.strike, label: `ราคาใช้สิทธิ ${index + 1}`, color: '#94a3b8', description: `ราคาใช้สิทธิของสัญญาที่ ${index + 1}: $${formatResultNumber(leg.strike)}` })),
+      ...breakEvens.map((value, index) => ({ value, label: breakEvens.length === 1 ? 'จุดคุ้มทุน' : `จุดคุ้มทุน ${index + 1}`, color: '#a78bfa', description: `จุดคุ้มทุน $${formatResultNumber(value)}` })),
+      ...(result.targetPrice === undefined ? [] : [{ value: result.targetPrice, label: 'ราคาเป้าหมาย', color: '#22d3ee', description: `ราคาเป้าหมาย $${formatResultNumber(result.targetPrice)}` }]),
+    ];
+  }, [result.breakEvens, result.targetPrice, workspace.legs, workspace.underlyingPrice]);
   const shownPaths = useMemo(() => result.samplePaths.slice(0, 8), [result.samplePaths]);
   const samples = useMemo(() => {
     const pointCount = Math.max(0, ...shownPaths.map((path) => path.length));
@@ -1143,7 +1237,7 @@ function MonteCarloHighlights({ workspace, result, scenarioScore, currency, fxQu
   const p95Pnl = result.percentiles.p95;
   const var95Pnl = -result.valueAtRisk.p95;
   const es95Pnl = -result.expectedShortfall.p95;
-  const maximumLoss = boundedExpirationProfitFloor(workspace);
+  const maximumLoss = result.expirationProfitFloor ?? null;
   const closeAboveLabel = formatProbability(result.probabilityClosingAboveTarget);
   const closeBelowLabel = result.probabilityClosingAboveTarget !== undefined
     && result.probabilityClosingBelowTarget !== undefined

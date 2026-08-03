@@ -6,9 +6,17 @@ import type { OptionsSrUnavailableReason } from '@/src/lib/analytics/options-sr'
  * stale-response rules are unit-testable in isolation.
  */
 
-/** The single-flight / cache key. Deliberately excludes viewport so a pan/zoom never refetches. */
-export function optionsRequestKey(symbol: string, expiration: string): string {
-  return `${symbol.toUpperCase()}::${expiration}`;
+/**
+ * The single-flight / cache key. Deliberately excludes viewport so a pan/zoom
+ * never refetches.
+ *
+ * The walls entitlement IS part of the key: the outcome for a reader with
+ * Options Walls carries real levels and the outcome for a reader without them
+ * carries a locked state, so the two must never share a cache entry. That also
+ * makes a trial starting mid-session correct — the next read misses and fetches.
+ */
+export function optionsRequestKey(symbol: string, expiration: string, wallsEntitled = true): string {
+  return `${symbol.toUpperCase()}::${expiration}::walls-${wallsEntitled ? 'on' : 'off'}`;
 }
 
 export interface OptionsRequestPlanInput {
@@ -65,6 +73,12 @@ export interface OptionsFailureClassification {
  */
 export function classifyOptionsFailure(status: number | null, code: string | null | undefined): OptionsFailureClassification {
   const normalizedCode = (code ?? '').toLowerCase();
+  // A plan refusal is also a 401/403, so it is recognised first: telling the
+  // reader their provider lacks options data when the real answer is "upgrade"
+  // would send them to the wrong remedy.
+  if (normalizedCode === 'upgrade_required' || normalizedCode === 'authentication_required') {
+    return { reason: 'subscription-required', retryable: false, stopsPolling: true };
+  }
   if (status === 401 || status === 403 || normalizedCode === 'forbidden' || normalizedCode === 'provider-unauthorized') {
     return { reason: 'entitlement-required', retryable: false, stopsPolling: true };
   }

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { InfoHint } from '@/src/components/ui/InfoHint';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import type { OptionsLevel, OptionsSrResult } from '@/src/lib/analytics/options-sr';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
@@ -119,6 +121,10 @@ export function OptionsLevelsPanel({
   onExpirationChange,
   onRetry,
 }: OptionsLevelsPanelProps) {
+  const { can } = useEntitlement();
+  const chainEntitled = can('options.chain.basic');
+  const wallsEntitled = can('options.analytics.walls');
+  const greeksEntitled = can('options.greeks.full');
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   const rows = useMemo(() => chain ? rowsNearSpot(chain) : [], [chain]);
@@ -155,7 +161,10 @@ export function OptionsLevelsPanel({
               <dt className="text-slate-500">สถานะข้อมูล</dt><dd className="text-right text-slate-200">{provenance.dataStatus}</dd>
               <dt className="text-slate-500">ข้อมูล ณ</dt><dd className="text-right text-slate-200">{provenance.asOf ? formatMarketDataAsOf(provenance.asOf) : '—'}</dd>
               <dt className="text-slate-500">Open Interest</dt><dd className="text-right text-slate-200">{provenance.openInterest}</dd>
-              <dt className="text-slate-500">IV / Greeks</dt><dd className="text-right text-slate-200">{provenance.greeks}</dd>
+              {/* Withheld fields have no provenance to report; saying the provider sent none would be false. */}
+              {greeksEntitled && <>
+                <dt className="text-slate-500">IV / Greeks</dt><dd className="text-right text-slate-200">{provenance.greeks}</dd>
+              </>}
             </dl>
             {provenance.failure && (
               <p className="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-400" data-testid="options-failure-detail">
@@ -166,7 +175,7 @@ export function OptionsLevelsPanel({
         </h3>
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {expanded && expirations.length > 0 && (
+          {chainEntitled && expanded && expirations.length > 0 && (
             <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
               <span>Expiration</span>
               <select
@@ -181,18 +190,35 @@ export function OptionsLevelsPanel({
               </select>
             </label>
           )}
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={onToggleExpanded}
-            data-testid="options-expand-toggle"
-            className="min-h-9 rounded-md border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:border-slate-500 focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
-          >
-            {expanded ? 'ซ่อน' : 'แสดงข้อมูลออปชัน'}
-          </button>
+          {chainEntitled && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={onToggleExpanded}
+              data-testid="options-expand-toggle"
+              className="min-h-9 rounded-md border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:border-slate-500 focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
+            >
+              {expanded ? 'ซ่อน' : 'แสดงข้อมูลออปชัน'}
+            </button>
+          )}
         </div>
       </div>
 
+      {/*
+        Without the ledger capability the section keeps its place in the reading
+        order and says what it is, but no chain request is issued and no contract
+        reaches this component — the locked branch has nothing to conceal.
+      */}
+      {!chainEntitled && (
+        <div className="mt-2 space-y-2" data-testid="options-locked">
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            สัญญาออปชันจริง ทั้ง strike, วันหมดอายุ, Bid/Ask, Volume และ Open Interest
+          </p>
+          <LockedNotice capability="options.chain.basic" source="chart.options-panel" />
+        </div>
+      )}
+
+      {chainEntitled && (
       <p
         role="status"
         aria-live="polite"
@@ -201,8 +227,9 @@ export function OptionsLevelsPanel({
       >
         <span aria-hidden="true">●</span>{status.label}
       </p>
+      )}
 
-      {(status.state === 'error' || status.state === 'empty') && (
+      {chainEntitled && (status.state === 'error' || status.state === 'empty') && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2" data-testid="options-failure">
           <span className="text-slate-400">{status.state === 'empty' ? OPTIONS_EMPTY_MESSAGE : OPTIONS_FAILURE_MESSAGE}</span>
           {status.state === 'error' && (
@@ -219,12 +246,12 @@ export function OptionsLevelsPanel({
         </div>
       )}
 
-      {chain && (
+      {chainEntitled && chain && (
         <>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="options-key-levels">
-            <KeyLevelCard title="Call Wall" term="callWall" helper="จุดที่ Call OI กระจุกตัวมาก" level={levels?.callWall ?? null} currency={currency} tone="text-rose-300" />
-            <KeyLevelCard title="Put Wall" term="putWall" helper="จุดที่ Put OI กระจุกตัวมาก" level={levels?.putWall ?? null} currency={currency} tone="text-emerald-300" />
-            <KeyLevelCard title="Max Pain" term="maxPain" helper="ค่าคำนวณจาก OI ของวันหมดอายุที่เลือก" level={levels?.maxPain ?? null} currency={currency} tone="text-fuchsia-300" showOi={false} />
+            <KeyLevelCard title="Call Wall" term="callWall" helper="จุดที่ Call OI กระจุกตัวมาก" level={wallsEntitled ? levels?.callWall ?? null : null} entitled={wallsEntitled} currency={currency} tone="text-rose-300" />
+            <KeyLevelCard title="Put Wall" term="putWall" helper="จุดที่ Put OI กระจุกตัวมาก" level={wallsEntitled ? levels?.putWall ?? null : null} entitled={wallsEntitled} currency={currency} tone="text-emerald-300" />
+            <KeyLevelCard title="Max Pain" term="maxPain" helper="ค่าคำนวณจาก OI ของวันหมดอายุที่เลือก" level={wallsEntitled ? levels?.maxPain ?? null : null} entitled={wallsEntitled} currency={currency} tone="text-fuchsia-300" showOi={false} />
           </div>
 
           <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(14rem,.6fr)]">
@@ -285,22 +312,39 @@ export function OptionsLevelsPanel({
                   <Metric label="OI" value={value(selectedContract.openInterest, 0)} term="openInterest" />
                 </DetailGroup>
 
-                <DetailGroup title="ความผันผวน">
-                  <Metric label="IV" value={selectedContract.impliedVolatility == null ? '—' : `${value(selectedContract.impliedVolatility * 100, 2)}%`} term="impliedVolatility" />
-                </DetailGroup>
+                {/*
+                  IV and the Greeks are stripped from the payload on the server
+                  for a reader without them, so rendering "—" here would read as
+                  "the provider had none" when the truth is "your plan does not
+                  include them". The locked control says which it is.
+                */}
+                {greeksEntitled ? (
+                  <>
+                    <DetailGroup title="ความผันผวน">
+                      <Metric label="IV" value={selectedContract.impliedVolatility == null ? '—' : `${value(selectedContract.impliedVolatility * 100, 2)}%`} term="impliedVolatility" />
+                    </DetailGroup>
 
-                <DetailGroup title="Greeks">
-                  <Metric label="Delta" value={value(selectedContract.delta)} term="delta" />
-                  <Metric label="Gamma" value={value(selectedContract.gamma)} term="gamma" />
-                  <Metric label="Theta" value={value(selectedContract.theta)} term="theta" />
-                  <Metric label="Vega" value={value(selectedContract.vega)} term="vega" />
-                </DetailGroup>
+                    <DetailGroup title="Greeks">
+                      <Metric label="Delta" value={value(selectedContract.delta)} term="delta" />
+                      <Metric label="Gamma" value={value(selectedContract.gamma)} term="gamma" />
+                      <Metric label="Theta" value={value(selectedContract.theta)} term="theta" />
+                      <Metric label="Vega" value={value(selectedContract.vega)} term="vega" />
+                    </DetailGroup>
+                  </>
+                ) : (
+                  <section className="mt-2 border-t border-slate-800 pt-1.5">
+                    <h5 className="mb-1 text-[10px] font-semibold text-slate-400">ความผันผวนและ Greeks</h5>
+                    <LockedNotice capability="options.greeks.full" source="chart.options-contract" variant="row" />
+                  </section>
+                )}
 
                 <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-slate-800 pt-2 text-[10px]">
                   <dt className="text-slate-500">สถานะ</dt><dd className="text-right font-semibold text-slate-200">{contractMoneyness(selectedContract, chain.spot)}</dd>
                   <dt className="text-slate-500">ราคา / Volume</dt><dd className="break-words text-right text-slate-300">{marketSource(selectedContract)}</dd>
                   <dt className="text-slate-500">Open Interest</dt><dd className="break-words text-right text-slate-300">{optionsProviderLabel(selectedContract.provider)}{selectedContract.oiAsOf ? ` · ${selectedContract.oiAsOf}` : ''}</dd>
-                  <dt className="text-slate-500">IV / Greeks</dt><dd className="break-words text-right text-slate-300">{valuationSource(selectedContract)}</dd>
+                  {greeksEntitled && <>
+                    <dt className="text-slate-500">IV / Greeks</dt><dd className="break-words text-right text-slate-300">{valuationSource(selectedContract)}</dd>
+                  </>}
                   <dt className="text-slate-500">ข้อมูล ณ</dt><dd className="break-words text-right text-slate-300">{formatMarketDataAsOf(selectedContract.asOf)}</dd>
                 </dl>
               </>}
@@ -312,12 +356,20 @@ export function OptionsLevelsPanel({
   );
 }
 
-/** One summary card. A level the real open interest does not support shows "—". */
-function KeyLevelCard({ title, term, helper, level, currency, tone, showOi = true }: {
+/**
+ * One summary card. A level the real open interest does not support shows "—".
+ *
+ * Without `options.analytics.walls` the card is a teaser: it still names the
+ * level and explains what it means, and in place of the number it carries the
+ * control that opens the upgrade prompt. No real value is rendered, blurred or
+ * otherwise present — for a reader on Pro the level was never computed.
+ */
+function KeyLevelCard({ title, term, helper, level, entitled, currency, tone, showOi = true }: {
   title: string;
   term: 'callWall' | 'putWall' | 'maxPain';
   helper: string;
   level: OptionsLevel | null;
+  entitled: boolean;
   currency: string;
   tone: string;
   showOi?: boolean;
@@ -325,10 +377,18 @@ function KeyLevelCard({ title, term, helper, level, currency, tone, showOi = tru
   return (
     <article className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/30 px-2.5 py-1.5" data-testid={`options-card-${title.toLowerCase().replace(' ', '-')}`}>
       <h4 className="flex items-center justify-between gap-2 text-[11px] text-slate-500"><span>{title}</span><InfoHint term={term} align="end" /></h4>
-      <p className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>
-        {level ? `${currency}${level.price.toFixed(2)}` : '—'}
-      </p>
-      {showOi && <p className="text-[10px] text-slate-500">OI {value(level?.rawOI, 0)}</p>}
+      {entitled ? (
+        <>
+          <p className={`font-mono text-sm font-semibold tabular-nums ${tone}`}>
+            {level ? `${currency}${level.price.toFixed(2)}` : '—'}
+          </p>
+          {showOi && <p className="text-[10px] text-slate-500">OI {value(level?.rawOI, 0)}</p>}
+        </>
+      ) : (
+        <div className="mt-1">
+          <LockedNotice capability="options.analytics.walls" source={`chart.options-${term}`} variant="row" />
+        </div>
+      )}
       <p className="mt-0.5 text-[10px] leading-snug text-slate-600">{helper}</p>
     </article>
   );

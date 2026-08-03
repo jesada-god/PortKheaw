@@ -2,6 +2,7 @@
 
 import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { InfoHint } from '@/src/components/ui/InfoHint';
+import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import type { LevelStatistics } from '@/src/lib/analytics/level-statistics';
 import type { VisibleRangeVolumeProfile } from '@/src/lib/analytics/institutional-sr/visible-range-profile';
 import { formatSupportResistanceLevelLabel } from './level-label';
@@ -28,6 +29,12 @@ export interface SupportResistancePanelProps {
   statisticsReason: string | null;
   levelsError: string | null;
   currency: string;
+  /**
+   * Whether the reader's plan includes S/R Context. When false the rows arrive
+   * with no statistics at all — they were never computed — and each row shows the
+   * locked placeholder in place of its strength line.
+   */
+  contextEntitled: boolean;
 }
 
 function money(value: number, currency: string): string {
@@ -79,6 +86,7 @@ export function SupportResistancePanel({
   statisticsReason,
   levelsError,
   currency,
+  contextEntitled,
 }: SupportResistancePanelProps) {
   const resistance = rows.filter((row) => row.side === 'resistance');
   const support = rows.filter((row) => row.side === 'support');
@@ -126,7 +134,7 @@ export function SupportResistancePanel({
       )}
 
       <ol className="space-y-0.5">
-        {resistance.map((row) => <LevelRow key={row.id} row={row} currency={currency} basisLabel={basisLabel} />)}
+        {resistance.map((row) => <LevelRow key={row.id} row={row} currency={currency} basisLabel={basisLabel} contextEntitled={contextEntitled} />)}
         <li
           data-testid="sr-current-price"
           className="flex items-center justify-between gap-2 rounded-md border border-[#D4FF00]/30 bg-[#D4FF00]/[.07] px-2.5 py-1.5"
@@ -136,10 +144,10 @@ export function SupportResistancePanel({
             {acceptedPrice == null ? '—' : money(acceptedPrice, currency)}
           </span>
         </li>
-        {support.map((row) => <LevelRow key={row.id} row={row} currency={currency} basisLabel={basisLabel} />)}
+        {support.map((row) => <LevelRow key={row.id} row={row} currency={currency} basisLabel={basisLabel} contextEntitled={contextEntitled} />)}
       </ol>
 
-      {statisticsReason && (
+      {contextEntitled && statisticsReason && (
         <p className="mt-1.5 text-[11px] text-slate-500" data-testid="sr-statistics-reason">{statisticsReason}</p>
       )}
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-600">
@@ -149,7 +157,22 @@ export function SupportResistancePanel({
   );
 }
 
-function LevelRow({ row, currency, basisLabel }: { row: SupportResistanceRow; currency: string; basisLabel: string }) {
+/**
+ * One level.
+ *
+ * The level itself — its name, its price and how far the accepted price sits
+ * from it — is the Basic surface and is always rendered. Everything below it is
+ * S/R Context: the touch/hold/break line, the last test, the VPVR confirmation
+ * and the details popover. Without the capability those rows were never
+ * computed, so the locked branch replaces them with the one control that
+ * explains why.
+ */
+function LevelRow({ row, currency, basisLabel, contextEntitled }: {
+  row: SupportResistanceRow;
+  currency: string;
+  basisLabel: string;
+  contextEntitled: boolean;
+}) {
   const tone = row.side === 'resistance' ? 'text-rose-300' : 'text-emerald-300';
   const lastTouch = lastTouchLabel(row.statistics);
   const levelLabel = formatSupportResistanceLevelLabel(row.label);
@@ -161,15 +184,23 @@ function LevelRow({ row, currency, basisLabel }: { row: SupportResistanceRow; cu
         <span className={`whitespace-nowrap text-right font-mono text-[11px] tabular-nums ${row.distancePercent != null && row.distancePercent > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
           {signedPercent(row.distancePercent)}
         </span>
-        <LevelDetails row={row} currency={currency} basisLabel={basisLabel} lastTouch={lastTouch} />
+        {contextEntitled && <LevelDetails row={row} currency={currency} basisLabel={basisLabel} lastTouch={lastTouch} />}
       </div>
-      <p className="mt-0.5 truncate text-[11px] text-slate-400" data-testid={`sr-level-${row.id}-summary`}>
-        {compactStatistics(row)}
-      </p>
-      <p className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
-        {lastTouch && <span>ทดสอบล่าสุด {lastTouch}</span>}
-        {row.confirmation && <span>VPVR Confirmation: {CONFIRMATION_LABEL[row.confirmation]}</span>}
-      </p>
+      {contextEntitled ? (
+        <>
+          <p className="mt-0.5 truncate text-[11px] text-slate-400" data-testid={`sr-level-${row.id}-summary`}>
+            {compactStatistics(row)}
+          </p>
+          <p className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
+            {lastTouch && <span>ทดสอบล่าสุด {lastTouch}</span>}
+            {row.confirmation && <span>VPVR Confirmation: {CONFIRMATION_LABEL[row.confirmation]}</span>}
+          </p>
+        </>
+      ) : (
+        <div className="mt-1" data-testid={`sr-level-${row.id}-locked`}>
+          <LockedNotice capability="chart.sr.context" source={`chart.sr-${row.id}`} variant="row" />
+        </div>
+      )}
     </li>
   );
 }

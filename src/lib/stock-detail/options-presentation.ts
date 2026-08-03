@@ -13,7 +13,7 @@ import type { MarketDataStatus, OptionsChain } from '@/src/lib/market-data/optio
  * never infers, estimates or fabricates a value.
  */
 
-export type OptionsLoadState = 'idle' | 'loading' | 'success' | 'empty' | 'error';
+export type OptionsLoadState = 'idle' | 'loading' | 'success' | 'empty' | 'error' | 'locked';
 
 /** Design-system tone: positive = success, neutral = loading, danger = failure. */
 export type OptionsStatusTone = 'positive' | 'neutral' | 'danger' | 'muted';
@@ -24,6 +24,7 @@ export const OPTIONS_STATUS_LABEL: Record<OptionsLoadState, string> = {
   success: 'โหลดข้อมูลสำเร็จ',
   empty: 'ไม่มีข้อมูลออปชัน',
   error: 'โหลดข้อมูลไม่สำเร็จ',
+  locked: 'ต้องอัปเกรดแพ็กเกจ',
 };
 
 const STATUS_TONE: Record<OptionsLoadState, OptionsStatusTone> = {
@@ -32,6 +33,8 @@ const STATUS_TONE: Record<OptionsLoadState, OptionsStatusTone> = {
   success: 'positive',
   empty: 'muted',
   error: 'danger',
+  // A plan boundary is not a fault, so it never wears the failure tone.
+  locked: 'muted',
 };
 
 /** The single failure sentence shown in the primary UI — never a raw provider error. */
@@ -73,7 +76,10 @@ export function presentOptionsStatus({ expanded, loading, chain, result }: Optio
     if (!expanded) return 'idle';
     if (loading) return 'loading';
     if (chain) return hasUsableChain(chain) ? 'success' : 'error';
-    if (result?.status === 'unavailable') return EMPTY_REASONS.has(result.reason) ? 'empty' : 'error';
+    if (result?.status === 'unavailable') {
+      if (result.reason === 'subscription-required') return 'locked';
+      return EMPTY_REASONS.has(result.reason) ? 'empty' : 'error';
+    }
     // Expanded, nothing resolved yet: the request is queued, not failed.
     return 'loading';
   })();
@@ -121,6 +127,7 @@ export interface OptionsProvenanceDetail {
 const FAILURE_DETAIL: Record<string, string> = {
   'rate-limited': 'แหล่งข้อมูลจำกัดจำนวนการเรียกชั่วคราว ระบบจะเว้นระยะก่อนลองใหม่',
   'entitlement-required': 'บัญชีผู้ให้บริการปัจจุบันยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลออปชัน',
+  'subscription-required': 'ข้อมูลส่วนนี้อยู่ในแพ็กเกจที่สูงขึ้น',
   'chain-unavailable': 'แหล่งข้อมูลไม่ตอบกลับข้อมูลออปชันที่ใช้งานได้',
   'no-expirations': 'ไม่พบวันหมดอายุที่ยังไม่หมดอายุสำหรับหุ้นนี้',
   'expired-expiration': 'วันหมดอายุที่เลือกผ่านไปแล้ว',

@@ -19,7 +19,7 @@ const nullableInteger = z.number().int().nonnegative().nullable();
 export const optionValuationSourceSchema = z.enum(['provider', 'nexora-derived']).nullable();
 export type OptionValuationSource = z.infer<typeof optionValuationSourceSchema>;
 
-export const optionContractSchema = z.object({
+const optionLedgerContractShape = {
   contractSymbol: z.string().min(1),
   underlyingSymbol: z.string().min(1),
   type: z.enum(['call', 'put']),
@@ -31,12 +31,6 @@ export const optionContractSchema = z.object({
   mark: nullableNonnegative,
   volume: nullableInteger,
   openInterest: nullableInteger,
-  impliedVolatility: nullableNonnegative,
-  delta: nullableFinite,
-  gamma: nullableFinite,
-  theta: nullableFinite,
-  vega: nullableFinite,
-  rho: nullableFinite,
   inTheMoney: z.boolean().nullable(),
   multiplier: z.number().finite().positive(),
   currency: z.string().min(3).max(8),
@@ -55,6 +49,26 @@ export const optionContractSchema = z.object({
   timestampKind: marketTimestampKindSchema,
   status: marketDataStatusSchema,
   delayedMinutes: z.number().int().nonnegative().nullable().default(null),
+};
+
+/**
+ * The Pro wire contract. IV, Greeks and their valuation provenance are absent
+ * from this schema, so validation cannot add locked field names to a response.
+ */
+export const optionLedgerContractSchema = z.object(optionLedgerContractShape).superRefine((contract, context) => {
+  if (contract.bid !== null && contract.ask !== null && contract.bid > contract.ask) {
+    context.addIssue({ code: 'custom', path: ['bid'], message: 'bid must not exceed ask' });
+  }
+});
+
+export const optionContractSchema = z.object({
+  ...optionLedgerContractShape,
+  impliedVolatility: nullableNonnegative,
+  delta: nullableFinite,
+  gamma: nullableFinite,
+  theta: nullableFinite,
+  vega: nullableFinite,
+  rho: nullableFinite,
   valuationSource: optionValuationSourceSchema.default(null),
 }).superRefine((contract, context) => {
   if (contract.bid !== null && contract.ask !== null && contract.bid > contract.ask) {
@@ -62,13 +76,11 @@ export const optionContractSchema = z.object({
   }
 });
 
-export const optionsChainSchema = z.object({
+const optionsChainShape = {
   underlyingSymbol: z.string().min(1),
   spot: z.number().finite().positive(),
   expiration: z.iso.date(),
   expirations: z.array(z.iso.date()),
-  calls: z.array(optionContractSchema),
-  puts: z.array(optionContractSchema),
   provider: z.string().min(1),
   asOf: z.iso.datetime(),
   timestampKind: marketTimestampKindSchema,
@@ -80,7 +92,22 @@ export const optionsChainSchema = z.object({
   underlyingProvider: z.string().min(1).nullable().optional(),
   underlyingAsOf: z.iso.datetime().nullable().optional(),
   underlyingStatus: z.enum(['live', 'delayed', 'cached', 'stale', 'unavailable']).optional(),
+};
+
+export const optionsChainSchema = z.object({
+  ...optionsChainShape,
+  calls: z.array(optionContractSchema),
+  puts: z.array(optionContractSchema),
 });
+
+export const optionsLedgerChainSchema = z.object({
+  ...optionsChainShape,
+  calls: z.array(optionLedgerContractSchema),
+  puts: z.array(optionLedgerContractSchema),
+});
+
+/** The two successful shapes accepted from the entitlement-gated route. */
+export const gatedOptionsChainSchema = z.union([optionsChainSchema, optionsLedgerChainSchema]);
 
 export const optionsExpirationsSchema = z.object({
   underlyingSymbol: z.string().min(1),
@@ -94,8 +121,37 @@ export const optionsExpirationsSchema = z.object({
 });
 
 export type OptionContract = z.infer<typeof optionContractSchema>;
+export type OptionLedgerContract = z.infer<typeof optionLedgerContractSchema>;
 export type OptionsChain = z.infer<typeof optionsChainSchema>;
+export type OptionsLedgerChain = z.infer<typeof optionsLedgerChainSchema>;
+export type GatedOptionsChain = z.infer<typeof gatedOptionsChainSchema>;
 export type OptionsExpirations = z.infer<typeof optionsExpirationsSchema>;
+
+function hydrateLedgerContract(contract: OptionContract | OptionLedgerContract): OptionContract {
+  if ('impliedVolatility' in contract) return contract;
+  return {
+    ...contract,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    rho: null,
+    valuationSource: null,
+  };
+}
+
+/**
+ * Normalize a gated wire DTO for internal UI consumers. Pro null placeholders
+ * are created only after browser parsing; the locked keys were absent on wire.
+ */
+export function normalizeGatedOptionsChain(chain: GatedOptionsChain): OptionsChain {
+  return {
+    ...chain,
+    calls: chain.calls.map(hydrateLedgerContract),
+    puts: chain.puts.map(hydrateLedgerContract),
+  };
+}
 
 export interface NormalizedOptionContracts {
   underlyingSymbol: string;

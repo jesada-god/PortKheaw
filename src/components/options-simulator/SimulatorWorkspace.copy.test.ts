@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(new URL('./SimulatorWorkspace.tsx', import.meta.url), 'utf8');
 const validationSource = readFileSync(new URL('../../lib/options-simulator/validation.ts', import.meta.url), 'utf8');
 const shellStylesSource = readFileSync(new URL('../../../app/globals.css', import.meta.url), 'utf8');
-const workerSource = readFileSync(new URL('../../workers/optionsMonteCarlo.worker.ts', import.meta.url), 'utf8');
+const serverComputeSource = readFileSync(new URL('../../lib/options-simulator/server-compute.ts', import.meta.url), 'utf8');
 const tabsSource = readFileSync(new URL('../ui/Tabs.tsx', import.meta.url), 'utf8');
 const disclosureSource = readFileSync(new URL('./MetricDisclosure.tsx', import.meta.url), 'utf8');
 
@@ -74,7 +74,7 @@ describe('Options Portfolio Simulator copy', () => {
     expect(saveIndex).toBeGreaterThan(source.indexOf('เพิ่มสัญญาอีก 1 รายการ'));
     expect(saveIndex).toBeLessThan(source.indexOf('แบบจำลองของฉัน'));
     // Exactly one of each control, and the unsaved status now travels with them.
-    expect(source.match(/บันทึกเป็นสำเนา<\/Button>/g)).toHaveLength(1);
+    expect(source.match(/บันทึกเป็นสำเนา<\/LockedFeatureButton>/g)).toHaveLength(1);
     expect(source.match(/'ลองบันทึกอีกครั้ง' : 'บันทึก'/g)).toHaveLength(1);
     expect(source.match(/displayedSaveStatus\[saveStatus\]/g)).toHaveLength(1);
     expect(source.indexOf('displayedSaveStatus[saveStatus]')).toBeGreaterThan(saveIndex);
@@ -155,18 +155,18 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('ข้อมูลสัญญามีการเปลี่ยนแปลง กรุณาคำนวณใหม่');
   });
 
-  it('derives Monte Carlo contract inputs and rejects stale worker results', () => {
+  it('derives Monte Carlo contract inputs and rejects stale server responses', () => {
     expect(source).toContain('เงินที่จ่ายเป็นค่าสัญญา');
     expect(source).toContain('จำนวนวันที่เหลือก่อนหมดอายุ (DTE)');
     expect(source).toContain('const targetDte =');
     expect(source).toContain('horizonDays: targetDte');
-    expect(source).toContain('runId !== workerRunId.current');
+    expect(source).toContain('runId !== calculationRunId.current');
     expect(source).toContain("'เริ่มจำลอง' : 'คำนวณผลลัพธ์'");
     expect(source).toContain('BASIC_PATH_OPTIONS.map');
     expect(source).toContain('helper={DELTA_MONTE_CARLO_HELP}');
     expect(source).not.toContain('>Advanced Settings<');
     expect(source).toContain('progress.toLocaleString()} / {workspace.monteCarlo.paths.toLocaleString()');
-    expect(source).toContain('worker.current?.terminate()');
+    expect(source).toContain('calculationController.current?.abort()');
   });
 
   it('keeps numeric drafts as strings and commits finite values on blur', () => {
@@ -176,11 +176,11 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain("if (value === 0) event.currentTarget.select()");
   });
 
-  it('keeps Manual Greeks separate from pricing and worker settings', () => {
+  it('keeps Manual Greeks separate from pricing and server settings', () => {
     expect(source).toContain('ค่าประมาณจาก Delta (ทั้งสถานะ)');
     expect(source).toContain('Delta เป็นตัวเลขไว้เทียบเท่านั้น ไม่ถูกนำไปบวกซ้ำในผลรวม');
     expect(source).toContain("source === 'manual' ? 'คุณกรอกเอง' : 'ระบบประเมินให้'");
-    expect(source).toContain('instance.postMessage({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
+    expect(source).toContain('body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
     expect(source).not.toContain('settings: { ...settings, delta');
   });
 
@@ -317,13 +317,17 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('delete snapshot.validPaths');
     expect(source).toContain('delete snapshot.discardedPaths');
     expect(source).toContain('delete snapshot.terminalPriceHistogram');
-    expect(source).toContain('monteCarlo: monteCarloSnapshot(event.data.result');
+    expect(source).toContain('delete snapshot.breakEvens');
+    expect(source).toContain('delete snapshot.expirationProfitFloor');
+    expect(source).toContain('monteCarlo: monteCarloSnapshot(result)');
     expect(source).toContain('const [callPutScore, setCallPutScore]');
     expect(source).not.toMatch(/resultSnapshot:[^\n]+callPutScore/);
     expect(source).not.toMatch(/resultSnapshot:[^\n]+scenarioScore/);
-    expect(workerSource).toContain('const { terminalPrices, pathSet: transientPathSet, ...result } = auditResult');
-    expect(workerSource).toContain('transientPathSet');
-    expect(workerSource).toContain('self.postMessage({ result, scenarioScore })');
+    expect(serverComputeSource).toContain('const { terminalPrices: _terminalPrices, pathSet: transientPathSet, ...result } = auditResult');
+    expect(serverComputeSource).toContain('transientPathSet');
+    expect(serverComputeSource).toContain('breakEvens: payoff.breakEvens');
+    expect(serverComputeSource).toContain('expirationProfitFloor: boundedExpirationProfitFloor(workspace)');
+    expect(serverComputeSource).toContain('scenarioScore,');
   });
 
   it('discloses every Monte Carlo assumption and fee treatment', () => {
@@ -351,8 +355,9 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('const analysisWorkspaceValue = useMemo');
     expect(source).toContain('const sensitivity = useMemo');
     expect(source).toContain('const summaryLegs = useMemo');
-    expect(source).toContain('const whatIfCalculation = useMemo');
-    expect(source).toContain('const breakEvens = useMemo');
+    expect(source).not.toContain('const whatIfCalculation = useMemo');
+    expect(source).not.toContain('valuePortfolio(');
+    expect(source).toContain('const breakEvens = result.breakEvens ?? []');
     expect(source).toContain("fxQuote?.stale ? 'stale'");
     expect(source).toContain('1 USD = {Number(fxQuote.rate).toFixed(2)} THB');
     expect(source).toContain('อัตรา ณ {formatTimestamp(fxQuote.asOf)}');
@@ -419,9 +424,10 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('ระบบดูอย่างไร');
     expect(source).toContain('data-testid="reconciliation-status"');
     expect(source).toContain('auditResultReconciliation({');
-    expect(source).toContain('priceImpact: afterPrice.theoreticalValue - current.theoreticalValue');
-    expect(source).toContain('timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue');
-    expect(source).toContain('ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue');
+    expect(serverComputeSource).toContain('priceImpact: afterPrice.theoreticalValue - current.theoreticalValue');
+    expect(serverComputeSource).toContain('timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue');
+    expect(serverComputeSource).toContain('ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue');
+    expect(source).not.toContain('valuePortfolio(');
     expect(source).toContain('ผลอื่น ๆ (Other Impact)');
     expect(source).toContain('รวมกันแล้วต้องเท่ากับมูลค่าที่เปลี่ยนไปทั้งหมด');
     expect(source).toContain('Delta เป็นตัวเลขไว้เทียบเท่านั้น');
@@ -455,7 +461,7 @@ describe('Options Portfolio Simulator copy', () => {
   it('keeps Calculate visible at 320px and moves the desktop action to the form end', () => {
     expect(source).toContain('data-testid="mobile-calculate-action"');
     expect(source).toContain('md:hidden');
-    expect(source).toContain('className="min-h-11 w-full"');
+    expect(source).toContain('min-h-11 w-full');
     expect(source).toContain('data-testid="desktop-calculate-action"');
     expect(source).toContain('hidden justify-end md:flex');
     expect(source).not.toContain('md:left-auto md:right-6');

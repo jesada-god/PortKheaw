@@ -5,19 +5,21 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import type { MarketDataLabel } from '@/src/lib/stock-detail/market-source';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
 const loadExpirations = vi.fn();
 const loadChain = vi.fn();
+const resetChain = vi.fn();
 vi.mock('@/src/lib/stock-detail/options-source', () => ({
   DEFAULT_EXPIRATIONS_COOLDOWN_MS: 60_000,
   OPTIONS_CHAIN_RATE_LIMIT_COOLDOWN_MS: 60_000,
   optionsExpirationsCoordinator: { load: (symbol: string) => loadExpirations(symbol) },
   optionsChainCoordinator: {
-    load: (symbol: string, expiration: string, price: number | null) => loadChain(symbol, expiration, price),
-    reset: () => true,
+    load: (symbol: string, expiration: string, price: number | null, options: { wallsEntitled?: boolean }) => loadChain(symbol, expiration, price, options),
+    reset: (symbol: string, expiration: string, wallsEntitled?: boolean) => resetChain(symbol, expiration, wallsEntitled),
   },
 }));
 
@@ -71,6 +73,7 @@ beforeEach(() => {
   push.mockReset();
   loadExpirations.mockReset().mockResolvedValue({ ok: true, data: { underlyingSymbol: 'AAPL', expirations: [EXPIRATION], provider: 'alpaca', asOf: AS_OF, timestampKind: 'receipt', status: 'delayed', delayedMinutes: 15, warnings: [] }, expirations: [EXPIRATION] });
   loadChain.mockReset().mockResolvedValue({ ok: true, chain });
+  resetChain.mockReset().mockReturnValue(true);
   window.localStorage.clear();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -90,7 +93,7 @@ const UNDERLYING: MarketDataLabel = {
 
 async function renderChain() {
   await act(async () => {
-    root.render(<OptionsChainPanel symbol="AAPL" acceptedPrice={SPOT} underlyingLabel={UNDERLYING} />);
+    root.render(<EntitlementProvider tier="elite" authenticated trialOffer="used"><OptionsChainPanel symbol="AAPL" acceptedPrice={SPOT} underlyingLabel={UNDERLYING} /></EntitlementProvider>);
   });
   const select = container.querySelector<HTMLSelectElement>('select[aria-label="วันหมดอายุออปชัน"]')!;
   await act(async () => {
@@ -107,6 +110,11 @@ function click(element: Element) {
 }
 
 describe('OptionsChainPanel layout', () => {
+  it('loads the ledger without making the Elite-only Walls request', async () => {
+    await renderChain();
+    expect(loadChain).toHaveBeenCalledWith('AAPL', EXPIRATION, SPOT, { wallsEntitled: false });
+  });
+
   it('renders one auto-height row per strike, never a fixed row height', async () => {
     await renderChain();
     const rendered = rows();

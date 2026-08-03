@@ -1,4 +1,4 @@
-import { subscriptionCapabilities, type SubscriptionCapability } from './capabilities';
+import { hasCapability, subscriptionCapabilities, type SubscriptionCapability } from './capabilities';
 import { subscriptionTiers, type SubscriptionTier } from './subscription-types';
 
 /**
@@ -8,9 +8,11 @@ import { subscriptionTiers, type SubscriptionTier } from './subscription-types';
  *
  * A row is one of two kinds:
  *
- *   `capability` — the value is read straight out of the Phase 1 entitlement
- *   matrix, which is the same matrix the server and the database enforce. These
- *   rows cannot disagree with what a subscription actually unlocks.
+ *   **enforced** — the value is read straight out of the entitlement matrix,
+ *   which is the same matrix the server enforces on every premium path. These
+ *   rows cannot disagree with what a subscription actually unlocks. A row that
+ *   grows in stages (a basic ledger, then an advanced one) names each stage's
+ *   capability in `capabilities` and still derives its value from the matrix.
  *
  *   `catalog` — part of the product's plan description that has no entitlement
  *   key behind it yet. Kept explicit so nobody mistakes it for an enforced gate.
@@ -25,8 +27,14 @@ export type PlanFeatureValue =
 export interface PlanFeatureRow {
   id: string;
   label: string;
-  /** Present when the row's value comes from the enforced entitlement matrix. */
+  /** Present when the row's value comes from one enforced entitlement key. */
   capability?: SubscriptionCapability;
+  /**
+   * Present when the row is a ladder: every stage's enforced key, cheapest
+   * first. `capability` carries the first stage, so one predicate — "does this
+   * row name a capability?" — still separates enforced rows from catalog copy.
+   */
+  capabilities?: readonly SubscriptionCapability[];
   values: Readonly<Record<SubscriptionTier, PlanFeatureValue>>;
 }
 
@@ -49,6 +57,28 @@ function fromCapability(id: string, label: string, capability: SubscriptionCapab
     return [tier, value ? included : excluded];
   })) as CatalogValues;
   return { id, label, capability, values };
+}
+
+/**
+ * A feature that arrives in stages. Each tier shows the label of the richest
+ * stage it is actually entitled to, so "พื้นฐาน" and "เต็มรูปแบบ" are decided by
+ * the matrix rather than typed in beside it.
+ */
+function fromCapabilityLadder(
+  id: string,
+  label: string,
+  stages: readonly { capability: SubscriptionCapability; text: string }[],
+): PlanFeatureRow {
+  const values = Object.fromEntries(subscriptionTiers.map((tier) => {
+    const reached = [...stages].reverse().find((stage) => hasCapability(tier, stage.capability));
+    return [tier, reached ? { kind: 'text', value: reached.text } as PlanFeatureValue : excluded];
+  })) as CatalogValues;
+  return { id, label, capabilities: stages.map((stage) => stage.capability), values };
+}
+
+/** One predicate for "this row is a promise the server enforces", used by tests and UI alike. */
+export function isEnforcedRow(row: PlanFeatureRow): boolean {
+  return Boolean(row.capability) || Boolean(row.capabilities?.length);
 }
 
 function fromCatalog(id: string, label: string, values: CatalogValues): PlanFeatureRow {
@@ -87,28 +117,22 @@ export const planFeatureGroups: readonly PlanFeatureGroup[] = [
     label: 'การวิเคราะห์',
     rows: [
       fromCapability('sr-context', 'S/R Context อธิบายที่มาของแต่ละแนว', 'chart.sr.context'),
-      fromCatalog('signal-breakdown', 'Signal Breakdown แยกรายปัจจัย', {
-        basic: excluded,
-        pro: excluded,
-        elite: included,
-      }),
+      fromCapability('signal-summary', 'Options Signal สรุปทิศทางและคะแนนความมั่นใจ', 'options.signal.summary'),
+      fromCapability('signal-breakdown', 'Signal Breakdown แยกรายปัจจัย', 'options.signal.breakdown'),
+      fromCapability('technical-outlook', 'Technical Outlook · Market Signal', 'technical.outlook'),
     ],
   },
   {
     id: 'options',
     label: 'Options',
     rows: [
-      fromCatalog('options-chain', 'Options Chain', {
-        basic: excluded,
-        pro: { kind: 'text', value: 'พื้นฐาน' },
-        elite: { kind: 'text', value: 'เต็มรูปแบบ' },
-      }),
+      fromCapabilityLadder('options-chain', 'Options Chain', [
+        { capability: 'options.chain.basic', text: 'พื้นฐาน' },
+        { capability: 'options.chain.advanced', text: 'เต็มรูปแบบ' },
+      ]),
       fromCapability('options-walls', 'Options Walls (Call/Put Wall, Max Pain)', 'options.analytics.walls'),
-      fromCatalog('full-greeks', 'Full Greeks ครบทุกค่า', {
-        basic: excluded,
-        pro: excluded,
-        elite: included,
-      }),
+      fromCapability('full-greeks', 'Full Greeks ครบทุกค่า', 'options.greeks.full'),
+      fromCapability('expected-move', 'Expected Move กรอบความผันผวนที่ตลาดคาด', 'options.expected_move'),
     ],
   },
   {

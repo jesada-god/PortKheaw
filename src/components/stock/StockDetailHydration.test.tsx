@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompanyProfile, Quote } from '@/src/lib/market-data/types';
 import { StockDetailClient } from './StockDetailClient';
 import { clearAnalystTargetClientCacheForTests } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 
 vi.stubGlobal('React', React);
 vi.mock('next/navigation', () => ({
@@ -238,7 +239,15 @@ const availableConsensus = {
 const originalTimeZone = process.env.TZ;
 
 function initialMarkup(): string {
-  return renderToString(<StockDetailClient {...props} />);
+  return renderToString(stockDetailTree());
+}
+
+function stockDetailTree() {
+  return (
+    <EntitlementProvider tier="elite" authenticated trialOffer="used">
+      <StockDetailClient {...props} />
+    </EntitlementProvider>
+  );
 }
 
 beforeEach(() => {
@@ -323,7 +332,7 @@ describe('Stock Detail hydration regression', () => {
     await act(async () => {
       root = hydrateRoot(
         container,
-        <StockDetailClient {...props} />,
+        stockDetailTree(),
         { onRecoverableError: (error) => recoverable.push(error) },
       );
     });
@@ -358,7 +367,7 @@ describe('Stock Detail hydration regression', () => {
 
     let root: Root | undefined;
     await act(async () => {
-      root = hydrateRoot(container, <StockDetailClient {...props} />);
+      root = hydrateRoot(container, stockDetailTree());
     });
     const financials = [...container.querySelectorAll('button')]
       .find((button) => button.textContent === 'Financials');

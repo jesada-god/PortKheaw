@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { subscriptionCapabilities } from './capabilities';
+import { hasCapability, subscriptionCapabilities } from './capabilities';
 import {
   featureSummary,
   formatBaht,
+  isEnforcedRow,
   planDescriptor,
   planDescriptors,
   planFeatureGroups,
@@ -17,8 +18,9 @@ describe('plan catalog', () => {
   });
 
   it('derives every enforced row from the entitlement matrix rather than restating it', () => {
-    const enforced = planFeatureGroups.flatMap((group) => group.rows).filter((row) => row.capability);
-    expect(enforced.length).toBeGreaterThanOrEqual(7);
+    const enforced = planFeatureGroups.flatMap((group) => group.rows)
+      .filter((row) => row.capability !== undefined);
+    expect(enforced.length).toBeGreaterThanOrEqual(12);
 
     for (const row of enforced) {
       for (const tier of subscriptionTiers) {
@@ -31,6 +33,32 @@ describe('plan catalog', () => {
         }
       }
     }
+  });
+
+  it('derives a staged row from the richest capability the tier actually holds', () => {
+    const chain = planFeatureRow('options-chain');
+    expect(chain.capabilities).toEqual(['options.chain.basic', 'options.chain.advanced']);
+    expect(isEnforcedRow(chain)).toBe(true);
+
+    for (const tier of subscriptionTiers) {
+      const value = chain.values[tier];
+      if (hasCapability(tier, 'options.chain.advanced')) {
+        expect(value).toEqual({ kind: 'text', value: 'เต็มรูปแบบ' });
+      } else if (hasCapability(tier, 'options.chain.basic')) {
+        expect(value).toEqual({ kind: 'text', value: 'พื้นฐาน' });
+      } else {
+        expect(value).toEqual({ kind: 'excluded' });
+      }
+    }
+  });
+
+  it('states plainly which comparison rows are enforced and which are product copy', () => {
+    const rows = planFeatureGroups.flatMap((group) => group.rows);
+    const catalogOnly = rows.filter((row) => !isEnforcedRow(row)).map((row) => row.id);
+    // Everything a plan claims to unlock is enforced; only descriptive rows that
+    // no gate stands behind may stay unenforced, and they are listed here so a
+    // new unenforced promise cannot slip in unnoticed.
+    expect(catalogOnly).toEqual(['watchlist', 'chart-basics']);
   });
 
   it('names every feature exactly once across the whole catalog', () => {

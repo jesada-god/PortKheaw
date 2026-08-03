@@ -219,6 +219,29 @@ describe('Options Portfolio Simulator hydration', () => {
     await act(async () => { root.unmount(); });
   });
 
+  it('keeps Basic calculation and saved-simulation paths inert', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL) => Promise.resolve(new Response('{}', { status: 401 })));
+    vi.stubGlobal('fetch', fetchMock);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => { root.render(<SimulatorWorkspace initialType="what-if" />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+
+    const calculate = container.querySelector<HTMLButtonElement>(
+      '[data-testid="desktop-calculate-action"] [data-capability="simulator.what_if"]',
+    );
+    expect(calculate?.dataset.locked).toBe('true');
+    await act(async () => calculate?.click());
+
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(requestedUrls.some((url) => url.includes('/api/option-simulations'))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes('/compute/'))).toBe(false);
+    expect(container.querySelector('[data-testid="result-summary"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+  });
+
   it('fills only undated fields so a restored draft keeps its own dates', () => {
     const seeded = withCalendarDates(seedWorkspace('what-if'), '2026-08-05');
     expect(seeded.valuationDate).toBe('2026-08-05');

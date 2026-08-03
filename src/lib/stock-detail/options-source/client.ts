@@ -1,10 +1,11 @@
+import { optionsUnavailable, type OptionsSrResult } from '@/src/lib/analytics/options-sr';
 import {
-  computeOptionsSupportResistance,
-  optionsUnavailable,
-  type OptionsSrConfig,
-  type OptionsSrResult,
-} from '@/src/lib/analytics/options-sr';
-import { optionsChainSchema, optionsExpirationsSchema, type OptionsChain, type OptionsExpirations } from '@/src/lib/market-data/options/contracts';
+  gatedOptionsChainSchema,
+  normalizeGatedOptionsChain,
+  optionsExpirationsSchema,
+  type OptionsChain,
+  type OptionsExpirations,
+} from '@/src/lib/market-data/options/contracts';
 import { classifyOptionsFailure, type OptionsFailureClassification } from './planner';
 
 /**
@@ -63,10 +64,47 @@ export async function fetchOptionsExpirations(symbol: string, signal: AbortSigna
 }
 
 export interface FetchOptionsSrOptions {
-  /** Injected clock for deterministic freshness/expiration handling in tests. */
-  nowMs?: number;
-  /** Pure-calc config overrides. */
-  config?: Partial<OptionsSrConfig>;
+  /**
+   * Whether this reader's plan includes Options Walls. When false the walls
+   * request is never made and the result is a typed `subscription-required`
+   * state — the browser does not compute Call Wall, Put Wall or Max Pain for
+   * itself, so no locked value exists here to leak.
+   */
+  wallsEntitled?: boolean;
+}
+
+/**
+ * Load Options Walls from the entitled server endpoint.
+ *
+ * The levels are computed on the server, behind `options.analytics.walls`, so a
+ * reader without the capability receives a refusal rather than a payload — and
+ * the browser never runs the calculation itself.
+ */
+export async function fetchOptionsWalls(
+  symbol: string,
+  expiration: string,
+  acceptedPrice: number | null,
+  signal: AbortSignal,
+): Promise<OptionsSrResult> {
+  const query = new URLSearchParams({ symbol, expiration });
+  if (acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0) {
+    query.set('underlyingPrice', String(acceptedPrice));
+  }
+  const response = await fetch(`/api/market/options/walls?${query.toString()}`, {
+    signal, headers: { Accept: 'application/json' }, cache: 'no-store',
+  });
+  const payload = await readEnvelope<OptionsSrResult>(response);
+  if (!response.ok || !payload.data) {
+    const classification = classifyOptionsFailure(response.status, payload.error?.code);
+    return optionsUnavailable(
+      symbol,
+      expiration,
+      classification.reason,
+      payload.error?.message ?? 'Options walls are unavailable.',
+      payload.meta?.provider ?? null,
+    );
+  }
+  return payload.data;
 }
 
 /**
@@ -126,7 +164,7 @@ export async function fetchOptionsChainOutcome(
       retryAfterSeconds,
     };
   }
-  const parsed = optionsChainSchema.safeParse(payload.data);
+  const parsed = gatedOptionsChainSchema.safeParse(payload.data);
   if (!parsed.success) {
     const provider = payload.meta?.provider ?? null;
     const classification = classifyOptionsFailure(null, 'invalid-provider-response');
@@ -139,18 +177,16 @@ export async function fetchOptionsChainOutcome(
       retryAfterSeconds: null,
     };
   }
-  const chain = parsed.data;
-  const price = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0 ? acceptedPrice : chain.spot;
-  const result = computeOptionsSupportResistance({
-    symbol: chain.underlyingSymbol,
-    expiration: chain.expiration,
-    acceptedPrice: price,
-    calls: chain.calls,
-    puts: chain.puts,
-    provider: chain.provider,
-    asOf: chain.asOf,
-    status: chain.status,
-  }, { ...(options.nowMs !== undefined ? { nowMs: options.nowMs } : {}), ...(options.config ?? {}) });
+  const chain = normalizeGatedOptionsChain(parsed.data);
+  const result = options.wallsEntitled === false
+    ? optionsUnavailable(
+      chain.underlyingSymbol,
+      chain.expiration,
+      'subscription-required',
+      'Options Walls are not included in this plan.',
+      chain.provider,
+    )
+    : await fetchOptionsWalls(chain.underlyingSymbol, chain.expiration, acceptedPrice, signal);
   return { ok: true, chain, result, provider: chain.provider, classification: null, retryAfterSeconds: null };
 }
 

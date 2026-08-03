@@ -78,6 +78,13 @@ describe('subscription capability matrix', () => {
       'simulator.what_if': false,
       'simulator.monte_carlo': false,
       'options.analytics.walls': false,
+      'options.chain.basic': false,
+      'options.chain.advanced': false,
+      'options.greeks.full': false,
+      'options.expected_move': false,
+      'options.signal.summary': false,
+      'options.signal.breakdown': false,
+      'technical.outlook': false,
     });
     expect(subscriptionCapabilities.pro).toEqual({
       'portfolio.stock.create': true,
@@ -90,11 +97,23 @@ describe('subscription capability matrix', () => {
       'simulator.what_if': true,
       'simulator.monte_carlo': false,
       'options.analytics.walls': false,
+      'options.chain.basic': true,
+      'options.chain.advanced': false,
+      'options.greeks.full': false,
+      'options.expected_move': false,
+      'options.signal.summary': true,
+      'options.signal.breakdown': false,
+      'technical.outlook': false,
     });
     expect(subscriptionCapabilities.elite).toEqual({
       ...subscriptionCapabilities.pro,
       'simulator.monte_carlo': true,
       'options.analytics.walls': true,
+      'options.chain.advanced': true,
+      'options.greeks.full': true,
+      'options.expected_move': true,
+      'options.signal.breakdown': true,
+      'technical.outlook': true,
     });
   });
 

@@ -8,8 +8,22 @@ import { DEFAULT_CHART_PREFERENCES } from '@/src/lib/analytics/timeframe';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import type { CanonicalBarInput } from '@/src/lib/analytics/canonical-bars';
 import { resolvePriceAdjustment } from '@/src/lib/analytics/price-adjustment';
+import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 
-const calls = vi.hoisted(() => ({ expirations: 0, chain: 0, levels: 0 }));
+const calls = vi.hoisted(() => ({ expirations: 0, chain: 0, levels: 0, vpvr: 0 }));
+
+vi.mock('@/src/lib/analytics/institutional-sr/visible-range-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/src/lib/analytics/institutional-sr/visible-range-profile')>();
+  return {
+    ...actual,
+    calculateVisibleRangeVolumeProfile: (
+      ...args: Parameters<typeof actual.calculateVisibleRangeVolumeProfile>
+    ) => {
+      calls.vpvr += 1;
+      return actual.calculateVisibleRangeVolumeProfile(...args);
+    },
+  };
+});
 
 // The chart canvas is irrelevant to page order; stub it so the test stays a
 // pure DOM-order assertion instead of a lightweight-charts integration.
@@ -110,10 +124,17 @@ function props(overrides: Partial<React.ComponentProps<typeof TechnicalAnalysisC
   };
 }
 
-function mount() {
+function mount(tier: 'basic' | 'pro' | 'elite' = 'elite') {
   const host = document.createElement('div');
   document.body.append(host);
-  return { host, root: createRoot(host) };
+  const reactRoot = createRoot(host);
+  return {
+    host,
+    root: {
+      render: (node: React.ReactNode) => reactRoot.render(<EntitlementProvider tier={tier} authenticated trialOffer="used">{node}</EntitlementProvider>),
+      unmount: () => reactRoot.unmount(),
+    },
+  };
 }
 
 /** Ascending document order of the given test ids inside a container. */
@@ -125,7 +146,7 @@ function order(host: HTMLElement, ids: readonly string[]): string[] {
 beforeEach(() => {
   vi.stubGlobal('React', React);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  calls.expirations = 0; calls.chain = 0; calls.levels = 0;
+  calls.expirations = 0; calls.chain = 0; calls.levels = 0; calls.vpvr = 0;
 });
 afterEach(() => { vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
@@ -184,6 +205,27 @@ describe('Stock Detail → Chart section order', () => {
     expect(calls.expirations).toBe(0);
     expect(calls.chain).toBe(0);
     expect(host.querySelector('[data-testid="options-status"]')?.textContent).toContain('ยังไม่ได้โหลดข้อมูล');
+    await act(async () => root.unmount());
+  });
+
+  it('shows Basic pivot prices without calculating VPVR or S/R context', async () => {
+    const { host, root } = mount('basic');
+    await act(async () => root.render(
+      <TechnicalAnalysisChart {...props({
+        preferences: { ...DEFAULT_CHART_PREFERENCES, options: true, vpvr: true },
+      })} />,
+    ));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(calls.vpvr).toBe(0);
+    expect(calls.expirations).toBe(0);
+    expect(calls.chain).toBe(0);
+    expect(host.querySelector('[data-capability="chart.vpvr"]')).not.toBeNull();
+    expect(host.querySelector('[data-capability="chart.sr.context"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="sr-level-R1"]')?.textContent).toContain('$210.90');
+    expect(host.querySelector('[data-testid="sr-level-S1"]')?.textContent).toContain('$203.80');
+    expect(host.querySelector('[data-testid="sr-level-R1-summary"]')).toBeNull();
+    expect(host.textContent).not.toMatch(/POC|VAH|VAL|ชน \d+|รับอยู่|ต้านอยู่|หลุด/);
     await act(async () => root.unmount());
   });
 

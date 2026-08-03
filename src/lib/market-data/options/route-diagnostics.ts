@@ -1,8 +1,25 @@
 export interface OptionsRouteDiagnosticsInput {
-  route: 'options-expirations' | 'options-chain';
+  route: 'options-expirations' | 'options-chain' | 'options-walls';
   symbol: string | null;
   routeRateLimited?: boolean;
   providerHint?: string | null;
+}
+
+/**
+ * A subscription refusal and a provider entitlement refusal are both 403s and
+ * mean opposite things: one is answered by the reader's own plan, the other by
+ * our data contract. The subscription guard names itself in the body, which is
+ * the only place the two differ, so the classifier reads it from there.
+ */
+const SUBSCRIPTION_DENIAL_KIND: Record<string, string> = {
+  UPGRADE_REQUIRED: 'subscription-upgrade-required',
+  AUTHENTICATION_REQUIRED: 'subscription-authentication-required',
+};
+
+function subscriptionDenialKind(response: Response): string | null {
+  if (response.status !== 401 && response.status !== 403) return null;
+  const code = response.headers.get('x-entitlement-denial');
+  return code ? SUBSCRIPTION_DENIAL_KIND[code] ?? null : null;
 }
 
 function safeSymbol(value: string | null): string | null {
@@ -33,15 +50,16 @@ export function withOptionsRouteDiagnostics<T extends Response>(
   // reported distinctly so production Network inspection can never conflate them.
   const failureKind = response.ok
     ? 'none'
-    : rateLimitSource === 'nexora'
-      ? 'nexora-rate-limit'
-      : rateLimitSource === 'upstream'
-        ? 'upstream-rate-limit'
-        : response.status === 403
-          ? 'provider-entitlement'
-          : response.status === 404
-            ? 'no-data'
-            : `route-http-${response.status}`;
+    : subscriptionDenialKind(response)
+      ?? (rateLimitSource === 'nexora'
+        ? 'nexora-rate-limit'
+        : rateLimitSource === 'upstream'
+          ? 'upstream-rate-limit'
+          : response.status === 403
+            ? 'provider-entitlement'
+            : response.status === 404
+              ? 'no-data'
+              : `route-http-${response.status}`);
 
   response.headers.set('X-Options-Route-Status', String(response.status));
   response.headers.set('X-Options-Rate-Limit-Source', rateLimitSource);
