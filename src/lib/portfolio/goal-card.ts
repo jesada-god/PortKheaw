@@ -2,18 +2,28 @@ import { calculateGoalProgress } from './aggregate';
 import type { PortfolioGoal, PortfolioSummary } from './types';
 
 export type PortfolioGoalScope = 'selected' | 'aggregate';
-export type PortfolioTodayMood =
-  | 'strong-gain'
+export type PortfolioMascotMood =
+  | 'strongGain'
   | 'gain'
-  | 'flat'
+  | 'neutral'
+  | 'smallLoss'
   | 'loss'
-  | 'strong-loss'
-  | 'severe-loss'
-  | 'unavailable';
+  | 'heavyLoss';
+export type PortfolioMascotSource = 'today' | 'total' | 'none';
+export type PortfolioMascotSpecialEvent = 'lossOver50' | 'gainOver50' | 'gainOver100';
+export type PortfolioTodayMood = PortfolioMascotMood | 'unavailable';
+
+export interface PortfolioMascotState {
+  mood: PortfolioMascotMood;
+  source: PortfolioMascotSource;
+  specialEvent: PortfolioMascotSpecialEvent | null;
+  percent: number | null;
+  message: string;
+}
 
 interface ReadyTodayState {
   kind: 'ready';
-  mood: Exclude<PortfolioTodayMood, 'unavailable'>;
+  mood: PortfolioMascotMood;
   amount: number;
   percent: number;
   message: string;
@@ -46,6 +56,7 @@ export interface PortfolioGoalCardModel {
   totalPortfolios: number;
   latestUpdatedAt: string | null;
   today: PortfolioTodayState;
+  mascot: PortfolioMascotState;
 }
 
 export function formatPortfolioGoalTime(value: string): string {
@@ -73,30 +84,119 @@ export function latestPortfolioPriceTime(summary: PortfolioSummary): string | nu
   return values.sort().at(-1) ?? null;
 }
 
-export function portfolioTodayMood(percent: number): Exclude<PortfolioTodayMood, 'unavailable'> {
-  if (percent > 3) return 'strong-gain';
-  if (percent > 0.5) return 'gain';
-  if (percent >= -0.5) return 'flat';
-  if (percent >= -3) return 'loss';
-  if (percent >= -8) return 'strong-loss';
-  return 'severe-loss';
+export function portfolioTodayMood(percent: number): PortfolioMascotMood {
+  if (percent >= 3) return 'strongGain';
+  if (percent >= 0.5) return 'gain';
+  if (percent > -0.5) return 'neutral';
+  if (percent > -3) return 'smallLoss';
+  if (percent > -7) return 'loss';
+  return 'heavyLoss';
 }
 
-function moodMessage(mood: Exclude<PortfolioTodayMood, 'unavailable'>): string {
+function todayMoodMessage(mood: PortfolioMascotMood): string {
   switch (mood) {
-    case 'strong-gain':
+    case 'strongGain':
       return 'เย้! วันนี้พอร์ตยิ้มแล้ว~ 💚';
     case 'gain':
       return 'ดีเลย! เก็บกำไรทีละนิดก็เก่งมากแล้ว';
-    case 'flat':
+    case 'neutral':
       return 'วันนี้เงียบ ๆ ก่อน รอดูโอกาสนะ';
-    case 'loss':
+    case 'smallLoss':
       return 'ไม่เป็นไรน้า แค่ย่อตัวเอง';
-    case 'strong-loss':
+    case 'loss':
       return 'สู้ไปด้วยกันนะ อย่าเพิ่งหมดกำลังใจ';
-    case 'severe-loss':
+    case 'heavyLoss':
       return 'กอด ๆ ก่อน แล้วค่อยวางแผนใหม่ ❤️';
   }
+}
+
+function totalMoodMessage(mood: PortfolioMascotMood): string {
+  switch (mood) {
+    case 'strongGain':
+      return 'พอร์ตโดยรวมกำลังสดใส 💚';
+    case 'gain':
+      return 'พอร์ตโดยรวมเป็นบวก';
+    case 'neutral':
+      return 'พอร์ตโดยรวมยังทรงตัว';
+    case 'smallLoss':
+      return 'พอร์ตโดยรวมลดลงเล็กน้อย';
+    case 'loss':
+      return 'พอร์ตโดยรวมกำลังติดลบ';
+    case 'heavyLoss':
+      return 'พอร์ตโดยรวมติดลบมาก ควรทบทวนความเสี่ยง';
+  }
+}
+
+export function resolvePortfolioMascotState({
+  todayReturnPct,
+  totalReturnPct,
+  todayDataComplete,
+}: {
+  todayReturnPct: number | null;
+  totalReturnPct: number | null;
+  todayDataComplete: boolean;
+}): PortfolioMascotState {
+  const finiteTotal = totalReturnPct !== null && Number.isFinite(totalReturnPct)
+    ? totalReturnPct
+    : null;
+
+  if (finiteTotal !== null && finiteTotal <= -50) {
+    return {
+      mood: 'heavyLoss',
+      source: 'total',
+      specialEvent: 'lossOver50',
+      percent: finiteTotal,
+      message: 'หนักหน่อยตอนนี้... แต่ยังไม่จบนะ เราค่อย ๆ เอาคืนกัน',
+    };
+  }
+  if (finiteTotal !== null && finiteTotal >= 100) {
+    return {
+      mood: 'strongGain',
+      source: 'total',
+      specialEvent: 'gainOver100',
+      percent: finiteTotal,
+      message: 'เก่งมาก! พอร์ตโตเกิน 100% แล้ว ฉลองได้เลย!',
+    };
+  }
+  if (finiteTotal !== null && finiteTotal >= 50) {
+    return {
+      mood: 'strongGain',
+      source: 'total',
+      specialEvent: 'gainOver50',
+      percent: finiteTotal,
+      message: 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย',
+    };
+  }
+
+  if (todayDataComplete && todayReturnPct !== null && Number.isFinite(todayReturnPct)) {
+    const mood = portfolioTodayMood(todayReturnPct);
+    return {
+      mood,
+      source: 'today',
+      specialEvent: null,
+      percent: todayReturnPct,
+      message: todayMoodMessage(mood),
+    };
+  }
+
+  if (finiteTotal !== null) {
+    const mood = portfolioTodayMood(finiteTotal);
+    return {
+      mood,
+      source: 'total',
+      specialEvent: null,
+      percent: finiteTotal,
+      message: totalMoodMessage(mood),
+    };
+  }
+
+  return {
+    mood: 'neutral',
+    source: 'none',
+    specialEvent: null,
+    percent: null,
+    message: 'วันนี้ยังไม่มีข้อมูล',
+  };
 }
 
 function unavailableTodayReason(summary: PortfolioSummary): string {
@@ -142,7 +242,7 @@ export function portfolioTodayState(summary: PortfolioSummary): PortfolioTodaySt
     mood,
     amount: summary.todayChange,
     percent: summary.todayChangePercent,
-    message: moodMessage(mood),
+    message: todayMoodMessage(mood),
   };
 }
 
@@ -160,6 +260,7 @@ export function buildPortfolioGoalCardModel({
   totalPortfolios: number;
 }): PortfolioGoalCardModel {
   const progress = calculateGoalProgress(summary.totalValue, goal);
+  const today = portfolioTodayState(summary);
   return {
     scope,
     currentValue: summary.totalValue,
@@ -170,6 +271,11 @@ export function buildPortfolioGoalCardModel({
     activePortfolios,
     totalPortfolios,
     latestUpdatedAt: latestPortfolioPriceTime(summary),
-    today: portfolioTodayState(summary),
+    today,
+    mascot: resolvePortfolioMascotState({
+      todayReturnPct: summary.todayChangePercent,
+      totalReturnPct: summary.totalGainPercent,
+      todayDataComplete: today.kind === 'ready',
+    }),
   };
 }

@@ -96,6 +96,22 @@ function Get-TailText {
   return ($tail -join [Environment]::NewLine)
 }
 
+function Complete-RedirectedProcess {
+  param(
+    [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+    [Parameter(Mandatory = $true)][System.Threading.Tasks.Task]$StdoutTask,
+    [Parameter(Mandatory = $true)][System.Threading.Tasks.Task]$StderrTask,
+    [Parameter(Mandatory = $true)][System.IO.Stream]$StdoutStream,
+    [Parameter(Mandatory = $true)][System.IO.Stream]$StderrStream
+  )
+
+  $Process.WaitForExit()
+  $StdoutTask.GetAwaiter().GetResult()
+  $StderrTask.GetAwaiter().GetResult()
+  $StdoutStream.Flush()
+  $StderrStream.Flush()
+}
+
 function Stop-OwnedProcessTree {
   param([Parameter(Mandatory = $true)][int]$RootProcessId)
 
@@ -183,37 +199,36 @@ try {
     $attemptNumber = $attempt + 1
     $stdoutPath = Join-Path $runDirectory ("stdout.attempt-{0}.log" -f $attemptNumber)
     $stderrPath = Join-Path $runDirectory ("stderr.attempt-{0}.log" -f $attemptNumber)
-    $exitCodePath = Join-Path $runDirectory ("exit-code.attempt-{0}.txt" -f $attemptNumber)
     $attemptStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $nextHeartbeatSeconds = 15
     $timedOut = $false
     $spawnedProcess = $null
     $spawnedPid = 0
+    $stdoutStream = $null
+    $stderrStream = $null
+    $stdoutTask = $null
+    $stderrTask = $null
+    $streamsCompleted = $false
 
     try {
-      $escapedPowerShellPath = $powershellPath.Replace("'", "''")
-      $escapedExitCodePath = $exitCodePath.Replace("'", "''")
-      $wrapperCommand = @"
-& '$escapedPowerShellPath' -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '$encodedCommand'
-`$commandExitCode = `$LASTEXITCODE
-[IO.File]::WriteAllText('$escapedExitCodePath', [string]`$commandExitCode, [Text.Encoding]::ASCII)
-exit `$commandExitCode
-"@
-      $encodedWrapper = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($wrapperCommand))
-      $spawnedProcess = Start-Process `
-        -FilePath $powershellPath `
-        -ArgumentList @(
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy', 'Bypass',
-          '-EncodedCommand', $encodedWrapper
-        ) `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -PassThru
+      $startInfo = [Diagnostics.ProcessStartInfo]::new()
+      $startInfo.FileName = $powershellPath
+      $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+      $startInfo.UseShellExecute = $false
+      $startInfo.CreateNoWindow = $true
+      $startInfo.RedirectStandardOutput = $true
+      $startInfo.RedirectStandardError = $true
+
+      $spawnedProcess = [Diagnostics.Process]::new()
+      $spawnedProcess.StartInfo = $startInfo
+      if (-not $spawnedProcess.Start()) {
+        throw "Failed to start bounded command for step $Step"
+      }
       $spawnedPid = $spawnedProcess.Id
+      $stdoutStream = [IO.File]::Open($stdoutPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+      $stderrStream = [IO.File]::Open($stderrPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+      $stdoutTask = $spawnedProcess.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
+      $stderrTask = $spawnedProcess.StandardError.BaseStream.CopyToAsync($stderrStream)
       Write-Output ("START: step={0} attempt={1}/{2} PID={3} run-id={4}" -f $Step, $attemptNumber, ($RetryCount + 1), $spawnedPid, $RunId)
 
       [ordered]@{
@@ -249,6 +264,8 @@ exit `$commandExitCode
 
       if ($timedOut) {
         $treeResult = Stop-OwnedProcessTree -RootProcessId $spawnedPid
+        Complete-RedirectedProcess -Process $spawnedProcess -StdoutTask $stdoutTask -StderrTask $stderrTask -StdoutStream $stdoutStream -StderrStream $stderrStream
+        $streamsCompleted = $true
         $finalExitCode = 124
         $willRetry = $attempt -lt $RetryCount -and $RetryOnTimeout.IsPresent
         Write-Output ("TIMEOUT: {0}" -f $Step)
@@ -263,17 +280,9 @@ exit `$commandExitCode
         break
       }
 
-      $spawnedProcess.WaitForExit()
-      $spawnedProcess.Refresh()
-      if (-not (Test-Path -LiteralPath $exitCodePath)) {
-        throw "Command exited without writing its exit-code sentinel: $exitCodePath"
-      }
-      $exitCodeText = (Get-Content -Raw -LiteralPath $exitCodePath).Trim()
-      $parsedExitCode = 0
-      if (-not [int]::TryParse($exitCodeText, [ref]$parsedExitCode)) {
-        throw "Invalid exit-code sentinel '$exitCodeText' in $exitCodePath"
-      }
-      $finalExitCode = $parsedExitCode
+      Complete-RedirectedProcess -Process $spawnedProcess -StdoutTask $stdoutTask -StderrTask $stderrTask -StdoutStream $stdoutStream -StderrStream $stderrStream
+      $streamsCompleted = $true
+      $finalExitCode = $spawnedProcess.ExitCode
       Write-Output ("EXIT: step={0} elapsed={1:n1}s PID={2} code={3}" -f $Step, $attemptStopwatch.Elapsed.TotalSeconds, $spawnedPid, $finalExitCode)
       if ($finalExitCode -eq 0) {
         break
@@ -295,6 +304,13 @@ exit `$commandExitCode
           $cleanupResult = Stop-OwnedProcessTree -RootProcessId $spawnedPid
           Write-Output ("CLEANUP: root={0}; {1}" -f $spawnedPid, $cleanupResult)
         }
+        if (-not $streamsCompleted -and $stdoutTask -and $stderrTask -and $stdoutStream -and $stderrStream) {
+          Complete-RedirectedProcess -Process $spawnedProcess -StdoutTask $stdoutTask -StderrTask $stderrTask -StdoutStream $stdoutStream -StderrStream $stderrStream
+        }
+        if ($stdoutTask) { $stdoutTask.Dispose() }
+        if ($stderrTask) { $stderrTask.Dispose() }
+        if ($stdoutStream) { $stdoutStream.Dispose() }
+        if ($stderrStream) { $stderrStream.Dispose() }
         $spawnedProcess.Dispose()
         $spawnedProcess = $null
         $spawnedPid = 0
@@ -319,11 +335,16 @@ exit `$commandExitCode
     }
   }
 
-  if ($ownsLock -and (Test-Path -LiteralPath $lockPath)) {
-    $currentLock = Read-LockRecord -Path $lockPath
-    if ($currentLock -and [string]$currentLock.runId -eq $RunId -and [int]$currentLock.runnerPid -eq $PID) {
-      Remove-Item -LiteralPath $lockPath -Force
+  try {
+    if ($ownsLock -and (Test-Path -LiteralPath $lockPath)) {
+      $currentLock = Read-LockRecord -Path $lockPath
+      if ($currentLock -and [string]$currentLock.runId -eq $RunId -and [int]$currentLock.runnerPid -eq $PID) {
+        Remove-Item -LiteralPath $lockPath -Force
+      }
     }
+  } catch {
+    [Console]::Error.WriteLine(("Lock cleanup failed for run {0}: {1}" -f $RunId, $_.Exception.Message))
+    $finalExitCode = 70
   }
 }
 

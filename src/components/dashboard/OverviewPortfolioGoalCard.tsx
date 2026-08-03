@@ -24,7 +24,7 @@ export function OverviewPortfolioGoalCard({
   percent: (value: number | null) => string;
   showBalances: boolean;
 }) {
-  const appearance = portfolioGoalAppearance[model.today.mood];
+  const appearance = portfolioGoalAppearance[model.mascot.mood];
   const hasGoal = model.goal.targetValueUsd !== null;
   const progress = model.progress.progressPercent;
   const progressText = progress === null
@@ -40,7 +40,9 @@ export function OverviewPortfolioGoalCard({
     className="relative min-w-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3"
     data-testid="overview-portfolio-goal-card"
     data-today-state={model.today.kind}
-    data-mood={model.today.mood}
+    data-mood={model.mascot.mood}
+    data-mood-source={model.mascot.source}
+    data-special-event={model.mascot.specialEvent ?? 'none'}
     style={style}
   >
     <div
@@ -70,7 +72,7 @@ export function OverviewPortfolioGoalCard({
         </div>
       </div>
       <div className="row-span-2 flex items-start justify-center" data-testid="overview-portfolio-goal-mascot">
-        <PortfolioGoalMascot compact mood={model.today.mood} />
+        <PortfolioGoalMascot compact state={model.mascot} />
       </div>
 
       <dl className="grid min-w-0 grid-cols-2 gap-2 text-xs">
@@ -82,17 +84,22 @@ export function OverviewPortfolioGoalCard({
       </dl>
     </div>
 
-    <div className="relative mt-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
-      {model.today.kind === 'ready' ? <>
+    <div className="relative mt-3 min-h-[6.5rem] rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
+      {model.mascot.source === 'today' && model.today.kind === 'ready' && <>
         <p className="text-[10px] text-[var(--text-muted)]">Today P/L</p>
         <p className="mt-0.5 break-words font-mono text-sm font-bold text-[var(--text)]">
           {signed(model.today.amount)} ({percent(model.today.percent)})
         </p>
-        <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{model.today.message}</p>
-      </> : <>
-        <p className="text-xs font-bold text-[var(--text)]">{model.today.title}</p>
-        <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{model.today.message}</p>
       </>}
+      {model.mascot.source === 'total' && <>
+        <p className="text-[10px] text-[var(--text-muted)]">ผลตอบแทนรวม</p>
+        <p className="mt-0.5 break-words font-mono text-sm font-bold text-[var(--text)]">
+          {percent(model.mascot.percent)}
+        </p>
+      </>}
+      <p className={`${model.mascot.source === 'none' ? '' : 'mt-1'} text-xs leading-5 text-[var(--text-secondary)]`}>
+        {model.mascot.message}
+      </p>
     </div>
 
     <dl className="relative mt-3 grid min-w-0 grid-cols-2 gap-2 border-t border-[var(--border)] pt-3 text-[10px] text-[var(--text-muted)]">

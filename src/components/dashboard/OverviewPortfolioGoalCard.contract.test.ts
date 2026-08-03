@@ -11,9 +11,11 @@ describe('Overview compact portfolio goal card contract', () => {
   it('uses the same model, mood presentation, formatter, and mascot as Portfolio', () => {
     expect(dashboard).toContain('buildPortfolioGoalCardModel');
     expect(dashboard).toContain('<OverviewPortfolioGoalCard');
-    expect(compact).toContain('portfolioGoalAppearance[model.today.mood]');
-    expect(compact).toContain('<PortfolioGoalMascot compact mood={model.today.mood}');
-    expect(full).toContain('<PortfolioGoalMascot mood={model.today.mood}');
+    expect(compact).toContain('portfolioGoalAppearance[model.mascot.mood]');
+    expect(compact).toContain('<PortfolioGoalMascot compact state={model.mascot}');
+    expect(full).toContain('<PortfolioGoalMascot state={model.mascot}');
+    expect(compact).toContain('data-mood-source={model.mascot.source}');
+    expect(compact).toContain("data-special-event={model.mascot.specialEvent ?? 'none'}");
     expect(compact).toContain('formatPortfolioGoalTime(model.latestUpdatedAt)');
   });
 
@@ -37,5 +39,10 @@ describe('Overview compact portfolio goal card contract', () => {
     expect(compact).toContain('sm:grid-cols-[minmax(0,1fr)_88px]');
     expect(compact).toContain('lg:grid-cols-[minmax(0,1fr)_104px]');
     expect(compact).toContain('min-w-0 overflow-hidden');
+  });
+
+  it('uses fresh server portfolio data without a stale local-state snapshot', () => {
+    expect(dashboard).toContain('viewState.source === data ? viewState.value : data');
+    expect(dashboard).toContain('current.source === data ? current.value : data');
   });
 });

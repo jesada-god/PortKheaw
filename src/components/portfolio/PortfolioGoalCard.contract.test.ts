@@ -35,7 +35,10 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
     expect(component).toContain('aria-labelledby="portfolio-goal-title"');
     expect(component).toContain('aria-label="ขอบเขตเป้าหมายพอร์ต"');
     expect(component).toContain('role="progressbar"');
-    expect(mascot).toContain('alt={`น้อง Kheaw สไตล์ Glossy Tech');
+    expect(mascot).toContain('alt={`น้อง Kheaw สี');
+    expect(component).toContain('data-mood-source={model.mascot.source}');
+    expect(component).toContain("data-special-event={model.mascot.specialEvent ?? 'none'}");
+    expect(css).not.toContain('hue-rotate');
     expect(component).not.toContain('Total P&L');
     expect(manager).toContain("useState<PortfolioGoalScope>('selected')");
     expect(manager).toContain("goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id]");

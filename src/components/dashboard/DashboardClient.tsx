@@ -727,11 +727,13 @@ function BreadthSection({
 }
 
 export function DashboardClient({ data }: { data: OverviewDashboardData }) {
-  const [view, setView] = useState(data);
+  const [viewState, setViewState] = useState(() => ({ source: data, value: data }));
+  const view = viewState.source === data ? viewState.value : data;
   const [retrying, setRetrying] = useState<Partial<Record<RetriableOverviewSection, boolean>>>({});
   const [retryNotice, setRetryNotice] = useState('');
   const autoIndustryRefreshStarted = useRef(false);
   const autoBreadthRefreshStarted = useRef(false);
+
   const retry = useCallback(async (section: RetriableOverviewSection) => {
     setRetrying((current) => ({ ...current, [section]: true }));
     setRetryNotice('');
@@ -751,20 +753,23 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
       if (!response.ok || !payload.data || payload.data.section !== section) {
         throw new Error('section retry failed');
       }
-      setView((current) => applyOverviewSectionUpdate(
-        current,
-        section,
-        payload.data!.value,
-        payload.data!.generatedAt,
-        payload.data!.related ?? null,
-      ));
+      setViewState((current) => ({
+        source: data,
+        value: applyOverviewSectionUpdate(
+          current.source === data ? current.value : data,
+          section,
+          payload.data!.value,
+          payload.data!.generatedAt,
+          payload.data!.related ?? null,
+        ),
+      }));
       setRetryNotice('อัปเดตข้อมูลส่วนนี้แล้ว');
     } catch {
       setRetryNotice('ยังอัปเดตข้อมูลส่วนนี้ไม่ได้ ข้อมูลล่าสุดยังคงแสดงอยู่');
     } finally {
       setRetrying((current) => ({ ...current, [section]: false }));
     }
-  }, []);
+  }, [data]);
 
   useEffect(() => {
     if (

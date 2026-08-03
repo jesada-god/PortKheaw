@@ -5,6 +5,7 @@ import {
   buildPortfolioGoalCardModel,
   portfolioTodayMood,
   portfolioTodayState,
+  resolvePortfolioMascotState,
 } from './goal-card';
 import type { MarketPriceInput, PortfolioSummary, PortfolioTransaction } from './types';
 
@@ -79,18 +80,92 @@ describe('portfolio goal card model', () => {
   });
 
   it.each([
-    [3.01, 'strong-gain'],
-    [3, 'gain'],
-    [0.51, 'gain'],
-    [0.5, 'flat'],
-    [-0.5, 'flat'],
-    [-0.51, 'loss'],
+    [3, 'strongGain'],
+    [2.999, 'gain'],
+    [0.5, 'gain'],
+    [0.499, 'neutral'],
+    [-0.499, 'neutral'],
+    [-0.5, 'smallLoss'],
+    [-2.999, 'smallLoss'],
     [-3, 'loss'],
-    [-3.01, 'strong-loss'],
-    [-8, 'strong-loss'],
-    [-8.01, 'severe-loss'],
+    [-6.999, 'loss'],
+    [-7, 'heavyLoss'],
   ] as const)('maps Today P/L % boundary %s to %s', (value, expected) => {
     expect(portfolioTodayMood(value)).toBe(expected);
+  });
+
+  it('prioritizes complete finite Today P/L for normal mood', () => {
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: -1,
+      totalReturnPct: 12.51,
+      todayDataComplete: true,
+    })).toMatchObject({
+      mood: 'smallLoss',
+      source: 'today',
+      specialEvent: null,
+      percent: -1,
+    });
+  });
+
+  it('falls back to the selected scope total without substituting zero for unavailable values', () => {
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: null,
+      totalReturnPct: 12.51,
+      todayDataComplete: false,
+    })).toEqual({
+      mood: 'strongGain',
+      source: 'total',
+      specialEvent: null,
+      percent: 12.51,
+      message: 'พอร์ตโดยรวมกำลังสดใส 💚',
+    });
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: null,
+      totalReturnPct: null,
+      todayDataComplete: false,
+    })).toEqual({
+      mood: 'neutral',
+      source: 'none',
+      specialEvent: null,
+      percent: null,
+      message: 'วันนี้ยังไม่มีข้อมูล',
+    });
+  });
+
+  it.each([
+    [-50, 'lossOver50', 'heavyLoss', 'หนักหน่อยตอนนี้... แต่ยังไม่จบนะ เราค่อย ๆ เอาคืนกัน'],
+    [50, 'gainOver50', 'strongGain', 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย'],
+    [99.99, 'gainOver50', 'strongGain', 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย'],
+    [100, 'gainOver100', 'strongGain', 'เก่งมาก! พอร์ตโตเกิน 100% แล้ว ฉลองได้เลย!'],
+  ] as const)('lets total return %s trigger special event %s', (totalReturnPct, specialEvent, mood, message) => {
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: -1,
+      totalReturnPct,
+      todayDataComplete: true,
+    })).toEqual({ mood, source: 'total', specialEvent, percent: totalReturnPct, message });
+  });
+
+  it('keeps +12.51% on the normal fallback path', () => {
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: null,
+      totalReturnPct: 12.51,
+      todayDataComplete: false,
+    })).toMatchObject({ mood: 'strongGain', source: 'total', specialEvent: null });
+  });
+
+  it.each([
+    [4, 'พอร์ตโดยรวมกำลังสดใส 💚'],
+    [1, 'พอร์ตโดยรวมเป็นบวก'],
+    [0, 'พอร์ตโดยรวมยังทรงตัว'],
+    [-1, 'พอร์ตโดยรวมลดลงเล็กน้อย'],
+    [-4, 'พอร์ตโดยรวมกำลังติดลบ'],
+    [-8, 'พอร์ตโดยรวมติดลบมาก ควรทบทวนความเสี่ยง'],
+  ] as const)('uses source-safe total copy for normal mood %s', (totalReturnPct, message) => {
+    expect(resolvePortfolioMascotState({
+      todayReturnPct: null,
+      totalReturnPct,
+      todayDataComplete: false,
+    }).message).toBe(message);
   });
 
   it('uses all six exact encouragement messages', () => {
@@ -177,5 +252,46 @@ describe('portfolio goal card model', () => {
       totalPortfolios: 3,
     });
     expect(aggregateModel.goal.targetValueUsd).toBe(2000);
+  });
+
+  it('resolves mascot state from the summary for the card\'s selected scope only', () => {
+    const unavailableToday = stockSummary({ price: 110, previousClose: null });
+    const selectedModel = buildPortfolioGoalCardModel({
+      scope: 'selected',
+      summary: {
+        ...unavailableToday,
+        todayChange: null,
+        todayChangePercent: null,
+        totalGainPercent: 12.51,
+      },
+      goal: { targetValueUsd: 800, targetDate: null },
+      activePortfolios: 2,
+      totalPortfolios: 2,
+    });
+    const aggregateModel = buildPortfolioGoalCardModel({
+      scope: 'aggregate',
+      summary: {
+        ...unavailableToday,
+        todayChange: null,
+        todayChangePercent: null,
+        totalGainPercent: -50,
+      },
+      goal: { targetValueUsd: 1600, targetDate: null },
+      activePortfolios: 2,
+      totalPortfolios: 2,
+    });
+
+    expect(selectedModel.mascot).toMatchObject({
+      mood: 'strongGain',
+      source: 'total',
+      specialEvent: null,
+      percent: 12.51,
+    });
+    expect(aggregateModel.mascot).toMatchObject({
+      mood: 'heavyLoss',
+      source: 'total',
+      specialEvent: 'lossOver50',
+      percent: -50,
+    });
   });
 });

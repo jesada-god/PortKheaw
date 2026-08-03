@@ -76,7 +76,9 @@ describe('Phase 11 market UI production contract', () => {
 
   it('revalidates a selected contract through the server API and marks edits custom', () => {
     expect(simulator).toContain('/api/market/options/chain?');
-    expect(simulator).toContain('importOptionContract(current, parsed.data, contractSymbol)');
+    expect(simulator).toContain('gatedOptionsChainSchema.safeParse(payload.data)');
+    expect(simulator).toContain('normalizeGatedOptionsChain(parsed.data)');
+    expect(simulator).toContain('importOptionContract(current, chain, contractSymbol)');
     expect(simulator).toContain("inputMode: 'custom' as const");
     expect(simulator).toContain("'ข้อมูลจริง' : 'กำหนดเอง'");
   });

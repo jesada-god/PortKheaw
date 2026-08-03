@@ -38,7 +38,7 @@ export function PortfolioGoalCard({
   onScopeChange: (scope: PortfolioGoalScope) => void;
   onEditGoal: () => void;
 }) {
-  const moodAppearance = portfolioGoalAppearance[model.today.mood];
+  const moodAppearance = portfolioGoalAppearance[model.mascot.mood];
   const progressText = model.progress.progressPercent === null
     ? '—'
     : showBalances
@@ -56,7 +56,9 @@ export function PortfolioGoalCard({
     data-testid="portfolio-goal-card"
     data-scope={model.scope}
     data-today-state={model.today.kind}
-    data-mood={model.today.mood}
+    data-mood={model.mascot.mood}
+    data-mood-source={model.mascot.source}
+    data-special-event={model.mascot.specialEvent ?? 'none'}
     style={cardStyle}
   >
     <header className="relative flex min-w-0 flex-col gap-3 border-b border-slate-800/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
@@ -117,19 +119,23 @@ export function PortfolioGoalCard({
 
       <aside className="min-w-0 text-center lg:row-span-2" data-testid="portfolio-goal-mascot">
         <div className="flex h-20 items-end justify-center sm:h-24 lg:h-28">
-          <PortfolioGoalMascot mood={model.today.mood} />
+          <PortfolioGoalMascot state={model.mascot} />
         </div>
-        {model.today.kind === 'ready'
-          ? <>
+        <div className="min-h-24">
+          {model.mascot.source === 'today' && model.today.kind === 'ready' && (
             <p className="mt-3 break-words font-mono text-sm font-bold text-white">
               วันนี้ {signed(model.today.amount)} ({percent(model.today.percent)})
             </p>
-            <p className="mx-auto mt-1 max-w-64 text-sm leading-relaxed text-slate-300">{model.today.message}</p>
-          </>
-          : <>
-            <p className="mt-3 font-bold text-white">{model.today.title}</p>
-            <p className="mx-auto mt-1 max-w-72 text-sm leading-relaxed text-slate-400">{model.today.message}</p>
-          </>}
+          )}
+          {model.mascot.source === 'total' && (
+            <p className="mt-3 break-words font-mono text-sm font-bold text-white">
+              ผลตอบแทนรวม ({percent(model.mascot.percent)})
+            </p>
+          )}
+          <p className={`${model.mascot.source === 'none' ? 'mt-3' : 'mt-1'} mx-auto max-w-72 text-sm leading-relaxed text-slate-300`}>
+            {model.mascot.message}
+          </p>
+        </div>
       </aside>
 
       <dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-800/70 pt-4 text-xs text-slate-400 sm:grid-cols-3 lg:col-start-1">
