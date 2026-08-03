@@ -189,7 +189,12 @@ describe('resolveAccountBadges', () => {
     }
   });
 
-  it('shows an administrator as ADMIN and ELITE, whatever they have paid for', () => {
+  /*
+   * An administrator's second badge names the *grant*, not a plan. `ELITE`
+   * would be a claim about billing that is false for the Basic row below, so
+   * operator access carries its own badge kind and its own label.
+   */
+  it('shows an administrator as ADMIN and ELITE ACCESS, whatever they have paid for', () => {
     for (const tier of ['basic', 'pro', 'elite'] as const) {
       const badges = resolveAccountBadges({
         role: 'admin',
@@ -198,9 +203,30 @@ describe('resolveAccountBadges', () => {
         status: 'basic',
       });
       expect(badges.showAdminBadge).toBe(true);
-      expect(badges.plan).toBe('elite');
-      expect(badges.planLabel).toBe('ELITE');
+      expect(badges.plan).toBe('elite_access');
+      expect(badges.planLabel).toBe('ELITE ACCESS');
       expect(badges.isPreview).toBe(false);
+    }
+  });
+
+  /*
+   * The grant badge is reachable only through the role. No subscription — not
+   * even a genuinely purchased Elite one — may produce it, or the profile would
+   * describe a paying customer as an operator.
+   */
+  it('never gives an ordinary reader the operator access badge', () => {
+    for (const tier of ['basic', 'pro', 'elite'] as const) {
+      for (const status of ['basic', 'active', 'trialing', 'past_due'] as const) {
+        const badges = resolveAccountBadges({
+          role: 'user',
+          adminPreviewMode: 'actual',
+          subscriptionEffectiveTier: tier,
+          status,
+        });
+        expect(badges.plan).not.toBe('elite_access');
+        expect(badges.planLabel).not.toContain('ACCESS');
+        expect(badges.showAdminBadge).toBe(false);
+      }
     }
   });
 

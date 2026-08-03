@@ -48,9 +48,44 @@ describe('resolveEffectiveTier', () => {
     expect(resolveEffectiveTier(subscription('active', { tier }), NOW)).toBe('basic');
   });
 
-  it.each(['basic', 'past_due', 'canceled', 'expired'] as const)('fails closed for %s status', (status) => {
+  it.each(['basic', 'canceled', 'expired'] as const)('fails closed for %s status', (status) => {
     expect(resolveEffectiveTier(subscription(status, {
       tier: 'elite',
+      trialEndsAt: '2099-01-01T00:00:00.000Z',
+      currentPeriodEnd: '2099-01-01T00:00:00.000Z',
+    }), NOW)).toBe('basic');
+  });
+
+  /*
+   * Phase 4 dunning grace. A failed renewal does not cut access off mid-period:
+   * the provider retries, and the reader keeps the period they have already paid
+   * for. The bound is the provider's own timestamp, which is what stops a
+   * stalled dunning cycle from becoming unlimited free access — so the second
+   * half of this test is the half that matters.
+   */
+  it.each(['pro', 'elite'] as const)('grants %s during past_due only until the paid period ends', (tier) => {
+    expect(resolveEffectiveTier(subscription('past_due', {
+      tier,
+      currentPeriodEnd: '2026-08-02T12:00:00.001Z',
+    }), NOW)).toBe(tier);
+
+    // The instant the period ends, and every instant after it.
+    expect(resolveEffectiveTier(subscription('past_due', { tier, currentPeriodEnd: NOW }), NOW)).toBe('basic');
+    expect(resolveEffectiveTier(subscription('past_due', {
+      tier,
+      currentPeriodEnd: '2026-08-02T11:59:59.999Z',
+    }), NOW)).toBe('basic');
+    // A past_due row with no period at all grants nothing.
+    expect(resolveEffectiveTier(subscription('past_due', { tier }), NOW)).toBe('basic');
+  });
+
+  /*
+   * Grace never promotes. `past_due` opens the tier that was purchased, so a
+   * Basic row cannot become paid by failing to pay.
+   */
+  it('never lets past_due grace grant more than the stored tier', () => {
+    expect(resolveEffectiveTier(subscription('past_due', {
+      tier: 'basic',
       trialEndsAt: '2099-01-01T00:00:00.000Z',
       currentPeriodEnd: '2099-01-01T00:00:00.000Z',
     }), NOW)).toBe('basic');

@@ -11,11 +11,25 @@ import type { AdminPreviewMode, UserRole } from './admin-access';
 import type { SubscriptionStatus, SubscriptionTier } from './subscription-types';
 
 /**
- * The five badges a plan can be. `expired_trial` is only ever a simulation — a
- * real reader whose trial ended is simply Basic, which is the honest thing to
- * show them.
+ * The six badges the second chip can be.
+ *
+ * Five of them name a *plan*. `elite_access` is the exception and the reason
+ * this list is not simply the tier list: it names an administrator's operator
+ * access, which opens the same features as Elite but was never bought. Giving it
+ * its own kind is what stops the profile from stamping `ELITE` beside someone
+ * whose subscription row says Basic.
+ *
+ * `expired_trial` is only ever a simulation — a real reader whose trial ended is
+ * simply Basic, which is the honest thing to show them.
  */
-export const planBadgeKinds = ['basic', 'pro', 'elite', 'elite_trial', 'expired_trial'] as const;
+export const planBadgeKinds = [
+  'basic',
+  'pro',
+  'elite',
+  'elite_access',
+  'elite_trial',
+  'expired_trial',
+] as const;
 export type PlanBadgeKind = typeof planBadgeKinds[number];
 
 /** Uppercase on purpose: these read as a stamp beside the name, not as prose. */
@@ -23,6 +37,7 @@ const PLAN_BADGE_LABEL: Readonly<Record<PlanBadgeKind, string>> = {
   basic: 'BASIC',
   pro: 'PRO',
   elite: 'ELITE',
+  elite_access: 'ELITE ACCESS',
   elite_trial: 'ELITE TRIAL',
   expired_trial: 'EXPIRED TRIAL',
 };
@@ -55,12 +70,17 @@ export interface AccountBadgeInput {
  * Three shapes, in order:
  *
  *   ordinary reader        `[BASIC]` · `[PRO]` · `[ELITE]` · `[ELITE TRIAL]`
- *   administrator          `[ADMIN] [ELITE]`
+ *   administrator          `[ADMIN] [ELITE ACCESS]`
  *   administrator previewing  `[ADMIN] [BASIC TEST]`
  *
  * The administrator badge is driven by the stored role alone, so previewing
  * Basic never hides who the reader is — and no plan, previewed or purchased,
  * can ever produce one.
+ *
+ * An administrator's second badge says `ELITE ACCESS` rather than `ELITE`
+ * because the two are different claims: one is a grant that comes with the role,
+ * the other is a plan someone is being billed for. The profile states the real
+ * subscription separately, and these two must never contradict each other.
  */
 export function resolveAccountBadges(input: AccountBadgeInput): AccountBadges {
   const isAdmin = input.role === 'admin';
@@ -68,7 +88,7 @@ export function resolveAccountBadges(input: AccountBadgeInput): AccountBadges {
   const plan: PlanBadgeKind = previewing
     ? input.adminPreviewMode as PlanBadgeKind
     : isAdmin
-      ? 'elite'
+      ? 'elite_access'
       : planBadgeKindForSubscription(input.subscriptionEffectiveTier, input.status);
 
   return {

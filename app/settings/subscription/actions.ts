@@ -9,6 +9,12 @@ import {
 } from '@/src/lib/subscription/account-access';
 import { adminPreviewModes, type AdminPreviewMode } from '@/src/lib/subscription/admin-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
+/*
+ * Shared with the billing webhook on purpose. An access change and a paid-plan
+ * change must invalidate exactly the same surfaces, and keeping one definition
+ * is what stops the two from drifting apart.
+ */
+import { revalidateEveryEntitlementSurface } from '@/src/lib/subscription/revalidate-entitlements';
 import { createClient } from '@/src/lib/supabase/server';
 import {
   ADMIN_TRIAL_BLOCKED_MESSAGE,
@@ -113,17 +119,6 @@ const ADMIN_PREVIEW_SUCCESS_MESSAGE: Record<AdminPreviewMode, string> = {
   elite_trial: 'กำลังจำลองสิทธิ์ Elite Trial',
   expired_trial: 'กำลังจำลองสถานะ Trial หมดอายุ',
 };
-
-/**
- * Everything under the root layout. A preview changes what the layout itself
- * renders — the banner — and what every page beneath it is allowed to show, so
- * invalidating the layout is the only revalidation that is actually complete.
- * Path-by-path invalidation would leave dynamic segments such as `/stock/[symbol]`
- * holding a cached premium render from the tier the operator just left.
- */
-function revalidateEveryEntitlementSurface() {
-  revalidatePath('/', 'layout');
-}
 
 /**
  * Start, change or end an access preview.

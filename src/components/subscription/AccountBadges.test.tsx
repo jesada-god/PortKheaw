@@ -75,15 +75,40 @@ describe('account identity badges', () => {
     }
   });
 
-  it('renders the administrator as ADMIN then ELITE, in that order', async () => {
+  /*
+   * `ELITE ACCESS`, not `ELITE`. The administrator below holds a Basic
+   * subscription; stamping `ELITE` beside their name would claim they are being
+   * billed for a plan they never bought.
+   */
+  it('renders the administrator as ADMIN then ELITE ACCESS, in that order', async () => {
     await renderIdentity('Jesada Tawinteung', {
       role: 'admin',
       adminPreviewMode: 'actual',
       subscriptionEffectiveTier: 'basic',
       status: 'basic',
     });
-    expect(badgeText()).toEqual(['ADMIN', 'ELITE']);
+    expect(badgeText()).toEqual(['ADMIN', 'ELITE ACCESS']);
     expect(container.textContent).toContain('Jesada Tawinteung');
+    // The grant is its own badge kind, so no surface can confuse it with a
+    // purchased Elite plan.
+    expect(document.querySelector('[data-testid="plan-badge"]')?.getAttribute('data-plan'))
+      .toBe('elite_access');
+  });
+
+  it('paints the ADMIN badge from the red role tokens, never a plan tone', async () => {
+    await renderIdentity('Jesada Tawinteung', {
+      role: 'admin',
+      adminPreviewMode: 'actual',
+      subscriptionEffectiveTier: 'basic',
+      status: 'basic',
+    });
+    const role = document.querySelector('[data-testid="role-badge"]')!;
+    for (const token of ['--role-admin-bg', '--role-admin-border', '--role-admin-text']) {
+      expect(role.className).toContain(token);
+    }
+    // A plan tone on the operator badge would be the exact confusion the
+    // separate token set exists to prevent.
+    expect(role.className).not.toMatch(/--plan-/);
   });
 
   it('renders every preview as ADMIN plus a dashed TEST badge', async () => {

@@ -46,14 +46,23 @@ html[data-theme="portkheaw"]:not([data-appearance]) {
    * is only readable in this appearance — in light it has to darken past the
    * point where the two separate. So the difference that actually carries the
    * meaning is the word on the badge and its outline treatment, never the tone.
-   * Admin is a violet: far enough from every plan tone, and from gain green and
-   * loss red, that it cannot be read as either a plan or a price.
+   *
+   * Admin is a crimson, and the exact hue is load-bearing in two directions at
+   * once. It sits at 334°, which is 68° off the nearest plan tone — so operator
+   * access can never be read as a plan — and 26° off --negative, so it is not
+   * the error red at another brightness. An administrator is an authority, not a
+   * fault, and the palette has to say that before any icon or word does.
    */
   --plan-basic: #6FD39A;
   --plan-pro: #4CC9D6;
   --plan-elite: #E5C069;
   --plan-elite-trial: #EBD9A6;
-  --role-admin: #C79BF2;
+  --role-admin: #EB7FAE;
+  /* The badge's three surfaces, all derived from the one tone above so the red
+     cannot drift apart between border, fill and text. */
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 18%, transparent);
   --focus-ring: #D7FF00;
   --input-bg: #0A0F0C;
   --chart-bg: #0D120F;

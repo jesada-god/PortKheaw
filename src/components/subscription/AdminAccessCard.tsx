@@ -1,7 +1,9 @@
 import { ShieldCheck } from 'lucide-react';
 import { resolveAccountBadges } from '@/src/lib/subscription/account-badges';
+import { resolveAccountPlanSummary } from '@/src/lib/subscription/account-plan-summary';
 import type { RequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { AccountIdentity } from './AccountBadges';
+import { AccountPlanSummary } from './AccountPlanSummary';
 import { AdminPreviewSelector } from './AdminPreviewSelector';
 
 /**
@@ -15,12 +17,19 @@ import { AdminPreviewSelector } from './AdminPreviewSelector';
  * access for a paid Elite plan.
  */
 export function AdminAccessCard({ access, name }: { access: RequestAccountAccess; name: string }) {
-  const badges = resolveAccountBadges({
+  /*
+   * Both reads take `subscriptionEffectiveTier` — the plan actually held — so
+   * the badge row and the plan line describe the subscription even while a
+   * preview is rewriting what the rest of the product will open.
+   */
+  const identity = {
     role: access.role,
     adminPreviewMode: access.adminPreviewMode,
     subscriptionEffectiveTier: access.subscriptionEffectiveTier,
     status: access.status,
-  });
+  };
+  const badges = resolveAccountBadges(identity);
+  const planSummary = resolveAccountPlanSummary(identity);
 
   return (
     <section
@@ -29,8 +38,8 @@ export function AdminAccessCard({ access, name }: { access: RequestAccountAccess
       className="min-w-0 space-y-4 rounded-3xl border border-[color-mix(in_srgb,var(--role-admin)_40%,transparent)] bg-[var(--surface-elevated)] p-5 sm:p-7"
     >
       <div className="flex items-start gap-2.5">
-        <ShieldCheck aria-hidden="true" size={20} className="mt-0.5 shrink-0 text-[var(--role-admin)]" />
-        <div className="min-w-0 space-y-2">
+        <ShieldCheck aria-hidden="true" size={20} className="mt-0.5 shrink-0 text-[var(--role-admin-text)]" />
+        <div className="min-w-0 space-y-3">
           <h2 id="admin-access-heading" className="text-lg font-bold text-[var(--text)]">
             สิทธิ์ผู้ดูแลระบบ PortKheaw
           </h2>
@@ -39,6 +48,7 @@ export function AdminAccessCard({ access, name }: { access: RequestAccountAccess
             badges={badges}
             nameClassName="text-sm font-semibold text-[var(--text-secondary)]"
           />
+          <AccountPlanSummary summary={planSummary} />
           <p className="text-sm leading-6 text-[var(--text-secondary)]">
             บัญชีนี้เปิดใช้ฟีเจอร์ได้ระดับ Elite จากสิทธิ์ผู้ดูแลระบบ
             {' '}<strong className="font-semibold text-[var(--text)]">ไม่ใช่แพ็กเกจ Elite แบบชำระเงิน</strong>

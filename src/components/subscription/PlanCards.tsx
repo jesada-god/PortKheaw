@@ -1,4 +1,4 @@
-import { Check, Clock } from 'lucide-react';
+import { Check } from 'lucide-react';
 import {
   featureSummary,
   formatBaht,
@@ -7,36 +7,54 @@ import {
   type PlanDescriptor,
 } from '@/src/lib/subscription/plan-catalog';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
+import type { BillingAvailability } from '@/src/lib/billing/billing-config';
+import type { PaidTier } from '@/src/lib/billing/billing-plans';
+import { PlanPurchase } from './PlanPurchase';
 
 /**
  * The three plans as sold. Prices and feature lines both come from the central
  * plan catalog, so a card can never claim something the comparison table below
- * it contradicts.
+ * it contradicts — and since Phase 4 that catalogue reads its prices from the
+ * billing rows the checkout charges against, so a card cannot disagree with the
+ * amount either.
  *
- * Neither paid plan can be bought yet, so both carry an inert "เร็ว ๆ นี้"
- * marker rather than a button. There is deliberately no checkout affordance of
- * any kind here — not a disabled one, and not a link that pretends to lead
- * somewhere.
+ * Whether a plan can actually be bought is decided by the server and passed in.
+ * The card never guesses: with no provider configured it states that payment is
+ * not open rather than rendering a control that cannot complete.
  */
-export function PlanCards({ effectiveTier }: { effectiveTier: SubscriptionTier }) {
+export function PlanCards({ effectiveTier, availability }: {
+  effectiveTier: SubscriptionTier;
+  availability: BillingAvailability;
+}) {
   return (
     <section aria-labelledby="plans-heading" className="space-y-4">
       <div className="space-y-1">
         <h2 id="plans-heading" className="text-xl font-bold text-[var(--text)]">แพ็กเกจทั้งหมด</h2>
         <p className="text-sm text-[var(--text-muted)]">
-          เลือกได้เมื่อระบบชำระเงินเปิดใช้งาน ตอนนี้ทดลอง Elite ได้ฟรีก่อน
+          {availability.enabled
+            ? 'เลือกแพ็กเกจที่เหมาะกับพอร์ตของคุณ ยกเลิกได้ทุกเมื่อ'
+            : 'ระบบชำระเงินยังไม่เปิด ตอนนี้ทดลอง Elite ได้ฟรีก่อน'}
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         {planDescriptors.map((plan) => (
-          <PlanCard key={plan.tier} plan={plan} current={plan.tier === effectiveTier} />
+          <PlanCard
+            key={plan.tier}
+            plan={plan}
+            current={plan.tier === effectiveTier}
+            availability={availability}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function PlanCard({ plan, current }: { plan: PlanDescriptor; current: boolean }) {
+function PlanCard({ plan, current, availability }: {
+  plan: PlanDescriptor;
+  current: boolean;
+  availability: BillingAvailability;
+}) {
   const recommended = Boolean(plan.badge);
   return (
     <article
@@ -64,7 +82,7 @@ function PlanCard({ plan, current }: { plan: PlanDescriptor; current: boolean })
         <p className="text-sm text-[var(--text-secondary)]">{plan.tagline}</p>
       </header>
 
-      <PlanPrice plan={plan} />
+      <PlanPrice plan={plan} billingOpen={availability.enabled} />
 
       <ul className="flex flex-1 flex-col gap-2.5 text-sm text-[var(--text-secondary)]">
         {plan.highlights.map((id) => (
@@ -80,16 +98,17 @@ function PlanCard({ plan, current }: { plan: PlanDescriptor; current: boolean })
       </ul>
 
       {plan.pricing && (
-        <p className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border-strong)] px-3 py-2.5 text-sm font-medium text-[var(--text-muted)]">
-          <Clock aria-hidden="true" size={15} className="shrink-0" />
-          เปิดให้สมัคร เร็ว ๆ นี้
-        </p>
+        <PlanPurchase
+          tier={plan.tier as PaidTier}
+          availability={availability}
+          emphasis={Boolean(plan.badge)}
+        />
       )}
     </article>
   );
 }
 
-function PlanPrice({ plan }: { plan: PlanDescriptor }) {
+function PlanPrice({ plan, billingOpen }: { plan: PlanDescriptor; billingOpen: boolean }) {
   if (!plan.pricing) {
     return (
       <p className="text-2xl font-bold tabular-nums text-[var(--text)]">
@@ -112,7 +131,9 @@ function PlanPrice({ plan }: { plan: PlanDescriptor }) {
           Founder&rsquo;s Club ปีแรก {formatBaht(founderFirstYearBaht)} บาท
         </p>
         <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-          ราคานี้จะใช้ได้เมื่อระบบชำระเงินจริงเปิดใช้งาน
+          {billingOpen
+            ? 'ราคาปีแรกครั้งเดียว ปีถัดไปคิดราคาปกติ'
+            : 'ราคานี้จะใช้ได้เมื่อระบบชำระเงินจริงเปิดใช้งาน'}
         </p>
       </div>
     </div>

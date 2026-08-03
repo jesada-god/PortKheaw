@@ -11,6 +11,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('.', import.meta.url)),
+      /*
+       * `server-only` throws unless resolved with Node's `react-server`
+       * condition, which Vitest does not set — so without this every module that
+       * imports it could only be tested by reading its source as text. The
+       * guarantee it encodes is enforced by the Next build, which is a separate
+       * gate, not by the test runner.
+       */
+      'server-only': fileURLToPath(new URL('./src/test/server-only-stub.ts', import.meta.url)),
     },
   },
   test: {

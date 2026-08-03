@@ -7,6 +7,15 @@ export type SubscriptionTier = 'basic' | 'pro' | 'elite';
 export type SubscriptionStatus = 'basic' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
 export type UserRole = 'user' | 'admin';
 export type AdminPreviewMode = 'actual' | 'basic' | 'pro' | 'elite' | 'elite_trial' | 'expired_trial';
+export type BillingProvider = 'stripe';
+export type BillingPlanKey =
+  | 'pro_monthly' | 'pro_annual' | 'pro_annual_founder'
+  | 'elite_monthly' | 'elite_annual' | 'elite_annual_founder';
+export type BillingInterval = 'month' | 'year';
+export type BillingPaymentStatus = 'succeeded' | 'failed';
+/** Every terminal state a webhook delivery can be recorded in. */
+export type BillingWebhookStatus =
+  'received' | 'applied' | 'ignored' | 'stale' | 'duplicate' | 'failed';
 
 export interface Database {
   public: {
@@ -177,6 +186,16 @@ export interface Database {
           billing_subscription_id: string | null;
           billing_price_id: string | null;
           founder_promo_applied: boolean;
+          /* Phase 4 billing columns. Written only by the webhook's trusted
+             routine; `authenticated` holds SELECT on this table and nothing more. */
+          billing_provider: BillingProvider | null;
+          billing_plan_key: BillingPlanKey | null;
+          billing_interval: BillingInterval | null;
+          latest_invoice_id: string | null;
+          latest_payment_status: BillingPaymentStatus | null;
+          latest_payment_at: string | null;
+          provider_event_at: string | null;
+          provider_event_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -210,7 +229,53 @@ export interface Database {
           billing_subscription_id?: string | null;
           billing_price_id?: string | null;
           founder_promo_applied?: boolean;
+          billing_provider?: BillingProvider | null;
+          billing_plan_key?: BillingPlanKey | null;
+          billing_interval?: BillingInterval | null;
+          latest_invoice_id?: string | null;
+          latest_payment_status?: BillingPaymentStatus | null;
+          latest_payment_at?: string | null;
+          provider_event_at?: string | null;
+          provider_event_id?: string | null;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      /**
+       * The webhook idempotency ledger. No grant exists for `anon` or
+       * `authenticated`, so this is reachable only with the service role — the
+       * type is here for the trusted server, never for a browser query.
+       */
+      billing_webhook_events: {
+        Row: {
+          id: number;
+          provider: BillingProvider;
+          provider_event_id: string;
+          event_type: string;
+          status: BillingWebhookStatus;
+          user_id: string | null;
+          occurred_at: string | null;
+          received_at: string;
+          processed_at: string | null;
+          error_code: string | null;
+          /** A digest of the delivered body — never the body itself. */
+          payload_digest: string | null;
+        };
+        Insert: {
+          provider: BillingProvider;
+          provider_event_id: string;
+          event_type: string;
+          status?: BillingWebhookStatus;
+          user_id?: string | null;
+          occurred_at?: string | null;
+          processed_at?: string | null;
+          error_code?: string | null;
+          payload_digest?: string | null;
+        };
+        Update: {
+          status?: BillingWebhookStatus;
+          processed_at?: string | null;
+          error_code?: string | null;
         };
         Relationships: [];
       };
@@ -462,6 +527,68 @@ export interface Database {
           created_at: string | null;
           updated_at: string | null;
           database_now: string;
+        }>;
+      };
+      /**
+       * The reader's own billing state, sanitized. Provider customer,
+       * subscription, price and invoice identifiers are deliberately absent —
+       * the manage page answers "what plan, when does it renew, for how much"
+       * without any of them reaching the browser.
+       */
+      get_my_billing_snapshot: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          user_id: string;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          billing_provider: BillingProvider | null;
+          billing_plan_key: BillingPlanKey | null;
+          billing_interval: BillingInterval | null;
+          current_period_start: string | null;
+          current_period_end: string | null;
+          cancel_at_period_end: boolean;
+          founder_promo_applied: boolean;
+          latest_payment_status: BillingPaymentStatus | null;
+          latest_payment_at: string | null;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          has_billing_customer: boolean;
+          database_now: string;
+        }>;
+      };
+      /**
+       * The only routine that changes billing state, and it is granted to
+       * neither `anon` nor `authenticated`. The webhook route reaches it with
+       * the service role after verifying the provider's signature; identity,
+       * idempotency, row locking and staleness are all decided inside it.
+       */
+      apply_billing_subscription_event: {
+        Args: {
+          input_provider: BillingProvider;
+          input_event_id: string;
+          input_event_type: string;
+          input_occurred_at: string | null;
+          input_payload_digest: string | null;
+          input_user_id: string | null;
+          input_customer_id: string | null;
+          input_subscription_id: string | null;
+          input_plan_key: BillingPlanKey | null;
+          input_price_id: string | null;
+          input_tier: SubscriptionTier | null;
+          input_status: SubscriptionStatus | null;
+          input_interval: BillingInterval | null;
+          input_period_start: string | null;
+          input_period_end: string | null;
+          input_cancel_at_period_end: boolean | null;
+          input_invoice_id: string | null;
+          input_payment_status: BillingPaymentStatus | null;
+          input_founder: boolean | null;
+        };
+        Returns: Array<{
+          outcome:
+            | 'applied' | 'duplicate' | 'ignored' | 'stale'
+            | 'unknown_user' | 'customer_mismatch' | 'subscription_mismatch';
+          applied_user_id: string | null;
         }>;
       };
       /**

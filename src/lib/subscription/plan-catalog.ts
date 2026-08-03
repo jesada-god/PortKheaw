@@ -1,3 +1,4 @@
+import { billingPlans, type PaidTier } from '@/src/lib/billing/billing-plans';
 import { hasCapability, subscriptionCapabilities, type SubscriptionCapability } from './capabilities';
 import { subscriptionTiers, type SubscriptionTier } from './subscription-types';
 
@@ -148,8 +149,25 @@ export const planFeatureGroups: readonly PlanFeatureGroup[] = [
 export interface PlanPricing {
   monthlyBaht: number;
   yearlyBaht: number;
-  /** First-year Founder's Club price, honoured once real billing opens. */
+  /** First-year Founder's Club price, charged on the first invoice only. */
   founderFirstYearBaht: number;
+}
+
+/**
+ * Prices are not written here.
+ *
+ * They are read from the billing catalogue, which is the same set of rows the
+ * checkout looks a plan key up in. Before Phase 4 these were three literals on
+ * this page, and a price shown on a card could quietly disagree with the price
+ * actually charged. Deriving them removes that possibility rather than
+ * documenting it away.
+ */
+function pricingFor(tier: PaidTier): PlanPricing {
+  return {
+    monthlyBaht: billingPlans[`${tier}_monthly`].renewalBaht,
+    yearlyBaht: billingPlans[`${tier}_annual`].renewalBaht,
+    founderFirstYearBaht: billingPlans[`${tier}_annual_founder`].firstPeriodBaht,
+  };
 }
 
 export interface PlanDescriptor {
@@ -177,7 +195,7 @@ export const planDescriptors: readonly PlanDescriptor[] = [
     tier: 'pro',
     name: 'Pro',
     tagline: 'สำหรับคนที่จัดพอร์ตหลายใบและอ่านกราฟลึกขึ้น',
-    pricing: { monthlyBaht: 349, yearlyBaht: 3_490, founderFirstYearBaht: 1_990 },
+    pricing: pricingFor('pro'),
     badge: 'แนะนำ',
     highlights: ['stock-portfolios', 'option-portfolios', 'vpvr', 'sr-context', 'what-if', 'options-chain'],
   },
@@ -185,7 +203,7 @@ export const planDescriptors: readonly PlanDescriptor[] = [
     tier: 'elite',
     name: 'Elite',
     tagline: 'ทุกอย่างใน Pro พร้อมเครื่องมือวิเคราะห์ Options เต็มชุด',
-    pricing: { monthlyBaht: 799, yearlyBaht: 7_990, founderFirstYearBaht: 4_490 },
+    pricing: pricingFor('elite'),
     highlights: ['options-walls', 'monte-carlo', 'full-greeks', 'signal-breakdown'],
   },
 ] as const;

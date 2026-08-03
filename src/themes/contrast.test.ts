@@ -171,15 +171,46 @@ describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) 
   });
 
   /**
-   * The operator role must never be mistakable for a plan. Admin is a violet and
-   * every plan tone is green, teal or gold, so the separation is in hue and
-   * survives both appearances.
+   * The operator role must never be mistakable for a plan. Admin is a crimson
+   * and every plan tone is green, teal or gold, so the separation is in hue and
+   * survives both appearances. Gold is the near neighbour, which is what sets
+   * the ceiling on how far toward pure red this tone may travel.
    */
   it('keeps the admin tone clear of every plan tone', () => {
     const plans = IDENTITY_TONES.filter((tone) => tone !== '--role-admin');
     for (const plan of plans) {
       expect(palette['--role-admin']).not.toBe(palette[plan]);
       expect(hueSeparation(palette['--role-admin'], palette[plan])).toBeGreaterThanOrEqual(60);
+    }
+  });
+
+  /**
+   * Administrator is an authority, not a fault.
+   *
+   * The ADMIN badge is red on purpose — it marks an account that can act on the
+   * whole product — but it must not be read as an error or a destructive
+   * action. The same 25° rule the session tones are held to applies: measurably
+   * off the error red, rather than the error red at another brightness.
+   */
+  it('keeps the admin tone off the error-red axis', () => {
+    expect(palette['--role-admin']).not.toBe(palette['--negative']);
+    expect(hueSeparation(palette['--role-admin'], palette['--negative'])).toBeGreaterThanOrEqual(25);
+    // Still unmistakably in the red family: crimson through to rose.
+    const hue = hueOf(palette['--role-admin']);
+    expect(hue).toBeGreaterThanOrEqual(300);
+    expect(hue).toBeLessThanOrEqual(345);
+  });
+
+  /**
+   * The badge's three surfaces exist in both appearances and all derive from the
+   * one tone above, so border, fill and text cannot drift into three reds.
+   */
+  it('defines the admin badge surfaces from the single admin tone', () => {
+    const css = readFileSync(resolve(`src/themes/portkheaw/${appearance}.css`), 'utf8');
+    for (const token of ['--role-admin-bg', '--role-admin-border', '--role-admin-text']) {
+      expect(css, `${appearance} ${token}`).toMatch(
+        new RegExp(`${token}:\\s*(var\\(--role-admin\\)|color-mix\\([^;]*var\\(--role-admin\\)[^;]*\\));`),
+      );
     }
   });
 

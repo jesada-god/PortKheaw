@@ -44,12 +44,22 @@ html[data-theme="portkheaw"][data-appearance="light"] {
    * nobody can read. Elite and Elite Trial necessarily converge here, which is
    * why the badge label and outline, not the tone, are what separate a trial
    * from a paid plan.
+   *
+   * Admin keeps the same 334° crimson as the dark appearance, darkened to clear
+   * AA on white: 66° off the nearest plan tone, and 26° off --negative, so it
+   * reads as operator authority rather than as an error state.
    */
   --plan-basic: #0F6B45;
   --plan-pro: #0F6E7A;
   --plan-elite: #7E5A10;
   --plan-elite-trial: #6B5526;
-  --role-admin: #7A2E8C;
+  --role-admin: #A30F4F;
+  /* The badge's three surfaces, all derived from the one tone above. The fill is
+     a lighter wash than dark's: the same 18% over white would wash out the
+     crimson rather than tint it. */
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 12%, transparent);
   --focus-ring: #596D00;
   --input-bg: #FFFFFF;
   --chart-bg: #FFFFFF;

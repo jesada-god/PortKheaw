@@ -62,15 +62,42 @@ describe('subscription centre vertical slice', () => {
     }
   });
 
-  it('offers no checkout of any kind while billing is closed', () => {
-    const cards = read('src/components/subscription/PlanCards.tsx');
-    expect(cards).toContain('เปิดให้สมัคร เร็ว ๆ นี้');
-    expect(cards).toContain('ราคานี้จะใช้ได้เมื่อระบบชำระเงินจริงเปิดใช้งาน');
-    // No payment provider, no route that takes money, and no control that
-    // implies one. The honest "opens later" wording above is not a checkout.
-    const code = readCode('src/components/subscription/PlanCards.tsx');
-    expect(code).not.toMatch(/checkout|stripe|omise|paypal|<form|onClick/i);
-    expect(code).not.toMatch(/สมัครเลย|ชำระเงินตอนนี้|อัปเกรดเลย/);
+  /*
+   * Phase 4 opens purchasing, but only where a provider is actually configured.
+   * The property that replaces "there is never a checkout" is stronger and is
+   * the one that matters to a reader: a deployment without credentials shows no
+   * pressable control at all — not a disabled button, not a link — just an
+   * honest statement, and the decision is the server's, never the card's.
+   */
+  it('offers no checkout affordance when billing is not configured', () => {
+    const purchase = read('src/components/subscription/PlanPurchase.tsx');
+    expect(purchase).toContain('ระบบชำระเงินยังไม่เปิด');
+    // The closed branch returns before any button exists in the tree.
+    const closedBranch = purchase.slice(0, purchase.indexOf('const founder'));
+    expect(closedBranch).toContain('!availability.enabled');
+    expect(closedBranch).not.toContain('<CheckoutButton');
+    expect(closedBranch).not.toMatch(/<button/);
+
+    // The card never decides for itself whether billing is open.
+    const cards = readCode('src/components/subscription/PlanCards.tsx');
+    expect(cards).toContain('availability');
+    expect(cards).not.toMatch(/process\.env|STRIPE_/);
+  });
+
+  /*
+   * A checkout must carry a plan key and nothing else. An amount, a tier or a
+   * discount arriving from a browser is the defect this asserts against.
+   */
+  it('lets the client name a plan and nothing else', () => {
+    const button = readCode('src/components/subscription/CheckoutButton.tsx');
+    expect(button).toContain('startCheckoutAction(planKey)');
+    expect(button).not.toMatch(/amount|price|baht|discount|coupon|tier|customer/i);
+
+    const actions = readCode('app/settings/subscription/billing-actions.ts');
+    expect(actions).toContain('startCheckoutAction(planKey: string)');
+    // No second parameter, of any name, on either exported action.
+    expect(actions).not.toMatch(/startCheckoutAction\([^)]*,/);
+    expect(actions).not.toMatch(/openBillingPortalAction\([^)]+\)/);
   });
 
   it('keeps the wide comparison inside its own scroller so the page never scrolls sideways', () => {

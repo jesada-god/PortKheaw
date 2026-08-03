@@ -53,8 +53,19 @@ describe('admin access vertical slice', () => {
     expect(subscription).toContain('effectiveTier={effectiveTier}');
     expect(subscription).not.toContain('effectiveTier={access.effectiveAccessTier}');
 
-    // And the profile's plan line names the subscription, not the preview.
-    expect(readCode('app/profile/page.tsx')).toContain('planDescriptor(access.subscriptionEffectiveTier)');
+    /*
+     * And the profile's plan line names the subscription, not the preview. Both
+     * the badge row and the "แพ็กเกจสมาชิกจริง" line are fed from one object
+     * built out of `subscriptionEffectiveTier`, so neither can be switched to
+     * the previewed tier without the other noticing.
+     */
+    const profile = readCode('app/profile/page.tsx');
+    expect(profile).toContain('subscriptionEffectiveTier: access.subscriptionEffectiveTier');
+    expect(profile).toContain('resolveAccountPlanSummary(badgeInput)');
+    expect(profile).toContain('resolveAccountBadges(badgeInput)');
+    // The previewed/effective tier must never reach either of them.
+    expect(profile).not.toMatch(/resolveAccountPlanSummary\([^)]*effectiveAccessTier/);
+    expect(profile).not.toContain('subscriptionEffectiveTier: access.effectiveAccessTier');
   });
 
   it('lets no client choose a role, a tier or a preview', () => {
@@ -97,11 +108,26 @@ describe('admin access vertical slice', () => {
   });
 
   it('invalidates every entitlement surface, including dynamic segments', () => {
-    const actions = readCode('app/settings/subscription/actions.ts');
-    // The layout invalidation is what covers `/stock/[symbol]` and friends; a
-    // path list alone would leave them holding the previous tier's render.
-    expect(actions).toContain("revalidatePath('/', 'layout')");
-    expect(actions).toContain('revalidateEveryEntitlementSurface()');
+    /*
+     * The layout invalidation is what covers `/stock/[symbol]` and friends; a
+     * path list alone would leave them holding the previous tier's render.
+     *
+     * It lives in one shared module because two different things must perform
+     * exactly the same invalidation: the administrator preview action, and the
+     * billing webhook that activates or ends a paid plan. Asserting the shared
+     * definition and both call sites is what stops them drifting apart.
+     */
+    const shared = readCode('src/lib/subscription/revalidate-entitlements.ts');
+    expect(shared).toContain("revalidatePath('/', 'layout')");
+
+    for (const file of [
+      'app/settings/subscription/actions.ts',
+      'app/api/billing/webhook/route.ts',
+    ]) {
+      const source = readCode(file);
+      expect(source, file).toContain('revalidateEveryEntitlementSurface()');
+      expect(source, file).toContain("from '@/src/lib/subscription/revalidate-entitlements'");
+    }
   });
 
   it('keeps entitled responses per-reader so no cache can share them across plans', () => {
@@ -136,10 +162,30 @@ describe('admin access vertical slice', () => {
     expect(card).toContain('สิทธิ์ผู้ดูแลระบบ PortKheaw');
     expect(card).toContain('ไม่ใช่แพ็กเกจ Elite แบบชำระเงิน');
 
-    // Buying is still closed, and this phase did not open it.
-    const cards = readCode('src/components/subscription/PlanCards.tsx');
-    expect(cards).toContain('เปิดให้สมัคร เร็ว ๆ นี้');
-    expect(cards).not.toMatch(/checkout|stripe|omise|paypal/i);
+    /*
+     * The card states the real subscription and the operator grant as two
+     * separately labelled lines, from the shared resolver, so an administrator
+     * reading it can tell that their card has not been charged.
+     */
+    expect(card).toContain('resolveAccountPlanSummary');
+    expect(card).toContain('<AccountPlanSummary');
+    expect(card).toContain('subscriptionEffectiveTier: access.subscriptionEffectiveTier');
+  });
+
+  /*
+   * Phase 4 opens purchasing, but an operator preview must never touch price,
+   * plan or billing state. The checkout action is the place that could get this
+   * wrong, so it is asserted to read neither the role nor the preview.
+   */
+  it('keeps the administrator preview out of every billing decision', () => {
+    const actions = readCode('app/settings/subscription/billing-actions.ts');
+    expect(actions).not.toMatch(/adminPreviewMode|effectiveAccessTier|isAdmin|requireAdmin/);
+    expect(actions).not.toMatch(/resolveRequestAccountAccess/);
+
+    // And the webhook cannot promote anyone or end a preview.
+    const migration = read('supabase/migrations/202608030003_billing_subscriptions.sql').toLowerCase();
+    expect(migration).not.toContain('user_roles');
+    expect(migration).not.toContain('admin_access_previews');
   });
 
   it('refuses an administrator the one real trial grant', () => {
@@ -171,7 +217,11 @@ describe('admin access vertical slice', () => {
   });
 
   it('takes every badge and banner tone from a theme token defined in both appearances', () => {
-    const tokens = ['--plan-basic', '--plan-pro', '--plan-elite', '--plan-elite-trial', '--role-admin'];
+    const tokens = [
+      '--plan-basic', '--plan-pro', '--plan-elite', '--plan-elite-trial',
+      // The operator tone, plus the three surfaces the ADMIN badge paints with.
+      '--role-admin', '--role-admin-bg', '--role-admin-border', '--role-admin-text',
+    ];
     for (const appearance of ['dark', 'light'] as const) {
       const css = read(`src/themes/portkheaw/${appearance}.css`);
       for (const token of tokens) expect(css, `${appearance} ${token}`).toContain(`${token}:`);

@@ -6,12 +6,12 @@ import { AuthMessage } from '@/src/components/auth/AuthMessage';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
 import { AccountActions } from '@/src/components/auth/AccountActions';
 import { AccountIdentity } from '@/src/components/subscription/AccountBadges';
+import { AccountPlanSummary } from '@/src/components/subscription/AccountPlanSummary';
 import { AdminPreviewSelector } from '@/src/components/subscription/AdminPreviewSelector';
 import { createClient } from '@/src/lib/supabase/server';
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { resolveAccountBadges } from '@/src/lib/subscription/account-badges';
-import { adminPreviewLabel, type ActiveAdminPreviewMode } from '@/src/lib/subscription/admin-access';
-import { planDescriptor } from '@/src/lib/subscription/plan-catalog';
+import { resolveAccountPlanSummary } from '@/src/lib/subscription/account-plan-summary';
 import { formatBangkokDateTime } from '@/src/lib/subscription/trial';
 
 /*
@@ -33,12 +33,20 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const error = typeof params.error === 'string' ? params.error : undefined;
 
   const access = await resolveRequestAccountAccess();
-  const badges = resolveAccountBadges({
+  /*
+   * Both of these read `subscriptionEffectiveTier`, which is the plan the
+   * account actually holds and is never rewritten by the operator role or by a
+   * running preview. That is what lets the badge row and the plan line below it
+   * disagree with `effectiveAccessTier` without either of them being wrong.
+   */
+  const badgeInput = {
     role: access.role,
     adminPreviewMode: access.adminPreviewMode,
     subscriptionEffectiveTier: access.subscriptionEffectiveTier,
     status: access.status,
-  });
+  };
+  const badges = resolveAccountBadges(badgeInput);
+  const planSummary = resolveAccountPlanSummary(badgeInput);
   const previewing = access.adminPreviewMode !== 'actual';
 
   return (
@@ -61,31 +69,17 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
           aria-labelledby="plan-summary-heading"
           className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-elevated)] p-5 sm:p-6"
         >
-          <h2 id="plan-summary-heading" className="text-xs font-medium tracking-wide text-[var(--text-muted)]">
-            แพ็กเกจของคุณ
-          </h2>
-          <p className="mt-1 text-lg font-semibold text-[var(--text)]">
-            {planDescriptor(access.subscriptionEffectiveTier).name}
-            {access.status === 'trialing' && access.subscriptionEffectiveTier === 'elite' && ' (ทดลองใช้)'}
-          </p>
+          {/* The heading names the section; the plan and the access grant are
+              each labelled inside it, so neither can be read as the other. */}
+          <h2 id="plan-summary-heading" className="sr-only">แพ็กเกจและสิทธิ์ของคุณ</h2>
+          <AccountPlanSummary summary={planSummary} />
 
-          {access.isAdmin && (
-            <p className="mt-2 flex items-start gap-2 text-sm leading-6 text-[var(--text-secondary)]">
-              <Shield aria-hidden="true" size={15} className="mt-1 shrink-0 text-[var(--role-admin)]" />
-              <span>
-                สิทธิ์ผู้ดูแลระบบ PortKheaw — เปิดใช้ฟีเจอร์ได้ระดับ Elite
-                {' '}โดยไม่ใช่แพ็กเกจแบบชำระเงิน
-              </span>
-            </p>
-          )}
-
-          {previewing && (
+          {previewing && access.previewExpiresAt && (
             <p
               data-testid="profile-preview-note"
-              className="mt-2 text-sm leading-6 text-[var(--text-secondary)]"
+              className="mt-2 text-xs leading-5 text-[var(--text-muted)]"
             >
-              กำลังจำลองสิทธิ์ {adminPreviewLabel(access.adminPreviewMode as ActiveAdminPreviewMode)} · แพ็กเกจจริงไม่ได้เปลี่ยน
-              {access.previewExpiresAt && ` · หมดอายุ ${formatBangkokDateTime(access.previewExpiresAt)}`}
+              หมดอายุ {formatBangkokDateTime(access.previewExpiresAt)}
             </p>
           )}
 

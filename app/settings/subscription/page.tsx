@@ -3,9 +3,13 @@ import Header from '@/src/components/layout/Header';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
 import { AdminAccessCard } from '@/src/components/subscription/AdminAccessCard';
 import { CurrentPlanHero } from '@/src/components/subscription/CurrentPlanHero';
+import { ManageSubscriptionCard } from '@/src/components/subscription/ManageSubscriptionCard';
 import { PlanCards } from '@/src/components/subscription/PlanCards';
 import { PlanComparison } from '@/src/components/subscription/PlanComparison';
 import { SubscriptionFaq } from '@/src/components/subscription/SubscriptionFaq';
+import { getBillingAvailability } from '@/src/lib/billing/billing-server';
+import { readBillingSnapshot } from '@/src/lib/billing/billing-repository';
+import { resolveBillingSummary } from '@/src/lib/billing/billing-summary';
 import { createClient } from '@/src/lib/supabase/server';
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
@@ -50,6 +54,28 @@ export default async function SubscriptionPage() {
    * simulation is running.
    */
   const access = await resolveRequestAccountAccess();
+
+  /*
+   * Billing is read separately from the entitlement snapshot above, through the
+   * database's own sanitized projection: it carries the plan, the period and the
+   * payment state, and deliberately carries no provider customer, subscription,
+   * price or invoice identifier. Whether anything can be *bought* is a property
+   * of the deployment, not of the reader, and is resolved on the server so the
+   * cards never have to guess.
+   */
+  const billingAvailability = getBillingAvailability();
+  const billingSnapshot = await readBillingSnapshot(supabase);
+  const billingSummary = billingSnapshot && resolveBillingSummary({
+    tier: billingSnapshot.tier,
+    status: billingSnapshot.status,
+    planKey: billingSnapshot.billing_plan_key,
+    cancelAtPeriodEnd: billingSnapshot.cancel_at_period_end,
+    currentPeriodEnd: billingSnapshot.current_period_end,
+    latestPaymentStatus: billingSnapshot.latest_payment_status,
+    trialEndsAt: billingSnapshot.trial_ends_at,
+    hasBillingCustomer: billingSnapshot.has_billing_customer,
+  });
+
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
   const metadataName = typeof user.user_metadata.full_name === 'string' ? user.user_metadata.full_name : null;
   const displayName = profile?.full_name || metadataName || user.email?.split('@')[0] || 'PortKheaw User';
@@ -63,8 +89,9 @@ export default async function SubscriptionPage() {
           effectiveTier={effectiveTier}
           trialBlockedReason={access.isAdmin ? ADMIN_TRIAL_BLOCKED_MESSAGE : undefined}
         />
+        {billingSummary && <ManageSubscriptionCard summary={billingSummary} />}
         {access.isAdmin && <AdminAccessCard access={access} name={displayName} />}
-        <PlanCards effectiveTier={effectiveTier} />
+        <PlanCards effectiveTier={effectiveTier} availability={billingAvailability} />
         <PlanComparison />
         <SubscriptionFaq />
       </main>

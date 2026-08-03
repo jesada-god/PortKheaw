@@ -74,6 +74,35 @@ export function parseServerEnv(input: Record<string, unknown>) {
       NEXT_PUBLIC_VAPID_PUBLIC_KEY: read('NEXT_PUBLIC_VAPID_PUBLIC_KEY', optionalSecret, undefined),
       VAPID_PRIVATE_KEY: read('VAPID_PRIVATE_KEY', optionalSecret, undefined),
       VAPID_SUBJECT: read('VAPID_SUBJECT', optionalSubject, undefined),
+      /*
+       * Billing.
+       *
+       * Every one of these is optional, and that is the point: with none of them
+       * set the product runs exactly as it did before paid plans existed, and
+       * the subscription page says so rather than offering a checkout that
+       * cannot complete. `BILLING_ENABLED` is a separate explicit switch on top
+       * of the credentials, so a half-populated environment — a key present but
+       * no webhook secret yet — cannot start taking money by accident.
+       *
+       * None of these values ever leave the server. The browser is told only
+       * which plan keys are purchasable, never why.
+       */
+      BILLING_ENABLED: read('BILLING_ENABLED', optionalSecret, undefined),
+      BILLING_RETURN_ORIGIN: read('BILLING_RETURN_ORIGIN', optionalUrl, undefined),
+      STRIPE_SECRET_KEY: read('STRIPE_SECRET_KEY', optionalSecret, undefined),
+      STRIPE_WEBHOOK_SECRET: read('STRIPE_WEBHOOK_SECRET', optionalSecret, undefined),
+      STRIPE_PRICE_PRO_MONTHLY: read('STRIPE_PRICE_PRO_MONTHLY', optionalSecret, undefined),
+      STRIPE_PRICE_PRO_ANNUAL: read('STRIPE_PRICE_PRO_ANNUAL', optionalSecret, undefined),
+      STRIPE_PRICE_ELITE_MONTHLY: read('STRIPE_PRICE_ELITE_MONTHLY', optionalSecret, undefined),
+      STRIPE_PRICE_ELITE_ANNUAL: read('STRIPE_PRICE_ELITE_ANNUAL', optionalSecret, undefined),
+      /*
+       * Founder's Club is a one-invoice coupon applied on top of the ordinary
+       * annual price — never a second, cheaper price. That is what guarantees
+       * the second year bills at the full rate: the subscription is on the full
+       * price from the first day, and the discount simply stops applying.
+       */
+      STRIPE_COUPON_FOUNDER_PRO: read('STRIPE_COUPON_FOUNDER_PRO', optionalSecret, undefined),
+      STRIPE_COUPON_FOUNDER_ELITE: read('STRIPE_COUPON_FOUNDER_ELITE', optionalSecret, undefined),
     },
     issues,
   };

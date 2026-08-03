@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest';
+import { billingPlanKeys } from './billing-plans';
+import {
+  checkoutRefusalMessage,
+  checkoutRefusalReasons,
+  resolveCheckoutEligibility,
+  type CheckoutEligibilityInput,
+} from './checkout-eligibility';
+
+/**
+ * The gate every purchase passes through. It runs before any provider is
+ * contacted, so a refusal here costs nothing and a mistake here is the one that
+ * charges the wrong person the wrong amount.
+ */
+
+function input(overrides: Partial<CheckoutEligibilityInput> = {}): CheckoutEligibilityInput {
+  return {
+    planKey: 'pro_monthly',
+    availablePlanKeys: [...billingPlanKeys],
+    billingEnabled: true,
+    authenticated: true,
+    emailVerified: true,
+    founderPromoApplied: false,
+    ...overrides,
+  };
+}
+
+describe('checkout eligibility', () => {
+  it('admits a verified reader buying an available plan', () => {
+    const result = resolveCheckoutEligibility(input());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.key).toBe('pro_monthly');
+    expect(result.plan.tier).toBe('pro');
+  });
+
+  /*
+   * Configuration is checked first, so a deployment with no provider refuses
+   * before it has looked anything up — and the refusal is the same whoever asks.
+   */
+  it('refuses everything while billing is disabled', () => {
+    for (const key of billingPlanKeys) {
+      const result = resolveCheckoutEligibility(input({ planKey: key, billingEnabled: false }));
+      expect(result.ok, key).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('billing-disabled');
+    }
+  });
+
+  /*
+   * The allowlist is the whole input surface. These are the shapes a tampered
+   * request actually takes: a tier name, a made-up key, a wrong type.
+   */
+  it('refuses any plan key that is not on the allowlist', () => {
+    for (const planKey of [
+      'pro', 'elite', 'basic', 'free', 'pro_weekly', 'PRO_MONTHLY',
+      '', null, undefined, 0, {}, [], { key: 'pro_monthly' }, '__proto__',
+    ]) {
+      const result = resolveCheckoutEligibility(input({ planKey }));
+      expect(result.ok, String(planKey)).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('unknown-plan');
+    }
+  });
+
+  it('refuses a real plan this deployment cannot price', () => {
+    const result = resolveCheckoutEligibility(input({
+      planKey: 'elite_annual',
+      availablePlanKeys: ['pro_monthly'],
+    }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('plan-unavailable');
+  });
+
+  it('refuses a signed-out caller before any account lookup matters', () => {
+    const result = resolveCheckoutEligibility(input({ authenticated: false }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('unauthenticated');
+  });
+
+  /*
+   * A mailbox nobody has proved they own must not become a recurring charge.
+   */
+  it('refuses an unverified mailbox', () => {
+    const result = resolveCheckoutEligibility(input({ emailVerified: false }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('email-unverified');
+  });
+
+  /*
+   * Founder's Club is one discounted first period per account, forever. The flag
+   * is only ever set by the webhook, so this cannot be reset from a browser.
+   */
+  it('allows a Founder plan once and refuses it afterwards', () => {
+    for (const planKey of ['pro_annual_founder', 'elite_annual_founder'] as const) {
+      expect(resolveCheckoutEligibility(input({ planKey })).ok, planKey).toBe(true);
+
+      const second = resolveCheckoutEligibility(input({ planKey, founderPromoApplied: true }));
+      expect(second.ok, planKey).toBe(false);
+      if (second.ok) return;
+      expect(second.reason).toBe('founder-already-used');
+    }
+  });
+
+  /*
+   * A spent promotion must not block ordinary purchasing — otherwise a Founder
+   * subscriber could never change plan.
+   */
+  it('still allows every non-Founder plan after the promotion is spent', () => {
+    for (const planKey of billingPlanKeys.filter((key) => !key.endsWith('_founder'))) {
+      const result = resolveCheckoutEligibility(input({ planKey, founderPromoApplied: true }));
+      expect(result.ok, planKey).toBe(true);
+    }
+  });
+
+  it('gives every refusal a Thai message that names no internals', () => {
+    for (const reason of checkoutRefusalReasons) {
+      const message = checkoutRefusalMessage(reason);
+      expect(message.length, reason).toBeGreaterThan(0);
+      // No environment variable, provider or identifier leaks into what a
+      // reader is shown.
+      expect(message, reason).not.toMatch(/stripe|sk_|whsec|price_|coupon|env|undefined/i);
+    }
+  });
+});

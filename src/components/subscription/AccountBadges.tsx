@@ -19,6 +19,9 @@ const PLAN_TONE: Readonly<Record<PlanBadgeKind, string>> = {
   basic: 'text-[var(--plan-basic)] border-[var(--plan-basic)]',
   pro: 'text-[var(--plan-pro)] border-[var(--plan-pro)]',
   elite: 'text-[var(--plan-elite)] border-[var(--plan-elite)]',
+  // Operator access opens exactly the Elite surface, so it is painted in the
+  // Elite gold; the word ACCESS is what says it was granted, not bought.
+  elite_access: 'text-[var(--plan-elite)] border-[var(--plan-elite)]',
   elite_trial: 'text-[var(--plan-elite-trial)] border-[var(--plan-elite-trial)]',
   // An expired trial grants exactly Basic, so it is painted as Basic; the word
   // on the badge is what says which scenario is being simulated.
@@ -29,6 +32,7 @@ const PLAN_FILL: Readonly<Record<PlanBadgeKind, string>> = {
   basic: 'bg-[color-mix(in_srgb,var(--plan-basic)_14%,transparent)]',
   pro: 'bg-[color-mix(in_srgb,var(--plan-pro)_14%,transparent)]',
   elite: 'bg-[color-mix(in_srgb,var(--plan-elite)_14%,transparent)]',
+  elite_access: 'bg-[color-mix(in_srgb,var(--plan-elite)_14%,transparent)]',
   elite_trial: 'bg-[color-mix(in_srgb,var(--plan-elite-trial)_14%,transparent)]',
   expired_trial: 'bg-[color-mix(in_srgb,var(--plan-basic)_14%,transparent)]',
 };
@@ -54,13 +58,19 @@ export function PlanBadge({ kind, label, preview }: {
 
 /**
  * The operator badge. It answers "who is this account", never "what did they
- * buy", so it is a violet that no plan uses and it sits first in the row.
+ * buy", so it is a crimson that no plan uses and it sits first in the row.
+ *
+ * The three tones are separate tokens rather than one colour mixed three ways,
+ * because the fill has to be a lighter wash in the light appearance than in the
+ * dark one to stay a tint rather than a smear. Red here means authority, not
+ * danger: the hue is held measurably off --negative in both appearances, and the
+ * shield and the word ADMIN carry the meaning even where colour cannot.
  */
 export function RoleBadge() {
   return (
     <span
       data-testid="role-badge"
-      className={`${BADGE_BASE} border-[var(--role-admin)] bg-[color-mix(in_srgb,var(--role-admin)_16%,transparent)] text-[var(--role-admin)]`}
+      className={`${BADGE_BASE} border-[var(--role-admin-border)] bg-[var(--role-admin-bg)] text-[var(--role-admin-text)]`}
     >
       <ShieldCheck aria-hidden="true" size={12} className="shrink-0" />
       {ADMIN_BADGE_LABEL}
