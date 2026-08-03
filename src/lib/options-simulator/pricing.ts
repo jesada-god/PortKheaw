@@ -65,15 +65,31 @@ export function binomialValue(input: PricingInput, steps = 200): number {
   const probability = (Math.exp((rate - dividendYield) * dt) - down) / (up - down);
   if (probability < 0 || probability > 1) throw new Error('Binomial inputs imply an invalid risk-neutral probability');
   const discount = Math.exp(-rate * dt);
-  const values = Array.from({ length: count + 1 }, (_, index) => intrinsicValue(spot * up ** (count - index) * down ** index, strike, kind));
+  const nodeRatio = down / up;
+  const values = new Array<number>(count + 1);
+  let nodeSpot = spot * up ** count;
+  for (let index = 0; index <= count; index += 1) {
+    values[index] = intrinsicValue(nodeSpot, strike, kind);
+    nodeSpot *= nodeRatio;
+  }
   for (let step = count - 1; step >= 0; step -= 1) {
+    nodeSpot = spot * up ** step;
     for (let index = 0; index <= step; index += 1) {
       const continuation = discount * (probability * values[index] + (1 - probability) * values[index + 1]);
-      const exercise = intrinsicValue(spot * up ** (step - index) * down ** index, strike, kind);
-      values[index] = style === 'american' ? Math.max(continuation, exercise) : continuation;
+      values[index] = style === 'american'
+        ? Math.max(continuation, intrinsicValue(nodeSpot, strike, kind))
+        : continuation;
+      nodeSpot *= nodeRatio;
     }
   }
   return values[0];
+}
+
+/** Price-only path for batch calculations that do not consume Greeks. */
+export function priceOptionValue(input: PricingInput): number {
+  return input.style === 'european'
+    ? blackScholes(input).value
+    : binomialValue(input);
 }
 
 function finiteDifferenceGreeks(input: PricingInput): Greeks {

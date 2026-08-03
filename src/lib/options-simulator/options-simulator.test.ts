@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { boundedExpirationProfitFloor, buildHistogram, isOptionInTheMoney, runMonteCarlo } from './monte-carlo';
-import { blackScholes, binomialValue } from './pricing';
+import { blackScholes, binomialValue, priceOption, priceOptionValue } from './pricing';
 import { detectStrategy, optionExpirationProfit, portfolioExpirationProfit, portfolioProfitLossBasis, valuePortfolio } from './portfolio';
 import type { OptionLeg, SimulationWorkspace } from './types';
 import { calculationValidationMessages, validationMessages } from './validation';
@@ -64,6 +64,15 @@ describe('options pricing', () => {
     const european = binomialValue({ ...common, style: 'european' }, 300);
     const american = binomialValue({ ...common, style: 'american' }, 300);
     expect(american).toBeGreaterThanOrEqual(european);
+  });
+
+  it('keeps value-only pricing identical to full pricing for European and American options', () => {
+    const common = { spot: 90, strike: 100, timeYears: 1, volatility: 0.25, rate: 0.05, dividendYield: 0,
+      kind: 'put' as const };
+    for (const style of ['european', 'american'] as const) {
+      const input = { ...common, style };
+      expect(priceOptionValue(input)).toBeCloseTo(priceOption(input).value, 10);
+    }
   });
 
   it('produces Greeks consistent with finite price changes', () => {

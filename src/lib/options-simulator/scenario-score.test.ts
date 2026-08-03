@@ -95,6 +95,11 @@ const available = (input: SimulationWorkspace, prices: readonly number[] = Array
 const classified = (edgeScore: number, positiveEdge: boolean): Pick<ScenarioStrategyScore, 'edgeScore' | 'positiveEdge'> => ({ edgeScore, positiveEdge });
 
 describe('Phase 11 option strategy edge score', () => {
+  it('scores 1,000 American-option paths without calculating unused Greeks', () => {
+    const result = available(workspace({ legs: [optionLeg({ style: 'american' })] }));
+    expect(result.call?.metrics?.commonValidPaths).toBe(1_000);
+  });
+
   it('supports a Long Call without inventing a Put result', () => {
     const result = available(workspace());
     expect(result.mode).toBe('single');

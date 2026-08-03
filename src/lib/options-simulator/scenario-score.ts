@@ -1,5 +1,5 @@
 import { boundedExpirationProfitFloor, percentile, type SimulationPathSet } from './monte-carlo';
-import { priceOption } from './pricing';
+import { priceOptionValue } from './pricing';
 import type { MonteCarloSettings, OptionLeg, SimulationWorkspace } from './types';
 
 export const PROFIT_FACTOR_CAP = 10;
@@ -266,7 +266,7 @@ function pathProfitLoss(
   for (const leg of workspace.legs) {
     const days = calendarDaysBetween(targetDate, leg.expiration);
     if (!Number.isFinite(days) || days < 0) throw new Error('Target date exceeds a contract expiration');
-    const optionValue = priceOption({
+    const optionValue = priceOptionValue({
       spot: terminalPrice,
       strike: leg.strike,
       timeYears: days / 365,
@@ -275,7 +275,7 @@ function pathProfitLoss(
       dividendYield: (workspace.scenarios[0]?.dividendYield ?? workspace.monteCarlo.dividendYield) + (shock.dividendShift ?? 0),
       kind: leg.kind,
       style: leg.style,
-    }).value;
+    });
     const sign = leg.side === 'buy' ? 1 : -1;
     profit += sign * (optionValue - leg.entryPremium) * leg.quantity * leg.multiplier - leg.fees;
   }
