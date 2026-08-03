@@ -55,6 +55,14 @@ export function InstrumentLogo({
   priority?: boolean;
 }) {
   const normalizedLogoUrl = normalizeInstrumentLogoUrl(logoUrl);
+  // Next's `priority` path preloads an image and revalidates that preload when a
+  // full-document navigation tears the page down. For an external provider logo
+  // Chromium treats the teardown revalidation as a connection, so our strict
+  // CSP correctly blocks it under `connect-src` and reports a console error even
+  // though the ordinary image itself is allowed by `img-src https:`. Keep eager
+  // preloading for same-origin brand assets only; provider logos still load as
+  // normal HTTPS images without widening the CSP's exfiltration surface.
+  const imagePriority = priority && normalizedLogoUrl?.startsWith('/') === true;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const failed = Boolean(normalizedLogoUrl && (
@@ -124,8 +132,8 @@ export function InstrumentLogo({
         fill
         sizes={`${size}px`}
         unoptimized
-        priority={priority}
-        loading={priority ? 'eager' : 'lazy'}
+        priority={imagePriority}
+        loading={imagePriority ? 'eager' : 'lazy'}
         referrerPolicy="no-referrer"
         className={plain ? 'object-contain' : 'object-contain p-1'}
         onLoad={() => {

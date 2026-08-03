@@ -71,6 +71,37 @@ describe('InstrumentLogo', () => {
     expect(image.className).not.toContain('p-1');
   });
 
+  it('does not priority-preload an external provider logo', () => {
+    act(() => {
+      root.render(
+        <InstrumentLogo
+          symbol="AAPL"
+          companyName="Apple Inc."
+          logoUrl="https://images.example.test/aapl.png"
+          priority
+        />,
+      );
+    });
+    const image = container.querySelector('img') as HTMLImageElement;
+    expect(image.getAttribute('loading')).toBe('lazy');
+    expect(image.getAttribute('fetchpriority')).not.toBe('high');
+  });
+
+  it('keeps priority loading for a same-origin logo asset', () => {
+    act(() => {
+      root.render(
+        <InstrumentLogo
+          symbol="SPY"
+          companyName="S&P 500"
+          logoUrl="/market-logos/spy.svg"
+          priority
+        />,
+      );
+    });
+    const image = container.querySelector('img') as HTMLImageElement;
+    expect(image.getAttribute('loading')).toBe('eager');
+  });
+
   it('falls back to a monogram after one real provider image fails', () => {
     act(() => {
       root.render(
