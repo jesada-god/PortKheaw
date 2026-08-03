@@ -40,9 +40,17 @@ function planNameFor(tier: SubscriptionTier): string {
 export function CurrentPlanHero({
   state,
   effectiveTier,
+  trialBlockedReason,
 }: {
   state: TrialState;
   effectiveTier: SubscriptionTier;
+  /**
+   * Set when the reader is eligible for the trial but must not be offered it —
+   * today, an administrator, whose single real grant would be spent for nothing.
+   * The control stays visible and inert so the reason sits on the thing it
+   * blocks, exactly as the unconfirmed-mailbox case does.
+   */
+  trialBlockedReason?: string;
 }) {
   return (
     <section
@@ -70,7 +78,7 @@ export function CurrentPlanHero({
             <BrandMark className="h-10 w-10 sm:h-12 sm:w-12" />
           </span>
         </div>
-        <HeroAction state={state} />
+        <HeroAction state={state} trialBlockedReason={trialBlockedReason} />
       </div>
     </section>
   );
@@ -118,7 +126,19 @@ function HeroSummary({ state }: { state: TrialState }) {
   );
 }
 
-function HeroAction({ state }: { state: TrialState }) {
+function HeroAction({ state, trialBlockedReason }: { state: TrialState; trialBlockedReason?: string }) {
+  if (state.kind === 'eligible' && trialBlockedReason) {
+    return (
+      <div className="flex flex-col gap-3 border-t border-[var(--border)] pt-5">
+        <TrialStartButton disabled />
+        <p data-testid="trial-blocked-note" className="flex items-start gap-2 text-sm leading-6 text-[var(--text-secondary)]">
+          <ShieldCheck aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-[var(--role-admin)]" />
+          <span>{trialBlockedReason}</span>
+        </p>
+      </div>
+    );
+  }
+
   if (state.kind === 'eligible') {
     return (
       <div className="flex flex-col gap-3 border-t border-[var(--border)] pt-5">

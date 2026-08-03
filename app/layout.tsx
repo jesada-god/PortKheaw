@@ -6,6 +6,7 @@ import { appConfig } from '@/src/config/app';
 import { ThemeProvider } from '@/src/themes/ThemeProvider';
 import { THEME_BOOTSTRAP } from '@/src/themes/bootstrap';
 import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
+import { AdminPreviewBanner } from '@/src/components/subscription/AdminPreviewBanner';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 
 export const metadata: Metadata = {
@@ -100,11 +101,13 @@ export default async function RootLayout({children}: {children: React.ReactNode}
         <script dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
         <ThemeProvider>
           <EntitlementProvider
-            tier={entitlement.tier}
+            tier={entitlement.effectiveAccessTier}
             authenticated={entitlement.authenticated}
             trialOffer={entitlement.trialOffer}
           >
-            <MainLayout>{children}</MainLayout>
+            <MainLayout banner={<AdminPreviewBanner entitlement={entitlement} />}>
+              {children}
+            </MainLayout>
             <Toaster />
           </EntitlementProvider>
         </ThemeProvider>

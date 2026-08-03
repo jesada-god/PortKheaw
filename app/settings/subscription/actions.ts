@@ -1,9 +1,17 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import {
+  isAdminRequiredError,
+  requireAdmin,
+  resolveRequestAccountAccess,
+  setAdminAccessPreview,
+} from '@/src/lib/subscription/account-access';
+import { adminPreviewModes, type AdminPreviewMode } from '@/src/lib/subscription/admin-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 import { createClient } from '@/src/lib/supabase/server';
 import {
+  ADMIN_TRIAL_BLOCKED_MESSAGE,
   trialFailureCode,
   trialFailureMessage,
   type TrialFailureCode,
@@ -13,14 +21,23 @@ export type StartTrialResult =
   | { ok: true; trialEndsAt: string; message: string }
   | { ok: false; code: TrialFailureCode; message: string };
 
+type AuditEvent =
+  | 'trial_started'
+  | 'trial_start_failed'
+  | 'admin_access_preview_started'
+  | 'admin_access_preview_changed'
+  | 'admin_access_preview_cleared'
+  | 'admin_access_preview_failed';
+
 /**
  * Surfaces the outcome in the same structured-log shape the rest of the server
- * uses. No identifiers are logged and no analytics dependency is introduced —
- * the event name and the typed code are the whole record.
+ * uses. No identifiers, tokens or account data are logged and no analytics
+ * dependency is introduced — the event name and the typed code are the whole
+ * record. The preview events name only the mode, which is not personal data.
  */
-function record(event: 'trial_started' | 'trial_start_failed', code?: TrialFailureCode) {
-  const payload = JSON.stringify({ event, ...(code ? { code } : {}) });
-  if (event === 'trial_start_failed') console.warn(payload);
+function record(event: AuditEvent, detail?: string) {
+  const payload = JSON.stringify({ event, ...(detail ? { detail } : {}) });
+  if (event.endsWith('_failed')) console.warn(payload);
   else console.info(payload);
 }
 
@@ -49,6 +66,17 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
     return { ok: false, code: 'UNAUTHENTICATED', message: trialFailureMessage('UNAUTHENTICATED') };
   }
 
+  /*
+   * An administrator already has the whole product and can simulate a trial
+   * without one, so spending the account's single real grant would only destroy
+   * a state they may later need to test against. Refused here, before the RPC.
+   */
+  const access = await resolveRequestAccountAccess();
+  if (access.isAdmin) {
+    record('trial_start_failed', 'ADMIN_TRIAL_BLOCKED');
+    return { ok: false, code: 'UNAVAILABLE', message: ADMIN_TRIAL_BLOCKED_MESSAGE };
+  }
+
   try {
     const grant = await new SubscriptionRepository(client).startEliteTrial();
     for (const path of ENTITLEMENT_PATHS) revalidatePath(path);
@@ -63,4 +91,85 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
     record('trial_start_failed', code);
     return { ok: false, code, message: trialFailureMessage(code) };
   }
+}
+
+export type AdminPreviewFailureCode = 'ADMIN_REQUIRED' | 'INVALID_MODE' | 'UNAVAILABLE';
+
+export type AdminPreviewResult =
+  | { ok: true; mode: AdminPreviewMode; expiresAt: string | null; message: string }
+  | { ok: false; code: AdminPreviewFailureCode; message: string };
+
+const ADMIN_PREVIEW_FAILURE_MESSAGE: Record<AdminPreviewFailureCode, string> = {
+  ADMIN_REQUIRED: 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ จึงจำลองสิทธิ์ไม่ได้',
+  INVALID_MODE: 'โหมดทดสอบไม่ถูกต้อง กรุณาเลือกใหม่อีกครั้ง',
+  UNAVAILABLE: 'เปลี่ยนโหมดทดสอบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
+};
+
+const ADMIN_PREVIEW_SUCCESS_MESSAGE: Record<AdminPreviewMode, string> = {
+  actual: 'กลับสู่สิทธิ์จริงแล้ว',
+  basic: 'กำลังจำลองสิทธิ์ Basic',
+  pro: 'กำลังจำลองสิทธิ์ Pro',
+  elite: 'กำลังจำลองสิทธิ์ Elite',
+  elite_trial: 'กำลังจำลองสิทธิ์ Elite Trial',
+  expired_trial: 'กำลังจำลองสถานะ Trial หมดอายุ',
+};
+
+/**
+ * Everything under the root layout. A preview changes what the layout itself
+ * renders — the banner — and what every page beneath it is allowed to show, so
+ * invalidating the layout is the only revalidation that is actually complete.
+ * Path-by-path invalidation would leave dynamic segments such as `/stock/[symbol]`
+ * holding a cached premium render from the tier the operator just left.
+ */
+function revalidateEveryEntitlementSurface() {
+  revalidatePath('/', 'layout');
+}
+
+/**
+ * Start, change or end an access preview.
+ *
+ * The mode is the only input, and it is checked against the same allowlist the
+ * database checks. Authorization is not decided here: `requireAdmin()` reads the
+ * stored role from the trusted resolver, and the RPC then refuses a second time
+ * inside the database. A caller who reaches this action with a forged payload
+ * therefore still has to be an administrator for anything to happen.
+ *
+ * No subscription, billing or trial field is read or written on any path.
+ */
+export async function setAdminAccessPreviewAction(mode: AdminPreviewMode): Promise<AdminPreviewResult> {
+  if (!adminPreviewModes.includes(mode)) {
+    record('admin_access_preview_failed', 'INVALID_MODE');
+    return { ok: false, code: 'INVALID_MODE', message: ADMIN_PREVIEW_FAILURE_MESSAGE.INVALID_MODE };
+  }
+
+  try {
+    const before = await requireAdmin();
+    const grant = await setAdminAccessPreview(mode);
+    revalidateEveryEntitlementSurface();
+
+    record(
+      grant.mode === 'actual'
+        ? 'admin_access_preview_cleared'
+        : before.adminPreviewMode === 'actual'
+          ? 'admin_access_preview_started'
+          : 'admin_access_preview_changed',
+      grant.mode,
+    );
+
+    return {
+      ok: true,
+      mode: grant.mode,
+      expiresAt: grant.expiresAt,
+      message: ADMIN_PREVIEW_SUCCESS_MESSAGE[grant.mode],
+    };
+  } catch (error) {
+    const code: AdminPreviewFailureCode = isAdminRequiredError(error) ? 'ADMIN_REQUIRED' : 'UNAVAILABLE';
+    record('admin_access_preview_failed', code);
+    return { ok: false, code, message: ADMIN_PREVIEW_FAILURE_MESSAGE[code] };
+  }
+}
+
+/** The explicit way back. Identical rules; `actual` is not a stored state. */
+export async function clearAdminAccessPreviewAction(): Promise<AdminPreviewResult> {
+  return setAdminAccessPreviewAction('actual');
 }

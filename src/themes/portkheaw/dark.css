@@ -37,6 +37,23 @@ html[data-theme="portkheaw"]:not([data-appearance]) {
   --session-post: #9BB6F5;
   --session-closed: #93A3AE;
   --session-event: #F5A85C;
+  /*
+   * Plan and role identity tones. One value per badge, defined here so the
+   * badge components carry no colour of their own and a plan cannot be painted
+   * two different greens on two different pages.
+   *
+   * Elite Trial is a paler gold than paid Elite, but the pale/rich distinction
+   * is only readable in this appearance — in light it has to darken past the
+   * point where the two separate. So the difference that actually carries the
+   * meaning is the word on the badge and its outline treatment, never the tone.
+   * Admin is a violet: far enough from every plan tone, and from gain green and
+   * loss red, that it cannot be read as either a plan or a price.
+   */
+  --plan-basic: #6FD39A;
+  --plan-pro: #4CC9D6;
+  --plan-elite: #E5C069;
+  --plan-elite-trial: #EBD9A6;
+  --role-admin: #C79BF2;
   --focus-ring: #D7FF00;
   --input-bg: #0A0F0C;
   --chart-bg: #0D120F;

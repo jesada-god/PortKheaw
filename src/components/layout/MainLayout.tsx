@@ -7,7 +7,12 @@ import { OfflineNotice } from '@/src/components/ui/OfflineNotice';
 import { AppRuntime } from './AppRuntime';
 import { isAuthShellPath } from '@/src/lib/auth/paths';
 
-export default function MainLayout({ children }: { children: ReactNode }) {
+/**
+ * `banner` is a server-rendered global notice — today, the admin access-preview
+ * strip. It is a prop rather than an import because only the root layout can
+ * resolve it, and it must not turn this client component into a server one.
+ */
+export default function MainLayout({ children, banner }: { children: ReactNode; banner?: ReactNode }) {
   const pathname = usePathname();
 
   /*
@@ -44,6 +49,7 @@ export default function MainLayout({ children }: { children: ReactNode }) {
   return <div className="min-h-dvh w-full max-w-full overflow-x-hidden bg-[var(--bg)] font-sans text-[var(--text)]">
     <AppRuntime />
     <main className="flex min-h-dvh min-w-0 flex-col bg-[var(--bg)] pb-[var(--dock-clearance)] transition-colors duration-200">
+      {banner}
       <OfflineNotice />
       <div className="mx-auto w-full max-w-[1600px] flex-1">{children}</div>
     </main>

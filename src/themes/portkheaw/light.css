@@ -38,6 +38,18 @@ html[data-theme="portkheaw"][data-appearance="light"] {
   --session-post: #2F5AAE;
   --session-closed: #5A6A75;
   --session-event: #9C5A1A;
+  /*
+   * The same five plan and role identities, darkened to clear AA on every light
+   * surface. The dark appearance's tones read around 1.5:1 on white — a badge
+   * nobody can read. Elite and Elite Trial necessarily converge here, which is
+   * why the badge label and outline, not the tone, are what separate a trial
+   * from a paid plan.
+   */
+  --plan-basic: #0F6B45;
+  --plan-pro: #0F6E7A;
+  --plan-elite: #7E5A10;
+  --plan-elite-trial: #6B5526;
+  --role-admin: #7A2E8C;
   --focus-ring: #596D00;
   --input-bg: #FFFFFF;
   --chart-bg: #FFFFFF;

@@ -27,8 +27,18 @@ export type TrialState =
   | { kind: 'used' }
   | { kind: 'paid'; tier: SubscriptionTier };
 
+/**
+ * The subset of a snapshot the trial rule actually reads. Naming it lets the
+ * trusted account resolver — which never carries billing identifiers — answer
+ * the same question from the same code as the subscription centre.
+ */
+export type TrialSnapshot = Pick<
+  SubscriptionSnapshot,
+  'tier' | 'status' | 'trialEndsAt' | 'trialUsedAt' | 'currentPeriodEnd' | 'databaseNow'
+>;
+
 export function resolveTrialState(
-  snapshot: SubscriptionSnapshot | null,
+  snapshot: TrialSnapshot | null,
   emailVerified: boolean,
 ): TrialState {
   if (!snapshot) return { kind: 'eligible' };
@@ -58,6 +68,24 @@ export function resolveTrialState(
 /** Only one state offers the button, so the page never renders two trial CTAs. */
 export function canStartTrial(state: TrialState): boolean {
   return state.kind === 'eligible';
+}
+
+/** Whether the one free Elite trial is running, spent, or still on the table. */
+export type TrialOffer = 'available' | 'active' | 'used';
+
+/**
+ * Which trial call to action a paywall should offer.
+ *
+ * Mailbox confirmation is deliberately passed as `true` here: it gates *starting*
+ * a trial, not whether one is still on offer, and both of its outcomes
+ * (`eligible`, `email-unverified`) mean the same thing to an upgrade prompt.
+ * Deriving the offer from the one trial rule keeps it from drifting.
+ */
+export function resolveTrialOffer(snapshot: TrialSnapshot | null): TrialOffer {
+  const state = resolveTrialState(snapshot, true);
+  if (state.kind === 'trialing') return 'active';
+  if (state.kind === 'used' || state.kind === 'paid') return 'used';
+  return 'available';
 }
 
 const MINUTE = 60_000;
@@ -116,6 +144,14 @@ const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
 export function trialFailureMessage(code: TrialFailureCode): string {
   return TRIAL_FAILURE_MESSAGES[code] ?? TRIAL_FAILURE_MESSAGES.UNAVAILABLE;
 }
+
+/**
+ * Why an administrator is not offered the trial. It lives here with the rest of
+ * the trial copy rather than beside the action, because a `'use server'` module
+ * may only export functions — and because this sentence is shown in two places.
+ */
+export const ADMIN_TRIAL_BLOCKED_MESSAGE =
+  'บัญชีผู้ดูแลระบบมีสิทธิ์ Elite อยู่แล้ว จึงไม่ต้องเริ่มทดลอง — ใช้ “ทดสอบการเข้าถึงในแพ็กเกจ” เพื่อจำลอง Elite Trial แทน';
 
 /**
  * Maps a PostgREST error onto a typed code. The database raises the code as the

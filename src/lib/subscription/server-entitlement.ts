@@ -1,43 +1,31 @@
 import 'server-only';
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@/src/lib/supabase/server';
+import { resolveRequestAccountAccess } from './account-access';
 import type { SubscriptionCapability } from './capabilities';
 import {
-  ANONYMOUS_ENTITLEMENT,
   denyEntitlement,
   entitlementDenialBody,
   type EntitlementDenial,
   type RequestEntitlement,
 } from './entitlement-guard';
-import { SubscriptionRepository } from './repository';
 
 /**
  * Resolve the caller's entitlement for THIS request.
  *
- * The tier is read from the database through the same repository the
- * subscription centre uses, so a trial that started a second ago is already in
- * force and one that expired a second ago is already gone — the resolver reads
- * the database clock, never a cron job's idea of the time.
+ * The tier is the *effective access* tier from the one trusted account
+ * resolver, so a trial that started a second ago is already in force, one that
+ * expired a second ago is already gone, and an administrator previewing Basic is
+ * refused exactly what a Basic reader is refused. It reads the database clock,
+ * never a cron job's idea of the time.
  *
  * Every failure resolves to Basic. A caller with no session, a misconfigured
  * Supabase, or a snapshot that could not be read gets the free surface, never
  * the premium one.
  */
 export async function resolveRequestEntitlement(): Promise<RequestEntitlement> {
-  const client = await createClient();
-  if (!client) return ANONYMOUS_ENTITLEMENT;
-
-  const { data: { user }, error } = await client.auth.getUser();
-  if (error || !user) return ANONYMOUS_ENTITLEMENT;
-
-  try {
-    return { authenticated: true, tier: await new SubscriptionRepository(client).getEffectiveTier() };
-  } catch {
-    // A readable session with an unreadable subscription is still a signed-in
-    // reader — they simply get nothing premium until the snapshot resolves.
-    return { authenticated: true, tier: 'basic' };
-  }
+  const access = await resolveRequestAccountAccess();
+  return { authenticated: access.authenticated, tier: access.effectiveAccessTier };
 }
 
 /**

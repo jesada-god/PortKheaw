@@ -5,6 +5,8 @@ export type AppLanguage = 'th' | 'en';
 export type PortfolioType = 'STOCK' | 'OPTION' | 'LEGACY';
 export type SubscriptionTier = 'basic' | 'pro' | 'elite';
 export type SubscriptionStatus = 'basic' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
+export type UserRole = 'user' | 'admin';
+export type AdminPreviewMode = 'actual' | 'basic' | 'pro' | 'elite' | 'elite_trial' | 'expired_trial';
 
 export interface Database {
   public: {
@@ -112,6 +114,51 @@ export interface Database {
         Update: {
           name?: string; base_currency?: Currency; portfolio_type?: PortfolioType; is_legacy?: boolean;
           archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null; updated_at?: string;
+        };
+        Relationships: [];
+      };
+      /**
+       * Operator role, deliberately separate from `user_subscriptions`. Read-only
+       * to the account it belongs to; there is no client write path at all, so
+       * `Insert` and `Update` exist only for the migration's own seeding.
+       */
+      user_roles: {
+        Row: {
+          user_id: string;
+          role: UserRole;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          role?: UserRole;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          role?: UserRole;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      /** Written only by the trusted preview routines; no grant to any client role. */
+      admin_access_previews: {
+        Row: {
+          user_id: string;
+          mode: AdminPreviewMode;
+          expires_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          mode: AdminPreviewMode;
+          expires_at: string;
+          updated_at?: string;
+        };
+        Update: {
+          mode?: AdminPreviewMode;
+          expires_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -433,6 +480,43 @@ export interface Database {
           trial_used_at: string | null;
           database_now: string;
         }>;
+      };
+      /**
+       * Role, running preview and subscription in one trusted read. The database
+       * has already dropped a lapsed preview and a preview held by an account
+       * that is no longer an administrator, so the caller never has to.
+       */
+      get_my_account_access: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          user_id: string;
+          role: UserRole;
+          preview_mode: AdminPreviewMode;
+          preview_expires_at: string | null;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          current_period_end: string | null;
+          database_now: string;
+        }>;
+      };
+      /**
+       * Takes a mode and nothing else. Identity comes from `auth.uid()`, the
+       * administrator check is made against the stored role inside the database,
+       * and no subscription, billing or trial column is read or written.
+       */
+      set_my_admin_access_preview: {
+        Args: { input_mode: AdminPreviewMode };
+        Returns: Array<{
+          mode: AdminPreviewMode;
+          expires_at: string | null;
+          database_now: string;
+        }>;
+      };
+      clear_my_admin_access_preview: {
+        Args: Record<PropertyKey, never>;
+        Returns: undefined;
       };
       create_portfolio: { Args: { input_name: string; input_type: 'STOCK' | 'OPTION' }; Returns: string };
       update_portfolio_details: { Args: { target_portfolio_id: string; input_name: string; input_type: PortfolioType }; Returns: undefined };

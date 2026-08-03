@@ -50,7 +50,7 @@ export default async function StockDetailPage({
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
-    loadEntitledMarketSignal(symbol, entitlement.tier),
+    loadEntitledMarketSignal(symbol, entitlement.effectiveAccessTier),
     getInstrumentMetadata([symbol]),
   ]);
 

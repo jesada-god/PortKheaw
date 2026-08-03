@@ -61,13 +61,21 @@ const SESSION_TONES = [
   '--session-closed',
   '--session-event',
 ] as const;
+/** Plan and role badge tones. They colour words, so the 4.5:1 text bar applies. */
+const IDENTITY_TONES = [
+  '--plan-basic',
+  '--plan-pro',
+  '--plan-elite',
+  '--plan-elite-trial',
+  '--role-admin',
+] as const;
 
 describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) => {
   const palette = tokens(appearance);
 
   it('has every token the checks below need', () => {
     expect(Object.keys(palette).length).toBeGreaterThan(15);
-    for (const name of [...SURFACES, ...TEXT_ON_SURFACES, ...STATUS, ...SESSION_TONES, '--accent-fg', '--border-strong']) {
+    for (const name of [...SURFACES, ...TEXT_ON_SURFACES, ...STATUS, ...SESSION_TONES, ...IDENTITY_TONES, '--accent-fg', '--border-strong']) {
       expect(`${name}=${palette[name] ?? 'MISSING'}`).toMatch(/#[0-9A-Fa-f]{6}$/);
     }
   });
@@ -141,6 +149,38 @@ describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) 
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  /**
+   * Plan and role badges.
+   *
+   * A badge is a word in its identity tone on a tinted wash of the same tone,
+   * which resolves to very close to the surface underneath. So the bar is the
+   * text bar, on every surface a card can sit on — and the light appearance is
+   * again where it bites: the dark tones read around 1.5:1 on white.
+   */
+  it('keeps every plan and role badge tone at AA on every surface', () => {
+    const failures: string[] = [];
+    for (const tone of IDENTITY_TONES) {
+      for (const surface of SURFACES) {
+        const ratio = contrast(palette[tone], palette[surface]);
+        if (ratio < 4.5) failures.push(`${tone} on ${surface} = ${ratio}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  /**
+   * The operator role must never be mistakable for a plan. Admin is a violet and
+   * every plan tone is green, teal or gold, so the separation is in hue and
+   * survives both appearances.
+   */
+  it('keeps the admin tone clear of every plan tone', () => {
+    const plans = IDENTITY_TONES.filter((tone) => tone !== '--role-admin');
+    for (const plan of plans) {
+      expect(palette['--role-admin']).not.toBe(palette[plan]);
+      expect(hueSeparation(palette['--role-admin'], palette[plan])).toBeGreaterThanOrEqual(60);
+    }
   });
 
   /**
