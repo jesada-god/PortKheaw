@@ -85,6 +85,8 @@ describe('InstrumentLogo', () => {
     const image = container.querySelector('img') as HTMLImageElement;
     expect(image.getAttribute('loading')).toBe('lazy');
     expect(image.getAttribute('fetchpriority')).not.toBe('high');
+    expect(image.getAttribute('data-nimg')).toBeNull();
+    expect(image.getAttribute('decoding')).toBe('async');
   });
 
   it('keeps priority loading for a same-origin logo asset', () => {
@@ -100,6 +102,7 @@ describe('InstrumentLogo', () => {
     });
     const image = container.querySelector('img') as HTMLImageElement;
     expect(image.getAttribute('loading')).toBe('eager');
+    expect(image.getAttribute('data-nimg')).toBe('fill');
   });
 
   it('falls back to a monogram after one real provider image fails', () => {

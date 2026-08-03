@@ -55,14 +55,7 @@ export function InstrumentLogo({
   priority?: boolean;
 }) {
   const normalizedLogoUrl = normalizeInstrumentLogoUrl(logoUrl);
-  // Next's `priority` path preloads an image and revalidates that preload when a
-  // full-document navigation tears the page down. For an external provider logo
-  // Chromium treats the teardown revalidation as a connection, so our strict
-  // CSP correctly blocks it under `connect-src` and reports a console error even
-  // though the ordinary image itself is allowed by `img-src https:`. Keep eager
-  // preloading for same-origin brand assets only; provider logos still load as
-  // normal HTTPS images without widening the CSP's exfiltration surface.
-  const imagePriority = priority && normalizedLogoUrl?.startsWith('/') === true;
+  const localLogo = normalizedLogoUrl?.startsWith('/') === true;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const failed = Boolean(normalizedLogoUrl && (
@@ -83,6 +76,10 @@ export function InstrumentLogo({
   const fail = () => {
     if (normalizedLogoUrl) failedLogos.add(normalizedLogoUrl);
     setFailedUrl(normalizedLogoUrl);
+  };
+  const loaded = () => {
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
   };
   const style = {
     position: 'relative',
@@ -126,22 +123,36 @@ export function InstrumentLogo({
         className,
       )}
     >
-      <Image
-        src={normalizedLogoUrl}
-        alt={`โลโก้ ${companyName || symbol}`}
-        fill
-        sizes={`${size}px`}
-        unoptimized
-        priority={imagePriority}
-        loading={imagePriority ? 'eager' : 'lazy'}
-        referrerPolicy="no-referrer"
-        className={plain ? 'object-contain' : 'object-contain p-1'}
-        onLoad={() => {
-          if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }}
-        onError={fail}
-      />
+      {localLogo ? (
+        <Image
+          src={normalizedLogoUrl}
+          alt={`โลโก้ ${companyName || symbol}`}
+          fill
+          sizes={`${size}px`}
+          unoptimized
+          priority={priority}
+          loading={priority ? 'eager' : 'lazy'}
+          referrerPolicy="no-referrer"
+          className={plain ? 'object-contain' : 'object-contain p-1'}
+          onLoad={loaded}
+          onError={fail}
+        />
+      ) : (
+        // `next/image` calls HTMLImageElement.decode(), which Chromium can
+        // reclassify as connect-src when an external image load is interrupted.
+        // A native image stays governed by img-src without weakening the CSP.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={normalizedLogoUrl}
+          alt={`Logo ${companyName || symbol}`}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className={`absolute inset-0 h-full w-full ${plain ? 'object-contain' : 'object-contain p-1'}`}
+          onLoad={loaded}
+          onError={fail}
+        />
+      )}
     </span>
   );
 }
