@@ -97,6 +97,13 @@ describe('POST /api/option-simulations/compute/what-if', () => {
     expect(Number.isFinite(payload.data.valuation.theoreticalValue)).toBe(true);
     expect(Number.isFinite(payload.data.valuation.profitLoss)).toBe(true);
     expect(Object.values(payload.data.valuation.greeks).every(Number.isFinite)).toBe(true);
+    expect(payload.data.valuation.initialDebit).toBe(200);
+    expect(payload.data.valuation.initialRisk).toBe(200);
+    expect(payload.data.valuation.maxLoss).toBe(200);
+    expect(payload.data.valuation.returnPct).toBeCloseTo(payload.data.valuation.profitLoss / 200 * 100, 10);
+    expect(payload.data.valuation.breakEvenPrices).toEqual([9]);
+    expect(payload.data.valuation.breakEvenPrices).toHaveLength(1);
+    expect(payload.data.valuation.payoff).toHaveLength(241);
   });
 
   it('returns safe Thai field issues when Target Date exceeds expiration', async () => {

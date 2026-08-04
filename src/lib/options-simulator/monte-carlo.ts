@@ -1,4 +1,5 @@
 import { portfolioExpirationProfit } from './portfolio';
+import { analyzeExpirationPayoff, buildCanonicalStrategyResult } from './result-contract';
 import type { MonteCarloResult, MonteCarloSettings, OptionLeg, SimulationWorkspace } from './types';
 
 const ALLOWED_PATHS = new Set([1_000, 5_000, 10_000, 25_000, 50_000]);
@@ -74,12 +75,8 @@ export function buildHistogram(values: number[], bucketCount = 24): HistogramBuc
 }
 
 export function boundedExpirationProfitFloor(workspace: SimulationWorkspace): number | null {
-  const upperTailSlope = workspace.stockQuantity + workspace.legs.reduce((slope, leg) => (
-    slope + (leg.kind === 'call' ? (leg.side === 'buy' ? 1 : -1) * leg.quantity * leg.multiplier : 0)
-  ), 0);
-  if (upperTailSlope < 0) return null;
-  const candidatePrices = [...new Set([0, ...workspace.legs.map((leg) => leg.strike)])];
-  return Math.min(...candidatePrices.map((price) => portfolioExpirationProfit(workspace, price)));
+  const maxLoss = analyzeExpirationPayoff(workspace).maxLoss;
+  return maxLoss === null ? null : -maxLoss;
 }
 
 function mulberry32(seed: number): () => number {
@@ -270,7 +267,9 @@ export function runMonteCarlo(
   const targetPrice = options.targetPrice ?? pathSet.targetPrice;
   const reachedCount = reachedTarget.filter(Boolean).length;
   const closedAbove = targetPrice === undefined ? 0 : terminalPrices.filter((price) => price >= targetPrice).length;
+  const expectedProfitLoss = finiteNumber(mean(profits));
   return {
+    ...buildCanonicalStrategyResult(workspace, expectedProfitLoss),
     paths: settings.paths,
     generatedPaths: pathSet.generatedPaths,
     validPaths,
@@ -280,7 +279,7 @@ export function runMonteCarlo(
     probabilityOfProfit: probability(profits.filter((value) => value > 0).length, validPaths),
     probabilityItm: probability(itm, validPaths),
     probabilityOtm: probability(validPaths - itm, validPaths),
-    expectedProfitLoss: finiteNumber(mean(profits)),
+    expectedProfitLoss,
     medianProfitLoss: finiteNumber(medianProfitLoss),
     percentiles: { p1: finiteNumber(p1), p5: finiteNumber(p5), p95: finiteNumber(p95), p99: finiteNumber(p99) },
     confidenceIntervals: { p95: [finiteNumber(p5), finiteNumber(p95)], p99: [finiteNumber(p1), finiteNumber(p99)] },

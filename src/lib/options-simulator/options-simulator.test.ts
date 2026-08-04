@@ -4,6 +4,7 @@ import { blackScholes, binomialValue, priceOption, priceOptionValue } from './pr
 import { detectStrategy, optionExpirationProfit, portfolioExpirationProfit, portfolioProfitLossBasis, valuePortfolio } from './portfolio';
 import type { OptionLeg, SimulationWorkspace } from './types';
 import { calculationPortfolioInputSchema, calculationValidationMessages, monteCarloCalculationInputSchema, prepareMonteCarloCalculationInput, prepareWhatIfCalculationInput, validationMessages, whatIfCalculationInputSchema } from './validation';
+import { normalizeBreakEvenPrices } from './result-contract';
 
 const leg = (overrides: Partial<OptionLeg> = {}): OptionLeg => ({ id: 'leg-1', kind: 'call', side: 'buy', quantity: 1,
   strike: 100, expiration: '2027-01-01', entryPremium: 10, impliedVolatility: 0.2, multiplier: 100, fees: 2,
@@ -106,25 +107,27 @@ describe('portfolio payoff and strategy handling', () => {
     expect(scaled).toBe(unscaled * 3 * 50);
   });
 
-  it('uses absolute net debit for debit positions and the existing gross-premium policy for credit positions', () => {
+  it('uses the canonical finite max-loss risk for returns and leaves unlimited-loss returns unavailable', () => {
     const debitSpread = workspace({ legs: [
       leg({ entryPremium: 10, fees: 0 }),
       leg({ id: 'leg-2', side: 'sell', strike: 110, entryPremium: 5, fees: 0 }),
     ] });
     const debitValuation = valuePortfolio(debitSpread, debitSpread.scenarios[0]);
     expect(portfolioProfitLossBasis(debitSpread)).toEqual({ amount: 500, policy: 'absolute-net-debit' });
-    expect(debitValuation.profitLossPercent).toBeCloseTo(debitValuation.profitLoss / 500 * 100, 10);
+    expect(debitValuation.initialRisk).toBe(500);
+    expect(debitValuation.returnPct).toBeCloseTo(debitValuation.profitLoss / 500 * 100, 10);
 
     const creditPosition = workspace({ legs: [leg({ side: 'sell', entryPremium: 10, fees: 0 })] });
     const creditValuation = valuePortfolio(creditPosition, creditPosition.scenarios[0]);
     expect(portfolioProfitLossBasis(creditPosition)).toEqual({ amount: 1_000, policy: 'gross-premium-at-risk' });
-    expect(creditValuation.profitLossPercent).toBeCloseTo(creditValuation.profitLoss / 1_000 * 100, 10);
+    expect(creditValuation.initialRisk).toBeNull();
+    expect(creditValuation.returnPct).toBeNull();
   });
 
   it('returns an unavailable P&L percentage instead of Infinity when the denominator is zero', () => {
     const zeroBasis = workspace({ legs: [leg({ entryPremium: 0, fees: 0 })] });
     expect(portfolioProfitLossBasis(zeroBasis)).toEqual({ amount: null, policy: 'unavailable' });
-    expect(valuePortfolio(zeroBasis, zeroBasis.scenarios[0]).profitLossPercent).toBeNull();
+    expect(valuePortfolio(zeroBasis, zeroBasis.scenarios[0]).returnPct).toBeNull();
   });
 
   it('aggregates multiple legs and detects common strategies', () => {
@@ -133,7 +136,7 @@ describe('portfolio payoff and strategy handling', () => {
     expect(detectStrategy(spread)).toBe('Vertical Spread');
     const valuation = valuePortfolio(workspace({ legs: spread }), workspace({ legs: spread }).scenarios[0]);
     expect(valuation.legs).toHaveLength(2);
-    expect(valuation.breakEvens[0]).toBeCloseTo(105, 1);
+    expect(valuation.breakEvenPrices[0]).toBeCloseTo(105, 1);
     expect(valuation.unlimitedLoss).toBe(false);
   });
 
@@ -147,8 +150,27 @@ describe('portfolio payoff and strategy handling', () => {
   it('derives single-leg Call and Put break-even from strike and entry premium', () => {
     const callInput = workspace({ legs: [leg({ kind: 'call', strike: 100, entryPremium: 5, fees: 0 })] });
     const putInput = workspace({ legs: [leg({ kind: 'put', strike: 100, entryPremium: 5, fees: 0 })] });
-    expect(valuePortfolio(callInput, callInput.scenarios[0]).breakEvens[0]).toBeCloseTo(105, 1);
-    expect(valuePortfolio(putInput, putInput.scenarios[0]).breakEvens[0]).toBeCloseTo(95, 1);
+    expect(valuePortfolio(callInput, callInput.scenarios[0]).breakEvenPrices).toEqual([105]);
+    expect(valuePortfolio(putInput, putInput.scenarios[0]).breakEvenPrices).toEqual([95]);
+  });
+
+  it('returns one exact canonical Long Call break-even independently of its 241-point payoff grid', () => {
+    const longCall = workspace({ legs: [leg({ kind: 'call', side: 'buy', strike: 100, entryPremium: 5, quantity: 2, multiplier: 50, fees: 2 })] });
+    const valuation = valuePortfolio(longCall, longCall.scenarios[0]);
+
+    expect(valuation.initialDebit).toBe(502);
+    expect(valuation.initialRisk).toBe(502);
+    expect(valuation.maxLoss).toBe(502);
+    expect(valuation.breakEvenPrices).toEqual([105.02]);
+    expect(valuation.breakEvenPrices).toHaveLength(1);
+    expect(valuation.payoff).toHaveLength(241);
+    expect(valuation.returnPct).toBeCloseTo(valuation.profitLoss / valuation.initialRisk! * 100, 10);
+  });
+
+  it('sorts and deduplicates break-even prices and rejects values beyond the strategy bound', () => {
+    expect(normalizeBreakEvenPrices([105, 95, 105, 95 + 1e-12], 2)).toEqual([95, 105]);
+    expect(() => normalizeBreakEvenPrices([95, 100, 105], 2)).toThrow('Break-even invariant failed');
+    expect(() => normalizeBreakEvenPrices([95, Number.NaN], 2)).toThrow('must be finite');
   });
 
   it('classifies naked short call loss as unlimited', () => {

@@ -14,12 +14,13 @@ const workspace = (overrides: Partial<SimulationWorkspace> = {}): SimulationWork
 });
 
 const whatIfResult: PortfolioValuation = {
-  legs: [], theoreticalValue: 123, profitLoss: 23, profitLossPercent: 23, netDebitCredit: 100,
-  greeks: { delta: 0.5, gamma: 0.01, theta: -0.02, vega: 0.1, rho: 0.01 }, breakEvens: [105],
+  legs: [], theoreticalValue: 123, profitLoss: 23, initialDebit: 100, initialRisk: 100, returnPct: 23, netDebitCredit: 100,
+  greeks: { delta: 0.5, gamma: 0.01, theta: -0.02, vega: 0.1, rho: 0.01 }, breakEvenPrices: [105],
   maxProfit: null, maxLoss: 100, unlimitedProfit: true, unlimitedLoss: false, payoff: [],
 };
 
 const monteCarloResult: MonteCarloResult = {
+  initialDebit: 100, initialRisk: 100, returnPct: 10, maxLoss: 100, breakEvenPrices: [105],
   paths: 1_000, seed: 42, probabilityOfProfit: 0.5, probabilityItm: 0.5, probabilityOtm: 0.5,
   expectedProfitLoss: 10, medianProfitLoss: 5, percentiles: { p1: -100, p5: -50, p95: 80, p99: 120 },
   confidenceIntervals: { p95: [-50, 80], p99: [-100, 120] }, expectedDrawdown: 0.2,
@@ -35,15 +36,18 @@ describe('simulation entitlement shaping', () => {
   });
 
   it('strips downgrade-ineligible snapshots without mutating the saved object', () => {
-    const saved = workspace({ resultSnapshot: { whatIf: whatIfResult, monteCarlo: monteCarloResult } });
+    const scenarioScore = { status: 'available', pathSetId: 'SCORE_SECRET' };
+    const saved = workspace({ resultSnapshot: { whatIf: whatIfResult, monteCarlo: monteCarloResult, scenarioScore } });
 
     const pro = shapeSimulationForTier(saved, 'pro');
     const basic = shapeSimulationForTier(saved, 'basic');
 
     expect(pro.resultSnapshot).toEqual({ whatIf: whatIfResult });
     expect(JSON.stringify(pro)).not.toContain('ELITE_SECRET');
+    expect(JSON.stringify(pro)).not.toContain('SCORE_SECRET');
     expect(basic.resultSnapshot).toBeNull();
     expect(saved.resultSnapshot?.monteCarlo).toBe(monteCarloResult);
+    expect(saved.resultSnapshot?.scenarioScore).toBe(scenarioScore);
     expect(shapeSimulationForTier(saved, 'elite')).toBe(saved);
   });
 });

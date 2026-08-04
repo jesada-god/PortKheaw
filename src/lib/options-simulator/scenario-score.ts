@@ -1,5 +1,6 @@
-import { boundedExpirationProfitFloor, percentile, type SimulationPathSet } from './monte-carlo';
+import { percentile, type SimulationPathSet } from './monte-carlo';
 import { priceOptionValue } from './pricing';
+import { buildCanonicalStrategyResult } from './result-contract';
 import type { MonteCarloSettings, OptionLeg, SimulationWorkspace } from './types';
 
 export const PROFIT_FACTOR_CAP = 10;
@@ -287,15 +288,14 @@ function evaluateCandidate(
   pathSet: SimulationPathSet,
   targetDate: string,
 ): CandidateEvaluation {
-  const floor = boundedExpirationProfitFloor(candidate.workspace);
-  const maxLoss = floor === null ? null : -floor;
+  const maxLoss = buildCanonicalStrategyResult(candidate.workspace, 0).initialRisk;
   return {
     ...candidate,
     pathPnL: pathSet.terminalPrices.map((terminalPrice) => {
       try { return pathProfitLoss(candidate.workspace, terminalPrice, targetDate); }
       catch { return null; }
     }),
-    maxLoss: maxLoss !== null && Number.isFinite(maxLoss) && maxLoss > 0 ? maxLoss : null,
+    maxLoss,
   };
 }
 

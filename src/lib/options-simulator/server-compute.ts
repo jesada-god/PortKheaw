@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { boundedExpirationProfitFloor, generateMonteCarloPathSet, runMonteCarlo } from './monte-carlo';
+import { generateMonteCarloPathSet, runMonteCarlo } from './monte-carlo';
 import { valuePortfolio } from './portfolio';
 import { calculateCallPutScenarioScore } from './scenario-score';
 import { calculationPortfolioToWorkspace } from './calculation-workspace';
@@ -52,13 +52,8 @@ export function computeMonteCarlo(
     transientPathSet,
     targetPrice,
   );
-  const payoff = valuePortfolio(workspace, workspace.scenarios[0]);
   return {
-    result: {
-      ...result,
-      breakEvens: payoff.breakEvens,
-      expirationProfitFloor: boundedExpirationProfitFloor(workspace),
-    },
+    result,
     scenarioScore,
   };
 }

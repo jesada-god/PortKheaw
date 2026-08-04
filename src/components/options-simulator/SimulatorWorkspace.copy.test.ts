@@ -7,6 +7,7 @@ const shellStylesSource = readFileSync(new URL('../../../app/globals.css', impor
 const serverComputeSource = readFileSync(new URL('../../lib/options-simulator/server-compute.ts', import.meta.url), 'utf8');
 const tabsSource = readFileSync(new URL('../ui/Tabs.tsx', import.meta.url), 'utf8');
 const disclosureSource = readFileSync(new URL('./MetricDisclosure.tsx', import.meta.url), 'utf8');
+const chartSource = readFileSync(new URL('./simulator-charts.ts', import.meta.url), 'utf8');
 
 describe('Options Portfolio Simulator copy', () => {
   it('shows the requested beginner-friendly Thai copy', () => {
@@ -294,40 +295,48 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).not.toContain('putPercent');
   });
 
-  it('uses deterministic accessible histograms with audited markers and dated sample paths', () => {
+  it('uses deterministic accessible histograms with bounded markers and fixed path series', () => {
     expect(source).toContain('<BarChart');
     expect(source).toContain('<Bar dataKey="count"');
     expect(source).toContain('การกระจายราคาหุ้นในวันเป้าหมาย (USD)');
     expect(source).toContain('ราคาหุ้นในวันเป้าหมาย (USD)');
-    expect(source).toContain("value: 'จำนวนรอบจำลอง'");
-    expect(source).toContain("label: 'ราคาปัจจุบัน'");
-    expect(source).toContain('label: `ราคาใช้สิทธิ ${index + 1}`');
-    expect(source).toContain("? 'จุดคุ้มทุน' : `จุดคุ้มทุน ${index + 1}`");
-    expect(source).toContain("label: 'ราคาเป้าหมาย'");
+    expect(source).toContain('<YAxis width={44} allowDecimals={false} />');
+    expect(chartSource).toContain("label: 'ราคาปัจจุบัน'");
+    expect(chartSource).toContain("? 'จุดคุ้มทุน' : `จุดคุ้มทุน ${index + 1}`");
+    expect(chartSource).toContain("label: 'ราคาเป้าหมาย'");
     expect(source).toContain('title={reference.description}');
     expect(source).toContain('isAnimationActive={false}');
-    expect(source).toContain('แสดงตัวอย่าง {shownPaths.length.toLocaleString()} เส้น จากการจำลอง {validPaths.toLocaleString()} รอบ');
+    expect(source).toContain('MONTE_CARLO_PATH_SERIES.map((series) => <Line');
+    expect(source).not.toContain('shownPaths.map');
+    expect(source).not.toContain('samplePaths.slice');
+    expect(chartSource.match(/dataKey:/g)).toHaveLength(3);
+    expect(source).toContain('สรุปตัวอย่างเส้นทางทั้งหมด {result.samplePaths.length.toLocaleString()} เส้น');
     expect(source).toContain('dataKey="date"');
     expect(source).toContain("value: 'วันที่'");
+    expect(source).toContain('min-w-0 overflow-hidden');
+    expect(source).toContain('grid-cols-1 gap-4 xl:grid-cols-2');
     expect(source).not.toContain('Math.random');
     expect(source).not.toContain('function MiniDistribution');
   });
 
-  it('keeps chart audit fields transient and preserves the persisted result contract', () => {
+  it('keeps path audit fields transient while persisting canonical results and their score', () => {
     expect(source).toContain('function monteCarloSnapshot');
     expect(source).toContain('delete snapshot.validPaths');
     expect(source).toContain('delete snapshot.discardedPaths');
     expect(source).toContain('delete snapshot.terminalPriceHistogram');
-    expect(source).toContain('delete snapshot.breakEvens');
-    expect(source).toContain('delete snapshot.expirationProfitFloor');
+    expect(source).not.toContain('delete snapshot.breakEvenPrices');
+    expect(source).not.toContain('delete snapshot.initialRisk');
     expect(source).toContain('monteCarlo: monteCarloSnapshot(result)');
     expect(source).toContain('const [callPutScore, setCallPutScore]');
     expect(source).not.toMatch(/resultSnapshot:[^\n]+callPutScore/);
-    expect(source).not.toMatch(/resultSnapshot:[^\n]+scenarioScore/);
+    expect(source).toMatch(/resultSnapshot:[^\n]+scenarioScore/);
+    expect(source).toContain('isCallPutScenarioScore(item.resultSnapshot?.scenarioScore)');
+    expect(source).toContain("restoredScore?.status !== 'available'");
     expect(serverComputeSource).toContain('const { terminalPrices: _terminalPrices, pathSet: transientPathSet, ...result } = auditResult');
     expect(serverComputeSource).toContain('transientPathSet');
-    expect(serverComputeSource).toContain('breakEvens: payoff.breakEvens');
-    expect(serverComputeSource).toContain('expirationProfitFloor: boundedExpirationProfitFloor(workspace)');
+    expect(serverComputeSource).not.toContain('payoff.breakEvens');
+    expect(serverComputeSource).not.toContain('expirationProfitFloor');
+    expect(serverComputeSource).toContain('result,');
     expect(serverComputeSource).toContain('scenarioScore,');
   });
 
@@ -358,7 +367,7 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('const summaryLegs = useMemo');
     expect(source).not.toContain('const whatIfCalculation = useMemo');
     expect(source).not.toContain('valuePortfolio(');
-    expect(source).toContain('const breakEvens = result.breakEvens ?? []');
+    expect(source).toContain('breakEvenPrices: result.breakEvenPrices');
     expect(source).toContain("fxQuote?.stale ? 'stale'");
     expect(source).toContain('1 USD = {Number(fxQuote.rate).toFixed(2)} THB');
     expect(source).toContain('อัตรา ณ {formatTimestamp(fxQuote.asOf)}');

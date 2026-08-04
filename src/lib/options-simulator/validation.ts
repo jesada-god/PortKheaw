@@ -203,7 +203,7 @@ export const simulationWorkspaceSchema = z.object({
   dataSource: z.string().max(120).nullable(),
   dataTimestamp: z.iso.datetime().nullable(),
   dataStatus: z.enum(['live', 'delayed', 'stale', 'manual', 'unavailable']),
-  resultSnapshot: z.object({ whatIf: z.unknown().optional(), monteCarlo: z.unknown().optional() }).nullable(),
+  resultSnapshot: z.object({ whatIf: z.unknown().optional(), monteCarlo: z.unknown().optional(), scenarioScore: z.unknown().optional() }).nullable(),
   methodologyVersion: z.literal('options-simulator-v1'),
   updatedAt: z.iso.datetime().optional(),
 }).superRefine((workspace, context) => {

@@ -96,6 +96,20 @@ describe('POST /api/option-simulations/compute/monte-carlo', () => {
     expect(payload.data.result.paths).toBe(50_000);
     expect(payload.data.result.validPaths).toBe(50_000);
     expect(Number.isFinite(payload.data.result.probabilityOfProfit)).toBe(true);
+    expect(payload.data.result.initialDebit).toBe(200);
+    expect(payload.data.result.initialRisk).toBe(200);
+    expect(payload.data.result.maxLoss).toBe(200);
+    expect(payload.data.result.returnPct).toBeCloseTo(payload.data.result.expectedProfitLoss / 200 * 100, 10);
+    expect(payload.data.result.breakEvenPrices).toEqual([9]);
+    expect(payload.data.result.breakEvenPrices).toHaveLength(1);
+    expect(payload.data.result.histogram).toHaveLength(24);
+    expect(payload.data.result.terminalPriceHistogram).toHaveLength(24);
+    expect(payload.data.result.samplePaths).toHaveLength(40);
+    expect(payload.data.result.breakEvenPrices).not.toEqual(payload.data.result.histogram.map((bucket: { lower: number }) => bucket.lower));
+    expect(payload.data.scenarioScore.status).toBe('available');
+    expect(payload.data.scenarioScore.call.status).toBe('available');
+    expect(payload.data.scenarioScore.call.metrics.maxLoss).toBe(200);
+    expect(payload.data.scenarioScore.call.metrics.riskCapital).toBe(payload.data.result.initialRisk);
   }, 30_000);
 
   it('rejects non-finite calculation values before invoking the engine', async () => {

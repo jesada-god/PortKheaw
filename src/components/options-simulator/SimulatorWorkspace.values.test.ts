@@ -48,8 +48,11 @@ describe('Options simulator displayed values survive the copy rework', () => {
     expect(valuation.theoreticalValue).toBeCloseTo(2745.75396012, 6);
     expect(valuation.profitLoss).toBeCloseTo(1894.25396012, 6);
     expect(valuation.netDebitCredit).toBeCloseTo(851.5, 4);
-    expect(valuation.breakEvens.map((value) => Number(value.toFixed(4)))).toEqual([124.2575]);
-    expect(valuation.maxLoss).toBeCloseTo(-851.5, 4);
+    expect(valuation.breakEvenPrices.map((value) => Number(value.toFixed(4)))).toEqual([124.2575]);
+    expect(valuation.initialDebit).toBeCloseTo(851.5, 4);
+    expect(valuation.initialRisk).toBeCloseTo(851.5, 4);
+    expect(valuation.maxLoss).toBeCloseTo(851.5, 4);
+    expect(valuation.returnPct).toBeCloseTo(valuation.profitLoss / 851.5 * 100, 10);
     expect(valuation.unlimitedProfit).toBe(true);
   });
 

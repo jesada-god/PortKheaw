@@ -74,9 +74,6 @@ export interface MonteCarloDisplayResult extends MonteCarloResult {
   validPaths?: number;
   discardedPaths?: number;
   terminalPriceHistogram?: Array<{ lower: number; upper: number; count: number }>;
-  /** Server-derived display references, deliberately omitted from persistence. */
-  breakEvens?: number[];
-  expirationProfitFloor?: number | null;
 }
 
 export interface MonteCarloComputeResult {

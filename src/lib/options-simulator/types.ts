@@ -86,7 +86,7 @@ export interface SimulationWorkspace {
   dataSource: string | null;
   dataTimestamp: string | null;
   dataStatus: DataStatus;
-  resultSnapshot: { whatIf?: PortfolioValuation; monteCarlo?: MonteCarloResult } | null;
+  resultSnapshot: { whatIf?: PortfolioValuation; monteCarlo?: MonteCarloResult; scenarioScore?: unknown } | null;
   methodologyVersion: 'options-simulator-v1';
   updatedAt?: string;
 }
@@ -109,22 +109,33 @@ export interface LegValuation {
   greeks: Greeks;
 }
 
-export interface PortfolioValuation {
+/** Shared result invariants returned by both What-If and Monte Carlo. */
+export interface CanonicalStrategyResult {
+  /** Cash paid to open the position; zero for net-credit positions. */
+  initialDebit: number;
+  /** Finite positive capital at risk, or null when loss is unbounded/zero. */
+  initialRisk: number | null;
+  /** P&L divided by initialRisk; null exactly when initialRisk is unavailable. */
+  returnPct: number | null;
+  /** Positive loss magnitude, or null for unlimited loss. */
+  maxLoss: number | null;
+  /** Exact isolated expiration roots, sorted and deduplicated. */
+  breakEvenPrices: number[];
+}
+
+export interface PortfolioValuation extends CanonicalStrategyResult {
   legs: LegValuation[];
   theoreticalValue: number;
   profitLoss: number;
-  profitLossPercent: number | null;
   netDebitCredit: number;
   greeks: Greeks;
-  breakEvens: number[];
   maxProfit: number | null;
-  maxLoss: number | null;
   unlimitedProfit: boolean;
   unlimitedLoss: boolean;
   payoff: Array<{ price: number; profitLoss: number }>;
 }
 
-export interface MonteCarloResult {
+export interface MonteCarloResult extends CanonicalStrategyResult {
   paths: number;
   seed: number;
   probabilityOfProfit: number;
