@@ -7,7 +7,7 @@ import { ManageSubscriptionCard } from '@/src/components/subscription/ManageSubs
 import { PlanCards } from '@/src/components/subscription/PlanCards';
 import { PlanComparison } from '@/src/components/subscription/PlanComparison';
 import { SubscriptionFaq } from '@/src/components/subscription/SubscriptionFaq';
-import { getBillingAvailability } from '@/src/lib/billing/billing-server';
+import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
 import { readBillingSnapshot } from '@/src/lib/billing/billing-repository';
 import { holdsLiveSubscription, resolveBillingSummary } from '@/src/lib/billing/billing-summary';
 import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
@@ -64,9 +64,17 @@ export default async function SubscriptionPage() {
    * of the deployment, not of the reader, and is resolved on the server so the
    * cards never have to guess.
    */
-  const billingAvailability = getBillingAvailability();
+  const billingAvailability = getBillingAvailability({
+    userId: access.userId,
+    role: access.role,
+  });
   const billingSnapshot = await readBillingSnapshot(supabase);
-  const billingSummary = billingSnapshot && resolveBillingSummary({
+  const billingConfig = getBillingConfig();
+  const snapshotMatchesMode = Boolean(
+    billingConfig
+    && billingSnapshot?.billing_provider_mode === billingConfig.providerMode,
+  );
+  const billingSummary = snapshotMatchesMode && billingSnapshot && resolveBillingSummary({
     tier: billingSnapshot.tier,
     status: billingSnapshot.status,
     planKey: billingSnapshot.billing_plan_key,
@@ -99,7 +107,7 @@ export default async function SubscriptionPage() {
            * The same predicate the checkout action gates on, so the cards cannot
            * offer a purchase the server would refuse.
            */
-          hasLiveSubscription={holdsLiveSubscription({
+          hasLiveSubscription={snapshotMatchesMode && holdsLiveSubscription({
             status: billingSnapshot?.status ?? 'basic',
             planKey: isBillingPlanKey(billingSnapshot?.billing_plan_key)
               ? billingSnapshot.billing_plan_key

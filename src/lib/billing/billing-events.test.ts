@@ -122,6 +122,7 @@ describe('entitlement consequence', () => {
   function event(overrides: Partial<NormalizedBillingEvent> = {}): NormalizedBillingEvent {
     return {
       provider: 'stripe',
+      providerMode: 'test',
       eventId: 'evt_1',
       eventType: 'customer.subscription.updated',
       kind: 'subscription_changed',

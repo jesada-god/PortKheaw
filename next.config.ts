@@ -1,5 +1,8 @@
 import type {NextConfig} from 'next';
 
+const buildTime = process.env.PORTKHEAW_BUILD_TIME ?? new Date().toISOString();
+const commitSha = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? 'unknown';
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Pin the public gateway URL at build time. This avoids a stale/empty client
@@ -7,6 +10,9 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_MARKET_WS_URL: process.env.NEXT_PUBLIC_MARKET_WS_URL ?? '',
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '',
+    // Non-secret deployment evidence for the read-only /api/version route.
+    PORTKHEAW_BUILD_TIME: buildTime,
+    PORTKHEAW_COMMIT_SHA: commitSha,
   },
   eslint: {
     ignoreDuringBuilds: true,

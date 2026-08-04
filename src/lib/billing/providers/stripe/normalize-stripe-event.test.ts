@@ -7,7 +7,13 @@ import {
   subscriptionIdFromEvent,
   tierFromSubscription,
 } from './normalize-stripe-event';
-import { BILLING_METADATA_PLAN_KEY, BILLING_METADATA_USER_ID } from '../../billing-events';
+import {
+  BILLING_METADATA_PLAN_KEY,
+  BILLING_METADATA_PROVIDER_MODE,
+  BILLING_METADATA_SCHEMA_VERSION,
+  BILLING_METADATA_SCHEMA_VERSION_VALUE,
+  BILLING_METADATA_USER_ID,
+} from '../../billing-events';
 
 /**
  * Stripe object shapes, built by hand from the pinned API version's typings.
@@ -27,10 +33,19 @@ function subscription(overrides: {
   planKey?: string | null;
   cancelAtPeriodEnd?: boolean;
   interval?: string;
+  livemode?: boolean;
+  metadataMode?: string | null;
+  schemaVersion?: string | null;
 } = {}): Stripe.Subscription {
   const metadata: Record<string, string> = { [BILLING_METADATA_USER_ID]: USER_ID };
   if (overrides.planKey !== null) {
     metadata[BILLING_METADATA_PLAN_KEY] = overrides.planKey ?? 'pro_annual';
+  }
+  if (overrides.metadataMode !== null) {
+    metadata[BILLING_METADATA_PROVIDER_MODE] = overrides.metadataMode ?? 'test';
+  }
+  if (overrides.schemaVersion !== null) {
+    metadata[BILLING_METADATA_SCHEMA_VERSION] = overrides.schemaVersion ?? BILLING_METADATA_SCHEMA_VERSION_VALUE;
   }
   return {
     id: 'sub_123',
@@ -38,6 +53,7 @@ function subscription(overrides: {
     status: overrides.status ?? 'active',
     cancel_at_period_end: overrides.cancelAtPeriodEnd ?? false,
     metadata,
+    livemode: overrides.livemode ?? false,
     items: {
       data: [{
         id: 'si_123',
@@ -50,7 +66,7 @@ function subscription(overrides: {
 }
 
 function event(type: string, object: unknown, created = 1_785_000_500): Stripe.Event {
-  return { id: 'evt_123', type, created, data: { object } } as unknown as Stripe.Event;
+  return { id: 'evt_123', type, created, livemode: false, data: { object } } as unknown as Stripe.Event;
 }
 
 describe('stripe event classification', () => {
@@ -116,6 +132,13 @@ describe('subscription normalization', () => {
     expect(tierFromSubscription(subscription({ planKey: null }))).toBeNull();
   });
 
+  it('refuses missing, mismatched, or unversioned provider metadata', () => {
+    expect(normalizeStripeSubscription(subscription({ metadataMode: null }))).toBeNull();
+    expect(normalizeStripeSubscription(subscription({ metadataMode: 'live' }))).toBeNull();
+    expect(normalizeStripeSubscription(subscription({ schemaVersion: null }))).toBeNull();
+    expect(normalizeStripeSubscription(subscription({ schemaVersion: '2' }))).toBeNull();
+  });
+
   it('carries the cancel-at-period-end flag through unchanged', () => {
     expect(normalizeStripeSubscription(subscription())!.state.cancelAtPeriodEnd).toBe(false);
     expect(normalizeStripeSubscription(subscription({ cancelAtPeriodEnd: true }))!.state.cancelAtPeriodEnd).toBe(true);
@@ -162,6 +185,7 @@ describe('full event normalization', () => {
       subscription(),
     );
     expect(normalized.provider).toBe('stripe');
+    expect(normalized.providerMode).toBe('test');
     expect(normalized.eventId).toBe('evt_123');
     expect(normalized.kind).toBe('subscription_changed');
     expect(normalized.userId).toBe(USER_ID);

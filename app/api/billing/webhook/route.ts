@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { getBillingConfig } from '@/src/lib/billing/billing-server';
 import { applyBillingEvent, BillingAdminUnavailableError } from '@/src/lib/billing/billing-repository';
-import { BillingSignatureError, verifyStripeWebhook } from '@/src/lib/billing/providers/stripe/stripe-provider';
+import {
+  BillingModeMismatchError,
+  BillingSignatureError,
+  verifyStripeWebhook,
+} from '@/src/lib/billing/providers/stripe/stripe-provider';
 import { revalidateEveryEntitlementSurface } from '@/src/lib/subscription/revalidate-entitlements';
 
 /**
@@ -67,6 +71,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     event = await verifyStripeWebhook(config, rawBody, signature);
   } catch (error) {
+    if (error instanceof BillingModeMismatchError) {
+      record('billing_webhook_rejected', 'unknown', 'mode_mismatch');
+      return Response.json({ error: 'mode_mismatch' }, { status: 400 });
+    }
     if (error instanceof BillingSignatureError) {
       record('billing_webhook_rejected', 'unknown', 'invalid_signature');
       return Response.json({ error: 'invalid_signature' }, { status: 400 });

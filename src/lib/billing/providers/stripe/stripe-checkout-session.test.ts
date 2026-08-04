@@ -20,11 +20,15 @@ import { billingPlans } from '../../billing-plans';
 
 const created = vi.fn();
 const portalCreated = vi.fn();
+const priceRetrieved = vi.fn();
+const couponRetrieved = vi.fn();
 
 vi.mock('stripe', () => {
   class MockStripe {
     checkout = { sessions: { create: created } };
     billingPortal = { sessions: { create: portalCreated } };
+    prices = { retrieve: priceRetrieved };
+    coupons = { retrieve: couponRetrieved };
     static createFetchHttpClient = () => ({});
     static createSubtleCryptoProvider = () => ({});
   }
@@ -35,6 +39,9 @@ const { createStripeCheckoutSession } = await import('./stripe-provider');
 
 const config: BillingConfig = {
   provider: 'stripe',
+  providerMode: 'test',
+  checkoutMode: 'internal',
+  internalUserIds: [],
   secretKey: 'sk_test_fixture',
   webhookSecret: 'whsec_fixture',
   prices: {
@@ -53,6 +60,18 @@ const config: BillingConfig = {
 };
 
 async function openCheckout(planKey: keyof typeof billingPlans, overrides = {}) {
+  const plan = billingPlans[planKey];
+  priceRetrieved.mockResolvedValue({
+    id: config.prices[planKey], active: true, livemode: false,
+    currency: 'thb', unit_amount: plan.renewalBaht * 100,
+    recurring: { interval: plan.interval },
+  });
+  couponRetrieved.mockResolvedValue({
+    id: config.coupons[planKey], valid: true, livemode: false,
+    duration: 'once', currency: 'thb',
+    amount_off: (plan.renewalBaht - plan.firstPeriodBaht) * 100,
+    percent_off: null,
+  });
   created.mockResolvedValue({ id: 'cs_test_fixture', url: 'https://checkout.test/session' });
   await createStripeCheckoutSession({
     config,
@@ -69,6 +88,8 @@ async function openCheckout(planKey: keyof typeof billingPlans, overrides = {}) 
 beforeEach(() => {
   created.mockReset();
   portalCreated.mockReset();
+  priceRetrieved.mockReset();
+  couponRetrieved.mockReset();
 });
 
 describe('stripe checkout session parameters', () => {
@@ -131,7 +152,12 @@ describe('stripe checkout session parameters', () => {
 
   it('carries our user id and plan key on both the session and the subscription', async () => {
     const params = await openCheckout('pro_monthly');
-    const metadata = { portkheaw_user_id: 'user-1', portkheaw_plan_key: 'pro_monthly' };
+    const metadata = {
+      portkheaw_user_id: 'user-1',
+      portkheaw_plan_key: 'pro_monthly',
+      portkheaw_provider_mode: 'test',
+      portkheaw_billing_schema: '1',
+    };
     expect(params.metadata).toEqual(metadata);
     expect(params.subscription_data).toEqual({ metadata });
     expect(params.client_reference_id).toBe('user-1');
@@ -158,6 +184,50 @@ describe('stripe checkout session parameters', () => {
         idempotencyKey: 'key-1',
       }),
     ).rejects.toThrow('BILLING_FOUNDER_COUPON_MISSING');
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Price whose mode, currency, interval, or amount differs from the catalog', async () => {
+    for (const mismatch of [
+      { livemode: true },
+      { currency: 'usd' },
+      { unit_amount: 1 },
+      { recurring: { interval: 'year' } },
+      { active: false },
+    ]) {
+      priceRetrieved.mockResolvedValue({
+        active: true, livemode: false, currency: 'thb', unit_amount: 34_900,
+        recurring: { interval: 'month' }, ...mismatch,
+      });
+      await expect(createStripeCheckoutSession({
+        config,
+        plan: billingPlans.pro_monthly,
+        userId: 'user-1',
+        email: 'reader@example.test',
+        existingCustomerId: null,
+        idempotencyKey: `bad-${JSON.stringify(mismatch)}`,
+      })).rejects.toThrow('BILLING_PRICE_CONTRACT_MISMATCH');
+      expect(created).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses a Founder Coupon whose mode or one-time discount contract differs', async () => {
+    priceRetrieved.mockResolvedValue({
+      active: true, livemode: false, currency: 'thb', unit_amount: 349_000,
+      recurring: { interval: 'year' },
+    });
+    couponRetrieved.mockResolvedValue({
+      valid: true, livemode: true, duration: 'once', currency: 'thb',
+      amount_off: 150_000, percent_off: null,
+    });
+    await expect(createStripeCheckoutSession({
+      config,
+      plan: billingPlans.pro_annual_founder,
+      userId: 'user-1',
+      email: 'reader@example.test',
+      existingCustomerId: null,
+      idempotencyKey: 'bad-coupon',
+    })).rejects.toThrow('BILLING_COUPON_CONTRACT_MISMATCH');
     expect(created).not.toHaveBeenCalled();
   });
 });

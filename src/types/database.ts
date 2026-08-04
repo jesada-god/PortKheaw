@@ -8,6 +8,7 @@ export type SubscriptionStatus = 'basic' | 'trialing' | 'active' | 'past_due' | 
 export type UserRole = 'user' | 'admin';
 export type AdminPreviewMode = 'actual' | 'basic' | 'pro' | 'elite' | 'elite_trial' | 'expired_trial';
 export type BillingProvider = 'stripe';
+export type BillingProviderMode = 'test' | 'live' | 'legacy_unknown';
 export type BillingPlanKey =
   | 'pro_monthly' | 'pro_annual' | 'pro_annual_founder'
   | 'elite_monthly' | 'elite_annual' | 'elite_annual_founder';
@@ -189,6 +190,7 @@ export interface Database {
           /* Phase 4 billing columns. Written only by the webhook's trusted
              routine; `authenticated` holds SELECT on this table and nothing more. */
           billing_provider: BillingProvider | null;
+          billing_provider_mode: BillingProviderMode | null;
           billing_plan_key: BillingPlanKey | null;
           billing_interval: BillingInterval | null;
           latest_invoice_id: string | null;
@@ -213,6 +215,7 @@ export interface Database {
           billing_subscription_id?: string | null;
           billing_price_id?: string | null;
           founder_promo_applied?: boolean;
+          billing_provider_mode?: BillingProviderMode | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -230,6 +233,7 @@ export interface Database {
           billing_price_id?: string | null;
           founder_promo_applied?: boolean;
           billing_provider?: BillingProvider | null;
+          billing_provider_mode?: BillingProviderMode | null;
           billing_plan_key?: BillingPlanKey | null;
           billing_interval?: BillingInterval | null;
           latest_invoice_id?: string | null;
@@ -250,6 +254,7 @@ export interface Database {
         Row: {
           id: number;
           provider: BillingProvider;
+          provider_mode: BillingProviderMode;
           provider_event_id: string;
           event_type: string;
           status: BillingWebhookStatus;
@@ -263,6 +268,7 @@ export interface Database {
         };
         Insert: {
           provider: BillingProvider;
+          provider_mode: BillingProviderMode;
           provider_event_id: string;
           event_type: string;
           status?: BillingWebhookStatus;
@@ -273,6 +279,7 @@ export interface Database {
           payload_digest?: string | null;
         };
         Update: {
+          provider_mode?: BillingProviderMode;
           status?: BillingWebhookStatus;
           processed_at?: string | null;
           error_code?: string | null;
@@ -565,6 +572,7 @@ export interface Database {
       apply_billing_subscription_event: {
         Args: {
           input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
           input_event_id: string;
           input_event_type: string;
           input_occurred_at: string | null;
@@ -587,7 +595,8 @@ export interface Database {
         Returns: Array<{
           outcome:
             | 'applied' | 'duplicate' | 'ignored' | 'stale'
-            | 'unknown_user' | 'customer_mismatch' | 'subscription_mismatch';
+            | 'unknown_user' | 'identity_incomplete'
+            | 'customer_mismatch' | 'subscription_mismatch';
           applied_user_id: string | null;
         }>;
       };

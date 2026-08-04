@@ -20,6 +20,9 @@
 import type Stripe from 'stripe';
 import {
   BILLING_METADATA_PLAN_KEY,
+  BILLING_METADATA_PROVIDER_MODE,
+  BILLING_METADATA_SCHEMA_VERSION,
+  BILLING_METADATA_SCHEMA_VERSION_VALUE,
   BILLING_METADATA_USER_ID,
   mapProviderSubscriptionStatus,
   type BillingEventKind,
@@ -28,6 +31,7 @@ import {
   type NormalizedSubscriptionState,
 } from '../../billing-events';
 import { billingPlans, isBillingPlanKey, type BillingInterval, type BillingPlanKey, type PaidTier } from '../../billing-plans';
+import { isTrustedBillingProviderMode, stripeProviderMode } from '../../billing-provider-mode';
 
 /** Seconds since the epoch → ISO, or null for an absent timestamp. */
 function isoFromUnix(seconds: number | null | undefined): string | null {
@@ -92,7 +96,15 @@ export function normalizeStripeSubscription(subscription: Stripe.Subscription): 
   subscriptionId: string;
 } | null {
   const planKey = planKeyFrom(subscription.metadata);
-  if (!planKey) return null;
+  const metadataMode = readMetadata(subscription.metadata, BILLING_METADATA_PROVIDER_MODE);
+  const schemaVersion = readMetadata(subscription.metadata, BILLING_METADATA_SCHEMA_VERSION);
+  const objectMode = stripeProviderMode(subscription.livemode);
+  if (
+    !planKey
+    || !isTrustedBillingProviderMode(metadataMode)
+    || metadataMode !== objectMode
+    || schemaVersion !== BILLING_METADATA_SCHEMA_VERSION_VALUE
+  ) return null;
 
   // A subscription in this product has exactly one item. Reading the first is
   // therefore reading the only one; the period lives here, not on the parent.
@@ -213,6 +225,7 @@ export function normalizeStripeEvent(
 
   return {
     provider: 'stripe',
+    providerMode: stripeProviderMode(event.livemode),
     eventId: event.id,
     eventType: event.type,
     kind,

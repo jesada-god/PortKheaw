@@ -88,6 +88,9 @@ export function parseServerEnv(input: Record<string, unknown>) {
        * which plan keys are purchasable, never why.
        */
       BILLING_ENABLED: read('BILLING_ENABLED', optionalSecret, undefined),
+      BILLING_PROVIDER_MODE: read('BILLING_PROVIDER_MODE', optionalSecret, undefined),
+      BILLING_CHECKOUT_MODE: read('BILLING_CHECKOUT_MODE', optionalSecret, undefined),
+      BILLING_INTERNAL_USER_IDS: read('BILLING_INTERNAL_USER_IDS', optionalSecret, undefined),
       BILLING_RETURN_ORIGIN: read('BILLING_RETURN_ORIGIN', optionalUrl, undefined),
       STRIPE_SECRET_KEY: read('STRIPE_SECRET_KEY', optionalSecret, undefined),
       STRIPE_WEBHOOK_SECRET: read('STRIPE_WEBHOOK_SECRET', optionalSecret, undefined),

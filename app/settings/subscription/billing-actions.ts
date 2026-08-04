@@ -111,14 +111,13 @@ function checkoutIdempotencyKey(
  * Begin a purchase.
  *
  * `planKey` is the only argument and is treated as untrusted until the
- * allowlist in `resolveCheckoutEligibility` has accepted it. Note what is NOT
- * read anywhere below: the administrator role, and any running access preview.
- * A preview changes what an operator can *see*; it must never change what
- * anybody is charged or which plan is bought.
+ * allowlist in `resolveCheckoutEligibility` has accepted it. The stored
+ * administrator role may admit an account during an internal rollout, but a
+ * running access preview is never consulted. Preview changes what an operator
+ * can *see*; it must never change what anybody is charged or which plan is
+ * bought.
  */
 export async function startCheckoutAction(planKey: string): Promise<StartCheckoutResult> {
-  const availability = getBillingAvailability();
-
   const client = await createClient();
   if (!client) {
     record('billing_checkout_failed', 'UNAVAILABLE');
@@ -134,6 +133,19 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
    * unverified address and a recurring charge.
    */
   const emailVerified = Boolean(user?.email_confirmed_at);
+  let role: 'user' | 'admin' = 'user';
+  if (authenticated) {
+    const roleResult = await client.from('user_roles').select('role').maybeSingle();
+    if (roleResult.error) {
+      record('billing_checkout_failed', 'ROLE_UNAVAILABLE');
+      return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+    }
+    role = roleResult.data?.role === 'admin' ? 'admin' : 'user';
+  }
+  const availability = getBillingAvailability({
+    userId: user?.id ?? null,
+    role,
+  });
 
   // Only read once identity is known. A signed out caller never reaches a
   // database read.
@@ -147,7 +159,11 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
       founderPromoApplied = snapshot?.founder_promo_applied ?? false;
       status = snapshot?.status ?? 'basic';
       periodEnd = snapshot?.current_period_end ?? null;
-      hasLiveSubscription = holdsLiveSubscription({
+      const config = getBillingConfig();
+      hasLiveSubscription = Boolean(
+        config
+        && snapshot?.billing_provider_mode === config.providerMode
+      ) && holdsLiveSubscription({
         status,
         // The snapshot's plan key is a database column, so it is narrowed
         // against the same allowlist the rest of billing uses rather than cast.
@@ -199,7 +215,7 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
       plan: eligibility.plan,
       userId: user.id,
       email: user.email ?? '',
-      existingCustomerId: await readBillingCustomerId(user.id),
+      existingCustomerId: await readBillingCustomerId(user.id, config.providerMode),
       idempotencyKey: checkoutIdempotencyKey(user.id, eligibility.plan.key, status, periodEnd),
     });
     record('billing_checkout_started', eligibility.plan.key);
@@ -246,7 +262,7 @@ export async function openBillingPortalAction(): Promise<BillingPortalResult> {
   }
 
   try {
-    const customerId = await readBillingCustomerId(user.id);
+    const customerId = await readBillingCustomerId(user.id, config.providerMode);
     if (!customerId) {
       record('billing_portal_failed', 'NO_CUSTOMER');
       return { ok: false, code: 'PLAN_UNAVAILABLE', message: PORTAL_UNAVAILABLE };

@@ -23,10 +23,14 @@
 
 import type { SubscriptionStatus } from '@/src/lib/subscription/subscription-types';
 import type { BillingInterval, BillingPlanKey, PaidTier } from './billing-plans';
+import type { TrustedBillingProviderMode } from './billing-provider-mode';
 
 /** Metadata keys we set on the provider objects, so an event can name our user. */
 export const BILLING_METADATA_USER_ID = 'portkheaw_user_id';
 export const BILLING_METADATA_PLAN_KEY = 'portkheaw_plan_key';
+export const BILLING_METADATA_PROVIDER_MODE = 'portkheaw_provider_mode';
+export const BILLING_METADATA_SCHEMA_VERSION = 'portkheaw_billing_schema';
+export const BILLING_METADATA_SCHEMA_VERSION_VALUE = '1';
 
 /**
  * What an event does to our records. Narrow on purpose: the adapter collapses
@@ -59,6 +63,8 @@ export interface NormalizedSubscriptionState {
 
 export interface NormalizedBillingEvent {
   provider: 'stripe';
+  /** Derived only from `livemode` on the signed provider event. */
+  providerMode: TrustedBillingProviderMode;
   /** The provider's own event id. The idempotency key, and it must be unique. */
   eventId: string;
   /** The provider's event name, kept verbatim for the audit row. */

@@ -4,10 +4,14 @@ import Stripe from 'stripe';
 import type { BillingConfig } from '../../billing-config';
 import {
   BILLING_METADATA_PLAN_KEY,
+  BILLING_METADATA_PROVIDER_MODE,
+  BILLING_METADATA_SCHEMA_VERSION,
+  BILLING_METADATA_SCHEMA_VERSION_VALUE,
   BILLING_METADATA_USER_ID,
   type NormalizedBillingEvent,
 } from '../../billing-events';
 import type { BillingPlanDefinition } from '../../billing-plans';
+import { stripeLivemode, stripeProviderMode } from '../../billing-provider-mode';
 import { classifyStripeEvent, normalizeStripeEvent, subscriptionIdFromEvent } from './normalize-stripe-event';
 
 /**
@@ -83,10 +87,26 @@ export async function createStripeCheckoutSession(
   const { config, plan } = request;
   const priceId = config.prices[plan.key];
   if (!priceId) throw new Error('BILLING_PLAN_NOT_CONFIGURED');
+  const coupon = config.coupons[plan.key];
+  if (plan.founder && !coupon) throw new Error('BILLING_FOUNDER_COUPON_MISSING');
+
+  const client = stripeClient(config);
+  const price = await client.prices.retrieve(priceId);
+  const expectedLivemode = stripeLivemode(config.providerMode);
+  const expectedAmount = plan.renewalBaht * 100;
+  if (
+    !price.active
+    || price.livemode !== expectedLivemode
+    || price.currency.toLowerCase() !== plan.currency.toLowerCase()
+    || price.unit_amount !== expectedAmount
+    || price.recurring?.interval !== plan.interval
+  ) throw new Error('BILLING_PRICE_CONTRACT_MISMATCH');
 
   const metadata = {
     [BILLING_METADATA_USER_ID]: request.userId,
     [BILLING_METADATA_PLAN_KEY]: plan.key,
+    [BILLING_METADATA_PROVIDER_MODE]: config.providerMode,
+    [BILLING_METADATA_SCHEMA_VERSION]: BILLING_METADATA_SCHEMA_VERSION_VALUE,
   };
 
   /*
@@ -96,10 +116,20 @@ export async function createStripeCheckoutSession(
    * full price from day one and the discount simply stops applying after the
    * first invoice.
    */
-  const coupon = config.coupons[plan.key];
-  if (plan.founder && !coupon) throw new Error('BILLING_FOUNDER_COUPON_MISSING');
+  if (coupon) {
+    const couponObject = await client.coupons.retrieve(coupon);
+    const expectedDiscount = (plan.renewalBaht - plan.firstPeriodBaht) * 100;
+    if (
+      !couponObject.valid
+      || couponObject.livemode !== expectedLivemode
+      || couponObject.duration !== 'once'
+      || couponObject.currency?.toLowerCase() !== plan.currency.toLowerCase()
+      || couponObject.amount_off !== expectedDiscount
+      || couponObject.percent_off !== null
+    ) throw new Error('BILLING_COUPON_CONTRACT_MISMATCH');
+  }
 
-  const session = await stripeClient(config).checkout.sessions.create(
+  const session = await client.checkout.sessions.create(
     {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
@@ -167,6 +197,13 @@ export class BillingSignatureError extends Error {
   }
 }
 
+export class BillingModeMismatchError extends Error {
+  constructor() {
+    super('BILLING_PROVIDER_MODE_MISMATCH');
+    this.name = 'BillingModeMismatchError';
+  }
+}
+
 /**
  * Verify a delivery and turn it into our vocabulary.
  *
@@ -202,13 +239,20 @@ export async function verifyStripeWebhook(
     throw new BillingSignatureError();
   }
 
+  const signedEventMode = stripeProviderMode(event.livemode);
+  if (signedEventMode !== config.providerMode) throw new BillingModeMismatchError();
+
   let subscription: Stripe.Subscription | null = null;
   if (classifyStripeEvent(event.type) !== 'ignored') {
     const subscriptionId = subscriptionIdFromEvent(event);
     if (subscriptionId) {
       try {
         subscription = await client.subscriptions.retrieve(subscriptionId);
-      } catch {
+        if (stripeProviderMode(subscription.livemode) !== signedEventMode) {
+          throw new BillingModeMismatchError();
+        }
+      } catch (error) {
+        if (error instanceof BillingModeMismatchError) throw error;
         // A subscription we cannot read yields an event with no state, which the
         // database routine records and applies nothing from. Failing closed here
         // is what stops a transient API error from clearing someone's plan.
@@ -217,5 +261,13 @@ export async function verifyStripeWebhook(
     }
   }
 
-  return normalizeStripeEvent(event, subscription);
+  const normalized = normalizeStripeEvent(event, subscription);
+  if (
+    normalized.state
+    && normalized.planKey
+    && normalized.priceId !== config.prices[normalized.planKey]
+  ) {
+    return { ...normalized, state: null };
+  }
+  return normalized;
 }

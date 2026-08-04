@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { BillingConfig } from '../../billing-config';
-import { BillingSignatureError, verifyStripeWebhook } from './stripe-provider';
+import { BillingModeMismatchError, BillingSignatureError, verifyStripeWebhook } from './stripe-provider';
 
 /**
  * Signature verification, exercised against the real provider SDK.
@@ -22,6 +22,9 @@ const SECRET = `whsec_${randomBytes(24).toString('hex')}`;
 function config(overrides: Partial<BillingConfig> = {}): BillingConfig {
   return {
     provider: 'stripe',
+    providerMode: 'test',
+    checkoutMode: 'off',
+    internalUserIds: [],
     secretKey: `sk_test_${randomBytes(12).toString('hex')}`,
     webhookSecret: SECRET,
     prices: { pro_monthly: 'price_test' },
@@ -42,6 +45,7 @@ function body(overrides: Record<string, unknown> = {}): string {
     id: 'evt_test_1',
     type: 'charge.refunded',
     created: Math.floor(Date.now() / 1000),
+    livemode: false,
     data: { object: { id: 'ch_test_1' } },
     ...overrides,
   });
@@ -54,6 +58,13 @@ describe('webhook signature verification', () => {
     expect(event.eventId).toBe('evt_test_1');
     expect(event.eventType).toBe('charge.refunded');
     expect(event.provider).toBe('stripe');
+    expect(event.providerMode).toBe('test');
+  });
+
+  it('rejects a signed live event at a test endpoint before applying it', async () => {
+    const raw = body({ livemode: true });
+    await expect(verifyStripeWebhook(config(), raw, sign(raw)))
+      .rejects.toThrow(BillingModeMismatchError);
   });
 
   it('refuses a delivery carrying no signature at all', async () => {

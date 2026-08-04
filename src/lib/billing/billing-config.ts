@@ -1,12 +1,10 @@
 /**
  * Turning environment into a billing configuration — or into an honest refusal.
  *
- * Two states exist and there is no third: billing is **configured**, in which
- * case every value a checkout needs is present and validated here once, or it is
- * **not**, in which case nothing anywhere in the product offers a purchase. The
- * failure mode this shape exists to prevent is a half-configured deployment that
- * renders a Subscribe button, sends someone to a provider, takes their money and
- * then has no webhook secret with which to believe the payment happened.
+ * Provider processing and checkout rollout are separate decisions. A configured
+ * provider can keep signed webhooks and the customer portal working while new
+ * checkout stays off. When checkout is internal or public, only plans with a
+ * complete Price/Coupon mapping become available.
  *
  * `resolveBillingConfig` is pure and takes its environment as an argument, so
  * every branch below is testable without credentials and without `process.env`.
@@ -17,9 +15,19 @@
  */
 
 import { billingPlanKeys, billingPlans, type BillingPlanKey } from './billing-plans';
+import {
+  isTrustedBillingProviderMode,
+  type TrustedBillingProviderMode,
+} from './billing-provider-mode';
+
+export const billingCheckoutModes = ['off', 'internal', 'public'] as const;
+export type BillingCheckoutMode = typeof billingCheckoutModes[number];
 
 export interface BillingConfig {
   provider: 'stripe';
+  providerMode: TrustedBillingProviderMode;
+  checkoutMode: BillingCheckoutMode;
+  internalUserIds: readonly string[];
   secretKey: string;
   webhookSecret: string;
   /** Provider price identifier per purchasable plan key. */
@@ -46,11 +54,14 @@ export type BillingConfigResult =
 export type BillingDisabledReason =
   /** `BILLING_ENABLED` is not `true`. The deliberate off switch. */
   | 'switched-off'
-  /** The switch is on but credentials or price identifiers are missing. */
+  /** The switch is on but provider credentials, mode or return origin are missing. */
   | 'incomplete-config';
 
 export interface BillingEnvironment {
   BILLING_ENABLED?: string;
+  BILLING_PROVIDER_MODE?: string;
+  BILLING_CHECKOUT_MODE?: string;
+  BILLING_INTERNAL_USER_IDS?: string;
   BILLING_RETURN_ORIGIN?: string;
   APP_URL?: string;
   STRIPE_SECRET_KEY?: string;
@@ -105,14 +116,36 @@ function normalizeOrigin(value: string | undefined): string | undefined {
   }
 }
 
+function checkoutMode(value: string | undefined): BillingCheckoutMode {
+  const normalized = trimmed(value)?.toLowerCase() ?? 'off';
+  return (billingCheckoutModes as readonly string[]).includes(normalized)
+    ? normalized as BillingCheckoutMode
+    : 'off';
+}
+
+function internalUserIds(value: string | undefined): readonly string[] {
+  if (!value) return [];
+  return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+}
+
+function secretMatchesMode(secretKey: string, mode: TrustedBillingProviderMode): boolean {
+  return mode === 'live' ? secretKey.startsWith('sk_live_') : secretKey.startsWith('sk_test_');
+}
+
 export function resolveBillingConfig(env: BillingEnvironment): BillingConfigResult {
   if (trimmed(env.BILLING_ENABLED)?.toLowerCase() !== 'true') {
     return { enabled: false, reason: 'switched-off', missing: ['BILLING_ENABLED'] };
   }
 
   const missing: string[] = [];
+  const providerMode = trimmed(env.BILLING_PROVIDER_MODE)?.toLowerCase();
+  if (!isTrustedBillingProviderMode(providerMode)) missing.push('BILLING_PROVIDER_MODE');
+  const resolvedCheckoutMode = checkoutMode(env.BILLING_CHECKOUT_MODE);
   const secretKey = trimmed(env.STRIPE_SECRET_KEY);
   if (!secretKey) missing.push('STRIPE_SECRET_KEY');
+  if (secretKey && isTrustedBillingProviderMode(providerMode) && !secretMatchesMode(secretKey, providerMode)) {
+    missing.push('STRIPE_SECRET_KEY_MODE_MISMATCH');
+  }
   const webhookSecret = trimmed(env.STRIPE_WEBHOOK_SECRET);
   if (!webhookSecret) missing.push('STRIPE_WEBHOOK_SECRET');
 
@@ -144,24 +177,58 @@ export function resolveBillingConfig(env: BillingEnvironment): BillingConfigResu
     availablePlanKeys.push(key);
   }
 
-  // The switch is on but no plan can actually be sold: that is a misconfiguration,
-  // not a catalogue with zero rows.
-  if (availablePlanKeys.length === 0) missing.push('STRIPE_PRICE_PRO_MONTHLY');
-
-  if (missing.length > 0 || !secretKey || !webhookSecret || !returnOrigin) {
+  /*
+   * A configured provider with checkout off is a valid operating state: signed
+   * webhooks and the portal must keep working even when no new purchase can be
+   * opened. Price identifiers therefore control only plan availability, never
+   * whether billing processing itself is enabled.
+   */
+  if (
+    missing.length > 0
+    || !secretKey
+    || !webhookSecret
+    || !returnOrigin
+    || !isTrustedBillingProviderMode(providerMode)
+  ) {
     return { enabled: false, reason: 'incomplete-config', missing };
   }
 
   return {
     enabled: true,
     availablePlanKeys,
-    config: { provider: 'stripe', secretKey, webhookSecret, prices, coupons, returnOrigin },
+    config: {
+      provider: 'stripe',
+      providerMode,
+      checkoutMode: resolvedCheckoutMode,
+      internalUserIds: internalUserIds(env.BILLING_INTERNAL_USER_IDS),
+      secretKey,
+      webhookSecret,
+      prices,
+      coupons,
+      returnOrigin,
+    },
   };
 }
 
-/** The browser-safe projection of a resolved configuration. */
-export function billingAvailability(result: BillingConfigResult): BillingAvailability {
-  return result.enabled
+export interface BillingCheckoutViewer {
+  userId: string | null;
+  role: 'user' | 'admin';
+}
+
+/** The one rollout decision shared by server-rendered UI and server actions. */
+export function checkoutAllowed(config: BillingConfig, viewer: BillingCheckoutViewer): boolean {
+  if (config.checkoutMode === 'off') return false;
+  if (config.checkoutMode === 'public') return true;
+  return viewer.role === 'admin'
+    || Boolean(viewer.userId && config.internalUserIds.includes(viewer.userId));
+}
+
+/** The browser-safe, viewer-specific projection of a resolved configuration. */
+export function billingAvailability(
+  result: BillingConfigResult,
+  viewer: BillingCheckoutViewer = { userId: null, role: 'user' },
+): BillingAvailability {
+  return result.enabled && checkoutAllowed(result.config, viewer)
     ? { enabled: true, availablePlanKeys: result.availablePlanKeys }
     : { enabled: false, availablePlanKeys: [] };
 }

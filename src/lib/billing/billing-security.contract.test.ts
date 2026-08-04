@@ -67,7 +67,8 @@ describe('billing security contract', () => {
 
     const env = read('src/config/env/server.ts');
     for (const key of [
-      'BILLING_ENABLED', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET',
+      'BILLING_ENABLED', 'BILLING_PROVIDER_MODE', 'BILLING_CHECKOUT_MODE',
+      'BILLING_INTERNAL_USER_IDS', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET',
       'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_ELITE_ANNUAL',
       'STRIPE_COUPON_FOUNDER_PRO', 'STRIPE_COUPON_FOUNDER_ELITE',
     ]) {
@@ -85,7 +86,11 @@ describe('billing security contract', () => {
   it('sends the provider a price identifier, never an amount', () => {
     const provider = readCode('src/lib/billing/providers/stripe/stripe-provider.ts');
     expect(provider).toContain('line_items: [{ price: priceId, quantity: 1 }]');
-    expect(provider).not.toMatch(/unit_amount|amount:|price_data/);
+    expect(provider).not.toMatch(/price_data/);
+    expect(provider).not.toMatch(/line_items[^\n]*unit_amount/);
+    // Amount is read back from the provider only to compare it with the server
+    // catalogue before checkout is created; it is never sent in session params.
+    expect(provider).toContain('price.unit_amount !== expectedAmount');
     /*
      * Promotion codes are off, so the only discount is the one the server picks.
      * The flag is conditional on there being no coupon, because Stripe refuses a
@@ -179,6 +184,15 @@ describe('billing security contract', () => {
     const provider = readCode('src/lib/billing/providers/stripe/stripe-provider.ts');
     expect(provider).toContain('constructEventAsync');
     expect(provider).toContain('config.webhookSecret');
+    expect(provider).toContain('signedEventMode !== config.providerMode');
+    expect(route).toContain('BillingModeMismatchError');
+  });
+
+  it('scopes customer lookup and event application by provider mode', () => {
+    const repository = readCode('src/lib/billing/billing-repository.ts');
+    expect(repository).toContain('input_provider_mode: event.providerMode');
+    expect(repository).toContain(".eq('billing_provider', 'stripe')");
+    expect(repository).toContain(".eq('billing_provider_mode', providerMode)");
   });
 
   it('records a digest of the delivery, never the delivery', () => {

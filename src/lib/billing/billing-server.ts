@@ -5,6 +5,7 @@ import {
   billingAvailability,
   resolveBillingConfig,
   type BillingAvailability,
+  type BillingCheckoutViewer,
   type BillingConfig,
   type BillingConfigResult,
 } from './billing-config';
@@ -25,8 +26,10 @@ export function billingConfigResult(): BillingConfigResult {
 }
 
 /** The browser-safe projection: which plans can be bought, and nothing else. */
-export function getBillingAvailability(): BillingAvailability {
-  return billingAvailability(billingConfigResult());
+export function getBillingAvailability(
+  viewer: BillingCheckoutViewer = { userId: null, role: 'user' },
+): BillingAvailability {
+  return billingAvailability(billingConfigResult(), viewer);
 }
 
 /**

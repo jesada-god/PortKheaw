@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   billingAvailability,
+  checkoutAllowed,
   founderPlansConfigured,
   resolveBillingConfig,
   type BillingEnvironment,
@@ -17,6 +18,8 @@ import {
 
 const COMPLETE: BillingEnvironment = {
   BILLING_ENABLED: 'true',
+  BILLING_PROVIDER_MODE: 'test',
+  BILLING_CHECKOUT_MODE: 'public',
   BILLING_RETURN_ORIGIN: 'https://portkheaw.vercel.app',
   STRIPE_SECRET_KEY: 'sk_test_placeholder',
   STRIPE_WEBHOOK_SECRET: 'whsec_placeholder',
@@ -76,7 +79,7 @@ describe('billing configuration', () => {
     expect(result.missing).toContain(key);
   });
 
-  it('fails closed when no price identifier is configured at all', () => {
+  it('keeps webhook and portal processing enabled when checkout has no prices', () => {
     const result = resolveBillingConfig({
       ...COMPLETE,
       STRIPE_PRICE_PRO_MONTHLY: undefined,
@@ -84,7 +87,45 @@ describe('billing configuration', () => {
       STRIPE_PRICE_ELITE_MONTHLY: undefined,
       STRIPE_PRICE_ELITE_ANNUAL: undefined,
     });
-    expect(result.enabled).toBe(false);
+    expect(result.enabled).toBe(true);
+    if (!result.enabled) return;
+    expect(result.availablePlanKeys).toEqual([]);
+  });
+
+  it('requires an explicit provider mode and rejects a key from the other mode', () => {
+    for (const environment of [
+      { ...COMPLETE, BILLING_PROVIDER_MODE: undefined },
+      { ...COMPLETE, BILLING_PROVIDER_MODE: 'live' },
+      { ...COMPLETE, BILLING_PROVIDER_MODE: 'legacy_unknown' },
+    ]) {
+      const result = resolveBillingConfig(environment);
+      expect(result.enabled).toBe(false);
+    }
+  });
+
+  it('defaults checkout off and admits only trusted internal viewers in internal mode', () => {
+    const off = resolveBillingConfig({ ...COMPLETE, BILLING_CHECKOUT_MODE: undefined });
+    expect(off.enabled).toBe(true);
+    if (!off.enabled) return;
+    expect(off.config.checkoutMode).toBe('off');
+    expect(checkoutAllowed(off.config, { userId: 'owner', role: 'admin' })).toBe(false);
+
+    const invalid = resolveBillingConfig({ ...COMPLETE, BILLING_CHECKOUT_MODE: 'surprise' });
+    expect(invalid.enabled).toBe(true);
+    if (!invalid.enabled) return;
+    expect(invalid.config.checkoutMode).toBe('off');
+
+    const internal = resolveBillingConfig({
+      ...COMPLETE,
+      BILLING_CHECKOUT_MODE: 'internal',
+      BILLING_INTERNAL_USER_IDS: 'allowlisted-user, second-user',
+    });
+    expect(internal.enabled).toBe(true);
+    if (!internal.enabled) return;
+    expect(checkoutAllowed(internal.config, { userId: 'admin', role: 'admin' })).toBe(true);
+    expect(checkoutAllowed(internal.config, { userId: 'allowlisted-user', role: 'user' })).toBe(true);
+    expect(checkoutAllowed(internal.config, { userId: 'ordinary-user', role: 'user' })).toBe(false);
+    expect(billingAvailability(internal, { userId: 'ordinary-user', role: 'user' }).enabled).toBe(false);
   });
 
   /*

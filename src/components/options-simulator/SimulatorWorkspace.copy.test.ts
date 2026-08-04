@@ -150,7 +150,7 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('title="วันที่ต้องการดูผล (Target Date)"');
     expect(source).toContain('title="ความผันผวนที่ตลาดคาด (IV %)"');
     expect(source).toContain('min={minimumTargetDate}');
-    expect(source).toContain('max={earliestExpiration}');
+    expect(source).toContain('max={maximumTargetDate}');
     expect(source).toContain('clampTargetDate(event.target.value');
     expect(source).toContain('ข้อมูลสัญญามีการเปลี่ยนแปลง กรุณาคำนวณใหม่');
   });
@@ -180,7 +180,8 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('ค่าประมาณจาก Delta (ทั้งสถานะ)');
     expect(source).toContain('Delta เป็นตัวเลขไว้เทียบเท่านั้น ไม่ถูกนำไปบวกซ้ำในผลรวม');
     expect(source).toContain("source === 'manual' ? 'คุณกรอกเอง' : 'ระบบประเมินให้'");
-    expect(source).toContain('body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
+    expect(source).toContain('prepareMonteCarloCalculationInput(scoped, workspace, settings)');
+    expect(source).toContain('body: JSON.stringify({ input: prepared.data })');
     expect(source).not.toContain('settings: { ...settings, delta');
   });
 

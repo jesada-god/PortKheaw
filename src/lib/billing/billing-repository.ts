@@ -3,8 +3,10 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/src/lib/supabase/admin';
 import type { Database } from '@/src/types/database';
+import type { BillingProviderMode } from '@/src/types/database';
 import type { NormalizedBillingEvent } from './billing-events';
 import { billingPlans } from './billing-plans';
+import type { TrustedBillingProviderMode } from './billing-provider-mode';
 
 /**
  * The database side of billing.
@@ -23,14 +25,23 @@ import { billingPlans } from './billing-plans';
 
 type BillingSnapshotRow = Database['public']['Functions']['get_my_billing_snapshot']['Returns'][number];
 
-export type BillingSnapshot = BillingSnapshotRow;
+export type BillingSnapshot = BillingSnapshotRow & {
+  billing_provider_mode: BillingProviderMode | null;
+};
 
 export async function readBillingSnapshot(
   client: SupabaseClient<Database>,
 ): Promise<BillingSnapshot | null> {
-  const { data, error } = await client.rpc('get_my_billing_snapshot');
-  if (error) throw error;
-  return data?.[0] ?? null;
+  const [snapshotResult, modeResult] = await Promise.all([
+    client.rpc('get_my_billing_snapshot'),
+    client.from('user_subscriptions').select('billing_provider_mode').maybeSingle(),
+  ]);
+  if (snapshotResult.error) throw snapshotResult.error;
+  if (modeResult.error) throw modeResult.error;
+  const snapshot = snapshotResult.data?.[0];
+  return snapshot
+    ? { ...snapshot, billing_provider_mode: modeResult.data?.billing_provider_mode ?? null }
+    : null;
 }
 
 export type BillingApplyOutcome =
@@ -64,6 +75,7 @@ export async function applyBillingEvent(
 
   const { data, error } = await admin.rpc('apply_billing_subscription_event', {
     input_provider: event.provider,
+    input_provider_mode: event.providerMode,
     input_event_id: event.eventId,
     input_event_type: event.eventType,
     input_occurred_at: event.occurredAt,
@@ -98,7 +110,10 @@ export async function applyBillingEvent(
  * account that asked. The identifier is passed straight to the provider and is
  * never returned to the browser.
  */
-export async function readBillingCustomerId(userId: string): Promise<string | null> {
+export async function readBillingCustomerId(
+  userId: string,
+  providerMode: TrustedBillingProviderMode,
+): Promise<string | null> {
   const admin = createAdminClient();
   if (!admin) throw new BillingAdminUnavailableError();
 
@@ -106,6 +121,8 @@ export async function readBillingCustomerId(userId: string): Promise<string | nu
     .from('user_subscriptions')
     .select('billing_customer_id')
     .eq('user_id', userId)
+    .eq('billing_provider', 'stripe')
+    .eq('billing_provider_mode', providerMode)
     .maybeSingle();
   if (error) throw error;
   return data?.billing_customer_id ?? null;
