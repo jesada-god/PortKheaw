@@ -10,6 +10,7 @@ import {
   readPendingPromptPayIdentity,
   readPendingPromptPayPayment,
   recordPendingPromptPayPayment,
+  type PendingPaymentOutcome,
 } from '@/src/lib/billing/billing-repository';
 import { holdsLiveSubscription } from '@/src/lib/billing/billing-summary';
 import type { BillingPaymentMethod } from '@/src/lib/billing/billing-payment-method';
@@ -23,19 +24,28 @@ import {
 import { createClient } from '@/src/lib/supabase/server';
 
 /**
- * Starting a purchase, and opening the provider's billing portal.
+ * Starting a purchase, abandoning an unpaid one, and opening the provider's
+ * billing portal.
  *
- * What a caller may send is one plan key. Not an amount, not a tier, not a
- * discount, not a customer identifier, not a user id — every one of those is
- * read on the server from the session or the account's own row. That is the
- * whole security argument for this file: the request surface is too narrow to
- * carry a lie worth telling.
+ * What a caller may send is a plan key and a payment method. Not an amount, not
+ * a tier, not a discount, not a customer identifier, not a user id — every one
+ * of those is read on the server from the session or the account's own row. And
+ * the rail selects only *how* money is collected: both rails bill the same Price
+ * object, so naming the other one cannot change what anybody is charged. That is
+ * the whole security argument for this file: the request surface is too narrow
+ * to carry a lie worth telling.
  *
- * Two more properties this file exists to hold:
+ * Three more properties this file exists to hold:
  *
  *   * Nothing is unlocked here. A successful return is a URL to the provider's
  *     hosted page and nothing more. Entitlement changes only when a signed
  *     webhook arrives, which is a different route with a different trust story.
+ *     That is true of the PromptPay rail twice over: the invoice it returns is a
+ *     request for money, and the plan opens when the bank confirms.
+ *
+ *   * A PromptPay invoice that cannot be recorded is unmade. Past the point
+ *     where the provider has created something payable, a failure has to undo it
+ *     rather than return an error and leave an invoice nobody can see or cancel.
  *
  *   * With billing unconfigured, the provider SDK is never even loaded. The
  *     import is dynamic and sits *after* the eligibility gate, so a deployment
@@ -308,31 +318,45 @@ export async function startCheckoutAction(
     if (eligibility.paymentMethod === 'promptpay') {
       const invoice = await provider.createStripePromptPaySubscription(request);
       /*
-       * The invoice exists at the provider now, so it must exist in our records
-       * before the reader is handed the link — otherwise an abandoned tab would
-       * leave a payable invoice nobody can see, cancel, or match a webhook to.
-       * If the record is refused, the subscription is cancelled again rather
-       * than left behind.
+       * From here the invoice is payable at the provider, so anything that goes
+       * wrong must *unmake* it rather than return an error and walk away. An
+       * invoice we failed to record is one nobody can see, cancel or match a
+       * webhook to — and somebody could still pay it.
        */
-      const recorded = await recordPendingPromptPayPayment({
-        userId: user.id,
-        providerMode: config.providerMode,
-        planKey: eligibility.plan.key,
-        subscriptionId: invoice.subscriptionId,
-        invoiceId: invoice.invoiceId,
-        hostedInvoiceUrl: invoice.hostedInvoiceUrl,
-        amountBaht: invoice.amountBaht,
-        dueAt: invoice.dueAt,
-      });
-      if (recorded !== 'recorded') {
-        await provider.abandonStripePromptPaySubscription(config, invoice.subscriptionId);
-        record('billing_checkout_refused', recorded);
-        return {
-          ok: false,
-          code: 'PROMPTPAY_INVOICE_OPEN',
-          message: checkoutRefusalMessage('promptpay-invoice-open'),
-        };
+      let recorded: PendingPaymentOutcome | 'record-failed';
+      try {
+        recorded = await recordPendingPromptPayPayment({
+          userId: user.id,
+          providerMode: config.providerMode,
+          planKey: eligibility.plan.key,
+          subscriptionId: invoice.subscriptionId,
+          invoiceId: invoice.invoiceId,
+          hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+          amountBaht: invoice.amountBaht,
+          dueAt: invoice.dueAt,
+        });
+      } catch {
+        recorded = 'record-failed';
       }
+
+      if (recorded !== 'recorded') {
+        try {
+          await provider.abandonStripePromptPaySubscription(config, invoice.subscriptionId);
+        } catch {
+          // Left to expire at its due date instead. Nothing was granted, and the
+          // reader is told the purchase did not start either way.
+          record('billing_checkout_failed', 'PROMPTPAY_ORPHAN_INVOICE');
+        }
+        record('billing_checkout_refused', recorded);
+        return recorded === 'record-failed'
+          ? { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE }
+          : {
+            ok: false,
+            code: 'PROMPTPAY_INVOICE_OPEN',
+            message: checkoutRefusalMessage('promptpay-invoice-open'),
+          };
+      }
+
       revalidatePath('/settings/subscription');
       record('billing_checkout_started', `${eligibility.plan.key}:promptpay`);
       return { ok: true, url: invoice.hostedInvoiceUrl, paymentMethod: 'promptpay' };
