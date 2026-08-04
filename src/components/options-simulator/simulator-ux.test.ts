@@ -39,9 +39,12 @@ describe('Options Simulator UX helpers', () => {
 
   it('clamps Target Date after valuation and no later than expiration', () => {
     expect(clampTargetDate('2026-07-19', '2026-07-19', '2026-08-19')).toBe('2026-07-20');
-    expect(clampTargetDate('2026-09-01', '2026-07-19', '2026-08-19')).toBe('2026-08-19');
+    expect(clampTargetDate('2026-09-01', '2026-07-19', '2026-08-19')).toBe('2026-08-18');
     expect(targetDateError('2026-07-19', '2026-07-19', '2026-08-19')).toContain('หลังวันที่ใช้คำนวณ');
-    expect(targetDateError('2026-08-20', '2026-07-19', '2026-08-19')).toContain('ไม่เกินวันหมดอายุ');
+    expect(targetDateError('2026-08-19', '2026-07-19', '2026-08-19')).toContain('ก่อนวันหมดอายุ');
+    expect(targetDateError('2026-08-20', '2026-07-19', '2026-08-19')).toContain('ก่อนวันหมดอายุ');
+    expect(clampTargetDate('2026-08-13', '2026-08-04', '2026-08-21')).toBe('2026-08-13');
+    expect(calendarDaysBetween('2026-08-13', '2026-08-21')).toBe(8);
   });
 
   it('allows an empty numeric draft and never returns NaN or Infinity', () => {
@@ -72,6 +75,8 @@ describe('Options Simulator UX helpers', () => {
     expect(normalizePercentDraft('00114.50')).toBe('114.50');
     expect(normalizePercentDraft('114.501')).toBeNull();
     expect(parsePercentDraft('114.50')).toBe(114.5);
+    expect(percentVolatilityToEngine(parsePercentDraft('115.27') as number)).toBeCloseTo(1.1527, 10);
+    expect(engineVolatilityToPercent(1.1527)).toBeCloseTo(115.27, 10);
   });
 
   it('shows the real field name and exposes unit-safe development diagnostics', () => {

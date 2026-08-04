@@ -1,11 +1,19 @@
 import { intrinsicValue, priceOption } from './pricing';
+import { calendarDaysBetween } from './calendar-date';
 import type { Greeks, OptionLeg, PortfolioValuation, ScenarioInput, SimulationWorkspace } from './types';
 import { portfolioProfitLossBasis } from './portfolio-inputs';
 
 const emptyGreeks = (): Greeks => ({ delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 });
-const yearsBetween = (from: string, to: string) => Math.max(0, (Date.parse(to) - Date.parse(from)) / 31_557_600_000);
+const yearsBetween = (from: string, to: string) => Math.max(0, calendarDaysBetween(from, to) / 365.25);
 const signOf = (leg: OptionLeg) => leg.side === 'buy' ? 1 : -1;
 export { detectStrategy, portfolioProfitLossBasis } from './portfolio-inputs';
+
+type PortfolioCalculationWorkspace = Pick<SimulationWorkspace,
+  'legs' | 'stockQuantity' | 'cashPosition' | 'underlyingPrice'
+>;
+type PortfolioCalculationScenario = Pick<ScenarioInput,
+  'targetPrice' | 'valuationDate' | 'volatilityShift' | 'rate' | 'dividendYield'
+>;
 
 export function optionExpirationProfit(leg: OptionLeg, terminalPrice: number): number {
   const gross = signOf(leg) * (intrinsicValue(terminalPrice, leg.strike, leg.kind) - leg.entryPremium) * leg.quantity * leg.multiplier;
@@ -18,7 +26,7 @@ export function portfolioExpirationProfit(workspace: Pick<SimulationWorkspace, '
   return options + stock + workspace.cashPosition;
 }
 
-function payoffAnalysis(workspace: SimulationWorkspace): Pick<PortfolioValuation, 'payoff' | 'breakEvens' | 'maxProfit' | 'maxLoss' | 'unlimitedProfit' | 'unlimitedLoss'> {
+function payoffAnalysis(workspace: PortfolioCalculationWorkspace): Pick<PortfolioValuation, 'payoff' | 'breakEvens' | 'maxProfit' | 'maxLoss' | 'unlimitedProfit' | 'unlimitedLoss'> {
   const spot = workspace.underlyingPrice ?? Math.max(...workspace.legs.map((leg) => leg.strike));
   const high = Math.max(spot * 3, ...workspace.legs.map((leg) => leg.strike * 2.5));
   const points = Array.from({ length: 241 }, (_, index) => ({
@@ -50,7 +58,7 @@ function payoffAnalysis(workspace: SimulationWorkspace): Pick<PortfolioValuation
   };
 }
 
-export function valuePortfolio(workspace: SimulationWorkspace, scenario: ScenarioInput): PortfolioValuation {
+export function valuePortfolio(workspace: PortfolioCalculationWorkspace, scenario: PortfolioCalculationScenario): PortfolioValuation {
   const aggregateGreeks = emptyGreeks();
   let theoreticalValue = workspace.cashPosition + workspace.stockQuantity * scenario.targetPrice;
   let profitLoss = workspace.cashPosition + workspace.stockQuantity * (scenario.targetPrice - (workspace.underlyingPrice ?? scenario.targetPrice));

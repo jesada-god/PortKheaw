@@ -22,7 +22,7 @@ import { detectStrategy, portfolioProfitLossBasis } from '@/src/lib/options-simu
 import type { MonteCarloDisplayResult, WhatIfDecomposition } from '@/src/lib/options-simulator/compute-dto';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
 import type { DataStatus, MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace } from '@/src/lib/options-simulator/types';
-import { calculationValidationMessages } from '@/src/lib/options-simulator/validation';
+import { calculationValidationMessages, prepareMonteCarloCalculationInput, prepareWhatIfCalculationInput } from '@/src/lib/options-simulator/validation';
 import { presentEdgeGate, presentError, presentUnavailableReason } from './error-presentation';
 import { runExclusiveSave, type SaveFeedbackStatus } from './save-feedback';
 import { MetricDisclosure } from './MetricDisclosure';
@@ -44,6 +44,11 @@ function calculationPayloadData(payload: unknown): unknown {
 function calculationPayloadMessage(payload: unknown, fallback: string): string {
   const error = recordValue(payload) && recordValue(payload.error) ? payload.error : null;
   return error && typeof error.message === 'string' ? error.message : fallback;
+}
+
+function calculationPayloadIssues(payload: unknown): string[] {
+  const error = recordValue(payload) && recordValue(payload.error) ? payload.error : null;
+  return error && Array.isArray(error.issues) ? error.issues.filter((issue): issue is string => typeof issue === 'string') : [];
 }
 
 function isPortfolioValuation(value: unknown): value is PortfolioValuation {
@@ -535,9 +540,19 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   }
   function validate(): boolean {
     const selectedLegIndex = workspace.legs.findIndex((leg) => leg.id === selectedLegId);
-    const issues = calculationValidationMessages(analysisWorkspace()).map((message) => (
+    const remapSelectedLeg = (message: string) => (
       selectedLegIndex >= 0 ? message.replace(/^legs\.0(?=[:.])/, `legs.${selectedLegIndex}`) : message
-    ));
+    );
+    const issues = calculationValidationMessages(analysisWorkspace()).map(remapSelectedLeg);
+    if (tab !== 'Monte Carlo Simulation') {
+      const prepared = prepareWhatIfCalculationInput(analysisWorkspace());
+      if (!prepared.success) issues.push(...prepared.issues.map(remapSelectedLeg));
+    } else {
+      const targetDte = Math.max(1, calendarDaysBetween(workspace.valuationDate, workspace.scenarios[0]?.valuationDate ?? ''));
+      const settings = { ...workspace.monteCarlo, horizonDays: targetDte, steps: Math.min(workspace.monteCarlo.steps, targetDte) };
+      const prepared = prepareMonteCarloCalculationInput(analysisWorkspace(), workspace, settings);
+      if (!prepared.success) issues.push(...prepared.issues.map(remapSelectedLeg));
+    }
     if (tab === 'Monte Carlo Simulation' && !isBasicPathOption(workspace.monteCarlo.paths)) issues.push('monteCarlo.paths: จำนวนรอบจำลองต้องเป็น 1,000, 5,000, 10,000, 25,000 หรือ 50,000');
     setValidationErrors(issues);
     if (issues.length > 0) {
@@ -574,14 +589,30 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         const scoped = analysisWorkspace();
         const targetDte = Math.max(1, calendarDaysBetween(workspace.valuationDate, workspace.scenarios[0].valuationDate));
         const settings = { ...workspace.monteCarlo, horizonDays: targetDte, steps: Math.min(workspace.monteCarlo.steps, targetDte) };
+        const prepared = prepareMonteCarloCalculationInput(scoped, workspace, settings);
+        if (!prepared.success) {
+          setValidationErrors(prepared.issues);
+          focusFirstValidationField(prepared.issues);
+          return;
+        }
         const response = await fetch('/api/option-simulations/compute/monte-carlo', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice: workspace.scenarios[0].targetPrice }),
+          body: JSON.stringify({ input: prepared.data }),
           signal: controller.signal,
         });
         const payload: unknown = await response.json();
-        if (!response.ok) throw new Error(calculationPayloadMessage(payload, 'ระบบจำลองผลไม่สำเร็จ กรุณาลองกดจำลองใหม่อีกครั้ง'));
+        if (!response.ok) {
+          const issues = calculationPayloadIssues(payload);
+          if (issues.length > 0) {
+            setValidationErrors(issues);
+            const firstPath = validationMessageParts(issues[0]).path;
+            if (firstPath?.startsWith('legs.')) setTab('Inputs');
+            focusFirstValidationField(issues);
+            return;
+          }
+          throw new Error(calculationPayloadMessage(payload, 'ระบบจำลองผลไม่สำเร็จ กรุณาลองกดจำลองใหม่อีกครั้ง'));
+        }
         const data = calculationPayloadData(payload);
         if (!recordValue(data) || !isMonteCarloDisplayResult(data.result) || !isCallPutScenarioScore(data.scenarioScore)) {
           throw new Error('ผลการจำลองจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
@@ -592,14 +623,30 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         setProgress(settings.paths);
         hasResults.current = true; setResultsOutdated(false); setInputsOutdated(false); setScenarioDirty(false); setMc(result); setCallPutScore(scenarioScore); setWorkspace((current) => ({ ...current, monteCarlo: settings, resultSnapshot: { ...current.resultSnapshot, monteCarlo: monteCarloSnapshot(result) } })); setSaveStatus('Unsaved');
       } else {
+        const prepared = prepareWhatIfCalculationInput(analysisWorkspace());
+        if (!prepared.success) {
+          setValidationErrors(prepared.issues);
+          focusFirstValidationField(prepared.issues);
+          return;
+        }
         const response = await fetch('/api/option-simulations/compute/what-if', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ workspace: analysisWorkspace() }),
+          body: JSON.stringify({ input: prepared.data }),
           signal: controller.signal,
         });
         const payload: unknown = await response.json();
-        if (!response.ok) throw new Error(calculationPayloadMessage(payload, 'ระบบคำนวณผลไม่สำเร็จ กรุณาลองใหม่'));
+        if (!response.ok) {
+          const issues = calculationPayloadIssues(payload);
+          if (issues.length > 0) {
+            setValidationErrors(issues);
+            const firstPath = validationMessageParts(issues[0]).path;
+            if (firstPath?.startsWith('legs.')) setTab('Inputs');
+            focusFirstValidationField(issues);
+            return;
+          }
+          throw new Error(calculationPayloadMessage(payload, 'ระบบคำนวณผลไม่สำเร็จ กรุณาลองใหม่'));
+        }
         const data = calculationPayloadData(payload);
         if (!recordValue(data) || !isPortfolioValuation(data.valuation) || !isWhatIfDecomposition(data.decomposition)) throw new Error('ผลการคำนวณจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
         const result = data.valuation;
@@ -675,6 +722,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const scopedLegs = activeLeg ? [activeLeg] : workspace.legs;
   const earliestExpiration = scopedLegs.map((leg) => leg.expiration).sort()[0] ?? workspace.valuationDate;
   const minimumTargetDate = addCalendarDays(workspace.valuationDate, 1);
+  const maximumTargetDate = addCalendarDays(earliestExpiration, -1);
   const dte = Math.max(0, calendarDaysBetween(workspace.scenarios[0].valuationDate, earliestExpiration));
   const monteCarloDte = Math.max(1, calendarDaysBetween(workspace.valuationDate, earliestExpiration));
   const scenario = workspace.scenarios[0];
@@ -732,7 +780,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
           <div className="rounded-xl border border-slate-700 p-4"><Numeric title="ราคาหุ้นที่อยากลอง (Target Stock Price)" placeholder="เช่น 130" helper="ราคาหุ้นที่ต้องการทดลองว่าจะขึ้นหรือลงไปถึงระดับใด" min={0.0000001} externalError={fieldError('scenarios.0.targetPrice')} validationPath="scenarios.0.targetPrice" value={scenario.targetPrice} onChange={(value) => scenarioChange(0, { targetPrice: value })} />
             <input aria-label="ปรับราคาหุ้นที่อยากลองเป็นเปอร์เซ็นต์" className="mt-3 w-full accent-[#D4FF00]" type="range" min="-50" max="100" value={workspace.underlyingPrice ? Math.round((scenario.targetPrice / workspace.underlyingPrice - 1) * 100) : 0} onChange={(event) => scenarioChange(0, { targetPrice: (workspace.underlyingPrice ?? 0) * (1 + Number(event.target.value) / 100) })} />
             <p className="mt-1 text-xs text-slate-400">ราคาหุ้นปัจจุบัน {workspace.underlyingPrice?.toFixed(2) ?? 'ไม่มีข้อมูล'} · เปลี่ยนไป {workspace.underlyingPrice ? `${((scenario.targetPrice / workspace.underlyingPrice - 1) * 100).toFixed(1)}%` : 'ไม่มีข้อมูล'}</p></div>
-          <div className="rounded-xl border border-slate-700 p-4"><FieldLabel title="วันที่ต้องการดูผล (Target Date)" helper="เลือกวันในอนาคต แต่ต้องไม่เกินวันหมดอายุ" /><div className="relative"><Input className="cursor-pointer pr-9" type="date" aria-label="วันที่ต้องการดูผล (Target Date)" min={minimumTargetDate} max={earliestExpiration} placeholder="เลือกวันที่จากปฏิทิน" value={scenario.valuationDate} data-validation-path="scenarios.0.valuationDate" onChange={(event) => scenarioChange(0, { valuationDate: clampTargetDate(event.target.value, workspace.valuationDate, earliestExpiration) })} /><CalendarDays aria-hidden="true" size={16} className="pointer-events-none absolute right-3 top-3 text-slate-500" /></div>
+          <div className="rounded-xl border border-slate-700 p-4"><FieldLabel title="วันที่ต้องการดูผล (Target Date)" helper="เลือกวันในอนาคต และต้องอยู่ก่อนวันหมดอายุ" /><div className="relative"><Input className="cursor-pointer pr-9" type="date" aria-label="วันที่ต้องการดูผล (Target Date)" min={minimumTargetDate} max={maximumTargetDate} placeholder="เลือกวันที่จากปฏิทิน" value={scenario.valuationDate} data-validation-path="scenarios.0.valuationDate" onChange={(event) => scenarioChange(0, { valuationDate: clampTargetDate(event.target.value, workspace.valuationDate, earliestExpiration) })} /><CalendarDays aria-hidden="true" size={16} className="pointer-events-none absolute right-3 top-3 text-slate-500" /></div>
             <p className="mt-2 text-xs text-slate-400">วันหมดอายุ {calendarText(earliestExpiration)} · จำนวนวันที่เหลือก่อนหมดอายุ (DTE) {dayCountText(dte)}</p>{dateIssue && <p role="alert" className="mt-1 text-xs text-red-300">{dateIssue}</p>}</div>
           <div className="rounded-xl border border-slate-700 p-4"><PercentInput title="ความผันผวนที่ตลาดคาด (IV %)" placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" value={currentIv * (1 + scenario.volatilityShift) * 100} onChange={(value) => scenarioChange(0, { volatilityShift: currentIv > 0 ? Math.max(-0.99, value / (currentIv * 100) - 1) : 0 })} />
             <input aria-label="ปรับความผันผวนที่ตลาดคาดเป็นเปอร์เซ็นต์" className="mt-3 w-full accent-[#D4FF00]" type="range" min="-90" max="200" value={Math.round(scenario.volatilityShift * 100)} onChange={(event) => scenarioChange(0, { volatilityShift: Number(event.target.value) / 100 })} />
@@ -744,7 +792,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
       {tab === 'Monte Carlo Simulation' && <section className={box} data-testid="monte-carlo-controls">
         <h1 className="text-xl font-bold">{stepHeadings['Monte Carlo']}</h1><p className="mb-5 text-sm text-slate-400">ระบบจำลองราคาหุ้นหลายพันสถานการณ์ แล้วสรุปว่าสถานะของคุณมีโอกาสกำไรหรือขาดทุนแค่ไหน</p>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"><div><Numeric title="ราคาหุ้นที่อยากลอง (Target Stock Price)" placeholder="เช่น 130" helper="ราคาที่อยากรู้ว่ามีโอกาสไปถึงมากน้อยแค่ไหน" min={0.0000001} externalError={fieldError('scenarios.0.targetPrice')} validationPath="scenarios.0.targetPrice" value={scenario.targetPrice} onChange={(value) => scenarioChange(0, { targetPrice: value })} /><p className="mt-1 text-xs text-slate-400">ต่างจากราคาปัจจุบัน {workspace.underlyingPrice ? `${((scenario.targetPrice / workspace.underlyingPrice - 1) * 100).toFixed(2)}%` : 'ไม่มีข้อมูล'}</p></div>
-          <div><FieldLabel title="วันที่ต้องการดูผล (Target Date)" helper="วันที่อยากรู้ผล ระบบจะดูโอกาสไปถึงเป้าหมายภายในวันนี้" /><div className="relative"><Input className="cursor-pointer pr-9" type="date" aria-label="วันที่ต้องการดูผล ของการจำลองความเป็นไปได้" min={minimumTargetDate} max={earliestExpiration} value={scenario.valuationDate} data-validation-path="scenarios.0.valuationDate" onChange={(event) => scenarioChange(0, { valuationDate: clampTargetDate(event.target.value, workspace.valuationDate, earliestExpiration) })} /><CalendarDays aria-hidden="true" size={16} className="pointer-events-none absolute right-3 top-3 text-slate-500" /></div><p className="mt-2 text-xs text-slate-400">เหลือ {dayCountText(Math.max(0, calendarDaysBetween(workspace.valuationDate, scenario.valuationDate)))} · ไม่เกิน {calendarText(earliestExpiration)}</p>{dateIssue && <p role="alert" className="mt-1 text-xs text-red-300">{dateIssue}</p>}{analysisSelection === 'portfolio' && new Set(scopedLegs.map((leg) => leg.expiration)).size > 1 && <p className="mt-1 text-xs text-amber-300">เมื่อดูทั้งพอร์ต ระบบใช้วันหมดอายุที่ใกล้ที่สุดเป็นขอบเขต</p>}</div>
+          <div><FieldLabel title="วันที่ต้องการดูผล (Target Date)" helper="วันที่อยากรู้ผล ระบบจะดูโอกาสไปถึงเป้าหมายภายในวันนี้" /><div className="relative"><Input className="cursor-pointer pr-9" type="date" aria-label="วันที่ต้องการดูผล ของการจำลองความเป็นไปได้" min={minimumTargetDate} max={maximumTargetDate} value={scenario.valuationDate} data-validation-path="scenarios.0.valuationDate" onChange={(event) => scenarioChange(0, { valuationDate: clampTargetDate(event.target.value, workspace.valuationDate, earliestExpiration) })} /><CalendarDays aria-hidden="true" size={16} className="pointer-events-none absolute right-3 top-3 text-slate-500" /></div><p className="mt-2 text-xs text-slate-400">เหลือ {dayCountText(Math.max(0, calendarDaysBetween(workspace.valuationDate, scenario.valuationDate)))} · ต้องก่อน {calendarText(earliestExpiration)}</p>{dateIssue && <p role="alert" className="mt-1 text-xs text-red-300">{dateIssue}</p>}{analysisSelection === 'portfolio' && new Set(scopedLegs.map((leg) => leg.expiration)).size > 1 && <p className="mt-1 text-xs text-amber-300">เมื่อดูทั้งพอร์ต ระบบใช้วันหมดอายุที่ใกล้ที่สุดเป็นขอบเขต</p>}</div>
           <PercentInput title="ความผันผวนที่ตลาดคาด (IV %)" placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" value={engineVolatilityToPercent(workspace.monteCarlo.volatility)} onChange={(value) => monteCarloChange({ volatility: percentVolatilityToEngine(value) })} />
           <div><FieldLabel title="รูปแบบการจำลอง" helper="เลือกวิธีที่ระบบใช้ประเมินผล" /><select aria-label="รูปแบบการจำลอง" className={select} value={driftMode} onChange={(event) => monteCarloChange({ driftMode: event.target.value as 'forecast' | 'risk-neutral' })}><option value="forecast">Forecast — คาดการณ์จากแนวโน้ม</option><option value="risk-neutral">Risk-neutral — มูลค่าตามมาตรฐานตลาด</option></select><p className="mt-1 text-[10px] leading-tight text-slate-500" data-testid="drift-mode-help">{driftModeHelp[driftMode]}</p></div>
           <div><FieldLabel title="จำนวนรอบจำลอง" helper="ยิ่งจำลองหลายรอบ ผลยิ่งนิ่ง แต่ใช้เวลานานขึ้น" /><select aria-label="จำนวนรอบจำลอง" className={select} value={workspace.monteCarlo.paths} data-validation-path="monteCarlo.paths" onChange={(event) => monteCarloChange({ paths: Number(event.target.value) })}>{BASIC_PATH_OPTIONS.map((value) => <option key={value} value={value}>{value.toLocaleString()}</option>)}</select>{fieldError('monteCarlo.paths') && <p role="alert" className="mt-1 text-xs text-red-300">{fieldError('monteCarlo.paths')}</p>}</div>

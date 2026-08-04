@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SimulationWorkspace } from '@/src/lib/options-simulator/types';
+import { prepareMonteCarloCalculationInput } from '@/src/lib/options-simulator/validation';
 
 const mocks = vi.hoisted(() => ({
   guardRouteEntitlement: vi.fn(),
@@ -22,6 +23,12 @@ const workspace: SimulationWorkspace = {
   monteCarlo: { paths: 1_000, seed: 42, horizonDays: 151, steps: 30, drift: 0.05, volatility: 0.2, rate: 0.05, dividendYield: 0 },
   dataSource: null, dataTimestamp: null, dataStatus: 'manual', resultSnapshot: null, methodologyVersion: 'options-simulator-v1',
 };
+
+function calculationInput(value: SimulationWorkspace = workspace) {
+  const prepared = prepareMonteCarloCalculationInput(value, value, value.monteCarlo);
+  if (!prepared.success) throw new Error(prepared.issues.join('; '));
+  return prepared.data;
+}
 
 describe('POST /api/option-simulations/compute/monte-carlo', () => {
   beforeEach(() => {
@@ -48,14 +55,78 @@ describe('POST /api/option-simulations/compute/monte-carlo', () => {
 
     const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/monte-carlo', {
       method: 'POST',
-      body: JSON.stringify({ workspace, comparisonWorkspace: workspace, settings: workspace.monteCarlo, targetPrice: 110 }),
+      body: JSON.stringify({ input: calculationInput() }),
     }));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.computeMonteCarlo).toHaveBeenCalledOnce();
+    expect(mocks.computeMonteCarlo).toHaveBeenCalledWith(calculationInput());
     expect(payload.data.result.paths).toBe(1_000);
+    expect(payload.error).toBeNull();
     expect(response.headers.get('Cache-Control')).toContain('private');
     expect(response.headers.get('X-Entitlement-Tier')).toBe('elite');
+  });
+
+  it('runs the reported Forecast case through 50,000 paths with IV over 100%', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'elite' } });
+    const actual = await vi.importActual<typeof import('@/src/lib/options-simulator/server-compute')>('@/src/lib/options-simulator/server-compute');
+    mocks.computeMonteCarlo.mockImplementation(actual.computeMonteCarlo);
+    const regression: SimulationWorkspace = {
+      ...workspace,
+      symbol: 'ONDS', companyName: 'Ondas Holdings Inc.', underlyingPrice: 10,
+      valuationDate: '2026-08-04', entryDate: '2026-08-04',
+      legs: [{ ...workspace.legs[0], kind: 'call', side: 'buy', quantity: 2, strike: 8, entryPremium: 1, impliedVolatility: 1.1527, expiration: '2026-08-21', fees: 0 }],
+      scenarios: [{ ...workspace.scenarios[0], targetPrice: 10, valuationDate: '2026-08-14', volatilityShift: 0, rate: 0, dividendYield: 0 }],
+      monteCarlo: { paths: 50_000, seed: 42, horizonDays: 10, steps: 10, drift: 0, volatility: 1.1527, rate: 0, dividendYield: 0, driftMode: 'forecast' },
+      dataTimestamp: 'not-a-provider-timestamp',
+    };
+    const input = calculationInput(regression);
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/monte-carlo', {
+      method: 'POST', body: JSON.stringify({ input }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.error).toBeNull();
+    expect(input.portfolio.legs[0].impliedVolatility).toBeCloseTo(1.1527, 10);
+    expect(input.settings.volatility).toBeCloseTo(1.1527, 10);
+    expect(input.settings.driftMode).toBe('forecast');
+    expect(input.quality.dataTimestamp).toBeNull();
+    expect(payload.data.result.paths).toBe(50_000);
+    expect(payload.data.result.validPaths).toBe(50_000);
+    expect(Number.isFinite(payload.data.result.probabilityOfProfit)).toBe(true);
+  }, 30_000);
+
+  it('rejects non-finite calculation values before invoking the engine', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'elite' } });
+    const invalid = calculationInput();
+    const raw = JSON.stringify({ input: { ...invalid, portfolio: { ...invalid.portfolio, spot: Number.NaN } } });
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/monte-carlo', { method: 'POST', body: raw }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.data).toBeNull();
+    expect(payload.error.code).toBe('invalid-calculation-input');
+    expect(payload.error.issues.some((issue: string) => issue.startsWith('underlyingPrice:'))).toBe(true);
+    expect(mocks.computeMonteCarlo).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe Thai cause when the engine fails instead of a generic error', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'elite' } });
+    mocks.computeMonteCarlo.mockImplementation(() => { throw new Error('Monte Carlo produced a non-finite result'); });
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/monte-carlo', {
+      method: 'POST', body: JSON.stringify({ input: calculationInput() }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(payload.data).toBeNull();
+    expect(payload.error).toEqual({
+      code: 'invalid-monte-carlo-input',
+      message: 'ข้อมูลสำหรับจำลองมีค่าที่ไม่ใช่ตัวเลข กรุณาตรวจสอบราคา IV จำนวนรอบ และสมมติฐาน',
+    });
   });
 });

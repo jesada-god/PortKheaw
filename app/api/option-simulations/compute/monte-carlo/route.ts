@@ -1,20 +1,30 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { computeMonteCarlo } from '@/src/lib/options-simulator/server-compute';
-import type { MonteCarloSettings, SimulationWorkspace } from '@/src/lib/options-simulator/types';
-import { monteCarloSettingsSchema, simulationWorkspaceSchema } from '@/src/lib/options-simulator/validation';
+import { monteCarloCalculationRequestSchema, monteCarloCalculationValidationMessages } from '@/src/lib/options-simulator/validation';
 import { withEntitledCacheHeaders } from '@/src/lib/subscription/entitled-response';
 import { guardRouteEntitlement } from '@/src/lib/subscription/server-entitlement';
 
 export const maxDuration = 60;
 
 const MAX_BODY_BYTES = 500_000;
-const requestSchema = z.object({
-  workspace: simulationWorkspaceSchema,
-  comparisonWorkspace: simulationWorkspaceSchema,
-  settings: monteCarloSettingsSchema,
-  targetPrice: z.number().finite().positive().max(1_000_000_000),
-}).strict();
+
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function calculationFailure(cause: unknown): { code: string; message: string } {
+  const detail = cause instanceof Error ? cause.message : '';
+  if (/non-finite|finite underlying|positive finite|inputs must be finite/i.test(detail)) {
+    return { code: 'invalid-monte-carlo-input', message: 'ข้อมูลสำหรับจำลองมีค่าที่ไม่ใช่ตัวเลข กรุณาตรวจสอบราคา IV จำนวนรอบ และสมมติฐาน' };
+  }
+  if (/seed|path count|path set/i.test(detail)) {
+    return { code: 'invalid-monte-carlo-settings', message: 'จำนวนรอบ ค่าเริ่มสุ่ม หรือสมมติฐานของชุดจำลองไม่ตรงกัน กรุณาตรวจสอบแล้วลองใหม่' };
+  }
+  if (/Target date exceeds|expiration/i.test(detail)) {
+    return { code: 'invalid-target-date', message: 'วันที่ต้องการดูผลต้องอยู่ก่อนวันหมดอายุของทุกสัญญา' };
+  }
+  return { code: 'monte-carlo-failed', message: 'ระบบจำลองความเป็นไปได้ไม่สำเร็จ กรุณาตรวจสอบข้อมูลที่กรอกแล้วลองใหม่' };
+}
 
 export async function POST(request: Request) {
   const gate = await guardRouteEntitlement('simulator.monte_carlo');
@@ -22,24 +32,24 @@ export async function POST(request: Request) {
 
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'payload-too-large', message: 'Payload too large' } }, { status: 413 }), gate.entitlement.tier);
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'payload-too-large', message: 'ข้อมูลที่ส่งมามีขนาดใหญ่เกินกำหนด กรุณาลดจำนวนสัญญาแล้วลองใหม่' } }, { status: 413 }), gate.entitlement.tier);
   }
   let body: unknown = null;
   try { body = JSON.parse(raw); } catch { /* schema response below */ }
-  const parsed = requestSchema.safeParse(body);
+  const parsed = monteCarloCalculationRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'invalid-simulation', message: 'Invalid simulation', issues: parsed.error.issues } }, { status: 400 }), gate.entitlement.tier);
+    const input = recordValue(body) ? body.input : null;
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: {
+      code: 'invalid-calculation-input',
+      message: 'ข้อมูลสำหรับจำลองไม่ถูกต้อง กรุณาตรวจสอบช่องที่ระบุ',
+      issues: monteCarloCalculationValidationMessages(input),
+    } }, { status: 400 }), gate.entitlement.tier);
   }
 
   try {
-    const data = computeMonteCarlo(
-      parsed.data.workspace as SimulationWorkspace,
-      parsed.data.comparisonWorkspace as SimulationWorkspace,
-      parsed.data.settings as MonteCarloSettings,
-      parsed.data.targetPrice,
-    );
-    return withEntitledCacheHeaders(NextResponse.json({ data }), gate.entitlement.tier);
-  } catch {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'calculation-failed', message: 'Unable to calculate simulation' } }, { status: 422 }), gate.entitlement.tier);
+    const data = computeMonteCarlo(parsed.data.input);
+    return withEntitledCacheHeaders(NextResponse.json({ data, error: null }), gate.entitlement.tier);
+  } catch (cause) {
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: calculationFailure(cause) }, { status: 422 }), gate.entitlement.tier);
   }
 }

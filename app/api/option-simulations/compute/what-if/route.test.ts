@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SimulationWorkspace } from '@/src/lib/options-simulator/types';
+import { prepareWhatIfCalculationInput } from '@/src/lib/options-simulator/validation';
 
 const mocks = vi.hoisted(() => ({
   guardRouteEntitlement: vi.fn(),
@@ -22,6 +23,12 @@ const workspace: SimulationWorkspace = {
   monteCarlo: { paths: 1_000, seed: 42, horizonDays: 30, steps: 30, drift: 0.05, volatility: 0.2, rate: 0.05, dividendYield: 0 },
   dataSource: null, dataTimestamp: null, dataStatus: 'manual', resultSnapshot: null, methodologyVersion: 'options-simulator-v1',
 };
+
+function calculationInput(value: SimulationWorkspace = workspace) {
+  const prepared = prepareWhatIfCalculationInput(value);
+  if (!prepared.success) throw new Error(prepared.issues.join('; '));
+  return prepared.data;
+}
 
 describe('POST /api/option-simulations/compute/what-if', () => {
   beforeEach(() => {
@@ -50,17 +57,86 @@ describe('POST /api/option-simulations/compute/what-if', () => {
     });
 
     const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
-      method: 'POST', body: JSON.stringify({ workspace }),
+      method: 'POST', body: JSON.stringify({ input: calculationInput() }),
     }));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.computeWhatIf).toHaveBeenCalledOnce();
+    expect(mocks.computeWhatIf).toHaveBeenCalledWith(calculationInput());
     expect(payload.data).toEqual({
       valuation: { theoreticalValue: 321 },
       decomposition: { currentValue: 300, priceImpact: 10, timeImpact: -2, ivImpact: 13 },
     });
     expect(response.headers.get('Cache-Control')).toContain('private');
     expect(response.headers.get('X-Entitlement-Tier')).toBe('pro');
+  });
+
+  it('runs the reported IV-over-100% case through the real pricing engine', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const actual = await vi.importActual<typeof import('@/src/lib/options-simulator/server-compute')>('@/src/lib/options-simulator/server-compute');
+    mocks.computeWhatIf.mockImplementation(actual.computeWhatIf);
+    const regression = calculationInput({
+      ...workspace,
+      underlyingPrice: 10,
+      valuationDate: '2026-08-04',
+      entryDate: '2026-08-04',
+      legs: [{ ...workspace.legs[0], side: 'buy', kind: 'call', strike: 8, entryPremium: 1, quantity: 2, impliedVolatility: 1.1527, expiration: '2026-08-21' }],
+      scenarios: [{ ...workspace.scenarios[0], targetPrice: 10, valuationDate: '2026-08-14', volatilityShift: 0, rate: 0, dividendYield: 0 }],
+    });
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: regression }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(regression.scenario.targetDate).toBe('2026-08-14');
+    expect(regression.legs[0].expiration).toBe('2026-08-21');
+    expect(regression.legs[0].impliedVolatility).toBeCloseTo(1.1527, 10);
+    expect(payload.error).toBeNull();
+    expect(Number.isFinite(payload.data.valuation.theoreticalValue)).toBe(true);
+    expect(Number.isFinite(payload.data.valuation.profitLoss)).toBe(true);
+    expect(Object.values(payload.data.valuation.greeks).every(Number.isFinite)).toBe(true);
+  });
+
+  it('returns safe Thai field issues when Target Date exceeds expiration', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const invalid = { ...calculationInput(), scenario: { ...calculationInput().scenario, targetDate: '2027-02-01' } };
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: invalid }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.code).toBe('invalid-calculation-input');
+    expect(payload.error.issues).toContain('scenarios.0.valuationDate: วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ');
+    expect(mocks.computeWhatIf).not.toHaveBeenCalled();
+  });
+
+  it.each(['2027-01-01', '2027-01-02'])('rejects Target Date %s at or after expiration on the target-date field', async (targetDate) => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const invalid = { ...calculationInput(), scenario: { ...calculationInput().scenario, targetDate } };
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: invalid }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.issues[0]).toMatch(/^scenarios\.0\.valuationDate:/);
+    expect(mocks.computeWhatIf).not.toHaveBeenCalled();
+  });
+
+  it.each([null, Number.NaN, Number.POSITIVE_INFINITY])('rejects a non-finite spot before pricing (%s)', async (spot) => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const invalid = { ...calculationInput(), spot };
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: invalid }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.computeWhatIf).not.toHaveBeenCalled();
   });
 });

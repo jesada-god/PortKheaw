@@ -3,13 +3,19 @@ import 'server-only';
 import { boundedExpirationProfitFloor, generateMonteCarloPathSet, runMonteCarlo } from './monte-carlo';
 import { valuePortfolio } from './portfolio';
 import { calculateCallPutScenarioScore } from './scenario-score';
-import type { MonteCarloSettings, SimulationWorkspace } from './types';
-import type { MonteCarloComputeResult, WhatIfComputeResult } from './compute-dto';
+import { calculationPortfolioToWorkspace } from './calculation-workspace';
+import type { MonteCarloCalculationInput, MonteCarloComputeResult, WhatIfCalculationInput, WhatIfComputeResult } from './compute-dto';
 
 /** Premium calculations live behind route entitlement guards, never in a browser worker. */
-export function computeWhatIf(workspace: SimulationWorkspace): WhatIfComputeResult {
-  const scenario = workspace.scenarios[0];
-  const currentScenario = { ...scenario, targetPrice: workspace.underlyingPrice ?? scenario.targetPrice, valuationDate: workspace.valuationDate, volatilityShift: 0 };
+export function computeWhatIf(input: WhatIfCalculationInput): WhatIfComputeResult {
+  const workspace = {
+    underlyingPrice: input.spot,
+    stockQuantity: input.stockQuantity,
+    cashPosition: input.cashPosition,
+    legs: input.legs,
+  };
+  const scenario = { ...input.scenario, valuationDate: input.scenario.targetDate };
+  const currentScenario = { ...scenario, targetPrice: input.spot, valuationDate: input.valuationDate, volatilityShift: 0 };
   const current = valuePortfolio(workspace, currentScenario);
   const afterPrice = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice });
   const afterTime = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice, valuationDate: scenario.valuationDate });
@@ -31,11 +37,12 @@ export function computeWhatIf(workspace: SimulationWorkspace): WhatIfComputeResu
  * cross the HTTP boundary.
  */
 export function computeMonteCarlo(
-  workspace: SimulationWorkspace,
-  comparisonWorkspace: SimulationWorkspace,
-  settings: MonteCarloSettings,
-  targetPrice: number,
+  input: MonteCarloCalculationInput,
 ): MonteCarloComputeResult {
+  const { settings, quality } = input;
+  const workspace = calculationPortfolioToWorkspace(input.portfolio, settings, quality);
+  const comparisonWorkspace = calculationPortfolioToWorkspace(input.comparisonPortfolio, settings, quality);
+  const targetPrice = input.portfolio.scenario.targetPrice;
   const pathSet = generateMonteCarloPathSet(workspace, settings, { targetPrice });
   const auditResult = runMonteCarlo(workspace, settings, { targetPrice, pathSet });
   const { terminalPrices: _terminalPrices, pathSet: transientPathSet, ...result } = auditResult;

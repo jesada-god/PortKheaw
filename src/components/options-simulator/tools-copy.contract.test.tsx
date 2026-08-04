@@ -36,6 +36,7 @@ const workspaceSource = read('./SimulatorWorkspace.tsx');
 const validationSource = read('../../lib/options-simulator/validation.ts');
 const scenarioScoreSource = read('../../lib/options-simulator/scenario-score.ts');
 const serverComputeSource = read('../../lib/options-simulator/server-compute.ts');
+const workerSource = read('../../workers/optionsMonteCarlo.worker.ts');
 const toolsPageSource = read('../../../app/tools/page.tsx');
 
 /*
@@ -106,7 +107,7 @@ describe('Tools copy', () => {
     const messages = [...validationSource.matchAll(/return '([^']+)';/g)].map((match) => match[1]);
     expect(messages.length).toBeGreaterThan(10);
     expect(messages.filter((text) => BANNED.test(text) || /Valuation Date|engine decimal|Target Date/.test(text))).toEqual([]);
-    expect(validationSource).toContain('วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และไม่เกินวันหมดอายุ');
+    expect(validationSource).toContain('วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ');
   });
 
   it('renders the tools shell without a single raw English or engine term', () => {
@@ -172,9 +173,17 @@ describe('Tools copy leaves the numbers alone', () => {
     expect(serverComputeSource).toContain('ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue');
     expect(workspaceSource).not.toContain('valuePortfolio(');
     expect(workspaceSource).toContain('deltaEstimate: sensitivity.delta');
-    expect(workspaceSource).toContain('body: JSON.stringify({ workspace: scoped, comparisonWorkspace: workspace, settings, targetPrice:');
+    expect(workspaceSource).toContain('body: JSON.stringify({ input: prepared.data })');
+    expect(workspaceSource).not.toContain('body: JSON.stringify({ workspace: scoped');
     expect(serverComputeSource).toContain('generateMonteCarloPathSet(workspace, settings, { targetPrice })');
     expect(workspaceSource).toContain("methodologyVersion: 'options-simulator-v1'");
+  });
+
+  it('keeps the legacy worker on the shared calculation DTO and exposes failures', () => {
+    expect(workspaceSource).not.toContain('new Worker(');
+    expect(workerSource).toContain('MessageEvent<{ input: MonteCarloCalculationInput }>');
+    expect(workerSource).toContain("error: { code: 'worker-failed'");
+    expect(workerSource).not.toContain('comparisonWorkspace: SimulationWorkspace');
   });
 });
 
@@ -199,6 +208,12 @@ describe('Tools error presentation', () => {
       ['Scenario score audit failed: unknown error', 'ผลจำลองยังตรวจสอบไม่ผ่าน'],
       ['Options chain response ไม่ผ่าน schema validation', 'นำเข้าสัญญาไม่สำเร็จ'],
       ['Simulation failed', 'จำลองไม่สำเร็จ'],
+      ['ข้อมูลสำหรับคำนวณราคาไม่ครบหรือไม่ใช่ตัวเลข', 'ข้อมูลคำนวณไม่ครบ'],
+      ['สมมติฐาน IV ดอกเบี้ย หรือเงินปันผลชุดนี้ไม่สามารถใช้คำนวณราคาได้', 'สมมติฐานราคาใช้คำนวณไม่ได้'],
+      ['ข้อมูลที่ส่งมามีขนาดใหญ่เกินกำหนด', 'ข้อมูลมีขนาดใหญ่เกินกำหนด'],
+      ['ข้อมูลสำหรับจำลองมีค่าที่ไม่ใช่ตัวเลข', 'ข้อมูลจำลองไม่ถูกต้อง'],
+      ['จำนวนรอบ ค่าเริ่มสุ่ม หรือสมมติฐานของชุดจำลองไม่ตรงกัน', 'ตั้งค่าชุดจำลองไม่ตรงกัน'],
+      ['ระบบจำลองความเป็นไปได้ไม่สำเร็จ', 'จำลองความเป็นไปได้ไม่สำเร็จ'],
     ];
     for (const [detail, title] of cases) {
       const presented = presentError(detail);

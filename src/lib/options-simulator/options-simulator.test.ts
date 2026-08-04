@@ -3,7 +3,7 @@ import { boundedExpirationProfitFloor, buildHistogram, isOptionInTheMoney, runMo
 import { blackScholes, binomialValue, priceOption, priceOptionValue } from './pricing';
 import { detectStrategy, optionExpirationProfit, portfolioExpirationProfit, portfolioProfitLossBasis, valuePortfolio } from './portfolio';
 import type { OptionLeg, SimulationWorkspace } from './types';
-import { calculationValidationMessages, validationMessages } from './validation';
+import { calculationPortfolioInputSchema, calculationValidationMessages, monteCarloCalculationInputSchema, prepareMonteCarloCalculationInput, prepareWhatIfCalculationInput, validationMessages, whatIfCalculationInputSchema } from './validation';
 
 const leg = (overrides: Partial<OptionLeg> = {}): OptionLeg => ({ id: 'leg-1', kind: 'call', side: 'buy', quantity: 1,
   strike: 100, expiration: '2027-01-01', entryPremium: 10, impliedVolatility: 0.2, multiplier: 100, fees: 2,
@@ -213,6 +213,52 @@ describe('portfolio payoff and strategy handling', () => {
 });
 
 describe('validation and Monte Carlo', () => {
+  it('builds a calculation-only payload for the reported case and drops unrelated persistence metadata', () => {
+    const input = workspace({
+      name: '',
+      dataTimestamp: 'not-a-provider-timestamp',
+      underlyingPrice: 10,
+      valuationDate: '2026-08-04',
+      legs: [leg({ kind: 'call', side: 'buy', strike: 8, entryPremium: 1, quantity: 2, impliedVolatility: 1.1527, expiration: '2026-08-21', fees: 0 })],
+      scenarios: [{ ...workspace().scenarios[0], targetPrice: 10, valuationDate: '2026-08-14', volatilityShift: 0, rate: 0, dividendYield: 0 }],
+    });
+
+    const prepared = prepareWhatIfCalculationInput(input);
+
+    expect(prepared.success).toBe(true);
+    if (!prepared.success) return;
+    expect(prepared.data.scenario.targetDate).toBe('2026-08-14');
+    expect(prepared.data.legs[0].expiration).toBe('2026-08-21');
+    expect(prepared.data.legs[0].impliedVolatility).toBe(1.1527);
+    expect(prepared.data).not.toHaveProperty('name');
+    expect(prepared.data).not.toHaveProperty('dataTimestamp');
+  });
+
+  it('uses one calculation portfolio schema for What-If and both Monte Carlo portfolios', () => {
+    expect(whatIfCalculationInputSchema).toBe(calculationPortfolioInputSchema);
+    const valid = workspace({ scenarios: [{ ...workspace().scenarios[0], valuationDate: '2026-06-01' }] });
+    const prepared = prepareMonteCarloCalculationInput(valid, valid, valid.monteCarlo);
+    expect(prepared.success).toBe(true);
+    if (!prepared.success) return;
+    expect(calculationPortfolioInputSchema.safeParse(prepared.data.portfolio).success).toBe(true);
+    expect(calculationPortfolioInputSchema.safeParse(prepared.data.comparisonPortfolio).success).toBe(true);
+    expect(monteCarloCalculationInputSchema.safeParse(prepared.data).success).toBe(true);
+    expect(prepared.data).not.toHaveProperty('workspace');
+    expect(prepared.data).not.toHaveProperty('comparisonWorkspace');
+  });
+
+  it('rejects a target date equal to expiration for both calculation modes', () => {
+    const equalDate = workspace({
+      scenarios: [{ ...workspace().scenarios[0], valuationDate: '2027-01-01' }],
+    });
+    const whatIf = prepareWhatIfCalculationInput(equalDate);
+    const monteCarlo = prepareMonteCarloCalculationInput(equalDate, equalDate, equalDate.monteCarlo);
+    expect(whatIf.success).toBe(false);
+    expect(monteCarlo.success).toBe(false);
+    if (!whatIf.success) expect(whatIf.issues[0]).toMatch(/^scenarios\.0\.valuationDate:/);
+    if (!monteCarlo.success) expect(monteCarlo.issues.some((issue) => issue.startsWith('scenarios.0.valuationDate:'))).toBe(true);
+  });
+
   it('accepts the complete visible Put contract without hidden legacy fields', () => {
     expect(calculationValidationMessages(visibleContract())).toEqual([]);
   });

@@ -24,5 +24,9 @@ export function withEntitledCacheHeaders<T extends NextResponse>(
   // The reader's own plan, on a response only they can receive. It is what makes
   // the shaping verifiable from the network panel during QA.
   response.headers.set('X-Entitlement-Tier', tier);
+  const deploymentSha = process.env.VERCEL_GIT_COMMIT_SHA;
+  if (deploymentSha && /^[0-9a-f]{40}$/i.test(deploymentSha)) {
+    response.headers.set('X-Deployment-SHA', deploymentSha.toLowerCase());
+  }
   return response;
 }

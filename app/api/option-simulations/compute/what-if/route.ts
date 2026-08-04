@@ -1,13 +1,24 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { computeWhatIf } from '@/src/lib/options-simulator/server-compute';
-import type { SimulationWorkspace } from '@/src/lib/options-simulator/types';
-import { simulationWorkspaceSchema } from '@/src/lib/options-simulator/validation';
+import { whatIfCalculationRequestSchema, whatIfCalculationValidationMessages } from '@/src/lib/options-simulator/validation';
 import { withEntitledCacheHeaders } from '@/src/lib/subscription/entitled-response';
 import { guardRouteEntitlement } from '@/src/lib/subscription/server-entitlement';
 
 const MAX_BODY_BYTES = 500_000;
-const requestSchema = z.object({ workspace: simulationWorkspaceSchema }).strict();
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function calculationFailure(cause: unknown): { code: string; message: string } {
+  const detail = cause instanceof Error ? cause.message : '';
+  if (/Black-Scholes inputs must be finite/i.test(detail)) {
+    return { code: 'invalid-pricing-input', message: 'ข้อมูลสำหรับคำนวณราคาไม่ครบหรือไม่ใช่ตัวเลข กรุณาตรวจสอบราคาหุ้น ราคาใช้สิทธิ ค่า IV และวันที่' };
+  }
+  if (/invalid risk-neutral probability/i.test(detail)) {
+    return { code: 'invalid-pricing-assumptions', message: 'สมมติฐาน IV ดอกเบี้ย หรือเงินปันผลชุดนี้ไม่สามารถใช้คำนวณราคาได้ กรุณาตรวจสอบค่าที่กรอก' };
+  }
+  return { code: 'calculation-failed', message: 'ระบบคำนวณราคาไม่สำเร็จ กรุณาตรวจสอบข้อมูลที่กรอกแล้วลองใหม่' };
+}
 
 export async function POST(request: Request) {
   const gate = await guardRouteEntitlement('simulator.what_if');
@@ -15,19 +26,25 @@ export async function POST(request: Request) {
 
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'payload-too-large', message: 'Payload too large' } }, { status: 413 }), gate.entitlement.tier);
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'payload-too-large', message: 'ข้อมูลที่ส่งมามีขนาดใหญ่เกินกำหนด กรุณาลดจำนวนสัญญาแล้วลองใหม่' } }, { status: 413 }), gate.entitlement.tier);
   }
   let body: unknown = null;
   try { body = JSON.parse(raw); } catch { /* schema response below */ }
-  const parsed = requestSchema.safeParse(body);
+  const parsed = whatIfCalculationRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'invalid-simulation', message: 'Invalid simulation', issues: parsed.error.issues } }, { status: 400 }), gate.entitlement.tier);
+    const input = recordValue(body) ? body.input : null;
+    const issues = whatIfCalculationValidationMessages(input);
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: {
+      code: 'invalid-calculation-input',
+      message: 'ข้อมูลสำหรับคำนวณไม่ถูกต้อง กรุณาตรวจสอบช่องที่ระบุ',
+      issues,
+    } }, { status: 400 }), gate.entitlement.tier);
   }
 
   try {
-    const data = computeWhatIf(parsed.data.workspace as SimulationWorkspace);
-    return withEntitledCacheHeaders(NextResponse.json({ data }), gate.entitlement.tier);
-  } catch {
-    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: { code: 'calculation-failed', message: 'Unable to calculate simulation' } }, { status: 422 }), gate.entitlement.tier);
+    const data = computeWhatIf(parsed.data.input);
+    return withEntitledCacheHeaders(NextResponse.json({ data, error: null }), gate.entitlement.tier);
+  } catch (cause) {
+    return withEntitledCacheHeaders(NextResponse.json({ data: null, error: calculationFailure(cause) }, { status: 422 }), gate.entitlement.tier);
   }
 }
