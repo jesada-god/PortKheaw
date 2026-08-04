@@ -151,6 +151,34 @@ export function founderRenewalNote(firstPeriodBaht: number, renewalBaht: number)
     + ` รอบถัดไปจะเรียกเก็บ ${formatBahtAmount(renewalBaht)} ต่อปี`;
 }
 
+/**
+ * Whether the provider is still billing this account for a plan.
+ *
+ * One account is one subscription. The row keeps a single
+ * `billing_subscription_id`, and the database routine refuses any event naming a
+ * different one, so a *second* checkout produces a subscription at the provider
+ * whose every event is rejected as `subscription_mismatch` — the reader pays and
+ * is granted nothing, then pays for both every period after that. This predicate
+ * is what closes the purchase surface while one subscription is live, and both
+ * the checkout gate and the plan cards read it so the button and the server can
+ * never disagree about who may buy.
+ *
+ * `trialing` is deliberately not live: the Elite trial is a grant with no plan
+ * key and no provider subscription behind it, so a reader on trial may still buy.
+ * `canceled` and `expired` are not live either — nothing is being billed, so a
+ * fresh purchase is exactly the right thing.
+ *
+ * A subscription set to end at the period end IS still live. It is still being
+ * billed until that date, and the way to keep it is to resume it in the portal
+ * rather than to open a second one alongside it.
+ */
+export function holdsLiveSubscription(
+  input: Pick<BillingSummaryInput, 'status' | 'planKey'> | null | undefined,
+): boolean {
+  if (!input?.planKey) return false;
+  return input.status === 'active' || input.status === 'past_due';
+}
+
 /** The reassurance that has to survive a downgrade, stated in one place. */
 export const DATA_KEPT_ON_DOWNGRADE_NOTE =
   'หากแพ็กเกจสิ้นสุด ข้อมูลพอร์ตและประวัติทั้งหมดของคุณยังอยู่ครบ เปิดดูได้ตามปกติ';

@@ -9,7 +9,8 @@ import { PlanComparison } from '@/src/components/subscription/PlanComparison';
 import { SubscriptionFaq } from '@/src/components/subscription/SubscriptionFaq';
 import { getBillingAvailability } from '@/src/lib/billing/billing-server';
 import { readBillingSnapshot } from '@/src/lib/billing/billing-repository';
-import { resolveBillingSummary } from '@/src/lib/billing/billing-summary';
+import { holdsLiveSubscription, resolveBillingSummary } from '@/src/lib/billing/billing-summary';
+import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
 import { createClient } from '@/src/lib/supabase/server';
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
@@ -91,9 +92,22 @@ export default async function SubscriptionPage() {
         />
         {billingSummary && <ManageSubscriptionCard summary={billingSummary} />}
         {access.isAdmin && <AdminAccessCard access={access} name={displayName} />}
-        <PlanCards effectiveTier={effectiveTier} availability={billingAvailability} />
+        <PlanCards
+          effectiveTier={effectiveTier}
+          availability={billingAvailability}
+          /*
+           * The same predicate the checkout action gates on, so the cards cannot
+           * offer a purchase the server would refuse.
+           */
+          hasLiveSubscription={holdsLiveSubscription({
+            status: billingSnapshot?.status ?? 'basic',
+            planKey: isBillingPlanKey(billingSnapshot?.billing_plan_key)
+              ? billingSnapshot.billing_plan_key
+              : null,
+          })}
+        />
         <PlanComparison />
-        <SubscriptionFaq />
+        <SubscriptionFaq billingEnabled={billingAvailability.enabled} />
       </main>
     </div>
   );

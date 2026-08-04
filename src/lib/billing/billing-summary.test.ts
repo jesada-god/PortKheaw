@@ -3,6 +3,7 @@ import {
   DATA_KEPT_ON_DOWNGRADE_NOTE,
   formatBahtAmount,
   founderRenewalNote,
+  holdsLiveSubscription,
   resolveBillingSummary,
   type BillingSummaryInput,
 } from './billing-summary';
@@ -122,5 +123,57 @@ describe('billing summary', () => {
   it('formats amounts consistently and promises the data survives', () => {
     expect(formatBahtAmount(3_490)).toBe('3,490 บาท');
     expect(DATA_KEPT_ON_DOWNGRADE_NOTE).toContain('ยังอยู่ครบ');
+  });
+
+  /**
+   * The predicate that closes the purchase surface while one subscription is
+   * live. Getting it wrong in either direction is expensive: too loose and a
+   * reader opens a second subscription whose events are all refused downstream
+   * as `subscription_mismatch`, so they pay and are granted nothing; too strict
+   * and somebody whose plan has ended can never buy again.
+   */
+  describe('holdsLiveSubscription', () => {
+    it.each(['active', 'past_due'])('counts %s with a plan key as live', (status) => {
+      expect(holdsLiveSubscription({ status, planKey: 'pro_monthly' })).toBe(true);
+    });
+
+    it.each(['canceled', 'expired', 'basic'])('counts %s as not live, so a fresh purchase is allowed', (status) => {
+      expect(holdsLiveSubscription({ status, planKey: 'pro_monthly' })).toBe(false);
+    });
+
+    /*
+     * The Elite trial is a grant, not a purchase: no plan key, no provider
+     * subscription. A reader on trial must still be able to buy.
+     */
+    it('does not count the Elite trial as a live subscription', () => {
+      expect(holdsLiveSubscription({ status: 'trialing', planKey: null })).toBe(false);
+    });
+
+    /*
+     * A subscription set to end is still being billed until it does, so opening
+     * a second one alongside it would still double-bill.
+     */
+    it('counts a subscription scheduled to end as still live', () => {
+      expect(holdsLiveSubscription({ status: 'active', planKey: 'elite_annual_founder' })).toBe(true);
+    });
+
+    it('treats a missing snapshot as nothing being billed', () => {
+      expect(holdsLiveSubscription(null)).toBe(false);
+      expect(holdsLiveSubscription(undefined)).toBe(false);
+      expect(holdsLiveSubscription({ status: 'active', planKey: null })).toBe(false);
+    });
+
+    /*
+     * The manage card and this predicate must agree about what "paid" means:
+     * anything the card calls a live paid plan is a plan you cannot buy over.
+     */
+    it('agrees with the manage card about which states are a live paid plan', () => {
+      for (const status of ['active', 'past_due', 'canceled', 'expired']) {
+        const summary = resolveBillingSummary(input({ status }));
+        const live = holdsLiveSubscription({ status, planKey: 'pro_annual' });
+        expect(summary.kind, status).toBe('paid');
+        expect(live, status).toBe(summary.statusTone === 'active' || summary.statusTone === 'warning');
+      }
+    });
   });
 });

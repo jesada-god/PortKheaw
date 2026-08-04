@@ -118,10 +118,21 @@ export async function createStripeCheckoutSession(
       subscription_data: { metadata },
       success_url: `${config.returnOrigin}/settings/subscription?checkout=success`,
       cancel_url: `${config.returnOrigin}/settings/subscription?checkout=cancelled`,
-      // Promotion codes are deliberately off: the only discount in this product
-      // is the Founder coupon the server chooses, so there is no field in which
-      // a reader could apply one we did not intend.
-      allow_promotion_codes: false,
+      /*
+       * Promotion codes are deliberately off: the only discount in this product
+       * is the Founder coupon the server chooses, so there is no field in which
+       * a reader could apply one we did not intend.
+       *
+       * The flag is sent only when no coupon is. Stripe refuses a session
+       * carrying both `allow_promotion_codes` and `discounts` — "You may only
+       * specify one of these parameters" — so sending it unconditionally made
+       * every Founder checkout fail at the provider while ordinary plans, which
+       * carry no discount, went through. Omitting it alongside a coupon costs
+       * nothing: a session with `discounts` cannot accept a promotion code
+       * either way, so the field a reader could type one into does not exist in
+       * either branch.
+       */
+      ...(coupon ? {} : { allow_promotion_codes: false }),
     },
     { idempotencyKey: request.idempotencyKey },
   );

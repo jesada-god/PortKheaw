@@ -22,9 +22,15 @@ import { PlanPurchase } from './PlanPurchase';
  * The card never guesses: with no provider configured it states that payment is
  * not open rather than rendering a control that cannot complete.
  */
-export function PlanCards({ effectiveTier, availability }: {
+export function PlanCards({ effectiveTier, availability, hasLiveSubscription = false }: {
   effectiveTier: SubscriptionTier;
   availability: BillingAvailability;
+  /**
+   * True when the provider is already billing this account. A subscriber is sent
+   * to the manage card to change plans rather than being offered a second
+   * checkout, which the server refuses and which would double-bill them.
+   */
+  hasLiveSubscription?: boolean;
 }) {
   return (
     <section aria-labelledby="plans-heading" className="space-y-4">
@@ -43,6 +49,7 @@ export function PlanCards({ effectiveTier, availability }: {
             plan={plan}
             current={plan.tier === effectiveTier}
             availability={availability}
+            hasLiveSubscription={hasLiveSubscription}
           />
         ))}
       </div>
@@ -50,10 +57,11 @@ export function PlanCards({ effectiveTier, availability }: {
   );
 }
 
-function PlanCard({ plan, current, availability }: {
+function PlanCard({ plan, current, availability, hasLiveSubscription }: {
   plan: PlanDescriptor;
   current: boolean;
   availability: BillingAvailability;
+  hasLiveSubscription: boolean;
 }) {
   const recommended = Boolean(plan.badge);
   return (
@@ -102,6 +110,7 @@ function PlanCard({ plan, current, availability }: {
           tier={plan.tier as PaidTier}
           availability={availability}
           emphasis={Boolean(plan.badge)}
+          hasLiveSubscription={hasLiveSubscription}
         />
       )}
     </article>

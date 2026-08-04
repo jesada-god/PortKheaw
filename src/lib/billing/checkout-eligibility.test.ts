@@ -21,6 +21,7 @@ function input(overrides: Partial<CheckoutEligibilityInput> = {}): CheckoutEligi
     authenticated: true,
     emailVerified: true,
     founderPromoApplied: false,
+    hasLiveSubscription: false,
     ...overrides,
   };
 }
@@ -114,6 +115,63 @@ describe('checkout eligibility', () => {
       const result = resolveCheckoutEligibility(input({ planKey, founderPromoApplied: true }));
       expect(result.ok, planKey).toBe(true);
     }
+  });
+
+  /*
+   * One account is one subscription.
+   *
+   * Without this rule the plan cards happily offered Elite to somebody already
+   * paying for Pro; the second checkout opened a *second* subscription at the
+   * provider, every event for it was refused downstream as
+   * `subscription_mismatch`, and the reader was charged 4,490 baht for a plan
+   * they were never granted — while the first subscription kept billing too.
+   */
+  describe('while a subscription is already live', () => {
+    it.each([...billingPlanKeys])('refuses %s', (planKey) => {
+      const result = resolveCheckoutEligibility(input({ planKey, hasLiveSubscription: true }));
+      expect(result.ok, planKey).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('already-subscribed');
+    });
+
+    /*
+     * Checked before the Founder rule, so a subscriber asking for a Founder plan
+     * is told the useful thing rather than that the promotion is spent.
+     */
+    it('says the plan is already held rather than that the promotion is spent', () => {
+      const result = resolveCheckoutEligibility(
+        input({ planKey: 'elite_annual_founder', hasLiveSubscription: true, founderPromoApplied: true }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('already-subscribed');
+    });
+
+    /*
+     * Configuration and the input allowlist still come first: a caller learns
+     * nothing about the account from a malformed key.
+     */
+    it('still refuses an unknown plan key as unknown', () => {
+      const result = resolveCheckoutEligibility(input({ planKey: 'free_forever', hasLiveSubscription: true }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('unknown-plan');
+    });
+
+    it('still refuses an unauthenticated caller as unauthenticated', () => {
+      const result = resolveCheckoutEligibility(input({ hasLiveSubscription: true, authenticated: false }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('unauthenticated');
+    });
+  });
+
+  /*
+   * A subscription that has ended is not live, so buying again is exactly the
+   * right thing and must not be blocked.
+   */
+  it('admits a purchase once nothing is being billed any more', () => {
+    expect(resolveCheckoutEligibility(input({ hasLiveSubscription: false })).ok).toBe(true);
   });
 
   it('gives every refusal a Thai message that names no internals', () => {

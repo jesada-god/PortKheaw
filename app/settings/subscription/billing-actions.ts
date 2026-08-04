@@ -3,6 +3,8 @@
 import { createHash } from 'node:crypto';
 import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
 import { readBillingCustomerId, readBillingSnapshot } from '@/src/lib/billing/billing-repository';
+import { holdsLiveSubscription } from '@/src/lib/billing/billing-summary';
+import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
 import {
   checkoutRefusalMessage,
   resolveCheckoutEligibility,
@@ -38,6 +40,8 @@ export type CheckoutFailureCode =
   | 'UNAUTHENTICATED'
   | 'EMAIL_UNVERIFIED'
   | 'FOUNDER_USED'
+  /** A subscription is already live; plan changes belong in the portal. */
+  | 'ALREADY_SUBSCRIBED'
   | 'UNAVAILABLE';
 
 export type StartCheckoutResult =
@@ -56,6 +60,7 @@ const REFUSAL_CODE: Readonly<Record<CheckoutRefusalReason, CheckoutFailureCode>>
   unauthenticated: 'UNAUTHENTICATED',
   'email-unverified': 'EMAIL_UNVERIFIED',
   'founder-already-used': 'FOUNDER_USED',
+  'already-subscribed': 'ALREADY_SUBSCRIBED',
 };
 
 const GENERIC_FAILURE = 'เริ่มการชำระเงินไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
@@ -130,9 +135,10 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
    */
   const emailVerified = Boolean(user?.email_confirmed_at);
 
-  // Only read for the Founder flag, and only once identity is known. A signed
-  // out caller never reaches a database read.
+  // Only read once identity is known. A signed out caller never reaches a
+  // database read.
   let founderPromoApplied = false;
+  let hasLiveSubscription = false;
   let status = 'basic';
   let periodEnd: string | null = null;
   if (authenticated) {
@@ -141,6 +147,12 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
       founderPromoApplied = snapshot?.founder_promo_applied ?? false;
       status = snapshot?.status ?? 'basic';
       periodEnd = snapshot?.current_period_end ?? null;
+      hasLiveSubscription = holdsLiveSubscription({
+        status,
+        // The snapshot's plan key is a database column, so it is narrowed
+        // against the same allowlist the rest of billing uses rather than cast.
+        planKey: isBillingPlanKey(snapshot?.billing_plan_key) ? snapshot.billing_plan_key : null,
+      });
     } catch {
       record('billing_checkout_failed', 'SNAPSHOT_UNAVAILABLE');
       return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
@@ -154,6 +166,7 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
     authenticated,
     emailVerified,
     founderPromoApplied,
+    hasLiveSubscription,
   });
 
   if (!eligibility.ok) {

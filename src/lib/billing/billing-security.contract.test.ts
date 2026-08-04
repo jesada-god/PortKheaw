@@ -86,8 +86,16 @@ describe('billing security contract', () => {
     const provider = readCode('src/lib/billing/providers/stripe/stripe-provider.ts');
     expect(provider).toContain('line_items: [{ price: priceId, quantity: 1 }]');
     expect(provider).not.toMatch(/unit_amount|amount:|price_data/);
-    // Promotion codes are off, so the only discount is the one the server picks.
-    expect(provider).toContain('allow_promotion_codes: false');
+    /*
+     * Promotion codes are off, so the only discount is the one the server picks.
+     * The flag is conditional on there being no coupon, because Stripe refuses a
+     * session that carries both it and `discounts` — asserting the bare string
+     * here is what let that combination ship and break every Founder checkout,
+     * so the condition is part of the contract now. The behaviour itself is
+     * covered in `providers/stripe/stripe-checkout-session.test.ts`.
+     */
+    expect(provider).toContain('...(coupon ? {} : { allow_promotion_codes: false })');
+    expect(provider).not.toMatch(/^\s*allow_promotion_codes: false,\s*$/m);
   });
 
   it('refuses to open a Founder checkout without its coupon', () => {

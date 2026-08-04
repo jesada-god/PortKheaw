@@ -1,4 +1,4 @@
-import { Clock } from 'lucide-react';
+import { Clock, Settings2 } from 'lucide-react';
 import { CheckoutButton } from './CheckoutButton';
 import type { BillingAvailability } from '@/src/lib/billing/billing-config';
 import {
@@ -24,10 +24,23 @@ import { founderRenewalNote } from '@/src/lib/billing/billing-summary';
  */
 export const BILLING_CLOSED_NOTE = 'ระบบชำระเงินยังไม่เปิด';
 
-export function PlanPurchase({ tier, availability, emphasis }: {
+/**
+ * What a reader who already subscribes is shown instead of a Subscribe button.
+ *
+ * One account is one subscription — see `holdsLiveSubscription` — so a second
+ * checkout would open a second subscription at the provider, be refused by the
+ * webhook as a mismatch, and leave the reader paying for a plan they were never
+ * granted. A plan change belongs on the subscription that already exists, which
+ * is what the manage card above these plans opens.
+ */
+export const ALREADY_SUBSCRIBED_NOTE = 'เปลี่ยนแพ็กเกจได้ที่ “จัดการการชำระเงินและยกเลิก” ด้านบน';
+
+export function PlanPurchase({ tier, availability, emphasis, hasLiveSubscription = false }: {
   tier: PaidTier;
   availability: BillingAvailability;
   emphasis?: boolean;
+  /** True when the provider is already billing this account for a plan. */
+  hasLiveSubscription?: boolean;
 }) {
   const purchasable = billingPlansForTier(tier)
     .filter((plan) => availability.availablePlanKeys.includes(plan.key));
@@ -40,6 +53,23 @@ export function PlanPurchase({ tier, availability, emphasis }: {
       >
         <Clock aria-hidden="true" size={15} className="shrink-0" />
         {BILLING_CLOSED_NOTE}
+      </p>
+    );
+  }
+
+  /*
+   * No control at all rather than a disabled one, for the same reason the
+   * billing-closed branch above renders none: a button that looks pressable and
+   * cannot complete is worse than a sentence saying where to go instead.
+   */
+  if (hasLiveSubscription) {
+    return (
+      <p
+        data-testid="already-subscribed-note"
+        className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border-strong)] px-3 py-2.5 text-center text-sm font-medium text-[var(--text-muted)]"
+      >
+        <Settings2 aria-hidden="true" size={15} className="shrink-0" />
+        {ALREADY_SUBSCRIBED_NOTE}
       </p>
     );
   }
