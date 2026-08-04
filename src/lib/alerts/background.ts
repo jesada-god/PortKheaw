@@ -11,6 +11,7 @@ import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations'
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import { isDailySummaryDue, zonedClock } from '@/src/lib/notifications/schedule';
+import { runPromptPayRenewalReminders } from '@/src/lib/billing/promptpay-reminders';
 import { targetObservation } from './observation';
 import { describeCondition } from './logic';
 
@@ -233,6 +234,8 @@ export interface BackgroundAlertSummary {
   unavailable: number;
   dailySummaries: number;
   dailySummaryUnavailable: number;
+  promptPayRenewalReminders: number;
+  promptPayRenewalUnavailable: number;
   quietItemsReleased: number;
 }
 
@@ -248,6 +251,8 @@ export async function runBackgroundAlerts(
     unavailable: 0,
     dailySummaries: 0,
     dailySummaryUnavailable: 0,
+    promptPayRenewalReminders: 0,
+    promptPayRenewalUnavailable: 0,
     quietItemsReleased: 0,
   };
   let { data: run, error: runError } = await client.from('alert_evaluation_runs')
@@ -321,12 +326,21 @@ export async function runBackgroundAlerts(
     const daily = await runDailySummaries(client, now);
     empty.dailySummaries = daily.generated;
     empty.dailySummaryUnavailable = daily.unavailable;
-    const status = empty.unavailable || empty.dailySummaryUnavailable ? 'partial' : 'completed';
+    const promptPay = await runPromptPayRenewalReminders(client, now);
+    empty.promptPayRenewalReminders = promptPay.due;
+    empty.promptPayRenewalUnavailable = promptPay.unavailable;
+    const status = empty.unavailable
+      || empty.dailySummaryUnavailable
+      || empty.promptPayRenewalUnavailable
+      ? 'partial'
+      : 'completed';
     await client.from('alert_evaluation_runs').update({
       status,
       evaluated_count: empty.evaluated,
       triggered_count: empty.triggered,
-      unavailable_count: empty.unavailable + empty.dailySummaryUnavailable,
+      unavailable_count: empty.unavailable
+        + empty.dailySummaryUnavailable
+        + empty.promptPayRenewalUnavailable,
       completed_at: new Date().toISOString(),
     }).eq('id', run.id);
     console.info('background-notifications', {
@@ -335,6 +349,7 @@ export async function runBackgroundAlerts(
       triggered: empty.triggered,
       unavailable: empty.unavailable,
       dailySummaries: empty.dailySummaries,
+      promptPayRenewalReminders: empty.promptPayRenewalReminders,
       quietItemsReleased: empty.quietItemsReleased,
     });
     return empty;

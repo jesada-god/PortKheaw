@@ -5,9 +5,12 @@ import { KheawMascot } from '@/src/components/auth/KheawMascot';
 import { AuthDivider, AuthLink } from '@/src/components/auth/AuthControls';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
 import { SignInForm } from '@/src/components/auth/SignInForm';
+import { LiveMemberCount } from '@/src/components/auth/LiveMemberCount';
 import { isSupabaseConfigured } from '@/src/config/env/client';
 import { getSafeReturnPath } from '@/src/lib/auth/paths';
 import { getEnabledAuthProviders } from '@/src/lib/auth/providers';
+import { readPublicMemberCount } from '@/src/lib/public-stats';
+import { createClient } from '@/src/lib/supabase/server';
 
 
 /*
@@ -29,11 +32,16 @@ export default async function SignInPage({
   const error = typeof params.error === 'string' ? params.error : undefined;
   const message = typeof params.message === 'string' ? params.message : undefined;
   const expired = params.reason === 'session_expired';
-  const providers = isSupabaseConfigured ? await getEnabledAuthProviders() : { google: false };
+  const supabase = isSupabaseConfigured ? await createClient() : null;
+  const [providers, memberCount] = await Promise.all([
+    isSupabaseConfigured ? getEnabledAuthProviders() : Promise.resolve({ google: false }),
+    supabase ? readPublicMemberCount(supabase) : Promise.resolve(null),
+  ]);
 
   return (
     <AuthShell>
       <AuthHeader />
+      {memberCount !== null ? <LiveMemberCount initialCount={memberCount} /> : null}
       <AuthCard>
         <AuthTitle title="เข้าสู่ระบบ" description="เข้าสู่ระบบเพื่อดูและจัดการพอร์ตของคุณ" />
         {!isSupabaseConfigured ? <ConfigurationRequired /> : (

@@ -45,6 +45,17 @@ export interface Database {
         };
         Relationships: [];
       };
+      /** Public singleton aggregate. Contains a count only, never profile data. */
+      app_public_stats: {
+        Row: {
+          singleton: boolean;
+          member_count: number;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       user_settings: {
         Row: {
           user_id: string;

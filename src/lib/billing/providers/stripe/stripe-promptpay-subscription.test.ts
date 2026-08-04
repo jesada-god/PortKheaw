@@ -56,6 +56,7 @@ vi.mock('stripe', () => {
 const {
   abandonStripePromptPaySubscription,
   createStripePromptPaySubscription,
+  findStripePromptPayRenewalInvoice,
 } = await import('./stripe-provider');
 
 const config: BillingConfig = {
@@ -86,6 +87,8 @@ const DUE_DATE = 1_786_000_000;
 function invoice(overrides: Record<string, unknown> = {}) {
   return {
     id: 'in_promptpay',
+    livemode: false,
+    currency: 'thb',
     status: 'open',
     hosted_invoice_url: 'https://invoice.stripe.test/i/one',
     due_date: DUE_DATE,
@@ -140,6 +143,74 @@ beforeEach(() => {
     subscriptionCreated, subscriptionRetrieved, subscriptionCanceled, customerCreated,
     invoiceRetrieved, invoiceFinalized, invoiceVoided, priceRetrieved, couponRetrieved,
   ]) mock.mockReset();
+});
+
+describe('reusing a provider-generated renewal invoice', () => {
+  it('returns the open invoice on the existing subscription without creating anything', async () => {
+    subscriptionRetrieved.mockResolvedValue({
+      id: 'sub_promptpay',
+      livemode: false,
+      status: 'active',
+      collection_method: 'send_invoice',
+      metadata: {
+        portkheaw_user_id: 'user-1',
+        portkheaw_plan_key: 'pro_monthly',
+        portkheaw_provider_mode: 'test',
+      },
+      items: { data: [{ price: { id: 'price_pro_monthly' } }] },
+      latest_invoice: invoice({ amount_due: 34_900, total: 34_900 }),
+    });
+
+    await expect(findStripePromptPayRenewalInvoice({
+      config,
+      userId: 'user-1',
+      plan: billingPlans.pro_monthly,
+      subscriptionId: 'sub_promptpay',
+    })).resolves.toMatchObject({
+      subscriptionId: 'sub_promptpay',
+      invoiceId: 'in_promptpay',
+      amountBaht: 349,
+    });
+    expect(subscriptionCreated).not.toHaveBeenCalled();
+    expect(invoiceFinalized).not.toHaveBeenCalled();
+    expect(couponRetrieved).not.toHaveBeenCalled();
+  });
+
+  it('refuses a paid, draft, mismatched or foreign invoice', async () => {
+    const base = {
+      id: 'sub_promptpay',
+      livemode: false,
+      status: 'active',
+      collection_method: 'send_invoice',
+      metadata: {
+        portkheaw_user_id: 'user-1',
+        portkheaw_plan_key: 'pro_monthly',
+        portkheaw_provider_mode: 'test',
+      },
+      items: { data: [{ price: { id: 'price_pro_monthly' } }] },
+    };
+    for (const changed of [
+      { latest_invoice: invoice({ status: 'paid', amount_due: 34_900, total: 34_900 }) },
+      { latest_invoice: invoice({ status: 'draft', amount_due: 34_900, total: 34_900 }) },
+      {
+        metadata: { ...base.metadata, portkheaw_user_id: 'somebody-else' },
+        latest_invoice: invoice({ amount_due: 34_900, total: 34_900 }),
+      },
+      {
+        items: { data: [{ price: { id: 'price_wrong' } }] },
+        latest_invoice: invoice({ amount_due: 34_900, total: 34_900 }),
+      },
+      { latest_invoice: invoice({ amount_due: 1, total: 1 }) },
+    ]) {
+      subscriptionRetrieved.mockResolvedValue({ ...base, ...changed });
+      await expect(findStripePromptPayRenewalInvoice({
+        config,
+        userId: 'user-1',
+        plan: billingPlans.pro_monthly,
+        subscriptionId: 'sub_promptpay',
+      })).resolves.toBeNull();
+    }
+  });
 });
 
 describe('promptpay subscription parameters', () => {

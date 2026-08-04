@@ -4,7 +4,9 @@ import {
   formatBahtAmount,
   founderRenewalNote,
   holdsLiveSubscription,
+  holdsReusablePromptPaySubscription,
   resolveBillingSummary,
+  subscriptionTimeRemainingLabel,
   type BillingSummaryInput,
 } from './billing-summary';
 
@@ -25,6 +27,7 @@ function input(overrides: Partial<BillingSummaryInput> = {}): BillingSummaryInpu
     latestPaymentStatus: 'succeeded',
     trialEndsAt: null,
     hasBillingCustomer: true,
+    now: '2026-08-04T12:00:00.000Z',
     ...overrides,
   };
 }
@@ -295,6 +298,43 @@ describe('billing summary', () => {
       expect(summary.paymentMethod).toBeNull();
       expect(summary.renewalNote).toBeNull();
       expect(summary.renewalReminder).toBeNull();
+    });
+  });
+
+  describe('server-clock period countdown', () => {
+    const NOW = '2026-08-04T12:00:00.000Z';
+
+    it('shows days, then hours below 24 hours, then expiry', () => {
+      expect(subscriptionTimeRemainingLabel({
+        periodEnd: '2026-08-07T12:00:00.000Z', now: NOW,
+      })).toBe('เหลืออีก 3 วัน');
+      expect(subscriptionTimeRemainingLabel({
+        periodEnd: '2026-08-05T11:30:00.000Z', now: NOW,
+      })).toBe('เหลืออีก 24 ชั่วโมง');
+      expect(subscriptionTimeRemainingLabel({
+        periodEnd: NOW, now: NOW,
+      })).toBe('หมดอายุแล้ว');
+    });
+
+    it('enables reuse of the same PromptPay subscription only after its paid period', () => {
+      const active = resolveBillingSummary(input({
+        collectionMethod: 'send_invoice',
+        currentPeriodEnd: '2026-08-05T11:30:00.000Z',
+        now: NOW,
+      }));
+      expect(active.periodRemainingLabel).toBe('เหลืออีก 24 ชั่วโมง');
+      expect(active.promptPayRenewalReady).toBe(false);
+
+      const ended = resolveBillingSummary(input({
+        collectionMethod: 'send_invoice',
+        currentPeriodEnd: NOW,
+        now: NOW,
+      }));
+      expect(ended.periodRemainingLabel).toBe('หมดอายุแล้ว');
+      expect(ended.promptPayRenewalReady).toBe(true);
+      expect(holdsReusablePromptPaySubscription({
+        status: 'active', planKey: 'pro_monthly', collectionMethod: 'send_invoice',
+      })).toBe(true);
     });
   });
 });

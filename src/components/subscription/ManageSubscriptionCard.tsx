@@ -1,5 +1,6 @@
 import { AlertTriangle, CalendarClock, CreditCard, QrCode, ShieldCheck } from 'lucide-react';
 import { BillingPortalButton } from './BillingPortalButton';
+import { PromptPayRenewalCta } from './PromptPayRenewalCta';
 import {
   PAYMENT_METHOD_COMMITMENT,
   PAYMENT_METHOD_LABEL,
@@ -32,7 +33,15 @@ const TONE_CLASS: Readonly<Record<BillingSummary['statusTone'], string>> = {
   inactive: 'border-[var(--border-strong)] text-[var(--text-secondary)] bg-[var(--surface-hover)]',
 };
 
-export function ManageSubscriptionCard({ summary }: { summary: BillingSummary }) {
+export function ManageSubscriptionCard({
+  summary,
+  pendingPromptPayUrl = null,
+  hasOpenPromptPayInvoice = false,
+}: {
+  summary: BillingSummary;
+  pendingPromptPayUrl?: string | null;
+  hasOpenPromptPayInvoice?: boolean;
+}) {
   if (summary.kind !== 'paid') return null;
 
   return (
@@ -84,6 +93,11 @@ export function ManageSubscriptionCard({ summary }: { summary: BillingSummary })
               <dd data-testid="billing-period-end" className="mt-0.5 font-medium break-words text-[var(--text)]">
                 {formatBangkokDateTime(summary.periodEnd)}
               </dd>
+              {summary.periodRemainingLabel && (
+                <dd data-testid="billing-period-remaining" className="mt-0.5 font-semibold tabular-nums text-[var(--text-secondary)]">
+                  {summary.periodRemainingLabel}
+                </dd>
+              )}
             </div>
           </div>
         )}
@@ -150,6 +164,13 @@ export function ManageSubscriptionCard({ summary }: { summary: BillingSummary })
       )}
 
       <div className="min-w-0 space-y-2 border-t border-[var(--border)] pt-4">
+        {summary.paymentMethod === 'promptpay' && (
+          <PromptPayRenewalCta
+            hasOpenInvoice={hasOpenPromptPayInvoice}
+            hostedInvoiceUrl={pendingPromptPayUrl}
+            canRequestRenewal={summary.promptPayRenewalReady}
+          />
+        )}
         {/* Cancellation, payment methods and invoices all live in the provider's
             own portal. Rebuilding them here would mean handling a card; sending
             the reader there means a cancellation returns as a signed webhook

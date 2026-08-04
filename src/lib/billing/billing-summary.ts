@@ -62,6 +62,10 @@ export interface BillingSummary {
   renewalNote: string | null;
   /** Shown only when a PromptPay period is about to lapse. */
   renewalReminder: string | null;
+  /** Countdown resolved from the database clock, never from a browser clock. */
+  periodRemainingLabel: string | null;
+  /** The old paid period is over, so reading its provider-issued next invoice cannot overlap access. */
+  promptPayRenewalReady: boolean;
 }
 
 export interface BillingSummaryInput {
@@ -75,8 +79,8 @@ export interface BillingSummaryInput {
   hasBillingCustomer: boolean;
   /** The rail, as the provider reports it. Absent on pre-Phase-4.4 records. */
   collectionMethod?: BillingCollectionMethod | null;
-  /** The database's clock, for the "your period is about to lapse" reminder. */
-  now?: string | number | Date | null;
+  /** The database's clock, for every period boundary on this card. */
+  now: string | number | Date;
 }
 
 const NO_SUBSCRIPTION: BillingSummary = {
@@ -96,7 +100,28 @@ const NO_SUBSCRIPTION: BillingSummary = {
   autoRenews: false,
   renewalNote: null,
   renewalReminder: null,
+  periodRemainingLabel: null,
+  promptPayRenewalReady: false,
 };
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+export function subscriptionTimeRemainingLabel(input: {
+  periodEnd: string | null;
+  now: string | number | Date;
+}): string | null {
+  if (!input.periodEnd) return null;
+  const end = Date.parse(input.periodEnd);
+  const now = new Date(input.now).getTime();
+  if (!Number.isFinite(end) || !Number.isFinite(now)) return null;
+  const remaining = end - now;
+  if (remaining <= 0) return 'หมดอายุแล้ว';
+  if (remaining < DAY_MS) {
+    return `เหลืออีก ${Math.max(1, Math.ceil(remaining / HOUR_MS))} ชั่วโมง`;
+  }
+  return `เหลืออีก ${Math.max(1, Math.ceil(remaining / DAY_MS))} วัน`;
+}
 
 export function resolveBillingSummary(input: BillingSummaryInput): BillingSummary {
   if (input.status === 'trialing') {
@@ -127,6 +152,10 @@ export function resolveBillingSummary(input: BillingSummaryInput): BillingSummar
   const renewalBaht = billingPlan(plan.renewsIntoKey).renewalBaht;
   const paymentMethod = paymentMethodFromCollectionMethod(input.collectionMethod ?? null);
   const autoRenews = paymentMethod !== 'promptpay';
+  const periodRemainingLabel = subscriptionTimeRemainingLabel({
+    periodEnd: input.currentPeriodEnd,
+    now: input.now,
+  });
 
   return {
     kind: 'paid',
@@ -158,8 +187,12 @@ export function resolveBillingSummary(input: BillingSummaryInput): BillingSummar
       ? null
       : promptPayRenewalReminder({
         periodEnd: input.currentPeriodEnd,
-        now: input.now ?? Date.now(),
+        now: input.now,
       }),
+    periodRemainingLabel,
+    promptPayRenewalReady: paymentMethod === 'promptpay'
+      && (input.status === 'active' || input.status === 'past_due')
+      && periodRemainingLabel === 'หมดอายุแล้ว',
   };
 }
 
@@ -253,9 +286,25 @@ export function holdsLiveSubscription(
    */
   if (input.collectionMethod !== 'send_invoice') return true;
   if (!input.currentPeriodEnd) return false;
+  if (input.now === null || input.now === undefined) return false;
   const end = Date.parse(input.currentPeriodEnd);
   if (!Number.isFinite(end)) return false;
-  return end > new Date(input.now ?? Date.now()).getTime();
+  return end > new Date(input.now).getTime();
+}
+
+/**
+ * An invoice-collected subscription remains reusable after its paid lease ends:
+ * Stripe creates the next invoice on this same subscription. Opening a fresh
+ * checkout would create a second subscription and bypass that renewal invoice.
+ */
+export function holdsReusablePromptPaySubscription(
+  input: Pick<BillingSummaryInput, 'status' | 'planKey' | 'collectionMethod'> | null | undefined,
+): boolean {
+  return Boolean(
+    input?.planKey
+    && input.collectionMethod === 'send_invoice'
+    && (input.status === 'active' || input.status === 'past_due'),
+  );
 }
 
 /** The reassurance that has to survive a downgrade, stated in one place. */

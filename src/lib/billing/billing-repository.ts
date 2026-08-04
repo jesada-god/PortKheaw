@@ -257,6 +257,34 @@ export async function readPendingPromptPayIdentity(
   return data ? { subscriptionId: data.subscription_id, status: data.status } : null;
 }
 
+/** Private provider identity for re-opening the next invoice on the same rail. */
+export async function readPromptPaySubscriptionIdentity(
+  userId: string,
+  providerMode: TrustedBillingProviderMode,
+): Promise<{ subscriptionId: string; planKey: keyof typeof billingPlans } | null> {
+  const admin = createAdminClient();
+  if (!admin) throw new BillingAdminUnavailableError();
+
+  const { data, error } = await admin
+    .from('user_subscriptions')
+    .select('billing_subscription_id, billing_plan_key, status, billing_collection_method')
+    .eq('user_id', userId)
+    .eq('billing_provider', 'stripe')
+    .eq('billing_provider_mode', providerMode)
+    .maybeSingle();
+  if (error) throw error;
+  if (
+    !data?.billing_subscription_id
+    || !isBillingPlanKey(data.billing_plan_key)
+    || data.billing_collection_method !== 'send_invoice'
+    || (data.status !== 'active' && data.status !== 'past_due')
+  ) return null;
+  return {
+    subscriptionId: data.billing_subscription_id,
+    planKey: data.billing_plan_key,
+  };
+}
+
 /**
  * Mark an unpaid invoice abandoned, after the provider has been told to cancel
  * it. The row survives, marked — see the migration for why the next attempt

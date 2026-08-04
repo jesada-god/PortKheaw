@@ -9,12 +9,13 @@ import {
   readBillingSnapshot,
   readPendingPromptPayIdentity,
   readPendingPromptPayPayment,
+  readPromptPaySubscriptionIdentity,
   recordPendingPromptPayPayment,
   type PendingPaymentOutcome,
 } from '@/src/lib/billing/billing-repository';
-import { holdsLiveSubscription } from '@/src/lib/billing/billing-summary';
+import { holdsLiveSubscription, holdsReusablePromptPaySubscription } from '@/src/lib/billing/billing-summary';
 import type { BillingPaymentMethod } from '@/src/lib/billing/billing-payment-method';
-import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
+import { billingPlan, isBillingPlanKey } from '@/src/lib/billing/billing-plans';
 import { pendingPromptPayIsOpen, type PendingPromptPayRecord } from '@/src/lib/billing/promptpay-pending';
 import {
   checkoutRefusalMessage,
@@ -89,6 +90,10 @@ export type BillingPortalResult =
   | { ok: true; url: string }
   | { ok: false; code: CheckoutFailureCode; message: string };
 
+export type PromptPayRenewalResult =
+  | { ok: true; url: string }
+  | { ok: false; code: CheckoutFailureCode; message: string };
+
 /** Refusal reasons carry a code as well as a message, so callers can branch. */
 const REFUSAL_CODE: Readonly<Record<CheckoutRefusalReason, CheckoutFailureCode>> = {
   'billing-disabled': 'BILLING_UNAVAILABLE',
@@ -109,6 +114,8 @@ const NO_PENDING_INVOICE = 'ไม่พบใบแจ้งหนี้ที�
 const INVOICE_ABANDONED = 'ยกเลิกใบแจ้งหนี้แล้ว เลือกวิธีชำระเงินใหม่ได้เลย';
 const INVOICE_ALREADY_PAID = 'ใบแจ้งหนี้นี้ชำระเงินแล้ว กรุณารีเฟรชหน้านี้เพื่อดูสิทธิ์ล่าสุด';
 
+const PROMPTPAY_RENEWAL_NOT_READY = 'ชำระได้เมื่อใกล้หมดอายุ';
+
 type AuditEvent =
   | 'billing_checkout_started'
   | 'billing_checkout_refused'
@@ -116,7 +123,9 @@ type AuditEvent =
   | 'billing_portal_opened'
   | 'billing_portal_failed'
   | 'billing_pending_invoice_abandoned'
-  | 'billing_pending_invoice_abandon_failed';
+  | 'billing_pending_invoice_abandon_failed'
+  | 'billing_promptpay_renewal_opened'
+  | 'billing_promptpay_renewal_failed';
 
 /**
  * The same structured-log shape the rest of the server uses. The event name and
@@ -234,15 +243,23 @@ export async function startCheckoutAction(
       status = snapshot?.status ?? 'basic';
       periodEnd = snapshot?.current_period_end ?? null;
       const modeMatches = Boolean(config && snapshot?.billing_provider_mode === config.providerMode);
-      hasLiveSubscription = modeMatches && holdsLiveSubscription({
-        status,
-        // The snapshot's plan key is a database column, so it is narrowed
-        // against the same allowlist the rest of billing uses rather than cast.
-        planKey: isBillingPlanKey(snapshot?.billing_plan_key) ? snapshot.billing_plan_key : null,
-        collectionMethod: snapshot?.billing_collection_method ?? null,
-        currentPeriodEnd: periodEnd,
-        now: snapshot?.database_now ?? null,
-      });
+      const storedPlanKey = isBillingPlanKey(snapshot?.billing_plan_key)
+        ? snapshot.billing_plan_key
+        : null;
+      hasLiveSubscription = modeMatches && (
+        holdsLiveSubscription({
+          status,
+          planKey: storedPlanKey,
+          collectionMethod: snapshot?.billing_collection_method ?? null,
+          currentPeriodEnd: periodEnd,
+          now: snapshot?.database_now ?? null,
+        })
+        || holdsReusablePromptPaySubscription({
+          status,
+          planKey: storedPlanKey,
+          collectionMethod: snapshot?.billing_collection_method ?? null,
+        })
+      );
       if (config) {
         pending = await readPendingPromptPayPayment(client, config.providerMode);
         /*
@@ -367,6 +384,125 @@ export async function startCheckoutAction(
     return { ok: true, url: session.url, paymentMethod: 'card' };
   } catch {
     record('billing_checkout_failed', `${eligibility.plan.key}:${eligibility.paymentMethod}`);
+    return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  }
+}
+
+/**
+ * Open the provider-generated next invoice on the existing PromptPay
+ * subscription. It creates nothing and changes no entitlement. Before the paid
+ * period ends there is no non-overlapping renewal invoice to open, so it fails
+ * closed with the same message shown beside the disabled button.
+ */
+export async function openPromptPayRenewalAction(): Promise<PromptPayRenewalResult> {
+  const config = getBillingConfig();
+  if (!config || !config.paymentMethods.includes('promptpay')) {
+    return {
+      ok: false,
+      code: 'BILLING_UNAVAILABLE',
+      message: checkoutRefusalMessage('billing-disabled'),
+    };
+  }
+
+  const client = await createClient();
+  if (!client) return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  const { data: { user }, error: authError } = await client.auth.getUser();
+  if (authError || !user) {
+    return {
+      ok: false,
+      code: 'UNAUTHENTICATED',
+      message: checkoutRefusalMessage('unauthenticated'),
+    };
+  }
+
+  try {
+    const [snapshot, existingPending] = await Promise.all([
+      readBillingSnapshot(client),
+      readPendingPromptPayPayment(client, config.providerMode),
+    ]);
+    if (
+      existingPending?.hostedInvoiceUrl
+      && snapshot
+      && pendingPromptPayIsOpen(existingPending, snapshot.database_now)
+    ) {
+      record('billing_promptpay_renewal_opened', 'pending-reused');
+      return { ok: true, url: existingPending.hostedInvoiceUrl };
+    }
+
+    const periodEnd = snapshot?.current_period_end
+      ? Date.parse(snapshot.current_period_end)
+      : Number.NaN;
+    const databaseNow = snapshot ? Date.parse(snapshot.database_now) : Number.NaN;
+    if (
+      !snapshot
+      || snapshot.billing_provider_mode !== config.providerMode
+      || snapshot.billing_collection_method !== 'send_invoice'
+      || !isBillingPlanKey(snapshot.billing_plan_key)
+      || !Number.isFinite(periodEnd)
+      || !Number.isFinite(databaseNow)
+      || periodEnd > databaseNow
+    ) {
+      return { ok: false, code: 'PLAN_UNAVAILABLE', message: PROMPTPAY_RENEWAL_NOT_READY };
+    }
+
+    const identity = await readPromptPaySubscriptionIdentity(user.id, config.providerMode);
+    if (!identity || identity.planKey !== snapshot.billing_plan_key) {
+      return { ok: false, code: 'PLAN_UNAVAILABLE', message: PROMPTPAY_RENEWAL_NOT_READY };
+    }
+
+    const { findStripePromptPayRenewalInvoice } = await import(
+      '@/src/lib/billing/providers/stripe/stripe-provider'
+    );
+    const invoice = await findStripePromptPayRenewalInvoice({
+      config,
+      userId: user.id,
+      plan: billingPlan(identity.planKey),
+      subscriptionId: identity.subscriptionId,
+    });
+    if (!invoice) {
+      return { ok: false, code: 'PLAN_UNAVAILABLE', message: PROMPTPAY_RENEWAL_NOT_READY };
+    }
+
+    const invoiceRecord: PendingPromptPayRecord = {
+      planKey: identity.planKey,
+      paymentMethod: 'promptpay',
+      status: 'awaiting_payment',
+      amountBaht: invoice.amountBaht,
+      hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+      dueAt: invoice.dueAt,
+      createdAt: snapshot.database_now,
+    };
+    if (!pendingPromptPayIsOpen(invoiceRecord, snapshot.database_now)) {
+      return { ok: false, code: 'PLAN_UNAVAILABLE', message: PROMPTPAY_RENEWAL_NOT_READY };
+    }
+
+    const recorded = await recordPendingPromptPayPayment({
+      userId: user.id,
+      providerMode: config.providerMode,
+      planKey: identity.planKey,
+      subscriptionId: identity.subscriptionId,
+      invoiceId: invoice.invoiceId,
+      hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+      amountBaht: invoice.amountBaht,
+      dueAt: invoice.dueAt,
+    });
+    if (recorded !== 'recorded') {
+      const concurrent = await readPendingPromptPayPayment(client, config.providerMode);
+      if (
+        concurrent?.hostedInvoiceUrl
+        && pendingPromptPayIsOpen(concurrent, snapshot.database_now)
+      ) {
+        record('billing_promptpay_renewal_opened', 'pending-race-reused');
+        return { ok: true, url: concurrent.hostedInvoiceUrl };
+      }
+      return { ok: false, code: 'PROMPTPAY_INVOICE_OPEN', message: GENERIC_FAILURE };
+    }
+
+    revalidatePath('/settings/subscription');
+    record('billing_promptpay_renewal_opened');
+    return { ok: true, url: invoice.hostedInvoiceUrl };
+  } catch {
+    record('billing_promptpay_renewal_failed', 'UNAVAILABLE');
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
   }
 }

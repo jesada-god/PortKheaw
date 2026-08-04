@@ -10,7 +10,11 @@ import { PlanComparison } from '@/src/components/subscription/PlanComparison';
 import { SubscriptionFaq } from '@/src/components/subscription/SubscriptionFaq';
 import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
 import { readBillingSnapshot, readPendingPromptPayPayment } from '@/src/lib/billing/billing-repository';
-import { holdsLiveSubscription, resolveBillingSummary } from '@/src/lib/billing/billing-summary';
+import {
+  holdsLiveSubscription,
+  holdsReusablePromptPaySubscription,
+  resolveBillingSummary,
+} from '@/src/lib/billing/billing-summary';
 import {
   pendingPromptPayIsOpen,
   resolvePendingPromptPayView,
@@ -117,6 +121,23 @@ export default async function SubscriptionPage() {
     })
     : null;
   const hasOpenInvoice = pendingView !== null;
+  const storedPlanKey = isBillingPlanKey(billingSnapshot?.billing_plan_key)
+    ? billingSnapshot.billing_plan_key
+    : null;
+  const blocksNewCheckout = snapshotMatchesMode && (
+    holdsLiveSubscription({
+      status: billingSnapshot?.status ?? 'basic',
+      planKey: storedPlanKey,
+      collectionMethod: billingSnapshot?.billing_collection_method ?? null,
+      currentPeriodEnd: billingSnapshot?.current_period_end ?? null,
+      now: billingSnapshot?.database_now ?? null,
+    })
+    || holdsReusablePromptPaySubscription({
+      status: billingSnapshot?.status ?? 'basic',
+      planKey: storedPlanKey,
+      collectionMethod: billingSnapshot?.billing_collection_method ?? null,
+    })
+  );
 
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
   const metadataName = typeof user.user_metadata.full_name === 'string' ? user.user_metadata.full_name : null;
@@ -132,7 +153,13 @@ export default async function SubscriptionPage() {
           trialBlockedReason={access.isAdmin ? ADMIN_TRIAL_BLOCKED_MESSAGE : undefined}
         />
         {pendingView && <PendingInvoiceCard view={pendingView} />}
-        {billingSummary && <ManageSubscriptionCard summary={billingSummary} />}
+        {billingSummary && (
+          <ManageSubscriptionCard
+            summary={billingSummary}
+            pendingPromptPayUrl={pendingView?.hostedInvoiceUrl ?? null}
+            hasOpenPromptPayInvoice={hasOpenInvoice}
+          />
+        )}
         {access.isAdmin && <AdminAccessCard access={access} name={displayName} />}
         <PlanCards
           effectiveTier={effectiveTier}
@@ -141,15 +168,7 @@ export default async function SubscriptionPage() {
            * The same predicates the checkout action gates on, so the cards
            * cannot offer a purchase the server would refuse.
            */
-          hasLiveSubscription={snapshotMatchesMode && holdsLiveSubscription({
-            status: billingSnapshot?.status ?? 'basic',
-            planKey: isBillingPlanKey(billingSnapshot?.billing_plan_key)
-              ? billingSnapshot.billing_plan_key
-              : null,
-            collectionMethod: billingSnapshot?.billing_collection_method ?? null,
-            currentPeriodEnd: billingSnapshot?.current_period_end ?? null,
-            now: billingSnapshot?.database_now ?? null,
-          })}
+          hasLiveSubscription={blocksNewCheckout}
           hasOpenInvoice={hasOpenInvoice}
         />
         <PlanComparison />

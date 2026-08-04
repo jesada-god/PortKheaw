@@ -221,6 +221,64 @@ export interface PromptPaySubscriptionResult {
   amountBaht: number;
 }
 
+export interface ExistingPromptPayInvoiceRequest {
+  config: BillingConfig;
+  userId: string;
+  plan: BillingPlanDefinition;
+  subscriptionId: string;
+}
+
+/**
+ * Read the renewal invoice Stripe generated for the existing PromptPay
+ * subscription. This function creates and finalizes nothing: before the billing
+ * boundary there is no safe invoice to return, and the UI remains disabled.
+ */
+export async function findStripePromptPayRenewalInvoice(
+  request: ExistingPromptPayInvoiceRequest,
+): Promise<PromptPaySubscriptionResult | null> {
+  const client = stripeClient(request.config);
+  const subscription = await client.subscriptions.retrieve(request.subscriptionId, {
+    expand: ['latest_invoice'],
+  });
+  const expectedPrice = request.config.prices[request.plan.key];
+  const hasExpectedPrice = subscription.items.data.some((item) => {
+    const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+    return priceId === expectedPrice;
+  });
+
+  if (
+    subscription.id !== request.subscriptionId
+    || subscription.collection_method !== 'send_invoice'
+    || stripeProviderMode(subscription.livemode) !== request.config.providerMode
+    || subscription.metadata[BILLING_METADATA_USER_ID] !== request.userId
+    || subscription.metadata[BILLING_METADATA_PLAN_KEY] !== request.plan.key
+    || subscription.metadata[BILLING_METADATA_PROVIDER_MODE] !== request.config.providerMode
+    || !hasExpectedPrice
+  ) return null;
+
+  const latest = subscription.latest_invoice;
+  if (!latest) return null;
+  const invoice = typeof latest === 'string' ? await client.invoices.retrieve(latest) : latest;
+  const amountBaht = Math.round((invoice.amount_due ?? invoice.total ?? 0) / 100);
+  if (
+    invoice.status !== 'open'
+    || !invoice.id
+    || !invoice.hosted_invoice_url
+    || stripeProviderMode(invoice.livemode) !== request.config.providerMode
+    || invoice.currency.toLowerCase() !== request.plan.currency.toLowerCase()
+    // A Founder coupon has duration `once`; every renewal must be full price.
+    || amountBaht !== request.plan.renewalBaht
+  ) return null;
+
+  return {
+    subscriptionId: subscription.id,
+    invoiceId: invoice.id,
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    dueAt: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null,
+    amountBaht,
+  };
+}
+
 /**
  * Start a PromptPay purchase.
  *

@@ -32,6 +32,20 @@ vi.mock('@/src/config/env/client', () => ({
   },
 }));
 
+// Login also server-renders the public aggregate. This fixture stays entirely
+// non-identifying and avoids Next's request-bound cookies API in a direct render.
+vi.mock('@/src/lib/supabase/server', () => ({
+  createClient: async () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: { member_count: 1284 }, error: null }),
+        }),
+      }),
+    }),
+  }),
+}));
+
 const { default: SignInPage } = await import('./sign-in/page');
 const { default: SignUpPage } = await import('./sign-up/page');
 const { AuthDivider } = await import('@/src/components/auth/AuthControls');
