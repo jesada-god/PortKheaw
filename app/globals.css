@@ -650,6 +650,20 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   box-shadow: var(--dock-shadow);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   backdrop-filter: blur(20px) saturate(140%);
+  /*
+   * `pan-y`, not `none`: a vertical swipe that starts on the capsule still
+   * scrolls the page, and the browser taking the gesture over is what delivers
+   * the `pointercancel` the dock reads as "this was a scroll, drop the
+   * selection". Horizontal movement is left unclaimed so a drag across the icons
+   * is never stolen mid-gesture. `pinch-zoom` is kept deliberately — zoom is an
+   * accessibility affordance and nothing here removes it.
+   */
+  touch-action: pan-y pinch-zoom;
+  /* A hold is a menu gesture, so it must not raise iOS's selection callout or
+     leave the capsule's labels highlighted behind it. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* From lg the capsule is only as wide as its five destinations. */
@@ -677,27 +691,29 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
 }
 
 /*
- * On a handset the four other destinations hold a 44px touch square each and the
- * current one takes everything left over, which is what gives its name room to
- * be read in full. Five equal shares would leave 54px apiece at 320px, and
- * "รายการติดตาม" needs 60 — measured, and the reason this is not an even split.
+ * Five equal shares, and the current destination is not one of them.
+ *
+ * The dock used to let the active slot take everything left over so its name
+ * could be read in full. That made the selected item a wide labelled pill beside
+ * four bare icons, and — worse — moved every icon sideways on each navigation.
+ * Equal shares mean the row is the same geometry on all five routes, so the only
+ * thing that changes when the reader arrives somewhere is colour.
+ *
+ * At the narrowest supported width this is still a comfortable target: a 320px
+ * viewport gives a 296px capsule, less 12px of padding and 12px of gaps, so each
+ * slot is ~54px and `.dock__item` holds its own 44px minimum inside that.
  *
  * From lg every slot is a fixed 60px: a magnified icon grows inside its slot and
  * never pushes its neighbours around.
  */
 .dock__slot {
   display: flex;
-  flex: 0 0 44px;
+  flex: 1 1 0;
   min-width: 0;
 }
 
-.dock__slot[data-active="true"] {
-  flex: 1 1 auto;
-}
-
 @media (min-width: 1024px) {
-  .dock__slot,
-  .dock__slot[data-active="true"] { flex: 0 0 60px; }
+  .dock__slot { flex: 0 0 60px; }
 }
 
 .dock__item {
@@ -708,17 +724,22 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 0;
   height: calc(var(--dock-height) - 12px);
   min-height: 44px;
   border-radius: 9999px;
   color: var(--text-muted);
   text-decoration: none;
   transition: color 180ms ease;
+  /* Matches the capsule, overriding the `manipulation` every anchor gets in
+     `@layer base` — this rule is unlayered, so it wins without `!important`. */
+  touch-action: pan-y pinch-zoom;
+  /* A mouse drag across the dock must not start a native link drag. */
+  -webkit-user-drag: none;
 }
 
 @media (min-width: 1024px) {
-  .dock__item { gap: 0; height: calc(var(--dock-height) - 8px); }
+  .dock__item { height: calc(var(--dock-height) - 8px); }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -760,7 +781,9 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   width: 30px;
   height: 30px;
   border-radius: 9999px;
-  transition: transform 220ms ease;
+  /* Background and ring only — never a size or a transform. Whatever marks the
+     current destination has to leave the row's geometry exactly as it found it. */
+  transition: background-color 200ms ease, box-shadow 200ms ease;
 }
 
 .dock__bubble > svg {
@@ -781,12 +804,34 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   .dock__bubble > svg { width: 42%; height: 42%; }
 }
 
-.dock__item[aria-current="page"] .dock__bubble { transform: scale(1.06); }
+/* The current destination: a tinted disc and a hairline ring inside the bubble's
+   existing box. `inset` so the ring costs no layout, and no `transform`, so the
+   icon under it stays the same size as the other four. */
+.dock__item[aria-current="page"] .dock__bubble {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/*
+ * The icon a press-and-drag is currently over. Stronger than the current-page
+ * treatment on purpose — during a gesture it has to be obvious which of the two
+ * marks is following the finger.
+ */
+.dock__slot[data-pressed="true"] .dock__item { color: var(--accent); }
+
+.dock__slot[data-pressed="true"] .dock__bubble {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 62%, transparent);
+}
 
 /*
  * Clipped rather than `display: none`, so every name stays in the accessibility
- * tree as its link's accessible name whether or not it is painted. That is what
- * keeps the tooltip from being the only thing that says where a link goes.
+ * tree as its link's accessible name whether or not it is painted.
+ *
+ * It is never painted. A name under the current icon is what made that slot a
+ * different width from its neighbours, and the dock now says where you are with
+ * colour alone; `aria-label` and this element carry the name for anyone who is
+ * not reading the screen.
  */
 .dock__label {
   position: absolute;
@@ -798,27 +843,6 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
   clip-path: inset(50%);
   border: 0;
   white-space: nowrap;
-}
-
-/*
- * Painted for the current destination only, and only below lg — where there is
- * no tooltip to name things and where five full labels cannot fit a 320px
- * capsule without one of them ellipsing.
- */
-@media (max-width: 1023px) {
-  .dock__slot[data-active="true"] .dock__label {
-    position: static;
-    width: auto;
-    height: auto;
-    max-width: 100%;
-    margin: 0;
-    overflow: visible;
-    clip-path: none;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.15;
-    letter-spacing: -0.01em;
-  }
 }
 
 .dock__tip {
@@ -854,6 +878,44 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
+
+  /* A mouse drag keeps `:hover` on whatever it started over, so without this the
+     capsule would show the drag's tooltip and a stale hover one side by side. */
+  .dock[data-pressing="true"] .dock__tip { opacity: 0; }
+}
+
+/*
+ * The press-and-drag tooltip: one element for the capsule, named for whichever
+ * icon the gesture is over.
+ *
+ * Its `left` is written by the component, already clamped so both ends stay
+ * inside the capsule — and the capsule is centred and inset from the viewport,
+ * so a tooltip that fits it cannot reach the screen edge. `bottom: 100% + 10px`
+ * puts it clear above the dock rather than over any icon, and it takes no
+ * pointer events, so it can never intercept the release that chooses a
+ * destination. It is only in the DOM while a gesture runs, which is what makes
+ * it disappear the instant one ends or is cancelled.
+ */
+.dock__drag-tip {
+  position: absolute;
+  z-index: 1;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(60vw, 240px);
+  overflow: hidden;
+  border: 1px solid var(--dock-border);
+  border-radius: 9999px;
+  background: var(--dock-bg);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+  box-shadow: var(--dock-shadow);
+  pointer-events: none;
 }
 
 /* ==========================================================================

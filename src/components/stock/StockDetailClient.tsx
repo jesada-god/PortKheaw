@@ -457,7 +457,13 @@ export function StockDetailClient({
   };
 
   return (
-    <div className="pb-20">
+    /*
+     * No bottom padding of its own. The shell already reserves the dock's whole
+     * footprint through `--dock-clearance`, and this page used to add `pb-20` on
+     * top of it — 80px of empty page above the capsule that no other route had,
+     * which is what made the dock look like it sat somewhere different here.
+     */
+    <div>
       <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-slate-800 bg-[#0A0E17]/95 px-3 backdrop-blur-md">
         <div className="flex min-w-0 items-center gap-2">
           {/*
