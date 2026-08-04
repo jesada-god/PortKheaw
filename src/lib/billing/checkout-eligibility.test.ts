@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { billingPaymentMethods } from './billing-payment-method';
 import { billingPlanKeys } from './billing-plans';
 import {
   checkoutRefusalMessage,
@@ -16,12 +17,15 @@ import {
 function input(overrides: Partial<CheckoutEligibilityInput> = {}): CheckoutEligibilityInput {
   return {
     planKey: 'pro_monthly',
+    paymentMethod: 'card',
     availablePlanKeys: [...billingPlanKeys],
+    availablePaymentMethods: [...billingPaymentMethods],
     billingEnabled: true,
     authenticated: true,
     emailVerified: true,
     founderPromoApplied: false,
     hasLiveSubscription: false,
+    hasOpenPromptPayInvoice: false,
     ...overrides,
   };
 }
@@ -172,6 +176,90 @@ describe('checkout eligibility', () => {
    */
   it('admits a purchase once nothing is being billed any more', () => {
     expect(resolveCheckoutEligibility(input({ hasLiveSubscription: false })).ok).toBe(true);
+  });
+
+  /*
+   * The second thing a browser may send. It selects a rail, never a price — both
+   * rails bill the same Price object — so the only harm a tampered value can do
+   * is name a rail this deployment does not offer, which is refused here.
+   */
+  describe('the payment method', () => {
+    it('admits either rail when both are offered', () => {
+      for (const paymentMethod of billingPaymentMethods) {
+        const result = resolveCheckoutEligibility(input({ paymentMethod }));
+        expect(result.ok, paymentMethod).toBe(true);
+        if (!result.ok) return;
+        expect(result.paymentMethod).toBe(paymentMethod);
+      }
+    });
+
+    it('refuses anything that is not a rail this product sells', () => {
+      for (const paymentMethod of ['bank_transfer', 'CARD', '', null, undefined, 7, {}]) {
+        const result = resolveCheckoutEligibility(input({ paymentMethod }));
+        expect(result.ok, String(paymentMethod)).toBe(false);
+        if (result.ok) return;
+        expect(result.reason).toBe('unknown-payment-method');
+      }
+    });
+
+    it('refuses a real rail this deployment has switched off', () => {
+      const result = resolveCheckoutEligibility(input({
+        paymentMethod: 'promptpay',
+        availablePaymentMethods: ['card'],
+      }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('payment-method-unavailable');
+    });
+  });
+
+  /*
+   * An unpaid PromptPay invoice is a purchase already in flight. Starting
+   * another one would leave two payable subscriptions at the provider, of which
+   * our records can honour exactly one — the reader would pay twice and be
+   * granted once.
+   */
+  describe('while an unpaid invoice is still payable', () => {
+    it('refuses a second purchase on either rail', () => {
+      for (const paymentMethod of billingPaymentMethods) {
+        const result = resolveCheckoutEligibility(input({
+          paymentMethod,
+          hasOpenPromptPayInvoice: true,
+        }));
+        expect(result.ok, paymentMethod).toBe(false);
+        if (result.ok) return;
+        expect(result.reason).toBe('promptpay-invoice-open');
+      }
+    });
+
+    /*
+     * Told the actionable thing rather than that a promotion is spent — it is
+     * not spent, because nothing has been paid.
+     */
+    it('says the invoice is open rather than that Founder is used', () => {
+      const result = resolveCheckoutEligibility(input({
+        planKey: 'pro_annual_founder',
+        hasOpenPromptPayInvoice: true,
+        founderPromoApplied: false,
+      }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('promptpay-invoice-open');
+    });
+
+    it('yields to the stronger fact that a subscription is already live', () => {
+      const result = resolveCheckoutEligibility(input({
+        hasOpenPromptPayInvoice: true,
+        hasLiveSubscription: true,
+      }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('already-subscribed');
+    });
+
+    it('admits a purchase again once the invoice can no longer be paid', () => {
+      expect(resolveCheckoutEligibility(input({ hasOpenPromptPayInvoice: false })).ok).toBe(true);
+    });
   });
 
   it('gives every refusal a Thai message that names no internals', () => {

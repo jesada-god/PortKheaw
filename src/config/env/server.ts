@@ -92,6 +92,14 @@ export function parseServerEnv(input: Record<string, unknown>) {
       BILLING_CHECKOUT_MODE: read('BILLING_CHECKOUT_MODE', optionalSecret, undefined),
       BILLING_INTERNAL_USER_IDS: read('BILLING_INTERNAL_USER_IDS', optionalSecret, undefined),
       BILLING_RETURN_ORIGIN: read('BILLING_RETURN_ORIGIN', optionalUrl, undefined),
+      /*
+       * The PromptPay rail's off switch, and the one billing variable that is on
+       * by default. It guards a provider *capability* rather than a credential:
+       * with everything else configured, the rail works, and this exists so it
+       * can be withdrawn without a redeploy if the provider account's Thai
+       * activation is ever removed. Set it to `false` to sell by card only.
+       */
+      BILLING_PROMPTPAY_ENABLED: read('BILLING_PROMPTPAY_ENABLED', optionalSecret, undefined),
       STRIPE_SECRET_KEY: read('STRIPE_SECRET_KEY', optionalSecret, undefined),
       STRIPE_WEBHOOK_SECRET: read('STRIPE_WEBHOOK_SECRET', optionalSecret, undefined),
       STRIPE_PRICE_PRO_MONTHLY: read('STRIPE_PRICE_PRO_MONTHLY', optionalSecret, undefined),

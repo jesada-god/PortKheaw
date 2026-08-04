@@ -1,5 +1,5 @@
 import { Clock, Settings2 } from 'lucide-react';
-import { CheckoutButton } from './CheckoutButton';
+import { PaymentMethodChoice, type PurchasablePlan } from './PaymentMethodChoice';
 import type { BillingAvailability } from '@/src/lib/billing/billing-config';
 import {
   billingPlan,
@@ -35,17 +35,37 @@ export const BILLING_CLOSED_NOTE = 'ระบบชำระเงินยั�
  */
 export const ALREADY_SUBSCRIBED_NOTE = 'เปลี่ยนแพ็กเกจได้ที่ “จัดการการชำระเงินและยกเลิก” ด้านบน';
 
-export function PlanPurchase({ tier, availability, emphasis, hasLiveSubscription = false }: {
+/**
+ * The same reasoning one step earlier: an unpaid PromptPay invoice is a purchase
+ * already in flight, and a second one alongside it would be a second
+ * subscription at the provider. The pending card above holds both ways out —
+ * scan it, or abandon it.
+ */
+export const OPEN_INVOICE_NOTE = 'มีใบแจ้งหนี้ที่รอชำระอยู่ ดูรายละเอียดได้ที่การ์ดด้านบน';
+
+export function PlanPurchase({
+  tier,
+  availability,
+  emphasis,
+  hasLiveSubscription = false,
+  hasOpenInvoice = false,
+}: {
   tier: PaidTier;
   availability: BillingAvailability;
   emphasis?: boolean;
   /** True when the provider is already billing this account for a plan. */
   hasLiveSubscription?: boolean;
+  /**
+   * True while an unpaid PromptPay invoice is still payable. The purchase area
+   * closes for the same reason it closes for a subscriber — one account, one
+   * purchase — and the pending card above these plans holds the way forward.
+   */
+  hasOpenInvoice?: boolean;
 }) {
   const purchasable = billingPlansForTier(tier)
     .filter((plan) => availability.availablePlanKeys.includes(plan.key));
 
-  if (!availability.enabled || purchasable.length === 0) {
+  if (!availability.enabled || purchasable.length === 0 || availability.paymentMethods.length === 0) {
     return (
       <p
         data-testid="billing-closed-note"
@@ -62,14 +82,14 @@ export function PlanPurchase({ tier, availability, emphasis, hasLiveSubscription
    * billing-closed branch above renders none: a button that looks pressable and
    * cannot complete is worse than a sentence saying where to go instead.
    */
-  if (hasLiveSubscription) {
+  if (hasLiveSubscription || hasOpenInvoice) {
     return (
       <p
-        data-testid="already-subscribed-note"
+        data-testid={hasLiveSubscription ? 'already-subscribed-note' : 'open-invoice-note'}
         className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border-strong)] px-3 py-2.5 text-center text-sm font-medium text-[var(--text-muted)]"
       >
         <Settings2 aria-hidden="true" size={15} className="shrink-0" />
-        {ALREADY_SUBSCRIBED_NOTE}
+        {hasLiveSubscription ? ALREADY_SUBSCRIBED_NOTE : OPEN_INVOICE_NOTE}
       </p>
     );
   }
@@ -80,18 +100,18 @@ export function PlanPurchase({ tier, availability, emphasis, hasLiveSubscription
    * invite somebody to pick the more expensive one by accident.
    */
   const founder = purchasable.find((plan) => plan.founder);
-  const shown = purchasable.filter((plan) => !(founder && plan.key === founder.renewsIntoKey));
+  const shown: PurchasablePlan[] = purchasable
+    .filter((plan) => !(founder && plan.key === founder.renewsIntoKey))
+    .map((plan) => ({
+      key: plan.key,
+      interval: plan.interval,
+      emphasis: Boolean(emphasis && plan.interval === 'year'),
+      label: `สมัคร ${plan.name} · ${formatBillingBaht(plan.firstPeriodBaht)} บาท`,
+    }));
 
   return (
     <div className="min-w-0 space-y-2">
-      {shown.map((plan) => (
-        <CheckoutButton
-          key={plan.key}
-          planKey={plan.key}
-          emphasis={emphasis && plan.interval === 'year'}
-          label={`สมัคร ${plan.name} · ${formatBillingBaht(plan.firstPeriodBaht)} บาท`}
-        />
-      ))}
+      <PaymentMethodChoice plans={shown} methods={availability.paymentMethods} />
       {founder && (
         // The renewal price is stated before anyone reaches the provider, so the
         // second year cannot be a surprise.

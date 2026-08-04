@@ -88,16 +88,22 @@ describe('subscription centre vertical slice', () => {
    * A checkout must carry a plan key and nothing else. An amount, a tier or a
    * discount arriving from a browser is the defect this asserts against.
    */
-  it('lets the client name a plan and nothing else', () => {
+  /*
+   * Two values, both from closed allowlists: which plan, and which rail. Neither
+   * can change what anybody is charged — both rails bill the same Price object,
+   * and the server resolves the price, the discount and the customer itself.
+   */
+  it('lets the client name a plan and a rail, and nothing else', () => {
     const button = readCode('src/components/subscription/CheckoutButton.tsx');
-    expect(button).toContain('startCheckoutAction(planKey)');
+    expect(button).toContain('startCheckoutAction(planKey, paymentMethod)');
     expect(button).not.toMatch(/amount|price|baht|discount|coupon|tier|customer/i);
 
     const actions = readCode('app/settings/subscription/billing-actions.ts');
-    expect(actions).toContain('startCheckoutAction(planKey: string)');
-    // No second parameter, of any name, on either exported action.
-    expect(actions).not.toMatch(/startCheckoutAction\([^)]*,/);
+    expect(actions).toMatch(/startCheckoutAction\(\s*planKey: string,\s*paymentMethod: string,\s*\)/);
+    // No third parameter, of any name, and nothing at all on the other two.
+    expect(actions).not.toMatch(/startCheckoutAction\([^)]*,[^)]*,[^)]*,/);
     expect(actions).not.toMatch(/openBillingPortalAction\([^)]+\)/);
+    expect(actions).not.toMatch(/abandonPromptPayInvoiceAction\([^)]+\)/);
   });
 
   it('keeps the wide comparison inside its own scroller so the page never scrolls sideways', () => {

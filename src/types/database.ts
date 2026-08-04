@@ -14,6 +14,11 @@ export type BillingPlanKey =
   | 'elite_monthly' | 'elite_annual' | 'elite_annual_founder';
 export type BillingInterval = 'month' | 'year';
 export type BillingPaymentStatus = 'succeeded' | 'failed';
+/** How the provider collects: a stored card, or an invoice the reader pays. */
+export type BillingCollectionMethod = 'charge_automatically' | 'send_invoice';
+export type BillingPaymentMethod = 'card' | 'promptpay';
+export type BillingPendingPaymentStatus =
+  'awaiting_payment' | 'paid' | 'canceled' | 'expired';
 /** Every terminal state a webhook delivery can be recorded in. */
 export type BillingWebhookStatus =
   'received' | 'applied' | 'ignored' | 'stale' | 'duplicate' | 'failed';
@@ -193,6 +198,8 @@ export interface Database {
           billing_provider_mode: BillingProviderMode | null;
           billing_plan_key: BillingPlanKey | null;
           billing_interval: BillingInterval | null;
+          /** Phase 4.4. Which rail this subscription is billed on. */
+          billing_collection_method: BillingCollectionMethod | null;
           latest_invoice_id: string | null;
           latest_payment_status: BillingPaymentStatus | null;
           latest_payment_at: string | null;
@@ -236,6 +243,7 @@ export interface Database {
           billing_provider_mode?: BillingProviderMode | null;
           billing_plan_key?: BillingPlanKey | null;
           billing_interval?: BillingInterval | null;
+          billing_collection_method?: BillingCollectionMethod | null;
           latest_invoice_id?: string | null;
           latest_payment_status?: BillingPaymentStatus | null;
           latest_payment_at?: string | null;
@@ -284,6 +292,36 @@ export interface Database {
           processed_at?: string | null;
           error_code?: string | null;
         };
+        Relationships: [];
+      };
+      /**
+       * Phase 4.4. An invoice that exists and has not been paid — the gap only
+       * the PromptPay rail has, since a card resolves in seconds.
+       *
+       * It grants nothing: no tier, status or period lives here, and
+       * `resolve_effective_subscription_tier` never reads it. `authenticated`
+       * holds SELECT on their own row and no write privilege at all; every write
+       * comes from a service-role routine.
+       */
+      billing_pending_payments: {
+        Row: {
+          user_id: string;
+          provider: BillingProvider;
+          provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          payment_method: Extract<BillingPaymentMethod, 'promptpay'>;
+          plan_key: BillingPlanKey;
+          subscription_id: string;
+          invoice_id: string | null;
+          /** The provider-hosted page that renders this invoice's QR. */
+          hosted_invoice_url: string | null;
+          amount_baht: number;
+          status: BillingPendingPaymentStatus;
+          due_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       portfolio_transactions: {
@@ -596,9 +634,58 @@ export interface Database {
           outcome:
             | 'applied' | 'duplicate' | 'ignored' | 'stale'
             | 'unknown_user' | 'identity_incomplete'
-            | 'customer_mismatch' | 'subscription_mismatch';
+            | 'customer_mismatch' | 'subscription_mismatch'
+            | 'provider_mode_downgrade';
           applied_user_id: string | null;
         }>;
+      };
+      /**
+       * Phase 4.4. Records a PromptPay invoice that is awaiting payment. Writes
+       * no entitlement column — the tier still opens only from a paid invoice —
+       * and is granted to neither `anon` nor `authenticated`.
+       */
+      record_pending_billing_payment: {
+        Args: {
+          input_user_id: string;
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_payment_method: Extract<BillingPaymentMethod, 'promptpay'>;
+          input_plan_key: BillingPlanKey;
+          input_subscription_id: string;
+          input_invoice_id: string | null;
+          input_hosted_invoice_url: string | null;
+          input_amount_baht: number;
+          input_due_at: string | null;
+        };
+        Returns: 'recorded' | 'unknown_user' | 'already_subscribed' | 'pending_exists';
+      };
+      /**
+       * Phase 4.4. Records which rail a subscription is billed on, and clears a
+       * pending invoice that has been settled. Scoped to a subscription
+       * identifier that must already match what is stored, and cannot grant.
+       */
+      apply_billing_payment_rail: {
+        Args: {
+          input_user_id: string;
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_subscription_id: string;
+          input_collection_method: BillingCollectionMethod | null;
+          input_pending_settled: boolean;
+        };
+        Returns: Array<{ rail_updated: boolean; pending_cleared: boolean }>;
+      };
+      /**
+       * Phase 4.4. Marks an unpaid invoice abandoned. Keeps the row so the next
+       * attempt's idempotency key differs from the abandoned one.
+       */
+      cancel_pending_billing_payment: {
+        Args: {
+          input_user_id: string;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_subscription_id: string;
+        };
+        Returns: boolean;
       };
       /**
        * Takes no arguments on purpose: identity, clock and current subscription

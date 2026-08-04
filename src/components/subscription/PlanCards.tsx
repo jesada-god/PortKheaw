@@ -22,7 +22,12 @@ import { PlanPurchase } from './PlanPurchase';
  * The card never guesses: with no provider configured it states that payment is
  * not open rather than rendering a control that cannot complete.
  */
-export function PlanCards({ effectiveTier, availability, hasLiveSubscription = false }: {
+export function PlanCards({
+  effectiveTier,
+  availability,
+  hasLiveSubscription = false,
+  hasOpenInvoice = false,
+}: {
   effectiveTier: SubscriptionTier;
   availability: BillingAvailability;
   /**
@@ -31,6 +36,8 @@ export function PlanCards({ effectiveTier, availability, hasLiveSubscription = f
    * checkout, which the server refuses and which would double-bill them.
    */
   hasLiveSubscription?: boolean;
+  /** True while an unpaid PromptPay invoice is still payable. Same reasoning. */
+  hasOpenInvoice?: boolean;
 }) {
   return (
     <section aria-labelledby="plans-heading" className="space-y-4">
@@ -50,6 +57,7 @@ export function PlanCards({ effectiveTier, availability, hasLiveSubscription = f
             current={plan.tier === effectiveTier}
             availability={availability}
             hasLiveSubscription={hasLiveSubscription}
+            hasOpenInvoice={hasOpenInvoice}
           />
         ))}
       </div>
@@ -57,11 +65,12 @@ export function PlanCards({ effectiveTier, availability, hasLiveSubscription = f
   );
 }
 
-function PlanCard({ plan, current, availability, hasLiveSubscription }: {
+function PlanCard({ plan, current, availability, hasLiveSubscription, hasOpenInvoice }: {
   plan: PlanDescriptor;
   current: boolean;
   availability: BillingAvailability;
   hasLiveSubscription: boolean;
+  hasOpenInvoice: boolean;
 }) {
   const recommended = Boolean(plan.badge);
   return (
@@ -111,6 +120,7 @@ function PlanCard({ plan, current, availability, hasLiveSubscription }: {
           availability={availability}
           emphasis={Boolean(plan.badge)}
           hasLiveSubscription={hasLiveSubscription}
+          hasOpenInvoice={hasOpenInvoice}
         />
       )}
     </article>

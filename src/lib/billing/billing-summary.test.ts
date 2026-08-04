@@ -175,5 +175,126 @@ describe('billing summary', () => {
         expect(live, status).toBe(summary.statusTone === 'active' || summary.statusTone === 'warning');
       }
     });
+
+    /*
+     * On the invoice rail the status outlives the lease. A PromptPay
+     * subscription stays `active` at the provider through a period nobody paid
+     * for — its unpaid events are ignored precisely so they cannot extend access
+     * — so status alone would leave somebody whose plan quietly ended unable to
+     * buy anything ever again.
+     */
+    describe('on the invoice rail', () => {
+      const NOW = '2026-08-04T12:00:00.000Z';
+      const future = '2026-09-04T12:00:00.000Z';
+      const past = '2026-07-04T12:00:00.000Z';
+
+      it('counts a paid period that is still running as live', () => {
+        expect(holdsLiveSubscription({
+          status: 'active',
+          planKey: 'pro_monthly',
+          collectionMethod: 'send_invoice',
+          currentPeriodEnd: future,
+          now: NOW,
+        })).toBe(true);
+      });
+
+      it('counts a lapsed paid period as not live, whatever the stored status', () => {
+        for (const status of ['active', 'past_due']) {
+          expect(holdsLiveSubscription({
+            status,
+            planKey: 'pro_monthly',
+            collectionMethod: 'send_invoice',
+            currentPeriodEnd: past,
+            now: NOW,
+          }), status).toBe(false);
+        }
+        // A record with no paid period never granted anything to protect.
+        expect(holdsLiveSubscription({
+          status: 'active',
+          planKey: 'pro_monthly',
+          collectionMethod: 'send_invoice',
+          currentPeriodEnd: null,
+          now: NOW,
+        })).toBe(false);
+      });
+
+      /*
+       * The card rail must keep its old behaviour exactly: it is charged before
+       * the period it grants, and a lapsed period there means a webhook we have
+       * not seen yet rather than a subscription that stopped.
+       */
+      it('leaves the card rail judged on status alone', () => {
+        for (const collectionMethod of ['charge_automatically', null] as const) {
+          expect(holdsLiveSubscription({
+            status: 'active',
+            planKey: 'pro_monthly',
+            collectionMethod,
+            currentPeriodEnd: past,
+            now: NOW,
+          }), String(collectionMethod)).toBe(true);
+        }
+      });
+    });
+  });
+
+  /*
+   * What the manage card says about a rail that does not renew itself. Getting
+   * this wrong is not a security failure but it is the one that costs a reader
+   * their plan: they would be waiting for a charge that is never coming.
+   */
+  describe('the payment rail on the manage card', () => {
+    const NOW = '2026-08-04T12:00:00.000Z';
+
+    it('states that PromptPay does not renew, in the plan’s own cadence', () => {
+      const summary = resolveBillingSummary(input({
+        planKey: 'elite_annual',
+        collectionMethod: 'send_invoice',
+        now: NOW,
+      }));
+      expect(summary.paymentMethod).toBe('promptpay');
+      expect(summary.autoRenews).toBe(false);
+      expect(summary.renewalNote).toContain('ทุกปี');
+      // The date is a deadline, not a schedule: nothing will be collected on it.
+      expect(summary.periodEndLabel).toBe('ใช้งานได้ถึง');
+    });
+
+    it('keeps calling a card subscription a renewal', () => {
+      const summary = resolveBillingSummary(input({
+        collectionMethod: 'charge_automatically',
+        now: NOW,
+      }));
+      expect(summary.paymentMethod).toBe('card');
+      expect(summary.autoRenews).toBe(true);
+      expect(summary.periodEndLabel).toBe('รอบบิลถัดไป');
+      // Nobody is warned about a renewal they need not do anything about.
+      expect(summary.renewalReminder).toBeNull();
+    });
+
+    it('reminds a PromptPay subscriber only when the period is about to lapse', () => {
+      const soon = resolveBillingSummary(input({
+        collectionMethod: 'send_invoice',
+        currentPeriodEnd: '2026-08-07T12:00:00.000Z',
+        now: NOW,
+      }));
+      expect(soon.renewalReminder).toContain('3 วัน');
+
+      const distant = resolveBillingSummary(input({
+        collectionMethod: 'send_invoice',
+        currentPeriodEnd: '2027-08-04T12:00:00.000Z',
+        now: NOW,
+      }));
+      expect(distant.renewalReminder).toBeNull();
+    });
+
+    /*
+     * A record from before the rail was stored says nothing about how it is
+     * billed, and a guess in either direction misinforms the reader.
+     */
+    it('says nothing about a rail it does not know', () => {
+      const summary = resolveBillingSummary(input({ now: NOW }));
+      expect(summary.paymentMethod).toBeNull();
+      expect(summary.renewalNote).toBeNull();
+      expect(summary.renewalReminder).toBeNull();
+    });
   });
 });

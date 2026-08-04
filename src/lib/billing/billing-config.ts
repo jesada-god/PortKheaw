@@ -14,6 +14,7 @@
  * key, not a price identifier, not the name of a missing variable.
  */
 
+import { billingPaymentMethods, type BillingPaymentMethod } from './billing-payment-method';
 import { billingPlanKeys, billingPlans, type BillingPlanKey } from './billing-plans';
 import {
   isTrustedBillingProviderMode,
@@ -36,6 +37,17 @@ export interface BillingConfig {
   coupons: Readonly<Partial<Record<BillingPlanKey, string>>>;
   /** The one origin checkout may return to. Never taken from a request. */
   returnOrigin: string;
+  /**
+   * The rails this deployment will open a purchase on.
+   *
+   * `card` is always present — it is the provider's hosted checkout and needs no
+   * capability beyond the credentials already required above. `promptpay`
+   * additionally requires the provider account to have the Thai rail activated,
+   * which is an account setting rather than an environment variable, so the flag
+   * below exists to switch it off without a redeploy of the catalogue if that
+   * activation is ever withdrawn.
+   */
+  paymentMethods: readonly BillingPaymentMethod[];
 }
 
 /**
@@ -45,6 +57,8 @@ export interface BillingConfig {
 export interface BillingAvailability {
   enabled: boolean;
   availablePlanKeys: readonly BillingPlanKey[];
+  /** Which payment rails this reader may start a purchase on. */
+  paymentMethods: readonly BillingPaymentMethod[];
 }
 
 export type BillingConfigResult =
@@ -61,6 +75,7 @@ export interface BillingEnvironment {
   BILLING_ENABLED?: string;
   BILLING_PROVIDER_MODE?: string;
   BILLING_CHECKOUT_MODE?: string;
+  BILLING_PROMPTPAY_ENABLED?: string;
   BILLING_INTERNAL_USER_IDS?: string;
   BILLING_RETURN_ORIGIN?: string;
   APP_URL?: string;
@@ -121,6 +136,24 @@ function checkoutMode(value: string | undefined): BillingCheckoutMode {
   return (billingCheckoutModes as readonly string[]).includes(normalized)
     ? normalized as BillingCheckoutMode
     : 'off';
+}
+
+/**
+ * The rails a purchase may open on.
+ *
+ * PromptPay is on unless it is explicitly switched off. That direction is
+ * deliberate and is the opposite of how a credential would be treated: this flag
+ * cannot cause an incorrect charge or expose anything — the worst case of it
+ * being wrong is a refusal at the provider that the reader sees as "could not
+ * start payment", which is the same outcome as the plan not being configured.
+ * Making it opt-in instead would mean a deployment that has every price, every
+ * coupon and an activated rail still silently offering only cards.
+ */
+function paymentMethods(value: string | undefined): readonly BillingPaymentMethod[] {
+  const promptPayOff = trimmed(value)?.toLowerCase() === 'false';
+  return promptPayOff
+    ? billingPaymentMethods.filter((method) => method !== 'promptpay')
+    : billingPaymentMethods;
 }
 
 function internalUserIds(value: string | undefined): readonly string[] {
@@ -206,6 +239,7 @@ export function resolveBillingConfig(env: BillingEnvironment): BillingConfigResu
       prices,
       coupons,
       returnOrigin,
+      paymentMethods: paymentMethods(env.BILLING_PROMPTPAY_ENABLED),
     },
   };
 }
@@ -229,8 +263,12 @@ export function billingAvailability(
   viewer: BillingCheckoutViewer = { userId: null, role: 'user' },
 ): BillingAvailability {
   return result.enabled && checkoutAllowed(result.config, viewer)
-    ? { enabled: true, availablePlanKeys: result.availablePlanKeys }
-    : { enabled: false, availablePlanKeys: [] };
+    ? {
+      enabled: true,
+      availablePlanKeys: result.availablePlanKeys,
+      paymentMethods: result.config.paymentMethods,
+    }
+    : { enabled: false, availablePlanKeys: [], paymentMethods: [] };
 }
 
 /**

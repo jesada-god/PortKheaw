@@ -112,22 +112,84 @@ describe('billing security contract', () => {
    * The checkout's whole input surface is one plan key. Identity comes from the
    * session, and the customer identifier from the account's own row.
    */
-  it('takes nothing from the client but a plan key', () => {
+  it('takes nothing from the client but a plan key and a payment method', () => {
     const actions = readCode('app/settings/subscription/billing-actions.ts');
-    expect(actions).toContain('startCheckoutAction(planKey: string)');
+    expect(actions).toContain('planKey: string');
+    expect(actions).toContain('paymentMethod: string');
     expect(actions).toContain('resolveCheckoutEligibility(');
     expect(actions).toContain('await client.auth.getUser()');
     expect(actions).toContain('userId: user.id');
 
     // The exported actions accept no identity, price or discount. Internal
     // helpers may take whatever they need — they are not a request surface.
-    const exported = [...actions.matchAll(/export async function \w+\(([^)]*)\)/g)].map((match) => match[1]);
-    expect(exported).toHaveLength(2);
+    const exported = [...actions.matchAll(/export async function \w+\(([\s\S]*?)\): Promise/g)]
+      .map((match) => match[1].replace(/\s+/g, ' ').trim());
+    expect(exported).toHaveLength(3);
     for (const parameters of exported) {
-      expect(parameters).not.toMatch(/\b(userId|customerId|amount|tier|coupon|discount|price|email)\b/);
+      expect(parameters).not.toMatch(/\b(userId|customerId|amount|tier|coupon|discount|price|email|invoice|subscriptionId)\b/);
     }
-    expect(exported).toContain('planKey: string');
-    expect(exported).toContain('');
+    // Starting a purchase names a plan and a rail; the portal and the abandon
+    // action take nothing at all and find the account from the session.
+    expect(exported).toContain('planKey: string, paymentMethod: string,');
+    expect(exported.filter((parameters) => parameters === '')).toHaveLength(2);
+  });
+
+  /*
+   * The second rail must not become a second way to be granted something.
+   *
+   * PromptPay's whole difference is that an invoice exists days before the money
+   * does, so the properties that keep those two facts apart are asserted here:
+   * the invoice-rail gate, the paid-invoice check, and the fact that recording a
+   * pending invoice cannot reach an entitlement column.
+   */
+  it('opens a PromptPay plan only from a paid invoice', () => {
+    const events = readCode('src/lib/billing/billing-events.ts');
+    // Only a paid invoice may carry a period on the invoice rail; everything
+    // else either strips the period or asserts nothing at all.
+    expect(events).toContain('gateEntitlementByCollectionMethod');
+    expect(events).toMatch(/case 'payment_succeeded':\s*return state;/);
+    expect(events).toMatch(/currentPeriodStart: null, currentPeriodEnd: null/);
+
+    const normalize = readCode('src/lib/billing/providers/stripe/normalize-stripe-event.ts');
+    expect(normalize).toContain("kind === 'payment_succeeded' && !invoiceIsPaid(event)");
+    expect(normalize).toContain("invoice.status === 'paid'");
+    // The rail is read from the provider's own field, never from metadata we
+    // wrote, so a bug in checkout cannot mislabel which gate applies.
+    expect(normalize).toContain('subscription.collection_method');
+
+    const migration = read('supabase/migrations/202608050001_promptpay_invoice_subscriptions.sql');
+    // The routine that records an unpaid invoice cannot write entitlement.
+    const recordRoutine = migration.slice(
+      migration.indexOf('function public.record_pending_billing_payment'),
+      migration.indexOf('function public.apply_billing_payment_rail'),
+    );
+    expect(recordRoutine.length).toBeGreaterThan(0);
+    expect(recordRoutine).not.toMatch(/update public\.user_subscriptions/);
+    // `status` is deliberately absent from this list: the pending table has a
+    // status of its own, and it is not an entitlement.
+    for (const column of ['tier =', 'current_period_end =', 'founder_promo_applied']) {
+      expect(recordRoutine, column).not.toContain(column);
+    }
+  });
+
+  /*
+   * Payment is proven by the provider and by nothing else. There is deliberately
+   * no slip upload, no "I have paid" control, and no QR stored by this product.
+   */
+  it('keeps proof of payment with the provider', () => {
+    for (const file of [
+      'src/components/subscription/PendingInvoiceCard.tsx',
+      'src/components/subscription/AbandonInvoiceButton.tsx',
+      'app/settings/subscription/billing-actions.ts',
+    ]) {
+      const source = readCode(file);
+      // A QR *link* is expected; generating, storing or uploading one is not.
+      expect(source, file).not.toMatch(/slip|upload|toDataURL|canvas|\bqrcode\(/i);
+    }
+    const card = readCode('src/components/subscription/PendingInvoiceCard.tsx');
+    // The QR lives on the provider's page, reached by a link.
+    expect(card).toContain('hostedInvoiceUrl');
+    expect(card).toContain('rel="noopener noreferrer"');
   });
 
   /*

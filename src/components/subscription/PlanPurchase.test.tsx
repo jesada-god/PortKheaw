@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ALREADY_SUBSCRIBED_NOTE, BILLING_CLOSED_NOTE, PlanPurchase } from './PlanPurchase';
+import {
+  ALREADY_SUBSCRIBED_NOTE,
+  BILLING_CLOSED_NOTE,
+  OPEN_INVOICE_NOTE,
+  PlanPurchase,
+} from './PlanPurchase';
 import { billingPlanKeys } from '@/src/lib/billing/billing-plans';
 import type { BillingAvailability } from '@/src/lib/billing/billing-config';
 
@@ -15,8 +20,12 @@ import type { BillingAvailability } from '@/src/lib/billing/billing-config';
  * granted, and both subscriptions kept billing.
  */
 
-const open: BillingAvailability = { enabled: true, availablePlanKeys: [...billingPlanKeys] };
-const closed: BillingAvailability = { enabled: false, availablePlanKeys: [] };
+const open: BillingAvailability = {
+  enabled: true,
+  availablePlanKeys: [...billingPlanKeys],
+  paymentMethods: ['card', 'promptpay'],
+};
+const closed: BillingAvailability = { enabled: false, availablePlanKeys: [], paymentMethods: [] };
 
 const render = (props: Partial<Parameters<typeof PlanPurchase>[0]> = {}) =>
   renderToStaticMarkup(<PlanPurchase tier="elite" availability={open} {...props} />);
@@ -73,5 +82,67 @@ describe('PlanPurchase', () => {
     expect(markup).toContain('data-plan-key="elite_annual_founder"');
     expect(markup).not.toContain('data-plan-key="elite_annual"');
     expect(markup).toContain('7,990');
+  });
+
+  /*
+   * The rail is a choice with a consequence, so it is made before the purchase
+   * rather than discovered on the provider's page: a card renews by itself and
+   * PromptPay never will.
+   */
+  describe('choosing how to pay', () => {
+    it('offers both rails, and says what each one commits the reader to', () => {
+      const markup = render();
+      expect(markup).toContain('data-testid="payment-method-choice"');
+      expect(markup).toContain('data-testid="payment-method-card"');
+      expect(markup).toContain('data-testid="payment-method-promptpay"');
+      expect(markup).toContain('ต่ออายุอัตโนมัติ');
+      expect(markup).toContain('ต้องสแกนจ่ายใหม่ทุกงวด');
+    });
+
+    /*
+     * The default must be the rail that cannot surprise anybody: a reader who
+     * presses Subscribe without reading gets the renewing one, not the one that
+     * silently stops.
+     */
+    it('starts on the card rail', () => {
+      const markup = render();
+      expect(markup).toMatch(/data-testid="checkout-button"[^>]*data-payment-method="card"/);
+      expect(markup).not.toContain('data-payment-method="promptpay"');
+    });
+
+    it('offers no choice at all when only one rail is open', () => {
+      const cardOnly = { ...open, paymentMethods: ['card'] as const };
+      const markup = render({ availability: cardOnly });
+      expect(markup).not.toContain('data-testid="payment-method-choice"');
+      expect(buttonCount(markup)).toBeGreaterThan(0);
+      expect(markup).toContain('data-payment-method="card"');
+    });
+
+    it('states that payment is closed when no rail is open at all', () => {
+      const noRails = { ...open, paymentMethods: [] as const };
+      const markup = render({ availability: noRails });
+      expect(markup).toContain(BILLING_CLOSED_NOTE);
+      expect(buttonCount(markup)).toBe(0);
+    });
+  });
+
+  /*
+   * An unpaid invoice is a purchase already in flight. Offering a second one
+   * would open a second subscription at the provider, of which our records can
+   * honour exactly one — the same harm as offering a plan to a subscriber.
+   */
+  describe('while an unpaid invoice is still payable', () => {
+    it('offers no checkout control, and points at the pending card', () => {
+      const markup = render({ hasOpenInvoice: true });
+      expect(buttonCount(markup)).toBe(0);
+      expect(markup).toContain(OPEN_INVOICE_NOTE);
+      expect(markup).not.toContain('disabled');
+    });
+
+    it('yields to the stronger fact that a subscription is already live', () => {
+      const markup = render({ hasOpenInvoice: true, hasLiveSubscription: true });
+      expect(markup).toContain(ALREADY_SUBSCRIBED_NOTE);
+      expect(markup).not.toContain(OPEN_INVOICE_NOTE);
+    });
   });
 });

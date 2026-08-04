@@ -24,12 +24,17 @@ import {
   BILLING_METADATA_SCHEMA_VERSION,
   BILLING_METADATA_SCHEMA_VERSION_VALUE,
   BILLING_METADATA_USER_ID,
+  gateEntitlementByCollectionMethod,
   mapProviderSubscriptionStatus,
   type BillingEventKind,
   type BillingPaymentStatus,
   type NormalizedBillingEvent,
   type NormalizedSubscriptionState,
 } from '../../billing-events';
+import {
+  isBillingCollectionMethod,
+  type BillingCollectionMethod,
+} from '../../billing-payment-method';
 import { billingPlans, isBillingPlanKey, type BillingInterval, type BillingPlanKey, type PaidTier } from '../../billing-plans';
 import { isTrustedBillingProviderMode, stripeProviderMode } from '../../billing-provider-mode';
 
@@ -94,6 +99,7 @@ export function normalizeStripeSubscription(subscription: Stripe.Subscription): 
   userId: string | null;
   customerId: string | null;
   subscriptionId: string;
+  collectionMethod: BillingCollectionMethod | null;
 } | null {
   const planKey = planKeyFrom(subscription.metadata);
   const metadataMode = readMetadata(subscription.metadata, BILLING_METADATA_PROVIDER_MODE);
@@ -116,6 +122,17 @@ export function normalizeStripeSubscription(subscription: Stripe.Subscription): 
     userId: readMetadata(subscription.metadata, BILLING_METADATA_USER_ID),
     customerId: idOf(subscription.customer),
     subscriptionId: subscription.id,
+    /*
+     * Read from the provider's own field rather than from metadata we wrote.
+     * Which rail a subscription is billed on is the provider's fact, and it is
+     * what gates whether an event may open a period at all — so it must not be
+     * something a bug in our checkout could mislabel. An unrecognised value
+     * stays `null`, and the gate then treats the subscription as a card one only
+     * if Stripe actually said so.
+     */
+    collectionMethod: isBillingCollectionMethod(subscription.collection_method)
+      ? subscription.collection_method
+      : null,
     state: {
       tier: billingPlans[planKey].tier,
       status: mapProviderSubscriptionStatus(subscription.status),
@@ -152,6 +169,15 @@ export function classifyStripeEvent(type: string): BillingEventKind {
     case 'invoice.payment_failed':
     case 'checkout.session.async_payment_failed':
       return 'payment_failed';
+    /*
+     * An invoice that will never be paid. Neither event grants or withdraws
+     * anything — an unpaid PromptPay invoice never granted anything to withdraw
+     * — but both settle the question of whether a purchase is still in flight,
+     * which is what releases the account's one open-purchase slot.
+     */
+    case 'invoice.voided':
+    case 'invoice.marked_uncollectible':
+      return 'invoice_closed';
     default:
       return 'ignored';
   }
@@ -170,7 +196,8 @@ export function subscriptionIdFromEvent(event: Stripe.Event): string | null {
     case 'subscription_canceled':
       return (object as Stripe.Subscription).id ?? null;
     case 'payment_succeeded':
-    case 'payment_failed': {
+    case 'payment_failed':
+    case 'invoice_closed': {
       // `invoice.subscription` was removed; the link is under `parent`.
       const invoice = object as Stripe.Invoice;
       return idOf(invoice.parent?.subscription_details?.subscription ?? null);
@@ -186,11 +213,30 @@ function paymentStatusFor(kind: BillingEventKind): BillingPaymentStatus | null {
   return null;
 }
 
+const INVOICE_KINDS = new Set<BillingEventKind>([
+  'payment_succeeded',
+  'payment_failed',
+  'invoice_closed',
+]);
+
 function invoiceIdFromEvent(event: Stripe.Event): string | null {
-  const kind = classifyStripeEvent(event.type);
-  if (kind !== 'payment_succeeded' && kind !== 'payment_failed') return null;
+  if (!INVOICE_KINDS.has(classifyStripeEvent(event.type))) return null;
   const invoice = event.data.object as Stripe.Invoice;
   return invoice.id ?? null;
+}
+
+/**
+ * Whether the invoice this event carries is genuinely settled.
+ *
+ * The event *name* says a payment succeeded; this reads the invoice's own status
+ * and requires it to agree. It costs nothing on the card rail, where the two
+ * always match, and it is the last line of defence on the invoice rail, where
+ * "an invoice exists" and "the invoice was paid" are days apart and only the
+ * second one may open a period.
+ */
+function invoiceIsPaid(event: Stripe.Event): boolean {
+  const invoice = event.data.object as Stripe.Invoice;
+  return invoice.status === 'paid';
 }
 
 /**
@@ -219,9 +265,17 @@ export function normalizeStripeEvent(
 
   let state: NormalizedSubscriptionState | null = normalized?.state ?? null;
 
+  // A "payment succeeded" event whose invoice does not say `paid` asserts
+  // nothing. Fail closed rather than trust the event name over the object.
+  if (state && kind === 'payment_succeeded' && !invoiceIsPaid(event)) state = null;
+
   if (state && kind === 'payment_failed' && !TERMINAL_STATUSES.has(state.status)) {
     state = { ...state, status: 'past_due' };
   }
+
+  // Last, because it is the rule that overrides all of the above: on the invoice
+  // rail only a paid invoice may carry a period.
+  state = gateEntitlementByCollectionMethod(kind, state, normalized?.collectionMethod ?? null);
 
   return {
     provider: 'stripe',
@@ -237,6 +291,7 @@ export function normalizeStripeEvent(
     priceId: normalized?.priceId ?? null,
     invoiceId: invoiceIdFromEvent(event),
     paymentStatus: paymentStatusFor(kind),
+    collectionMethod: normalized?.collectionMethod ?? null,
     state: kind === 'ignored' ? null : state,
   };
 }

@@ -30,6 +30,7 @@ function config(overrides: Partial<BillingConfig> = {}): BillingConfig {
     prices: { pro_monthly: 'price_test' },
     coupons: {},
     returnOrigin: 'https://portkheaw.vercel.app',
+    paymentMethods: ['card', 'promptpay'],
     ...overrides,
   };
 }

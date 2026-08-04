@@ -10,6 +10,7 @@ import {
   BILLING_METADATA_USER_ID,
   type NormalizedBillingEvent,
 } from '../../billing-events';
+import { PROMPTPAY_DUE_DAYS } from '../../billing-payment-method';
 import type { BillingPlanDefinition } from '../../billing-plans';
 import { stripeLivemode, stripeProviderMode } from '../../billing-provider-mode';
 import { classifyStripeEvent, normalizeStripeEvent, subscriptionIdFromEvent } from './normalize-stripe-event';
@@ -72,25 +73,38 @@ export interface CheckoutSessionResult {
 }
 
 /**
- * Create a hosted checkout session.
- *
- * Card details are entered on Stripe's own page and never touch this server, so
- * no card number or CVV exists anywhere in this system to store or leak.
- *
- * The amount is never sent. Only a price identifier is, and Stripe holds the
- * amount behind it — so neither a browser nor a bug in this file can change what
- * someone is charged.
+ * The identity we stamp on every provider object we create, so that an event a
+ * year from now names our account and our plan without being matched by email.
  */
-export async function createStripeCheckoutSession(
-  request: CheckoutSessionRequest,
-): Promise<CheckoutSessionResult> {
-  const { config, plan } = request;
+function planMetadata(userId: string, plan: BillingPlanDefinition, config: BillingConfig) {
+  return {
+    [BILLING_METADATA_USER_ID]: userId,
+    [BILLING_METADATA_PLAN_KEY]: plan.key,
+    [BILLING_METADATA_PROVIDER_MODE]: config.providerMode,
+    [BILLING_METADATA_SCHEMA_VERSION]: BILLING_METADATA_SCHEMA_VERSION_VALUE,
+  };
+}
+
+/**
+ * Read the provider's own Price and Coupon back and refuse to sell if either
+ * disagrees with the catalogue.
+ *
+ * Shared by both rails on purpose. A PromptPay purchase and a card purchase must
+ * be the same commercial contract — same Price object, same one-invoice Founder
+ * coupon, same currency and cadence — or the two rails would be two products
+ * that merely look alike, and the second year of a Founder subscription could
+ * quietly bill differently depending on how the first was paid.
+ */
+async function assertPlanContract(
+  client: Stripe,
+  config: BillingConfig,
+  plan: BillingPlanDefinition,
+): Promise<{ priceId: string; coupon: string | undefined }> {
   const priceId = config.prices[plan.key];
   if (!priceId) throw new Error('BILLING_PLAN_NOT_CONFIGURED');
   const coupon = config.coupons[plan.key];
   if (plan.founder && !coupon) throw new Error('BILLING_FOUNDER_COUPON_MISSING');
 
-  const client = stripeClient(config);
   const price = await client.prices.retrieve(priceId);
   const expectedLivemode = stripeLivemode(config.providerMode);
   const expectedAmount = plan.renewalBaht * 100;
@@ -102,19 +116,13 @@ export async function createStripeCheckoutSession(
     || price.recurring?.interval !== plan.interval
   ) throw new Error('BILLING_PRICE_CONTRACT_MISMATCH');
 
-  const metadata = {
-    [BILLING_METADATA_USER_ID]: request.userId,
-    [BILLING_METADATA_PLAN_KEY]: plan.key,
-    [BILLING_METADATA_PROVIDER_MODE]: config.providerMode,
-    [BILLING_METADATA_SCHEMA_VERSION]: BILLING_METADATA_SCHEMA_VERSION_VALUE,
-  };
-
   /*
    * The Founder promotion is a coupon with `duration: once` on top of the
    * ordinary annual price — never a second, cheaper price object. That is what
    * guarantees the second year bills at full rate: the subscription sits on the
    * full price from day one and the discount simply stops applying after the
-   * first invoice.
+   * first invoice. On the PromptPay rail this is also what makes the *first* QR
+   * the discounted amount and every later one the full one.
    */
   if (coupon) {
     const couponObject = await client.coupons.retrieve(coupon);
@@ -128,6 +136,28 @@ export async function createStripeCheckoutSession(
       || couponObject.percent_off !== null
     ) throw new Error('BILLING_COUPON_CONTRACT_MISMATCH');
   }
+
+  return { priceId, coupon };
+}
+
+/**
+ * Create a hosted checkout session.
+ *
+ * Card details are entered on Stripe's own page and never touch this server, so
+ * no card number or CVV exists anywhere in this system to store or leak.
+ *
+ * The amount is never sent. Only a price identifier is, and Stripe holds the
+ * amount behind it — so neither a browser nor a bug in this file can change what
+ * someone is charged.
+ */
+export async function createStripeCheckoutSession(
+  request: CheckoutSessionRequest,
+): Promise<CheckoutSessionResult> {
+  const { config, plan } = request;
+  const client = stripeClient(config);
+  const { priceId, coupon } = await assertPlanContract(client, config, plan);
+
+  const metadata = planMetadata(request.userId, plan, config);
 
   const session = await client.checkout.sessions.create(
     {
@@ -169,6 +199,179 @@ export async function createStripeCheckoutSession(
 
   if (!session.url) throw new Error('BILLING_CHECKOUT_URL_MISSING');
   return { url: session.url, sessionId: session.id };
+}
+
+export interface PromptPaySubscriptionRequest {
+  config: BillingConfig;
+  plan: BillingPlanDefinition;
+  userId: string;
+  email: string;
+  existingCustomerId: string | null;
+  idempotencyKey: string;
+}
+
+export interface PromptPaySubscriptionResult {
+  subscriptionId: string;
+  invoiceId: string;
+  /** The provider-hosted page that renders the QR. The only URL we hand back. */
+  hostedInvoiceUrl: string;
+  /** ISO. When the invoice stops being payable. */
+  dueAt: string | null;
+  /** What this invoice actually asks for, promotion included, in whole baht. */
+  amountBaht: number;
+}
+
+/**
+ * Start a PromptPay purchase.
+ *
+ * PromptPay is a push payment: the reader scans a QR in their bank's app and the
+ * money arrives afterwards. There is no credential to keep and nothing to charge
+ * later, so this cannot be a hosted checkout in subscription mode — the provider
+ * only supports the rail on a subscription that bills by **invoice**
+ * (`collection_method: 'send_invoice'`). That single fact shapes everything
+ * here, and two consequences are worth stating rather than discovering:
+ *
+ *   * The subscription is activated by the provider the moment it is created,
+ *     before any money moves. It is therefore **not** evidence of payment, and
+ *     `gateEntitlementByCollectionMethod` refuses to open a period from it.
+ *     Access begins when a paid invoice says so.
+ *
+ *   * Nothing renews. Each period issues a fresh invoice and a fresh QR, and if
+ *     nobody scans it the paid period simply runs out. That is a product
+ *     property the reader is told about before they choose the rail, not a
+ *     failure mode to paper over.
+ *
+ * As on the card rail, the amount is never sent — only a price identifier, with
+ * the Founder discount expressed as the same one-invoice coupon.
+ */
+export async function createStripePromptPaySubscription(
+  request: PromptPaySubscriptionRequest,
+): Promise<PromptPaySubscriptionResult> {
+  const { config, plan } = request;
+  const client = stripeClient(config);
+  const { priceId, coupon } = await assertPlanContract(client, config, plan);
+  const expectedLivemode = stripeLivemode(config.providerMode);
+  const metadata = planMetadata(request.userId, plan, config);
+
+  /*
+   * One account is one customer. A returning reader keeps the customer their
+   * card purchases used, so their invoices stay in one history and the identity
+   * checks in the database keep matching.
+   */
+  const customerId = request.existingCustomerId ?? (await client.customers.create(
+    { email: request.email, metadata },
+    { idempotencyKey: `${request.idempotencyKey}:customer` },
+  )).id;
+
+  const subscription = await client.subscriptions.create(
+    {
+      customer: customerId,
+      items: [{ price: priceId, quantity: 1 }],
+      // The rail. Without this the provider would try to charge a payment method
+      // that does not exist, and the subscription would never become payable.
+      collection_method: 'send_invoice',
+      days_until_due: PROMPTPAY_DUE_DAYS,
+      payment_settings: {
+        payment_method_types: ['promptpay'],
+        // Nothing is stored to reuse; PromptPay leaves no reusable credential
+        // behind, and saying so keeps the subscription from acquiring a default
+        // payment method by a later, unrelated payment.
+        save_default_payment_method: 'off',
+      },
+      ...(coupon ? { discounts: [{ coupon }] } : {}),
+      metadata,
+      expand: ['latest_invoice'],
+    },
+    { idempotencyKey: request.idempotencyKey },
+  );
+
+  /*
+   * Read back what was actually created. If the provider did not put this
+   * subscription on the invoice rail, it is an auto-charging subscription with
+   * no payment method — refused here rather than left for a reader to discover
+   * as a silent failure to renew.
+   */
+  if (subscription.collection_method !== 'send_invoice') {
+    throw new Error('BILLING_PROMPTPAY_COLLECTION_METHOD_MISMATCH');
+  }
+  if (subscription.livemode !== expectedLivemode) {
+    throw new Error('BILLING_PROVIDER_MODE_MISMATCH');
+  }
+
+  const invoice = await payableInvoiceFor(client, subscription);
+  if (!invoice.id || !invoice.hosted_invoice_url) {
+    throw new Error('BILLING_PROMPTPAY_INVOICE_URL_MISSING');
+  }
+
+  return {
+    subscriptionId: subscription.id,
+    invoiceId: invoice.id,
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    dueAt: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null,
+    // The invoiced amount, not the catalogue's: on a Founder purchase these
+    // differ, and the QR the reader scans is for this one.
+    amountBaht: Math.round((invoice.amount_due ?? invoice.total ?? 0) / 100),
+  };
+}
+
+/**
+ * The invoice a reader can actually pay.
+ *
+ * A subscription's first invoice may still be a draft, and a draft has no hosted
+ * page and no QR. Finalizing is what publishes it; doing so explicitly means the
+ * reader gets a payable link now rather than whenever the provider's own
+ * auto-advance happens to run.
+ */
+async function payableInvoiceFor(
+  client: Stripe,
+  subscription: Stripe.Subscription,
+): Promise<Stripe.Invoice> {
+  const latest = subscription.latest_invoice;
+  if (!latest) throw new Error('BILLING_PROMPTPAY_INVOICE_MISSING');
+  const invoice = typeof latest === 'string' ? await client.invoices.retrieve(latest) : latest;
+  if (invoice.status !== 'draft' || !invoice.id) return invoice;
+  return client.invoices.finalizeInvoice(invoice.id, { auto_advance: true });
+}
+
+/**
+ * Abandon an unpaid PromptPay purchase.
+ *
+ * Somebody who chose the wrong rail should not have to wait three days to pay by
+ * card, so this exists — but it is the one operation here that could destroy
+ * something valuable, and so it refuses to run on anything that has been paid.
+ * The subscription is re-read from the provider first, and a paid invoice or a
+ * subscription already collecting normally is left exactly as it is.
+ *
+ * Cancelling the subscription does not by itself close the invoice, so the open
+ * invoice is voided too. Both steps are safe to repeat.
+ */
+export async function abandonStripePromptPaySubscription(
+  config: BillingConfig,
+  subscriptionId: string,
+): Promise<'abandoned' | 'already-paid'> {
+  const client = stripeClient(config);
+  const subscription = await client.subscriptions.retrieve(subscriptionId, {
+    expand: ['latest_invoice'],
+  });
+
+  if (subscription.collection_method !== 'send_invoice') return 'already-paid';
+
+  const latest = subscription.latest_invoice;
+  const invoice = typeof latest === 'string' ? await client.invoices.retrieve(latest) : latest;
+  // `paid` is the fact that matters; a paid invoice means money moved and this
+  // is no longer an abandonment but a cancellation, which belongs in the portal.
+  if (invoice?.status === 'paid') return 'already-paid';
+
+  if (subscription.status !== 'canceled') await client.subscriptions.cancel(subscriptionId);
+  if (invoice?.id && invoice.status === 'open') {
+    try {
+      await client.invoices.voidInvoice(invoice.id);
+    } catch {
+      // The subscription is already cancelled, so an invoice we could not void
+      // can no longer grant anything. It expires on its own at the due date.
+    }
+  }
+  return 'abandoned';
 }
 
 /**

@@ -8,6 +8,10 @@
  * against the allowlist as its first act.
  */
 
+import {
+  isBillingPaymentMethod,
+  type BillingPaymentMethod,
+} from './billing-payment-method';
 import { billingPlan, isBillingPlanKey, type BillingPlanDefinition, type BillingPlanKey } from './billing-plans';
 
 export const checkoutRefusalReasons = [
@@ -17,6 +21,10 @@ export const checkoutRefusalReasons = [
   'unknown-plan',
   /** A real key, but this deployment has no price identifier for it. */
   'plan-unavailable',
+  /** The rail is not one this product sells. The other client-supplied value. */
+  'unknown-payment-method',
+  /** A real rail, switched off in this deployment. */
+  'payment-method-unavailable',
   'unauthenticated',
   /** A mailbox nobody has proved they own must not become a paying account. */
   'email-unverified',
@@ -28,18 +36,32 @@ export const checkoutRefusalReasons = [
    * correctness rule rather than a convenience.
    */
   'already-subscribed',
+  /**
+   * A PromptPay invoice is open and still payable. Starting anything else now
+   * would leave two payable subscriptions at the provider, of which our records
+   * can honour exactly one — see `pendingPromptPayIsOpen`.
+   */
+  'promptpay-invoice-open',
 ] as const;
 export type CheckoutRefusalReason = typeof checkoutRefusalReasons[number];
 
 export type CheckoutEligibility =
-  | { ok: true; plan: BillingPlanDefinition }
+  | { ok: true; plan: BillingPlanDefinition; paymentMethod: BillingPaymentMethod }
   | { ok: false; reason: CheckoutRefusalReason };
 
 export interface CheckoutEligibilityInput {
   /** Straight from the request. Untrusted until it clears the allowlist. */
   planKey: unknown;
+  /**
+   * The other half of what a browser may send, and equally untrusted. It selects
+   * a rail, never a price: both rails bill the same Price object, so this value
+   * cannot change what anyone is charged.
+   */
+  paymentMethod: unknown;
   /** Which keys this deployment actually has a price identifier for. */
   availablePlanKeys: readonly BillingPlanKey[];
+  /** Which rails this deployment will open a purchase on. */
+  availablePaymentMethods: readonly BillingPaymentMethod[];
   billingEnabled: boolean;
   authenticated: boolean;
   emailVerified: boolean;
@@ -61,6 +83,16 @@ export interface CheckoutEligibilityInput {
    * receive.
    */
   hasLiveSubscription: boolean;
+  /**
+   * Whether a PromptPay invoice this account can still pay is outstanding.
+   *
+   * Read from the account's own pending row, never from the request. It is a
+   * weaker fact than `hasLiveSubscription` — nothing has been granted and
+   * nothing may ever be — but it carries the same hazard: the invoice can be
+   * paid at any moment until it expires, and whichever subscription is paid
+   * second is one our records will refuse as a mismatch.
+   */
+  hasOpenPromptPayInvoice: boolean;
 }
 
 /**
@@ -75,6 +107,12 @@ export function resolveCheckoutEligibility(input: CheckoutEligibilityInput): Che
   if (!input.billingEnabled) return { ok: false, reason: 'billing-disabled' };
   if (!isBillingPlanKey(input.planKey)) return { ok: false, reason: 'unknown-plan' };
   if (!input.availablePlanKeys.includes(input.planKey)) return { ok: false, reason: 'plan-unavailable' };
+  if (!isBillingPaymentMethod(input.paymentMethod)) {
+    return { ok: false, reason: 'unknown-payment-method' };
+  }
+  if (!input.availablePaymentMethods.includes(input.paymentMethod)) {
+    return { ok: false, reason: 'payment-method-unavailable' };
+  }
   if (!input.authenticated) return { ok: false, reason: 'unauthenticated' };
   if (!input.emailVerified) return { ok: false, reason: 'email-unverified' };
 
@@ -86,6 +124,14 @@ export function resolveCheckoutEligibility(input: CheckoutEligibilityInput): Che
    * than being told the promotion is spent.
    */
   if (input.hasLiveSubscription) return { ok: false, reason: 'already-subscribed' };
+
+  /*
+   * Immediately after, and for the same reason: an unpaid PromptPay invoice is a
+   * purchase already in flight. It is refused ahead of the Founder rule so the
+   * reader is told the actionable thing — pay or abandon the invoice you have —
+   * rather than being told a promotion is spent that in fact is not.
+   */
+  if (input.hasOpenPromptPayInvoice) return { ok: false, reason: 'promptpay-invoice-open' };
 
   const plan = billingPlan(input.planKey);
 
@@ -99,7 +145,7 @@ export function resolveCheckoutEligibility(input: CheckoutEligibilityInput): Che
     return { ok: false, reason: 'founder-already-used' };
   }
 
-  return { ok: true, plan };
+  return { ok: true, plan, paymentMethod: input.paymentMethod };
 }
 
 /** What a reader is told. Never names an environment variable or a provider. */
@@ -107,10 +153,13 @@ const REFUSAL_MESSAGE: Readonly<Record<CheckoutRefusalReason, string>> = {
   'billing-disabled': 'ระบบชำระเงินยังไม่เปิดให้บริการ',
   'unknown-plan': 'ไม่พบแพ็กเกจที่เลือก กรุณาลองใหม่อีกครั้ง',
   'plan-unavailable': 'แพ็กเกจนี้ยังไม่เปิดให้สมัครในขณะนี้',
+  'unknown-payment-method': 'ไม่พบวิธีชำระเงินที่เลือก กรุณาลองใหม่อีกครั้ง',
+  'payment-method-unavailable': 'วิธีชำระเงินนี้ยังไม่เปิดให้ใช้งานในขณะนี้',
   unauthenticated: 'กรุณาเข้าสู่ระบบก่อนสมัครแพ็กเกจ',
   'email-unverified': 'ยืนยันอีเมลของคุณก่อน จึงจะสมัครแพ็กเกจได้',
   'founder-already-used': 'บัญชีนี้ใช้สิทธิ์ราคา Founder’s Club ไปแล้ว',
   'already-subscribed': 'บัญชีนี้มีแพ็กเกจที่ใช้งานอยู่แล้ว หากต้องการเปลี่ยนแพ็กเกจ กรุณาไปที่ “จัดการการชำระเงินและยกเลิก”',
+  'promptpay-invoice-open': 'มีใบแจ้งหนี้ PromptPay ที่รอชำระอยู่ กรุณาสแกนจ่ายให้เสร็จ หรือยกเลิกใบแจ้งหนี้นั้นก่อนเริ่มรายการใหม่',
 };
 
 export function checkoutRefusalMessage(reason: CheckoutRefusalReason): string {

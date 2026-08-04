@@ -133,6 +133,7 @@ describe('entitlement consequence', () => {
       planKey: 'pro_annual',
       priceId: 'price_1',
       invoiceId: null,
+      collectionMethod: 'charge_automatically',
       paymentStatus: null,
       state: {
         tier: 'pro',

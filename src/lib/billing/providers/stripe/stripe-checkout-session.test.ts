@@ -57,6 +57,7 @@ const config: BillingConfig = {
     elite_annual_founder: 'coupon_founder_elite',
   },
   returnOrigin: 'https://example.test',
+  paymentMethods: ['card', 'promptpay'],
 };
 
 async function openCheckout(planKey: keyof typeof billingPlans, overrides = {}) {

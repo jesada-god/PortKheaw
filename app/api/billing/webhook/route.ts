@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { getBillingConfig } from '@/src/lib/billing/billing-server';
-import { applyBillingEvent, BillingAdminUnavailableError } from '@/src/lib/billing/billing-repository';
+import {
+  applyBillingEvent,
+  applyBillingPaymentRail,
+  BillingAdminUnavailableError,
+} from '@/src/lib/billing/billing-repository';
+import type { NormalizedBillingEvent } from '@/src/lib/billing/billing-events';
 import {
   BillingModeMismatchError,
   BillingSignatureError,
@@ -90,6 +95,14 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const outcome = await applyBillingEvent(event, payloadDigest);
 
+    /*
+     * Runs on every delivery, including one the routine above answered as a
+     * duplicate. It grants nothing — it records which rail the subscription is
+     * billed on and closes a settled pending invoice — and both writes are
+     * idempotent, so a redelivery that follows a failure here finishes the job.
+     */
+    await settlePaymentRail(event);
+
     if (outcome === 'applied') {
       // Access has genuinely changed, so every cached render that depended on it
       // has to go. Same invalidation the admin preview performs, on purpose.
@@ -112,6 +125,35 @@ export async function POST(request: Request): Promise<Response> {
     record('billing_webhook_failed', event.eventType, detail);
     return Response.json({ error: 'processing_failed' }, { status: 500 });
   }
+}
+
+/**
+ * Which events end a purchase that was in flight.
+ *
+ * A paid invoice ends it because the plan is now bought; a voided or written-off
+ * invoice and a cancelled subscription end it because it can never be paid. A
+ * failed payment does **not**: on the PromptPay rail the reader can still scan
+ * again before the due date, and clearing the row would take their QR away
+ * while the invoice is still live.
+ */
+function settlesPendingPayment(event: NormalizedBillingEvent): boolean {
+  return event.kind === 'payment_succeeded'
+    || event.kind === 'invoice_closed'
+    || event.kind === 'subscription_canceled';
+}
+
+async function settlePaymentRail(event: NormalizedBillingEvent): Promise<void> {
+  if (!event.userId || !event.subscriptionId) return;
+  const settled = settlesPendingPayment(event);
+  if (!settled && !event.collectionMethod) return;
+
+  await applyBillingPaymentRail({
+    userId: event.userId,
+    providerMode: event.providerMode,
+    subscriptionId: event.subscriptionId,
+    collectionMethod: event.collectionMethod,
+    pendingSettled: settled,
+  });
 }
 
 /**

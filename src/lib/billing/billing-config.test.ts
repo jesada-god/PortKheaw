@@ -41,7 +41,11 @@ describe('billing configuration', () => {
     expect(result.enabled).toBe(false);
     if (result.enabled) return;
     expect(result.reason).toBe('switched-off');
-    expect(billingAvailability(result)).toEqual({ enabled: false, availablePlanKeys: [] });
+    expect(billingAvailability(result)).toEqual({
+      enabled: false,
+      availablePlanKeys: [],
+      paymentMethods: [],
+    });
   });
 
   it('stays disabled while the switch is off, however complete the rest is', () => {
@@ -224,7 +228,9 @@ describe('billing configuration', () => {
   it('narrows to plan keys only before anything reaches the browser', () => {
     const result = resolveBillingConfig(COMPLETE);
     const availability = billingAvailability(result);
-    expect(Object.keys(availability).sort()).toEqual(['availablePlanKeys', 'enabled']);
+    expect(Object.keys(availability).sort()).toEqual([
+      'availablePlanKeys', 'enabled', 'paymentMethods',
+    ]);
 
     const serialized = JSON.stringify(availability);
     for (const secret of [
@@ -234,6 +240,47 @@ describe('billing configuration', () => {
     ]) {
       expect(serialized).not.toContain(secret);
     }
+  });
+
+  /*
+   * The one billing variable that is on by default. It guards a provider
+   * capability rather than a credential — the worst a wrong value can do is
+   * refuse a purchase, never mischarge one — so an otherwise complete
+   * deployment sells on both rails without a further variable to remember.
+   */
+  describe('the PromptPay rail', () => {
+    it('is offered by default wherever checkout is open', () => {
+      const availability = billingAvailability(resolveBillingConfig(COMPLETE));
+      expect([...availability.paymentMethods]).toEqual(['card', 'promptpay']);
+    });
+
+    it('is withdrawn only by an explicit false, leaving cards untouched', () => {
+      for (const value of ['false', 'FALSE', ' false ']) {
+        const availability = billingAvailability(resolveBillingConfig({
+          ...COMPLETE,
+          BILLING_PROMPTPAY_ENABLED: value,
+        }));
+        expect([...availability.paymentMethods], value).toEqual(['card']);
+        // Withdrawing a rail must not withdraw a plan.
+        expect(availability.availablePlanKeys.length, value).toBeGreaterThan(0);
+      }
+
+      for (const value of [undefined, '', 'true', 'no', '0']) {
+        const availability = billingAvailability(resolveBillingConfig({
+          ...COMPLETE,
+          BILLING_PROMPTPAY_ENABLED: value,
+        }));
+        expect(availability.paymentMethods, String(value)).toContain('promptpay');
+      }
+    });
+
+    it('is offered to nobody while checkout itself is closed', () => {
+      const availability = billingAvailability(resolveBillingConfig({
+        ...COMPLETE,
+        BILLING_CHECKOUT_MODE: 'off',
+      }));
+      expect(availability.paymentMethods).toEqual([]);
+    });
   });
 
   it('discloses no value in the disabled projection either', () => {

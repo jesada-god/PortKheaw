@@ -14,6 +14,13 @@
 
 import { billingPlan, formatBillingBaht, type BillingPlanKey } from './billing-plans';
 import type { BillingPaymentStatus } from './billing-events';
+import {
+  paymentMethodFromCollectionMethod,
+  paymentMethodRenewalNote,
+  type BillingCollectionMethod,
+  type BillingPaymentMethod,
+} from './billing-payment-method';
+import { promptPayRenewalReminder } from './promptpay-pending';
 
 export type BillingSummaryKind =
   /** No paid subscription has ever been recorded against this account. */
@@ -33,6 +40,8 @@ export interface BillingSummary {
   statusTone: BillingStatusTone;
   /** ISO. The date the next charge or the end of access falls on. */
   periodEnd: string | null;
+  /** What that date means on this rail — a charge, or a deadline to act. */
+  periodEndLabel: string;
   /** What the next invoice will be, in whole baht. */
   renewalBaht: number | null;
   /** What was charged for the current period, when it differed. */
@@ -41,6 +50,18 @@ export interface BillingSummary {
   latestPaymentFailed: boolean;
   /** True once a provider customer exists, which is what the portal needs. */
   canOpenPortal: boolean;
+  /** The rail this subscription is billed on, or null for an older record. */
+  paymentMethod: BillingPaymentMethod | null;
+  /**
+   * Whether the provider will collect the next period without the reader doing
+   * anything. False on PromptPay, and that difference is the whole reason this
+   * field exists rather than being inferred from a label.
+   */
+  autoRenews: boolean;
+  /** The rail's commitment, in one sentence. */
+  renewalNote: string | null;
+  /** Shown only when a PromptPay period is about to lapse. */
+  renewalReminder: string | null;
 }
 
 export interface BillingSummaryInput {
@@ -52,6 +73,10 @@ export interface BillingSummaryInput {
   latestPaymentStatus: BillingPaymentStatus | null;
   trialEndsAt: string | null;
   hasBillingCustomer: boolean;
+  /** The rail, as the provider reports it. Absent on pre-Phase-4.4 records. */
+  collectionMethod?: BillingCollectionMethod | null;
+  /** The database's clock, for the "your period is about to lapse" reminder. */
+  now?: string | number | Date | null;
 }
 
 const NO_SUBSCRIPTION: BillingSummary = {
@@ -61,11 +86,16 @@ const NO_SUBSCRIPTION: BillingSummary = {
   statusLabel: 'ฟรีตลอดชีพ',
   statusTone: 'inactive',
   periodEnd: null,
+  periodEndLabel: 'รอบบิลถัดไป',
   renewalBaht: null,
   firstPeriodBaht: null,
   cancelAtPeriodEnd: false,
   latestPaymentFailed: false,
   canOpenPortal: false,
+  paymentMethod: null,
+  autoRenews: false,
+  renewalNote: null,
+  renewalReminder: null,
 };
 
 export function resolveBillingSummary(input: BillingSummaryInput): BillingSummary {
@@ -95,6 +125,8 @@ export function resolveBillingSummary(input: BillingSummaryInput): BillingSummar
    * it is the one shown as the renewal.
    */
   const renewalBaht = billingPlan(plan.renewsIntoKey).renewalBaht;
+  const paymentMethod = paymentMethodFromCollectionMethod(input.collectionMethod ?? null);
+  const autoRenews = paymentMethod !== 'promptpay';
 
   return {
     kind: 'paid',
@@ -102,11 +134,32 @@ export function resolveBillingSummary(input: BillingSummaryInput): BillingSummar
     intervalLabel: plan.intervalLabel,
     ...statusPresentation(input),
     periodEnd: input.currentPeriodEnd,
+    /*
+     * On PromptPay this date is a deadline rather than a schedule: nothing will
+     * be collected on it, and the plan ends unless somebody scans a new QR
+     * first. Calling it "รอบบิลถัดไป" would promise a renewal that is not going
+     * to happen.
+     */
+    periodEndLabel: input.cancelAtPeriodEnd || !autoRenews ? 'ใช้งานได้ถึง' : 'รอบบิลถัดไป',
     renewalBaht,
     firstPeriodBaht: plan.founder ? plan.firstPeriodBaht : null,
     cancelAtPeriodEnd: input.cancelAtPeriodEnd,
     latestPaymentFailed: input.latestPaymentStatus === 'failed',
     canOpenPortal: input.hasBillingCustomer,
+    paymentMethod,
+    autoRenews,
+    renewalNote: paymentMethod ? paymentMethodRenewalNote(paymentMethod, plan.interval) : null,
+    /*
+     * The reminder exists only for the rail that needs one. A card subscriber is
+     * not warned about a renewal they do not have to do anything about; a
+     * PromptPay subscriber loses their plan on this date unless they act.
+     */
+    renewalReminder: autoRenews || input.cancelAtPeriodEnd
+      ? null
+      : promptPayRenewalReminder({
+        periodEnd: input.currentPeriodEnd,
+        now: input.now ?? Date.now(),
+      }),
   };
 }
 
@@ -173,10 +226,36 @@ export function founderRenewalNote(firstPeriodBaht: number, renewalBaht: number)
  * rather than to open a second one alongside it.
  */
 export function holdsLiveSubscription(
-  input: Pick<BillingSummaryInput, 'status' | 'planKey'> | null | undefined,
+  input: (Pick<BillingSummaryInput, 'status' | 'planKey'> & {
+    /** The rail. `null` for a record from before the column existed. */
+    collectionMethod?: BillingCollectionMethod | null;
+    currentPeriodEnd?: string | null;
+    /** The database's clock. Never the browser's, and never this process's. */
+    now?: string | number | Date | null;
+  }) | null | undefined,
 ): boolean {
   if (!input?.planKey) return false;
-  return input.status === 'active' || input.status === 'past_due';
+  if (input.status !== 'active' && input.status !== 'past_due') return false;
+
+  /*
+   * On the invoice rail the status alone is not enough.
+   *
+   * A PromptPay subscription stays `active` at the provider after a period
+   * nobody paid for — its events are ignored precisely so an unpaid renewal
+   * cannot extend access — so the stored status can outlive the lease by a long
+   * way. Reading it as "still being billed" would leave somebody whose plan
+   * quietly ended unable to buy anything ever again, which is the opposite of
+   * what this predicate is for. The paid period is the authority instead.
+   *
+   * A card subscription is unchanged: it is judged on status, because the
+   * provider charges it before each period and a lapsed one arrives as its own
+   * event.
+   */
+  if (input.collectionMethod !== 'send_invoice') return true;
+  if (!input.currentPeriodEnd) return false;
+  const end = Date.parse(input.currentPeriodEnd);
+  if (!Number.isFinite(end)) return false;
+  return end > new Date(input.now ?? Date.now()).getTime();
 }
 
 /** The reassurance that has to survive a downgrade, stated in one place. */

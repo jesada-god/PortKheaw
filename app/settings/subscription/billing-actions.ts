@@ -1,10 +1,20 @@
 'use server';
 
 import { createHash } from 'node:crypto';
+import { revalidatePath } from 'next/cache';
 import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
-import { readBillingCustomerId, readBillingSnapshot } from '@/src/lib/billing/billing-repository';
+import {
+  cancelPendingPromptPayPayment,
+  readBillingCustomerId,
+  readBillingSnapshot,
+  readPendingPromptPayIdentity,
+  readPendingPromptPayPayment,
+  recordPendingPromptPayPayment,
+} from '@/src/lib/billing/billing-repository';
 import { holdsLiveSubscription } from '@/src/lib/billing/billing-summary';
+import type { BillingPaymentMethod } from '@/src/lib/billing/billing-payment-method';
 import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
+import { pendingPromptPayIsOpen, type PendingPromptPayRecord } from '@/src/lib/billing/promptpay-pending';
 import {
   checkoutRefusalMessage,
   resolveCheckoutEligibility,
@@ -37,15 +47,32 @@ export type CheckoutFailureCode =
   | 'BILLING_UNAVAILABLE'
   | 'INVALID_PLAN'
   | 'PLAN_UNAVAILABLE'
+  | 'INVALID_PAYMENT_METHOD'
+  | 'PAYMENT_METHOD_UNAVAILABLE'
   | 'UNAUTHENTICATED'
   | 'EMAIL_UNVERIFIED'
   | 'FOUNDER_USED'
   /** A subscription is already live; plan changes belong in the portal. */
   | 'ALREADY_SUBSCRIBED'
+  /** An unpaid PromptPay invoice is still payable; pay or abandon it first. */
+  | 'PROMPTPAY_INVOICE_OPEN'
   | 'UNAVAILABLE';
 
 export type StartCheckoutResult =
-  | { ok: true; url: string }
+  | {
+    ok: true;
+    url: string;
+    /**
+     * Which rail the URL leads to. The browser only navigates, but a PromptPay
+     * destination is a QR the reader may need to keep open on another device,
+     * so the caller is told which one it is rather than having to guess.
+     */
+    paymentMethod: BillingPaymentMethod;
+  }
+  | { ok: false; code: CheckoutFailureCode; message: string };
+
+export type AbandonInvoiceResult =
+  | { ok: true; message: string }
   | { ok: false; code: CheckoutFailureCode; message: string };
 
 export type BillingPortalResult =
@@ -57,21 +84,29 @@ const REFUSAL_CODE: Readonly<Record<CheckoutRefusalReason, CheckoutFailureCode>>
   'billing-disabled': 'BILLING_UNAVAILABLE',
   'unknown-plan': 'INVALID_PLAN',
   'plan-unavailable': 'PLAN_UNAVAILABLE',
+  'unknown-payment-method': 'INVALID_PAYMENT_METHOD',
+  'payment-method-unavailable': 'PAYMENT_METHOD_UNAVAILABLE',
   unauthenticated: 'UNAUTHENTICATED',
   'email-unverified': 'EMAIL_UNVERIFIED',
   'founder-already-used': 'FOUNDER_USED',
   'already-subscribed': 'ALREADY_SUBSCRIBED',
+  'promptpay-invoice-open': 'PROMPTPAY_INVOICE_OPEN',
 };
 
 const GENERIC_FAILURE = 'เริ่มการชำระเงินไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
 const PORTAL_UNAVAILABLE = 'ยังไม่มีข้อมูลการชำระเงินสำหรับบัญชีนี้';
+const NO_PENDING_INVOICE = 'ไม่พบใบแจ้งหนี้ที่รอชำระ';
+const INVOICE_ABANDONED = 'ยกเลิกใบแจ้งหนี้แล้ว เลือกวิธีชำระเงินใหม่ได้เลย';
+const INVOICE_ALREADY_PAID = 'ใบแจ้งหนี้นี้ชำระเงินแล้ว กรุณารีเฟรชหน้านี้เพื่อดูสิทธิ์ล่าสุด';
 
 type AuditEvent =
   | 'billing_checkout_started'
   | 'billing_checkout_refused'
   | 'billing_checkout_failed'
   | 'billing_portal_opened'
-  | 'billing_portal_failed';
+  | 'billing_portal_failed'
+  | 'billing_pending_invoice_abandoned'
+  | 'billing_pending_invoice_abandon_failed';
 
 /**
  * The same structured-log shape the rest of the server uses. The event name and
@@ -95,16 +130,39 @@ function record(event: AuditEvent, detail?: string) {
  * purchase is never collapsed into a stale session. Hashed so the account
  * identifier is not embedded in a value handed to a third party.
  */
-function checkoutIdempotencyKey(
-  userId: string,
-  planKey: string,
-  status: string,
-  periodEnd: string | null,
-): string {
+function checkoutIdempotencyKey(input: {
+  userId: string;
+  planKey: string;
+  paymentMethod: BillingPaymentMethod;
+  status: string;
+  periodEnd: string | null;
+  /**
+   * The invoice attempt this account last made, if any.
+   *
+   * On the PromptPay rail an abandoned attempt must not be collapsed into the
+   * one that replaces it: the provider replays a repeated key for a day, and
+   * replaying a cancelled subscription would hand the reader a QR for an invoice
+   * that can never be paid. The abandoned row survives precisely so this value
+   * changes.
+   */
+  pendingStamp: string;
+}): string {
   return createHash('sha256')
-    .update(`${userId}:${planKey}:${status}:${periodEnd ?? 'none'}`)
+    .update([
+      input.userId,
+      input.planKey,
+      input.paymentMethod,
+      input.status,
+      input.periodEnd ?? 'none',
+      input.pendingStamp,
+    ].join(':'))
     .digest('hex')
     .slice(0, 48);
+}
+
+/** Identifies one purchase attempt, so the next one cannot reuse its key. */
+function pendingStampOf(pending: PendingPromptPayRecord | null): string {
+  return pending ? `${pending.createdAt}:${pending.status}` : 'none';
 }
 
 /**
@@ -117,7 +175,10 @@ function checkoutIdempotencyKey(
  * can *see*; it must never change what anybody is charged or which plan is
  * bought.
  */
-export async function startCheckoutAction(planKey: string): Promise<StartCheckoutResult> {
+export async function startCheckoutAction(
+  planKey: string,
+  paymentMethod: string,
+): Promise<StartCheckoutResult> {
   const client = await createClient();
   if (!client) {
     record('billing_checkout_failed', 'UNAVAILABLE');
@@ -153,22 +214,36 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
   let hasLiveSubscription = false;
   let status = 'basic';
   let periodEnd: string | null = null;
+  let pending: PendingPromptPayRecord | null = null;
+  let hasOpenPromptPayInvoice = false;
   if (authenticated) {
     try {
+      const config = getBillingConfig();
       const snapshot = await readBillingSnapshot(client);
       founderPromoApplied = snapshot?.founder_promo_applied ?? false;
       status = snapshot?.status ?? 'basic';
       periodEnd = snapshot?.current_period_end ?? null;
-      const config = getBillingConfig();
-      hasLiveSubscription = Boolean(
-        config
-        && snapshot?.billing_provider_mode === config.providerMode
-      ) && holdsLiveSubscription({
+      const modeMatches = Boolean(config && snapshot?.billing_provider_mode === config.providerMode);
+      hasLiveSubscription = modeMatches && holdsLiveSubscription({
         status,
         // The snapshot's plan key is a database column, so it is narrowed
         // against the same allowlist the rest of billing uses rather than cast.
         planKey: isBillingPlanKey(snapshot?.billing_plan_key) ? snapshot.billing_plan_key : null,
+        collectionMethod: snapshot?.billing_collection_method ?? null,
+        currentPeriodEnd: periodEnd,
+        now: snapshot?.database_now ?? null,
       });
+      if (config) {
+        pending = await readPendingPromptPayPayment(client, config.providerMode);
+        /*
+         * Judged against the database's clock, never this process's. An expiry
+         * decided by a server whose time has drifted would either lock a reader
+         * out of buying or let two payable invoices exist at once — and with no
+         * snapshot there is no clock and no pending row either.
+         */
+        hasOpenPromptPayInvoice = Boolean(snapshot)
+          && pendingPromptPayIsOpen(pending, snapshot!.database_now);
+      }
     } catch {
       record('billing_checkout_failed', 'SNAPSHOT_UNAVAILABLE');
       return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
@@ -177,12 +252,15 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
 
   const eligibility = resolveCheckoutEligibility({
     planKey,
+    paymentMethod,
     availablePlanKeys: availability.availablePlanKeys,
+    availablePaymentMethods: availability.paymentMethods,
     billingEnabled: availability.enabled,
     authenticated,
     emailVerified,
     founderPromoApplied,
     hasLiveSubscription,
+    hasOpenPromptPayInvoice,
   });
 
   if (!eligibility.ok) {
@@ -207,21 +285,129 @@ export async function startCheckoutAction(planKey: string): Promise<StartCheckou
   }
 
   try {
-    // Loaded only now. With billing switched off the provider SDK is never
-    // imported, let alone contacted.
-    const { createStripeCheckoutSession } = await import('@/src/lib/billing/providers/stripe/stripe-provider');
-    const session = await createStripeCheckoutSession({
+    const request = {
       config,
       plan: eligibility.plan,
       userId: user.id,
       email: user.email ?? '',
       existingCustomerId: await readBillingCustomerId(user.id, config.providerMode),
-      idempotencyKey: checkoutIdempotencyKey(user.id, eligibility.plan.key, status, periodEnd),
-    });
+      idempotencyKey: checkoutIdempotencyKey({
+        userId: user.id,
+        planKey: eligibility.plan.key,
+        paymentMethod: eligibility.paymentMethod,
+        status,
+        periodEnd,
+        pendingStamp: pendingStampOf(pending),
+      }),
+    };
+
+    // Loaded only now. With billing switched off the provider SDK is never
+    // imported, let alone contacted.
+    const provider = await import('@/src/lib/billing/providers/stripe/stripe-provider');
+
+    if (eligibility.paymentMethod === 'promptpay') {
+      const invoice = await provider.createStripePromptPaySubscription(request);
+      /*
+       * The invoice exists at the provider now, so it must exist in our records
+       * before the reader is handed the link — otherwise an abandoned tab would
+       * leave a payable invoice nobody can see, cancel, or match a webhook to.
+       * If the record is refused, the subscription is cancelled again rather
+       * than left behind.
+       */
+      const recorded = await recordPendingPromptPayPayment({
+        userId: user.id,
+        providerMode: config.providerMode,
+        planKey: eligibility.plan.key,
+        subscriptionId: invoice.subscriptionId,
+        invoiceId: invoice.invoiceId,
+        hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+        amountBaht: invoice.amountBaht,
+        dueAt: invoice.dueAt,
+      });
+      if (recorded !== 'recorded') {
+        await provider.abandonStripePromptPaySubscription(config, invoice.subscriptionId);
+        record('billing_checkout_refused', recorded);
+        return {
+          ok: false,
+          code: 'PROMPTPAY_INVOICE_OPEN',
+          message: checkoutRefusalMessage('promptpay-invoice-open'),
+        };
+      }
+      revalidatePath('/settings/subscription');
+      record('billing_checkout_started', `${eligibility.plan.key}:promptpay`);
+      return { ok: true, url: invoice.hostedInvoiceUrl, paymentMethod: 'promptpay' };
+    }
+
+    const session = await provider.createStripeCheckoutSession(request);
     record('billing_checkout_started', eligibility.plan.key);
-    return { ok: true, url: session.url };
+    return { ok: true, url: session.url, paymentMethod: 'card' };
   } catch {
-    record('billing_checkout_failed', eligibility.plan.key);
+    record('billing_checkout_failed', `${eligibility.plan.key}:${eligibility.paymentMethod}`);
+    return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  }
+}
+
+/**
+ * Abandon an unpaid PromptPay invoice.
+ *
+ * Takes nothing: the invoice is found from the caller's own row, so this cannot
+ * be pointed at anybody else's. It grants nothing and withdraws nothing — an
+ * unpaid invoice never opened a plan, so cancelling it changes no entitlement.
+ *
+ * The provider is asked first and our record is marked only if it agreed. An
+ * invoice that turns out to have been paid is left alone and reported as such,
+ * because at that point money has moved and the right control is the portal.
+ */
+export async function abandonPromptPayInvoiceAction(): Promise<AbandonInvoiceResult> {
+  const config = getBillingConfig();
+  if (!config) {
+    record('billing_pending_invoice_abandon_failed', 'BILLING_UNAVAILABLE');
+    return {
+      ok: false,
+      code: 'BILLING_UNAVAILABLE',
+      message: checkoutRefusalMessage('billing-disabled'),
+    };
+  }
+
+  const client = await createClient();
+  if (!client) {
+    record('billing_pending_invoice_abandon_failed', 'UNAVAILABLE');
+    return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  }
+
+  const { data: { user }, error } = await client.auth.getUser();
+  if (error || !user) {
+    record('billing_pending_invoice_abandon_failed', 'UNAUTHENTICATED');
+    return {
+      ok: false,
+      code: 'UNAUTHENTICATED',
+      message: checkoutRefusalMessage('unauthenticated'),
+    };
+  }
+
+  try {
+    const identity = await readPendingPromptPayIdentity(user.id, config.providerMode);
+    if (!identity || identity.status !== 'awaiting_payment') {
+      return { ok: false, code: 'PLAN_UNAVAILABLE', message: NO_PENDING_INVOICE };
+    }
+
+    const { abandonStripePromptPaySubscription } = await import('@/src/lib/billing/providers/stripe/stripe-provider');
+    const outcome = await abandonStripePromptPaySubscription(config, identity.subscriptionId);
+    if (outcome === 'already-paid') {
+      record('billing_pending_invoice_abandon_failed', 'ALREADY_PAID');
+      return { ok: false, code: 'ALREADY_SUBSCRIBED', message: INVOICE_ALREADY_PAID };
+    }
+
+    await cancelPendingPromptPayPayment({
+      userId: user.id,
+      providerMode: config.providerMode,
+      subscriptionId: identity.subscriptionId,
+    });
+    revalidatePath('/settings/subscription');
+    record('billing_pending_invoice_abandoned');
+    return { ok: true, message: INVOICE_ABANDONED };
+  } catch {
+    record('billing_pending_invoice_abandon_failed', 'PROVIDER_ERROR');
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
   }
 }

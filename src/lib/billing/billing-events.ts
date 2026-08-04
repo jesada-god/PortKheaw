@@ -22,6 +22,7 @@
  */
 
 import type { SubscriptionStatus } from '@/src/lib/subscription/subscription-types';
+import type { BillingCollectionMethod } from './billing-payment-method';
 import type { BillingInterval, BillingPlanKey, PaidTier } from './billing-plans';
 import type { TrustedBillingProviderMode } from './billing-provider-mode';
 
@@ -48,6 +49,12 @@ export type BillingEventKind =
   | 'payment_failed'
   /** The subscription ended, by request or by exhaustion. */
   | 'subscription_canceled'
+  /**
+   * An invoice was closed without being paid — voided, or written off. It never
+   * changes entitlement (nothing was ever granted for it); it exists so an
+   * abandoned PromptPay invoice stops occupying the account's one purchase slot.
+   */
+  | 'invoice_closed'
   /** Received, understood, and deliberately without effect on entitlement. */
   | 'ignored';
 
@@ -85,6 +92,13 @@ export interface NormalizedBillingEvent {
   invoiceId: string | null;
   /** Recorded for the reader's benefit; entitlement comes from `state`. */
   paymentStatus: BillingPaymentStatus | null;
+  /**
+   * How the provider collects for this subscription, which is what tells the two
+   * rails apart: `charge_automatically` renews itself, `send_invoice` does not.
+   * It decides both what the manage card says and — through
+   * `gateEntitlementByCollectionMethod` — which events may open a period at all.
+   */
+  collectionMethod: BillingCollectionMethod | null;
   /** Absent on events that carry identity but assert no subscription state. */
   state: NormalizedSubscriptionState | null;
 }
@@ -164,4 +178,46 @@ export function isFreshEvent(occurredAt: string, appliedAt: string | null): bool
 /** Events that carry no entitlement consequence still get logged, never applied. */
 export function eventChangesEntitlement(event: NormalizedBillingEvent): boolean {
   return event.kind !== 'ignored' && event.state !== null;
+}
+
+/**
+ * The rule that makes an invoice-collected subscription safe: **a paid period is
+ * the only period.**
+ *
+ * A `send_invoice` subscription — which is what PromptPay must be, since there is
+ * no credential to charge — behaves in one way that would quietly give away the
+ * product if it were treated like a card one. The provider activates it the
+ * moment it is created, before a satang has moved, and at every renewal it
+ * advances the billing period as soon as the new invoice is *issued*. Applied
+ * naively, creating an invoice would grant a year of Elite, and never paying the
+ * second year's invoice would extend it by another.
+ *
+ * So for this rail entitlement is a lease, and only money extends it:
+ *
+ *   * a paid invoice asserts the period it paid for — the one moment a period
+ *     may move forward;
+ *   * a cancellation and a failed payment assert their status but carry **no**
+ *     period, so the stored, already-paid period stands and expires by itself;
+ *   * everything else — created, updated, checkout completed — asserts nothing
+ *     at all, because an issued invoice is a request for money, not money.
+ *
+ * `charge_automatically` is untouched: a card subscription is billed before the
+ * period it grants, so its own events are already evidence of payment.
+ */
+export function gateEntitlementByCollectionMethod(
+  kind: BillingEventKind,
+  state: NormalizedSubscriptionState | null,
+  collectionMethod: BillingCollectionMethod | null,
+): NormalizedSubscriptionState | null {
+  if (!state || collectionMethod !== 'send_invoice') return state;
+
+  switch (kind) {
+    case 'payment_succeeded':
+      return state;
+    case 'subscription_canceled':
+    case 'payment_failed':
+      return { ...state, currentPeriodStart: null, currentPeriodEnd: null };
+    default:
+      return null;
+  }
 }

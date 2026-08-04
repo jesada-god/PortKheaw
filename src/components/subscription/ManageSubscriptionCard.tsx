@@ -1,5 +1,9 @@
-import { AlertTriangle, CalendarClock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CreditCard, QrCode, ShieldCheck } from 'lucide-react';
 import { BillingPortalButton } from './BillingPortalButton';
+import {
+  PAYMENT_METHOD_COMMITMENT,
+  PAYMENT_METHOD_LABEL,
+} from '@/src/lib/billing/billing-payment-method';
 import {
   DATA_KEPT_ON_DOWNGRADE_NOTE,
   formatBahtAmount,
@@ -56,13 +60,27 @@ export function ManageSubscriptionCard({ summary }: { summary: BillingSummary })
       </div>
 
       <dl className="min-w-0 space-y-3 border-t border-[var(--border)] pt-4 text-sm">
+        {summary.paymentMethod && (
+          <div className="flex min-w-0 items-start gap-2">
+            {summary.paymentMethod === 'promptpay'
+              ? <QrCode aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
+              : <CreditCard aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />}
+            <div className="min-w-0">
+              <dt className="text-[var(--text-muted)]">วิธีชำระเงิน</dt>
+              <dd data-testid="billing-payment-method" className="mt-0.5 font-medium break-words text-[var(--text)]">
+                {PAYMENT_METHOD_LABEL[summary.paymentMethod]}
+                {' · '}
+                {PAYMENT_METHOD_COMMITMENT[summary.paymentMethod]}
+              </dd>
+            </div>
+          </div>
+        )}
+
         {summary.periodEnd && (
           <div className="flex min-w-0 items-start gap-2">
             <CalendarClock aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
             <div className="min-w-0">
-              <dt className="text-[var(--text-muted)]">
-                {summary.cancelAtPeriodEnd ? 'ใช้งานได้ถึง' : 'รอบบิลถัดไป'}
-              </dt>
+              <dt className="text-[var(--text-muted)]">{summary.periodEndLabel}</dt>
               <dd data-testid="billing-period-end" className="mt-0.5 font-medium break-words text-[var(--text)]">
                 {formatBangkokDateTime(summary.periodEnd)}
               </dd>
@@ -71,16 +89,38 @@ export function ManageSubscriptionCard({ summary }: { summary: BillingSummary })
         )}
 
         {/* The renewal amount, never the promotional one — it is the number a
-            reader is most likely to be surprised by. */}
+            reader is most likely to be surprised by. On the invoice rail it is
+            what the next QR will ask for rather than what will be collected. */}
         {summary.renewalBaht !== null && !summary.cancelAtPeriodEnd && (
           <div className="min-w-0">
-            <dt className="text-[var(--text-muted)]">ราคาต่ออายุ</dt>
+            <dt className="text-[var(--text-muted)]">
+              {summary.autoRenews ? 'ราคาต่ออายุ' : 'ราคารอบถัดไป'}
+            </dt>
             <dd data-testid="billing-renewal-price" className="mt-0.5 font-medium tabular-nums text-[var(--text)]">
               {formatBahtAmount(summary.renewalBaht)} {summary.intervalLabel}
             </dd>
           </div>
         )}
       </dl>
+
+      {summary.renewalNote && (
+        <p data-testid="billing-renewal-note" className="text-xs leading-5 text-[var(--text-secondary)]">
+          {summary.renewalNote}
+        </p>
+      )}
+
+      {/* The one reminder this product sends itself: a PromptPay period that is
+          about to lapse, which nobody else will chase. */}
+      {summary.renewalReminder && (
+        <p
+          data-testid="billing-renewal-reminder"
+          role="alert"
+          className="flex items-start gap-2 rounded-xl border border-[var(--warning)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3 py-2.5 text-sm leading-6 text-[var(--text)]"
+        >
+          <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-[var(--warning)]" />
+          <span>{summary.renewalReminder}</span>
+        </p>
+      )}
 
       {summary.firstPeriodBaht !== null && summary.renewalBaht !== null && (
         <p data-testid="billing-founder-note" className="text-xs leading-5 text-[var(--text-secondary)]">

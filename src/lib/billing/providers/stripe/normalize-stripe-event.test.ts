@@ -36,6 +36,7 @@ function subscription(overrides: {
   livemode?: boolean;
   metadataMode?: string | null;
   schemaVersion?: string | null;
+  collectionMethod?: string;
 } = {}): Stripe.Subscription {
   const metadata: Record<string, string> = { [BILLING_METADATA_USER_ID]: USER_ID };
   if (overrides.planKey !== null) {
@@ -50,6 +51,7 @@ function subscription(overrides: {
   return {
     id: 'sub_123',
     customer: 'cus_123',
+    collection_method: overrides.collectionMethod ?? 'charge_automatically',
     status: overrides.status ?? 'active',
     cancel_at_period_end: overrides.cancelAtPeriodEnd ?? false,
     metadata,
@@ -223,7 +225,11 @@ describe('full event normalization', () => {
   });
 
   it('records a successful payment without inventing a state of its own', () => {
-    const invoice = { id: 'in_8', parent: { subscription_details: { subscription: 'sub_123' } } };
+    const invoice = {
+      id: 'in_8',
+      status: 'paid',
+      parent: { subscription_details: { subscription: 'sub_123' } },
+    };
     const normalized = normalizeStripeEvent(event('invoice.paid', invoice), subscription());
     expect(normalized.paymentStatus).toBe('succeeded');
     expect(normalized.state?.status).toBe('active');
@@ -252,5 +258,121 @@ describe('full event normalization', () => {
     expect(normalized.eventId).toBe('evt_123');
     // Still recorded against the right subscription for the audit row.
     expect(normalized.subscriptionId).toBe('sub_123');
+  });
+});
+
+/**
+ * The invoice rail, where "the subscription is active" and "somebody paid" are
+ * days apart.
+ *
+ * Stripe activates a `send_invoice` subscription the moment it is created and
+ * advances its period as soon as each renewal invoice is issued — both before
+ * any money moves. Treated like a card subscription, creating an invoice would
+ * grant a year of Elite and never paying the next one would grant another. Every
+ * assertion below is a version of the same rule: only a paid invoice may carry a
+ * period.
+ */
+describe('an invoice-collected subscription', () => {
+  const promptPay = (overrides: Parameters<typeof subscription>[0] = {}) =>
+    subscription({ collectionMethod: 'send_invoice', ...overrides });
+
+  const paidInvoice = {
+    id: 'in_paid',
+    status: 'paid',
+    parent: { subscription_details: { subscription: 'sub_123' } },
+  };
+  const openInvoice = { ...paidInvoice, id: 'in_open', status: 'open' };
+
+  /*
+   * The defect this rail would otherwise ship with: an unpaid invoice exists,
+   * the provider says `active`, and a naive mapping opens the plan.
+   */
+  it.each([
+    'customer.subscription.created',
+    'customer.subscription.updated',
+    'checkout.session.completed',
+  ])('asserts nothing from %s, however active the provider says it is', (type) => {
+    const normalized = normalizeStripeEvent(event(type, promptPay()), promptPay());
+    expect(normalized.state).toBeNull();
+    // The rail is still reported, so the record can say which one it is.
+    expect(normalized.collectionMethod).toBe('send_invoice');
+  });
+
+  it('opens the paid period when an invoice is paid', () => {
+    const normalized = normalizeStripeEvent(event('invoice.paid', paidInvoice), promptPay());
+    expect(normalized.state?.status).toBe('active');
+    expect(normalized.state?.currentPeriodEnd).toBe(new Date(PERIOD_END * 1000).toISOString());
+    expect(normalized.paymentStatus).toBe('succeeded');
+  });
+
+  /*
+   * The event name says a payment succeeded; the invoice is what decides.
+   */
+  it('refuses to open a period when the invoice does not say paid', () => {
+    for (const status of ['open', 'draft', 'void', 'uncollectible']) {
+      const normalized = normalizeStripeEvent(
+        event('invoice.paid', { ...openInvoice, status }),
+        promptPay(),
+      );
+      expect(normalized.state, status).toBeNull();
+    }
+  });
+
+  /*
+   * A failed payment and a cancellation may say what state the subscription is
+   * in, but neither may move the period: the paid lease has to run out on its
+   * own rather than being extended by an invoice nobody paid.
+   */
+  it('never lets a failure or a cancellation carry a period', () => {
+    const failed = normalizeStripeEvent(event('invoice.payment_failed', openInvoice), promptPay());
+    expect(failed.state?.status).toBe('past_due');
+    expect(failed.state?.currentPeriodStart).toBeNull();
+    expect(failed.state?.currentPeriodEnd).toBeNull();
+
+    const canceled = promptPay({ status: 'canceled' });
+    const ended = normalizeStripeEvent(event('customer.subscription.deleted', canceled), canceled);
+    expect(ended.state?.status).toBe('canceled');
+    expect(ended.state?.currentPeriodEnd).toBeNull();
+  });
+
+  /*
+   * The card rail must be untouched by all of the above — it is billed before
+   * the period it grants, so its own events are already evidence of payment.
+   */
+  it('leaves the card rail asserting state from its own events', () => {
+    const card = subscription();
+    const normalized = normalizeStripeEvent(event('customer.subscription.updated', card), card);
+    expect(normalized.state?.status).toBe('active');
+    expect(normalized.state?.currentPeriodEnd).toBe(new Date(PERIOD_END * 1000).toISOString());
+    expect(normalized.collectionMethod).toBe('charge_automatically');
+  });
+
+  /*
+   * A subscription whose rail we cannot read is treated as the card one, because
+   * that is the branch that changes nothing — the gate is a restriction, and it
+   * only applies where the provider positively said `send_invoice`.
+   */
+  it('treats an unreadable collection method as the ordinary rail', () => {
+    const unknown = subscription({ collectionMethod: 'something_new' });
+    const normalized = normalizeStripeEvent(event('customer.subscription.updated', unknown), unknown);
+    expect(normalized.collectionMethod).toBeNull();
+    expect(normalized.state?.status).toBe('active');
+  });
+
+  /*
+   * An invoice that will never be paid. It changes no entitlement — there was
+   * none — but it settles whether a purchase is still in flight.
+   */
+  it('recognises an invoice closed without payment, and grants nothing from it', () => {
+    for (const type of ['invoice.voided', 'invoice.marked_uncollectible']) {
+      expect(classifyStripeEvent(type), type).toBe('invoice_closed');
+      const normalized = normalizeStripeEvent(event(type, openInvoice), promptPay());
+      expect(normalized.state, type).toBeNull();
+      expect(normalized.paymentStatus, type).toBeNull();
+      // Still matched to the subscription and invoice, so the pending row can be
+      // found and closed.
+      expect(normalized.subscriptionId, type).toBe('sub_123');
+      expect(normalized.invoiceId, type).toBe('in_open');
+    }
   });
 });
