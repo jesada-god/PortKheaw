@@ -1,4 +1,16 @@
-export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile'] as const;
+/**
+ * `/admin` is here for the cheap half of the guard only — it bounces a
+ * signed-out visitor to the sign-in form instead of rendering a shell they
+ * cannot use. The real boundary is `requireAdmin()` inside the admin layout and
+ * the `is_platform_admin` check inside every operator routine, both of which
+ * read the *stored* role from the database. Middleware never decides who is an
+ * operator.
+ *
+ * `/support` is deliberately absent: the FAQ and the direct contact channels
+ * must stay readable by somebody who cannot sign in, which is exactly the reader
+ * most likely to need them.
+ */
+export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/admin'] as const;
 
 /**
  * Sending someone back to a page that starts an authentication attempt is how

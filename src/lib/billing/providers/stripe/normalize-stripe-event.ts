@@ -18,6 +18,11 @@
  */
 
 import type Stripe from 'stripe';
+import type {
+  BillingDisputeOutcome,
+  BillingRefundKind,
+  NormalizedRefundEvent,
+} from '../../billing-refunds';
 import {
   BILLING_METADATA_PLAN_KEY,
   BILLING_METADATA_PROVIDER_MODE,
@@ -29,6 +34,7 @@ import {
   type BillingEventKind,
   type BillingPaymentStatus,
   type NormalizedBillingEvent,
+  type NormalizedInvoiceRecord,
   type NormalizedSubscriptionState,
 } from '../../billing-events';
 import {
@@ -207,6 +213,84 @@ export function subscriptionIdFromEvent(event: Stripe.Event): string | null {
   }
 }
 
+/**
+ * Which Stripe events describe money going back.
+ *
+ * Kept apart from `classifyStripeEvent` on purpose. Those events are `ignored`
+ * for the *subscription* path and must stay that way: neither a refund nor a
+ * dispute ends a Stripe subscription, so letting them reach the routine that
+ * writes tier and period would be asserting a state the provider never asserted.
+ * They travel their own path, into their own ledger, with their own idempotency.
+ */
+export function classifyStripeRefundEvent(type: string): BillingRefundKind | null {
+  switch (type) {
+    // Fires for a partial refund as well as a full one, which is exactly why
+    // "full" is decided by comparing amounts rather than by reading this name.
+    case 'charge.refunded':
+      return 'refund';
+    case 'charge.dispute.created':
+      return 'dispute_opened';
+    case 'charge.dispute.closed':
+      return 'dispute_closed';
+    default:
+      return null;
+  }
+}
+
+/**
+ * How a dispute ended.
+ *
+ * The warning states — `warning_needs_response`, `warning_under_review`,
+ * `warning_closed` — are notifications about a charge the bank is asking about,
+ * not a dispute that has been decided, so they map to `other` and change
+ * nothing. `needs_response` and `under_review` on a *closed* event are likewise
+ * not outcomes.
+ */
+export function mapStripeDisputeOutcome(status: string | null | undefined): BillingDisputeOutcome | null {
+  if (!status) return null;
+  if (status === 'won') return 'won';
+  if (status === 'lost') return 'lost';
+  return 'other';
+}
+
+/** The invoice this ledger row is about, as the provider currently states it. */
+export function normalizeStripeInvoice(invoice: Stripe.Invoice): NormalizedInvoiceRecord | null {
+  if (!invoice.id) return null;
+  // Stripe's status union stays open to values added later, so the allowlist is
+  // an explicit membership test: `draft` and anything unrecognised describe an
+  // invoice that has not been issued, and there is nothing to reconcile there.
+  const recordable = ['open', 'paid', 'void', 'uncollectible'] as const;
+  const status = recordable.find((candidate) => candidate === invoice.status);
+  if (!status) return null;
+
+  /*
+   * The period a subscription invoice *covers* lives on its line item; the
+   * invoice's own `period_start`/`period_end` describe when the invoice was
+   * assembled and can be a single instant on a renewal. Reconciliation compares
+   * this period against the stored one, so reading the wrong pair would
+   * manufacture a mismatch on every account.
+   */
+  const line = invoice.lines?.data?.[0];
+  const linePeriod = line?.period ?? null;
+
+  return {
+    invoiceId: invoice.id,
+    status,
+    amountDueMinor: typeof invoice.amount_due === 'number' ? invoice.amount_due : 0,
+    amountPaidMinor: typeof invoice.amount_paid === 'number' ? invoice.amount_paid : 0,
+    currency: (invoice.currency ?? 'thb').toLowerCase(),
+    periodStart: isoFromUnix(linePeriod?.start) ?? isoFromUnix(invoice.period_start),
+    periodEnd: isoFromUnix(linePeriod?.end) ?? isoFromUnix(invoice.period_end),
+    issuedAt: isoFromUnix(invoice.created),
+    paidAt: isoFromUnix(invoice.status_transitions?.paid_at),
+  };
+}
+
+function invoiceRecordFromEvent(event: Stripe.Event): NormalizedInvoiceRecord | null {
+  if (!INVOICE_KINDS.has(classifyStripeEvent(event.type))) return null;
+  return normalizeStripeInvoice(event.data.object as Stripe.Invoice);
+}
+
 function paymentStatusFor(kind: BillingEventKind): BillingPaymentStatus | null {
   if (kind === 'payment_succeeded') return 'succeeded';
   if (kind === 'payment_failed') return 'failed';
@@ -256,9 +340,72 @@ const TERMINAL_STATUSES = new Set(['canceled', 'expired']);
  * own current view — rather than whatever was embedded in the event payload,
  * which may be a stale snapshot by the time a retry is delivered.
  */
+/**
+ * The parts of a refund or dispute that only a provider lookup can supply.
+ *
+ * A dispute names a charge, a charge names an invoice, and an invoice names a
+ * subscription — three hops, none of which is in the event body. The adapter
+ * walks them and hands the result here so this file stays pure.
+ */
+export interface StripeRefundLinkage {
+  chargeId: string | null;
+  invoiceId: string | null;
+  subscriptionId: string | null;
+  /** What the charge was for, so a partial refund can be told from a full one. */
+  chargeAmountMinor: number | null;
+}
+
+/**
+ * A refund or dispute, in our vocabulary.
+ *
+ * Returns `null` for an event type this build does not treat as money going
+ * back, so a caller cannot accidentally route an ordinary event down this path.
+ */
+export function normalizeStripeRefundEvent(
+  event: Stripe.Event,
+  linkage: StripeRefundLinkage,
+): NormalizedRefundEvent | null {
+  const kind = classifyStripeRefundEvent(event.type);
+  if (!kind) return null;
+
+  const occurredAt = isoFromUnix(event.created) ?? new Date(0).toISOString();
+
+  if (kind === 'refund') {
+    const charge = event.data.object as Stripe.Charge;
+    return {
+      kind,
+      chargeId: linkage.chargeId ?? charge.id ?? null,
+      invoiceId: linkage.invoiceId,
+      subscriptionId: linkage.subscriptionId,
+      // `amount_refunded` is cumulative, which is the number that matters: two
+      // partial refunds that add up to the charge are a full refund.
+      amountMinor: typeof charge.amount_refunded === 'number' ? charge.amount_refunded : 0,
+      chargeAmountMinor: linkage.chargeAmountMinor
+        ?? (typeof charge.amount === 'number' ? charge.amount : null),
+      currency: (charge.currency ?? 'thb').toLowerCase(),
+      disputeOutcome: null,
+      occurredAt,
+    };
+  }
+
+  const dispute = event.data.object as Stripe.Dispute;
+  return {
+    kind,
+    chargeId: linkage.chargeId ?? idOf(dispute.charge),
+    invoiceId: linkage.invoiceId,
+    subscriptionId: linkage.subscriptionId,
+    amountMinor: typeof dispute.amount === 'number' ? dispute.amount : 0,
+    chargeAmountMinor: linkage.chargeAmountMinor,
+    currency: (dispute.currency ?? 'thb').toLowerCase(),
+    disputeOutcome: mapStripeDisputeOutcome(dispute.status),
+    occurredAt,
+  };
+}
+
 export function normalizeStripeEvent(
   event: Stripe.Event,
   subscription: Stripe.Subscription | null,
+  refund: NormalizedRefundEvent | null = null,
 ): NormalizedBillingEvent {
   const kind = classifyStripeEvent(event.type);
   const normalized = subscription ? normalizeStripeSubscription(subscription) : null;
@@ -286,13 +433,18 @@ export function normalizeStripeEvent(
     occurredAt: isoFromUnix(event.created) ?? new Date(0).toISOString(),
     userId: normalized?.userId ?? checkoutUserId(event),
     customerId: normalized?.customerId ?? checkoutCustomerId(event),
-    subscriptionId: normalized?.subscriptionId ?? subscriptionIdFromEvent(event),
+    subscriptionId: normalized?.subscriptionId
+      ?? subscriptionIdFromEvent(event)
+      ?? refund?.subscriptionId
+      ?? null,
     planKey: normalized?.planKey ?? null,
     priceId: normalized?.priceId ?? null,
-    invoiceId: invoiceIdFromEvent(event),
+    invoiceId: invoiceIdFromEvent(event) ?? refund?.invoiceId ?? null,
     paymentStatus: paymentStatusFor(kind),
     collectionMethod: normalized?.collectionMethod ?? null,
     state: kind === 'ignored' ? null : state,
+    invoice: invoiceRecordFromEvent(event),
+    refund,
   };
 }
 

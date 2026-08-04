@@ -143,6 +143,8 @@ describe('entitlement consequence', () => {
         currentPeriodEnd: FUTURE,
         cancelAtPeriodEnd: false,
       },
+      invoice: null,
+      refund: null,
       ...overrides,
     };
   }

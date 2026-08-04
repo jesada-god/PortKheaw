@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import Header from '@/src/components/layout/Header';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
+import { LegalFooterLinks } from '@/src/components/legal/LegalFooterLinks';
+import { BillingHistoryCard } from '@/src/components/refunds/BillingHistoryCard';
+import { listMyBillingInvoices } from '@/src/lib/support/refund-repository';
 import { AdminAccessCard } from '@/src/components/subscription/AdminAccessCard';
 import { CurrentPlanHero } from '@/src/components/subscription/CurrentPlanHero';
 import { ManageSubscriptionCard } from '@/src/components/subscription/ManageSubscriptionCard';
@@ -172,7 +175,14 @@ export default async function SubscriptionPage() {
           hasOpenInvoice={hasOpenInvoice}
         />
         <PlanComparison />
+        {/*
+         * Purchases, and the way into a refund request. Read through the
+         * reader's own session with the sanitized projection, so the card can
+         * show what was paid without a provider identifier reaching the browser.
+         */}
+        <BillingHistoryCard invoices={await listMyBillingInvoices(supabase)} />
         <SubscriptionFaq billingEnabled={billingAvailability.enabled} />
+        <LegalFooterLinks />
       </main>
     </div>
   );

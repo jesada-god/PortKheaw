@@ -9,6 +9,7 @@ import { Select } from '@/src/components/ui/Select';
 import { createClient } from '@/src/lib/supabase/server';
 import { saveSettingsAction } from './actions';
 import { DevicePreferences } from '@/src/components/settings/DevicePreferences';
+import { LegalFooterLinks } from '@/src/components/legal/LegalFooterLinks';
 import { NotificationPreferences } from '@/src/components/settings/NotificationPreferences';
 import { ThemeControls } from '@/src/themes/ThemeControls';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
@@ -124,6 +125,10 @@ export default async function SettingsPage({ searchParams }: {
         quietHoursEnd: settings.quiet_hours_end.slice(0, 5),
         timezone: settings.timezone as 'Asia/Bangkok' | 'UTC' | 'America/New_York' | 'Europe/London',
       }} />
+
+      {/* The policy links live at the foot of Settings, where a reader looking
+          for "the boring pages" already goes. */}
+      <LegalFooterLinks />
     </main>
   </div>;
 }

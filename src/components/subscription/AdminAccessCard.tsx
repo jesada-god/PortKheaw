@@ -1,4 +1,5 @@
-import { ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
+import { ShieldCheck, Wrench } from 'lucide-react';
 import { resolveAccountBadges } from '@/src/lib/subscription/account-badges';
 import { resolveAccountPlanSummary } from '@/src/lib/subscription/account-plan-summary';
 import type { RequestAccountAccess } from '@/src/lib/subscription/account-access';
@@ -58,6 +59,17 @@ export function AdminAccessCard({ access, name }: { access: RequestAccountAccess
       </div>
 
       <AdminPreviewSelector currentMode={access.adminPreviewMode} expiresAt={access.previewExpiresAt} />
+
+      {/* The way into the operator console. It lives here rather than in the
+          dock because it is not a destination for readers, and the dock's five
+          slots belong to the product. */}
+      <Link
+        href="/admin"
+        className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+      >
+        <Wrench aria-hidden="true" size={16} />
+        เปิดศูนย์ปฏิบัติการ
+      </Link>
     </section>
   );
 }

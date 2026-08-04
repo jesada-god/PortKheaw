@@ -23,6 +23,40 @@ export type BillingPendingPaymentStatus =
 export type BillingWebhookStatus =
   'received' | 'applied' | 'ignored' | 'stale' | 'duplicate' | 'failed';
 
+/* ---------------------------------------------------------------------------
+ * Phase 5 — billing operations, support and trust.
+ * ------------------------------------------------------------------------ */
+
+/** Why paid access was withdrawn. Only these two ever revoke; nothing else does. */
+export type AccessRevocationReason = 'refund' | 'dispute';
+export type BillingInvoiceStatus =
+  'open' | 'paid' | 'void' | 'uncollectible' | 'refunded' | 'partially_refunded' | 'disputed';
+export type BillingRefundEventKind = 'refund' | 'dispute_opened' | 'dispute_closed';
+/** What a refund or dispute does to entitlement. Decided by a pure classifier. */
+export type BillingRefundEntitlementAction = 'revoke' | 'suspend' | 'restore' | 'record_only';
+export type BillingWebhookRetryStatus = 'retrying' | 'dead_letter' | 'resolved';
+export type BillingReconciliationIssueType =
+  | 'paid_invoice_without_active_tier'
+  | 'active_tier_without_confirmed_payment'
+  | 'tier_period_mismatch'
+  | 'orphan_customer'
+  | 'orphan_subscription'
+  | 'revoked_access_still_active'
+  | 'dead_letter_event';
+export type BillingReconciliationSeverity = 'info' | 'warning' | 'critical';
+export type SupportTicketCategory =
+  'billing' | 'subscription' | 'portfolio' | 'market_data' | 'technical' | 'suggestion' | 'other';
+export type SupportTicketStatus =
+  'open' | 'in_progress' | 'waiting_user' | 'resolved' | 'closed';
+export type RefundRequestStatus =
+  'pending' | 'reviewing' | 'approved' | 'rejected' | 'refunded' | 'canceled';
+export type RefundRequestReason =
+  'duplicate_charge' | 'not_as_expected' | 'accidental_purchase' | 'technical_issue' | 'other';
+export type SupportAuthorRole = 'user' | 'admin' | 'system';
+/** The only image types an attachment may be. Nothing executable is storable. */
+export type SupportAttachmentMimeType =
+  'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+
 export interface Database {
   public: {
     Tables: {
@@ -216,6 +250,15 @@ export interface Database {
           latest_payment_at: string | null;
           provider_event_at: string | null;
           provider_event_id: string | null;
+          /**
+           * Phase 5. Set when a provider-confirmed full refund or a chargeback
+           * ended paid access. The billing evidence beside it is untouched;
+           * these three columns say why the status moved and, for a reversible
+           * dispute suspension, what to move it back to.
+           */
+          access_revoked_at: string | null;
+          access_revoked_reason: AccessRevocationReason | null;
+          access_revoked_restore_status: SubscriptionStatus | null;
           created_at: string;
           updated_at: string;
         };
@@ -330,6 +373,235 @@ export interface Database {
           due_at: string | null;
           created_at: string;
           updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /**
+       * Phase 5. What the provider actually billed and collected, written only
+       * by the webhook. Holds no card detail of any kind — the rail is a type,
+       * read from `user_subscriptions.billing_collection_method`.
+       *
+       * No grant to `anon` or `authenticated`: a reader reaches their own
+       * purchases through `list_my_billing_invoices()`, which returns our uuid
+       * and never the provider's invoice identifier.
+       */
+      billing_invoices: {
+        Row: {
+          id: string;
+          user_id: string;
+          provider: BillingProvider;
+          provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          invoice_id: string;
+          subscription_id: string | null;
+          plan_key: BillingPlanKey | null;
+          status: BillingInvoiceStatus;
+          amount_due_minor: number;
+          amount_paid_minor: number;
+          amount_refunded_minor: number;
+          currency: string;
+          period_start: string | null;
+          period_end: string | null;
+          issued_at: string | null;
+          paid_at: string | null;
+          refunded_at: string | null;
+          disputed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** Phase 5. Provider-confirmed refunds, disputes and their resolutions. */
+      billing_refund_events: {
+        Row: {
+          id: string;
+          provider: BillingProvider;
+          provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          provider_event_id: string;
+          event_type: string;
+          kind: BillingRefundEventKind;
+          entitlement_action: BillingRefundEntitlementAction;
+          outcome: string;
+          entitlement_changed: boolean;
+          user_id: string | null;
+          subscription_id: string | null;
+          invoice_id: string | null;
+          charge_id: string | null;
+          amount_minor: number;
+          charge_amount_minor: number | null;
+          currency: string;
+          is_full: boolean;
+          dispute_outcome: string | null;
+          occurred_at: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** Phase 5. Failed deliveries, their bounded attempts and the dead letter. */
+      billing_webhook_retries: {
+        Row: {
+          id: string;
+          provider: BillingProvider;
+          provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          provider_event_id: string;
+          event_type: string;
+          user_id: string | null;
+          attempt_count: number;
+          status: BillingWebhookRetryStatus;
+          last_error_code: string | null;
+          first_failed_at: string;
+          last_failed_at: string;
+          next_attempt_at: string | null;
+          dead_lettered_at: string | null;
+          resolved_at: string | null;
+          alerted_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      billing_reconciliation_runs: {
+        Row: {
+          id: string;
+          local_date: string;
+          provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          status: 'running' | 'completed' | 'failed';
+          checked_count: number;
+          issue_count: number;
+          started_at: string;
+          completed_at: string | null;
+          error_code: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** Phase 5. One row per distinct disagreement, re-stamped rather than duplicated. */
+      billing_reconciliation_issues: {
+        Row: {
+          id: string;
+          dedupe_key: string;
+          issue_type: BillingReconciliationIssueType;
+          severity: BillingReconciliationSeverity;
+          user_id: string | null;
+          provider_mode: string | null;
+          detail: Json;
+          occurrences: number;
+          first_seen_at: string;
+          last_seen_at: string;
+          last_run_id: string | null;
+          resolved_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /**
+       * Phase 5. A reader supplies category, subject and description; the
+       * routine supplies everything else. `authenticated` holds SELECT on their
+       * own rows and no write privilege at all, so a client cannot set its own
+       * status or forge the tier it was on.
+       */
+      support_tickets: {
+        Row: {
+          id: string;
+          reference: string;
+          user_id: string;
+          category: SupportTicketCategory;
+          subject: string;
+          description: string;
+          status: SupportTicketStatus;
+          tier_snapshot: SubscriptionTier;
+          status_changed_at: string;
+          last_user_reply_at: string | null;
+          last_admin_reply_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** Phase 5. Filing one moves no money and withdraws no access. */
+      refund_requests: {
+        Row: {
+          id: string;
+          reference: string;
+          user_id: string;
+          invoice_ref: string | null;
+          status: RefundRequestStatus;
+          reason_category: RefundRequestReason;
+          details: string;
+          amount_minor: number | null;
+          currency: string | null;
+          tier_snapshot: SubscriptionTier;
+          status_changed_at: string;
+          decided_at: string | null;
+          decided_by: string | null;
+          refunded_at: string | null;
+          refund_event_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /**
+       * Phase 5. Tickets and refund requests share one thread. `is_internal`
+       * marks the operator's private margin, and the reading policy hides those
+       * rows from everybody who is not an administrator.
+       */
+      support_thread_messages: {
+        Row: {
+          id: string;
+          ticket_id: string | null;
+          refund_request_id: string | null;
+          author_user_id: string | null;
+          author_role: SupportAuthorRole;
+          body: string;
+          is_internal: boolean;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      support_attachments: {
+        Row: {
+          id: string;
+          ticket_id: string | null;
+          refund_request_id: string | null;
+          message_id: string | null;
+          uploaded_by: string | null;
+          storage_bucket: string;
+          storage_path: string;
+          mime_type: SupportAttachmentMimeType;
+          size_bytes: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** Phase 5. Append-only; a trigger refuses every UPDATE and DELETE. */
+      support_audit_events: {
+        Row: {
+          id: number;
+          ticket_id: string | null;
+          refund_request_id: string | null;
+          actor_user_id: string | null;
+          actor_role: SupportAuthorRole;
+          action: string;
+          from_status: string | null;
+          to_status: string | null;
+          detail: Json;
+          created_at: string;
         };
         Insert: never;
         Update: never;
@@ -646,7 +918,13 @@ export interface Database {
             | 'applied' | 'duplicate' | 'ignored' | 'stale'
             | 'unknown_user' | 'identity_incomplete'
             | 'customer_mismatch' | 'subscription_mismatch'
-            | 'provider_mode_downgrade';
+            | 'provider_mode_downgrade'
+            /**
+             * Phase 5. A revocation is recorded against this subscription, and
+             * this event would have asserted a granting status without money
+             * behind it. Understood, recorded, and deliberately without effect.
+             */
+            | 'revoked_hold';
           applied_user_id: string | null;
         }>;
       };
@@ -697,6 +975,310 @@ export interface Database {
           input_subscription_id: string;
         };
         Returns: boolean;
+      };
+      /* --- Phase 5: billing operations (service role only) ----------------- */
+      /** Upsert of what the provider billed. Never walks a refund back to paid. */
+      record_billing_invoice: {
+        Args: {
+          input_user_id: string;
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_invoice_id: string;
+          input_subscription_id: string | null;
+          input_plan_key: BillingPlanKey | null;
+          input_status: 'open' | 'paid' | 'void' | 'uncollectible';
+          input_amount_due_minor: number;
+          input_amount_paid_minor: number;
+          input_currency: string;
+          input_period_start: string | null;
+          input_period_end: string | null;
+          input_issued_at: string | null;
+          input_paid_at: string | null;
+        };
+        Returns: 'recorded' | 'ignored' | 'unknown_user';
+      };
+      /**
+       * The one path a refund or a chargeback takes into entitlement.
+       * Idempotent on the provider's event id, and constrained to the four
+       * actions the pure classifier can produce.
+       */
+      apply_billing_refund_event: {
+        Args: {
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_event_id: string;
+          input_event_type: string;
+          input_kind: BillingRefundEventKind;
+          input_action: BillingRefundEntitlementAction;
+          input_occurred_at: string;
+          input_user_id: string | null;
+          input_subscription_id: string | null;
+          input_invoice_id: string | null;
+          input_charge_id: string | null;
+          input_amount_minor: number;
+          input_charge_amount_minor: number | null;
+          input_currency: string;
+          input_is_full: boolean;
+          input_dispute_outcome: string | null;
+        };
+        Returns: Array<{
+          outcome:
+            | 'recorded' | 'duplicate' | 'unknown_user' | 'subscription_mismatch'
+            | 'revoked' | 'suspended' | 'restored'
+            | 'no_active_entitlement' | 'not_restorable';
+          entitlement_changed: boolean;
+          refund_event_id: string | null;
+        }>;
+      };
+      /** Records one failed delivery and reports whether it has run out of attempts. */
+      record_billing_webhook_attempt: {
+        Args: {
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_event_id: string;
+          input_event_type: string;
+          input_user_id: string | null;
+          input_error_code: string | null;
+          input_backoff_seconds: number;
+          input_max_attempts: number;
+        };
+        Returns: Array<{
+          attempt_count: number;
+          status: BillingWebhookRetryStatus;
+          next_attempt_at: string | null;
+          newly_dead_lettered: boolean;
+        }>;
+      };
+      resolve_billing_webhook_retry: {
+        Args: {
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_event_id: string;
+        };
+        Returns: boolean;
+      };
+      mark_billing_webhook_alerted: {
+        Args: {
+          input_provider: BillingProvider;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+          input_event_id: string;
+        };
+        Returns: boolean;
+      };
+      start_billing_reconciliation_run: {
+        Args: {
+          input_local_date: string;
+          input_provider_mode: Exclude<BillingProviderMode, 'legacy_unknown'>;
+        };
+        Returns: Array<{ run_id: string; outcome: 'started' | 'resumed' | 'already_ran' }>;
+      };
+      record_billing_reconciliation_issue: {
+        Args: {
+          input_run_id: string;
+          input_dedupe_key: string;
+          input_issue_type: BillingReconciliationIssueType;
+          input_severity: BillingReconciliationSeverity;
+          input_user_id: string | null;
+          input_provider_mode: string | null;
+          input_detail: Json;
+        };
+        Returns: 'recorded' | 'updated';
+      };
+      complete_billing_reconciliation_run: {
+        Args: {
+          input_run_id: string;
+          input_checked: number;
+          input_issue_count: number;
+          input_status: 'completed' | 'failed';
+          input_error_code: string | null;
+        };
+        Returns: number;
+      };
+      record_support_attachment: {
+        Args: {
+          input_ticket_id: string | null;
+          input_refund_request_id: string | null;
+          input_uploaded_by: string;
+          input_storage_bucket: string;
+          input_storage_path: string;
+          input_mime_type: SupportAttachmentMimeType;
+          input_size_bytes: number;
+        };
+        Returns: Array<{
+          attachment_id: string | null;
+          outcome: 'recorded' | 'invalid_subject' | 'invalid_file' | 'not_found';
+        }>;
+      };
+      /* --- Phase 5: what a reader may do ----------------------------------- */
+      create_support_ticket: {
+        Args: {
+          input_category: SupportTicketCategory;
+          input_subject: string;
+          input_description: string;
+        };
+        Returns: Array<{
+          ticket_id: string | null;
+          reference: string | null;
+          outcome: 'created' | 'invalid_category' | 'invalid_content' | 'too_soon' | 'rate_limited';
+        }>;
+      };
+      reply_to_my_support_ticket: {
+        Args: { input_ticket_id: string; input_body: string };
+        Returns: Array<{
+          message_id: string | null;
+          outcome: 'replied' | 'invalid_content' | 'not_found' | 'closed' | 'too_soon' | 'rate_limited';
+        }>;
+      };
+      /**
+       * The reader's own purchases, by our uuid. No provider identifier is in
+       * the projection, which is what makes "choose a purchase" safe to ask a
+       * browser: the answer means nothing anywhere but this account's own rows.
+       */
+      list_my_billing_invoices: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          invoice_ref: string;
+          plan_key: BillingPlanKey | null;
+          status: BillingInvoiceStatus;
+          amount_paid_minor: number;
+          amount_refunded_minor: number;
+          currency: string;
+          period_start: string | null;
+          period_end: string | null;
+          issued_at: string | null;
+          paid_at: string | null;
+          refund_request_status: RefundRequestStatus | null;
+          database_now: string;
+        }>;
+      };
+      create_refund_request: {
+        Args: {
+          input_invoice_ref: string;
+          input_reason_category: RefundRequestReason;
+          input_details: string;
+        };
+        Returns: Array<{
+          request_id: string | null;
+          reference: string | null;
+          outcome:
+            | 'created' | 'invalid_reason' | 'invalid_content' | 'not_found'
+            | 'not_refundable' | 'already_open' | 'already_refunded' | 'rate_limited';
+        }>;
+      };
+      cancel_my_refund_request: {
+        Args: { input_request_id: string };
+        Returns: 'canceled' | 'not_found' | 'not_cancelable';
+      };
+      reply_to_my_refund_request: {
+        Args: { input_request_id: string; input_body: string };
+        Returns: Array<{
+          message_id: string | null;
+          outcome: 'replied' | 'invalid_content' | 'not_found' | 'closed' | 'too_soon';
+        }>;
+      };
+      /* --- Phase 5: what an operator may do -------------------------------- */
+      is_platform_admin: {
+        Args: { input_user_id: string };
+        Returns: boolean;
+      };
+      admin_reply_support_ticket: {
+        Args: { input_ticket_id: string; input_body: string; input_internal: boolean };
+        Returns: Array<{
+          message_id: string | null;
+          outcome: 'replied' | 'noted' | 'invalid_content' | 'not_found';
+        }>;
+      };
+      admin_set_support_ticket_status: {
+        Args: { input_ticket_id: string; input_status: SupportTicketStatus };
+        Returns: 'updated' | 'unchanged' | 'invalid_status' | 'not_found';
+      };
+      admin_reply_refund_request: {
+        Args: { input_request_id: string; input_body: string; input_internal: boolean };
+        Returns: Array<{
+          message_id: string | null;
+          outcome: 'replied' | 'noted' | 'invalid_content' | 'not_found';
+        }>;
+      };
+      /**
+       * Nothing reaches `refunded` here without a completion reference: approval
+       * is a decision, and a claim that money moved has to name its evidence.
+       */
+      admin_set_refund_request_status: {
+        Args: {
+          input_request_id: string;
+          input_status: Extract<RefundRequestStatus, 'reviewing' | 'approved' | 'rejected' | 'refunded'>;
+          input_completion_reference: string | null;
+        };
+        Returns:
+          | 'updated' | 'unchanged' | 'invalid_status' | 'not_found'
+          | 'invalid_transition' | 'confirmation_required';
+      };
+      admin_search_accounts: {
+        Args: { input_query: string; input_limit: number };
+        Returns: Array<{
+          user_id: string;
+          email: string | null;
+          full_name: string | null;
+          role: UserRole;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          effective_tier: SubscriptionTier;
+          billing_plan_key: BillingPlanKey | null;
+          billing_interval: BillingInterval | null;
+          billing_provider_mode: BillingProviderMode | null;
+          billing_collection_method: BillingCollectionMethod | null;
+          current_period_end: string | null;
+          cancel_at_period_end: boolean;
+          access_revoked_at: string | null;
+          access_revoked_reason: AccessRevocationReason | null;
+          open_ticket_count: number;
+          open_refund_count: number;
+          database_now: string;
+        }>;
+      };
+      admin_account_invoices: {
+        Args: { input_user_id: string };
+        Returns: Array<{
+          invoice_ref: string;
+          plan_key: BillingPlanKey | null;
+          status: BillingInvoiceStatus;
+          amount_due_minor: number;
+          amount_paid_minor: number;
+          amount_refunded_minor: number;
+          currency: string;
+          period_start: string | null;
+          period_end: string | null;
+          issued_at: string | null;
+          paid_at: string | null;
+          refunded_at: string | null;
+          disputed_at: string | null;
+        }>;
+      };
+      admin_account_webhook_history: {
+        Args: { input_user_id: string };
+        Returns: Array<{
+          event_type: string;
+          status: BillingWebhookStatus;
+          provider_mode: BillingProviderMode;
+          error_code: string | null;
+          occurred_at: string | null;
+          received_at: string;
+          processed_at: string | null;
+        }>;
+      };
+      admin_open_billing_issues: {
+        Args: { input_user_id: string | null; input_limit: number };
+        Returns: Array<{
+          issue_id: string;
+          issue_type: BillingReconciliationIssueType;
+          severity: BillingReconciliationSeverity;
+          user_id: string | null;
+          provider_mode: string | null;
+          detail: Json;
+          occurrences: number;
+          first_seen_at: string;
+          last_seen_at: string;
+        }>;
       };
       /**
        * Takes no arguments on purpose: identity, clock and current subscription

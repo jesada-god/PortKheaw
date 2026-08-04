@@ -1,0 +1,634 @@
+/**
+ * The trust surface, as data.
+ *
+ * Every legal and policy page is described here rather than written as JSX, for
+ * three reasons that all turned out to matter:
+ *
+ *   * **Prices are read, never typed.** The plan table below is generated from
+ *     `billingPlans`, which is the same catalogue the checkout uses. A price can
+ *     therefore never be right on the plan cards and stale on the terms page —
+ *     the failure mode that turns a pricing change into a consumer-protection
+ *     problem.
+ *   * **The claims are testable.** A contract test asserts that the copy states
+ *     the Founder rule, the two renewal behaviours and the not-a-broker
+ *     disclaimer, so none of them can be edited away by accident.
+ *   * **Six pages, one layout.** The renderer is written once and every document
+ *     gets the same heading structure, the same reading width and the same
+ *     behaviour at 320px.
+ *
+ * What this file deliberately does not do is invent a guarantee. There is no
+ * uptime promise, no accuracy warranty, no "we will always refund within N
+ * days", and no claim about regulatory status. Where the honest answer is "this
+ * is decided case by case", the copy says so.
+ */
+
+import { billingPlanKeys, billingPlans, formatBillingBaht } from '@/src/lib/billing/billing-plans';
+
+/** The two channels a reader who cannot sign in can still reach us on. */
+export const SUPPORT_CONTACTS = {
+  facebook: { label: 'Facebook', value: 'Jesada Tawinteung' },
+  line: { label: 'LINE', value: '0620843259' },
+} as const;
+
+export type LegalBlock =
+  | { kind: 'paragraph'; text: string }
+  | { kind: 'list'; items: readonly string[] }
+  /** A definition-style row: a short label and the sentence that explains it. */
+  | { kind: 'definitions'; items: readonly { term: string; description: string }[] }
+  | { kind: 'table'; columns: readonly string[]; rows: readonly (readonly string[])[] }
+  /** Set apart visually. Used for the things a reader must not miss. */
+  | { kind: 'callout'; tone: 'info' | 'warning'; text: string };
+
+export interface LegalSection {
+  heading: string;
+  blocks: readonly LegalBlock[];
+}
+
+export interface LegalDocument {
+  slug: LegalDocumentSlug;
+  /** The route this document is served from. */
+  href: string;
+  title: string;
+  subtitle: string;
+  /** Shown under the title. A date, not a version number readers cannot use. */
+  effectiveDate: string;
+  intro: string;
+  sections: readonly LegalSection[];
+}
+
+export const legalDocumentSlugs = [
+  'terms',
+  'privacy',
+  'refund-policy',
+  'subscription-policy',
+  'investment-disclaimer',
+] as const;
+export type LegalDocumentSlug = typeof legalDocumentSlugs[number];
+
+/**
+ * The day this wording took effect. One constant, so the six pages cannot drift
+ * apart and claim different vintages of the same policy.
+ */
+const EFFECTIVE_DATE = '5 สิงหาคม 2569';
+
+const PRODUCT = 'PortKheaw';
+
+/**
+ * The price table, built from the catalogue.
+ *
+ * A Founder row states both numbers — what the first annual invoice costs and
+ * what every one after it costs — because stating only the promotional price is
+ * exactly the omission that makes a discount misleading.
+ */
+function planRows(): readonly (readonly string[])[] {
+  return billingPlanKeys.map((key) => {
+    const plan = billingPlans[key];
+    const renewsInto = billingPlans[plan.renewsIntoKey];
+    return [
+      plan.name,
+      plan.interval === 'year' ? 'รายปี (12 เดือน)' : 'รายเดือน (1 เดือน)',
+      `${formatBillingBaht(plan.firstPeriodBaht)} บาท`,
+      plan.founder
+        ? `${formatBillingBaht(renewsInto.renewalBaht)} บาท (ราคาปกติ)`
+        : `${formatBillingBaht(plan.renewalBaht)} บาท`,
+    ];
+  });
+}
+
+/** The Founder rule, stated identically wherever it appears. */
+const FOUNDER_RULE =
+  'ส่วนลด Founder’s Club ใช้ได้กับใบแจ้งหนี้รอบแรกของแพ็กเกจรายปีที่เข้าเงื่อนไขเพียงรอบเดียวต่อหนึ่งบัญชีเท่านั้น '
+  + 'เมื่อครบรอบและมีการต่ออายุ จะคิดราคาปกติของแพ็กเกจรายปีนั้นเต็มจำนวน ไม่ใช่ราคาส่วนลดเดิม';
+
+/** The two rails, stated identically wherever they appear. */
+const RENEWAL_RULES: readonly { term: string; description: string }[] = [
+  {
+    term: 'บัตรเครดิต/เดบิต และ Apple Pay',
+    description:
+      'เป็นการชำระแบบต่ออายุอัตโนมัติ ระบบของผู้ให้บริการชำระเงินจะเรียกเก็บเงินตามรอบโดยอัตโนมัติจนกว่าคุณจะยกเลิก '
+      + 'คุณยกเลิกการต่ออายุอัตโนมัติได้ทุกเมื่อจากหน้าแพ็กเกจของคุณ',
+  },
+  {
+    term: 'PromptPay',
+    description:
+      'ไม่มีการตัดเงินอัตโนมัติ เพราะเป็นการสแกนจ่ายครั้งต่อครั้ง คุณต้องชำระใหม่ทุกครั้งที่ครบรอบ '
+      + 'สิทธิ์การใช้งานจะเปิดตามรอบที่ชำระจริงเท่านั้น และจะสิ้นสุดเองเมื่อครบรอบหากยังไม่ได้ชำระรอบถัดไป',
+  },
+];
+
+/** Downgrade keeps data. Stated in every document where a downgrade is possible. */
+const DATA_ON_DOWNGRADE =
+  'เมื่อสิทธิ์แบบชำระเงินสิ้นสุดลง ไม่ว่าจะจากการยกเลิก การหมดรอบ หรือการคืนเงิน บัญชีจะกลับไปใช้สิทธิ์ Basic '
+  + 'ข้อมูลพอร์ต รายการติดตาม การแจ้งเตือน และผลการจำลองของคุณยังคงอยู่ครบ ไม่มีการลบข้อมูลจากการลดระดับแพ็กเกจ '
+  + 'แต่ฟีเจอร์ที่จำกัดเฉพาะแพ็กเกจแบบชำระเงินจะกลับไปอยู่ในสถานะอ่านอย่างเดียวหรือถูกปิดตามสิทธิ์ Basic';
+
+/** The disclaimer, in one sentence, reused so it cannot be softened in one place. */
+const NOT_ADVICE =
+  `${PRODUCT} เป็นเครื่องมือวิเคราะห์และติดตามการลงทุน ไม่ใช่บริษัทหลักทรัพย์ ไม่ใช่นายหน้าซื้อขายหลักทรัพย์ `
+  + 'และไม่ได้ให้คำแนะนำการลงทุนที่เฉพาะเจาะจงรายบุคคล เราไม่รับฝากเงิน ไม่ส่งคำสั่งซื้อขาย และไม่บริหารเงินลงทุนแทนคุณ';
+
+const TERMS: LegalDocument = {
+  slug: 'terms',
+  href: '/terms',
+  title: 'ข้อกำหนดการใช้งาน',
+  subtitle: `เงื่อนไขการใช้บริการ ${PRODUCT}`,
+  effectiveDate: EFFECTIVE_DATE,
+  intro:
+    `เอกสารนี้อธิบายเงื่อนไขการใช้งาน ${PRODUCT} เมื่อคุณสมัครใช้งานหรือใช้บริการต่อ `
+    + 'ถือว่าคุณได้อ่านและยอมรับเงื่อนไขในหน้านี้แล้ว',
+  sections: [
+    {
+      heading: '1. บริการนี้คืออะไร',
+      blocks: [
+        { kind: 'paragraph', text: NOT_ADVICE },
+        {
+          kind: 'paragraph',
+          text:
+            `${PRODUCT} ให้บริการเครื่องมือดูข้อมูลตลาด บันทึกและติดตามพอร์ตของคุณเอง วิเคราะห์เชิงเทคนิคและปัจจัยพื้นฐาน `
+            + 'ตั้งการแจ้งเตือนราคา และจำลองสถานการณ์ของสัญญาออปชัน ทั้งหมดนี้เป็นข้อมูลประกอบการตัดสินใจของคุณเอง',
+        },
+        {
+          kind: 'callout',
+          tone: 'warning',
+          text:
+            'การตัดสินใจลงทุนทุกครั้งเป็นความรับผิดชอบของคุณเอง ผลการดำเนินงานในอดีตและผลการจำลองไม่ได้รับประกันผลตอบแทนในอนาคต',
+        },
+      ],
+    },
+    {
+      heading: '2. บัญชีผู้ใช้',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'คุณต้องให้ข้อมูลที่ถูกต้องในการสมัคร และดูแลรหัสผ่านของคุณเอง',
+            'หนึ่งบัญชีมีสิทธิ์ใช้แพ็กเกจได้ครั้งละหนึ่งแพ็กเกจ และมีสิทธิ์ทดลอง Elite ฟรีได้หนึ่งครั้งต่อบัญชี',
+            'ห้ามใช้บัญชีร่วมกันหลายคน หรือใช้เครื่องมืออัตโนมัติดึงข้อมูลออกจากระบบในลักษณะที่กระทบผู้ใช้อื่น',
+            'เราอาจระงับบัญชีที่ใช้งานผิดวัตถุประสงค์ ละเมิดกฎหมาย หรือมีการโต้แย้งการชำระเงินที่ยังไม่ได้ข้อยุติ',
+          ],
+        },
+      ],
+    },
+    {
+      heading: '3. ข้อมูลตลาดและความถูกต้อง',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'ข้อมูลราคา งบการเงิน ข่าว และข้อมูลออปชัน มาจากผู้ให้บริการข้อมูลภายนอก เราแสดงที่มาและเวลาของข้อมูลไว้บนหน้าจอ '
+            + 'ข้อมูลบางส่วนเป็นข้อมูลล่าช้า (delayed) ไม่ใช่ราคาเรียลไทม์ทั้งหมด',
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'เราพยายามให้ข้อมูลถูกต้องและตรวจสอบที่มาของข้อมูลอย่างต่อเนื่อง แต่ไม่สามารถรับประกันความถูกต้อง ความครบถ้วน '
+            + 'หรือความต่อเนื่องของข้อมูลจากผู้ให้บริการภายนอกได้ หากพบข้อมูลที่ไม่ถูกต้อง โปรดแจ้งเราผ่านหน้าช่วยเหลือ',
+        },
+      ],
+    },
+    {
+      heading: '4. แพ็กเกจและการชำระเงิน',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text: 'ราคาทั้งหมดเป็นเงินบาท และรวมภาษีตามที่ผู้ให้บริการชำระเงินแสดงในขั้นตอนชำระเงิน',
+        },
+        {
+          kind: 'table',
+          columns: ['แพ็กเกจ', 'รอบบิล', 'รอบแรก', 'รอบต่ออายุ'],
+          rows: planRows(),
+        },
+        { kind: 'callout', tone: 'info', text: FOUNDER_RULE },
+        { kind: 'definitions', items: RENEWAL_RULES },
+        {
+          kind: 'paragraph',
+          text: 'รายละเอียดการต่ออายุ การยกเลิก และการลดระดับแพ็กเกจ อยู่ในหน้านโยบายแพ็กเกจและการต่ออายุ',
+        },
+      ],
+    },
+    {
+      heading: '5. การยกเลิกและการคืนเงิน',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'คุณยกเลิกแพ็กเกจได้ทุกเมื่อ และขอคืนเงินได้ผ่านหน้าคำขอคืนเงินในบัญชีของคุณ '
+            + 'การส่งคำขอคืนเงินยังไม่ใช่การคืนเงิน และไม่ตัดสิทธิ์การใช้งานของคุณทันที',
+        },
+        { kind: 'paragraph', text: DATA_ON_DOWNGRADE },
+      ],
+    },
+    {
+      heading: '6. ขอบเขตความรับผิด',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'เราไม่รับผิดชอบต่อผลขาดทุนจากการลงทุน การตัดสินใจซื้อขาย หรือความเสียหายที่เกิดจากการพึ่งพาข้อมูลบนแพลตฟอร์ม '
+            + 'เท่าที่กฎหมายที่ใช้บังคับอนุญาต',
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'บริการอาจหยุดชะงักจากการปรับปรุงระบบ หรือจากผู้ให้บริการภายนอก เราจะแจ้งให้ทราบเท่าที่ทำได้ '
+            + 'แต่ไม่ได้รับประกันความพร้อมใช้งานต่อเนื่องตลอดเวลา',
+        },
+      ],
+    },
+    {
+      heading: '7. การเปลี่ยนแปลงเงื่อนไข',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'หากมีการเปลี่ยนแปลงเงื่อนไขหรือราคา เราจะปรับปรุงหน้านี้พร้อมระบุวันที่มีผล '
+            + 'การเปลี่ยนแปลงราคาจะไม่ย้อนหลังกับรอบบิลที่ชำระไปแล้ว',
+        },
+        {
+          kind: 'paragraph',
+          text: 'หากมีคำถามเกี่ยวกับเงื่อนไขเหล่านี้ ติดต่อเราได้ที่หน้าช่วยเหลือ',
+        },
+      ],
+    },
+  ],
+};
+
+const PRIVACY: LegalDocument = {
+  slug: 'privacy',
+  href: '/privacy',
+  title: 'นโยบายความเป็นส่วนตัว',
+  subtitle: 'เราเก็บข้อมูลอะไร ใช้ทำอะไร และคุณควบคุมอะไรได้บ้าง',
+  effectiveDate: EFFECTIVE_DATE,
+  intro:
+    'หน้านี้อธิบายข้อมูลที่เราเก็บเมื่อคุณใช้งาน วิธีที่เราใช้ข้อมูลนั้น และสิทธิ์ที่คุณมีเหนือข้อมูลของคุณเอง',
+  sections: [
+    {
+      heading: '1. ข้อมูลที่เราเก็บ',
+      blocks: [
+        {
+          kind: 'definitions',
+          items: [
+            {
+              term: 'ข้อมูลบัญชี',
+              description: 'อีเมล ชื่อที่แสดง และวิธีการเข้าสู่ระบบ (รหัสผ่านที่เข้ารหัส หรือการเข้าสู่ระบบด้วย Google)',
+            },
+            {
+              term: 'ข้อมูลที่คุณสร้างเอง',
+              description: 'พอร์ตการลงทุน รายการธุรกรรมที่คุณบันทึก รายการติดตาม การแจ้งเตือน และผลการจำลองที่คุณบันทึกไว้',
+            },
+            {
+              term: 'ข้อมูลการใช้งานและอุปกรณ์',
+              description: 'การตั้งค่าการแสดงผล เขตเวลา และการอนุญาตแจ้งเตือนบนอุปกรณ์ของคุณ',
+            },
+            {
+              term: 'ข้อมูลการชำระเงิน',
+              description:
+                'สถานะการชำระ รอบบิล แพ็กเกจ และประเภทช่องทางชำระเงิน (บัตร หรือ PromptPay) '
+                + 'เราไม่เก็บเลขบัตร วันหมดอายุ หรือรหัส CVC ไว้ในระบบของเราเลย ข้อมูลบัตรอยู่กับผู้ให้บริการชำระเงินเท่านั้น',
+            },
+            {
+              term: 'ข้อมูลการติดต่อฝ่ายช่วยเหลือ',
+              description: 'เรื่องที่คุณแจ้ง ข้อความที่ส่ง และไฟล์แนบที่คุณอัปโหลด',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      heading: '2. เราใช้ข้อมูลทำอะไร',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ให้บริการตามแพ็กเกจที่คุณใช้ และคำนวณสิทธิ์การใช้งาน',
+            'ส่งการแจ้งเตือนที่คุณเปิดใช้ เช่น การแจ้งเตือนราคา สรุปพอร์ตรายวัน และการแจ้งเตือนเกี่ยวกับการชำระเงินของคุณ',
+            'ดำเนินการชำระเงิน ออกใบแจ้งหนี้ และตรวจสอบความถูกต้องของสิทธิ์กับรายการชำระเงิน',
+            'ตอบเรื่องที่คุณแจ้งเข้ามา และตรวจสอบคำขอคืนเงิน',
+            'รักษาความปลอดภัยของระบบ ป้องกันการใช้งานที่ผิดปกติ และปฏิบัติตามกฎหมาย',
+          ],
+        },
+        {
+          kind: 'paragraph',
+          text: 'เราไม่ขายข้อมูลส่วนบุคคลของคุณ และไม่ใช้ข้อมูลพอร์ตของคุณเพื่อโฆษณาของบุคคลที่สาม',
+        },
+      ],
+    },
+    {
+      heading: '3. ผู้ให้บริการที่เกี่ยวข้อง',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'เราใช้ผู้ให้บริการภายนอกเท่าที่จำเป็นในการให้บริการ ได้แก่ ผู้ให้บริการฐานข้อมูลและการยืนยันตัวตน '
+            + 'ผู้ให้บริการโฮสติ้ง ผู้ให้บริการข้อมูลตลาด และผู้ให้บริการชำระเงิน '
+            + 'ผู้ให้บริการเหล่านี้เข้าถึงข้อมูลได้เท่าที่จำเป็นต่อหน้าที่ของตนเท่านั้น',
+        },
+      ],
+    },
+    {
+      heading: '4. การเก็บรักษาและความปลอดภัย',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ข้อมูลของคุณถูกจำกัดสิทธิ์ในระดับฐานข้อมูล ผู้ใช้แต่ละคนเข้าถึงได้เฉพาะข้อมูลของตนเอง',
+            'ไฟล์แนบในเรื่องที่แจ้งจะถูกเก็บในพื้นที่แบบไม่เปิดสาธารณะ และเปิดดูได้ผ่านลิงก์ชั่วคราวที่ออกให้เฉพาะผู้ที่มีสิทธิ์เท่านั้น',
+            'ข้อมูลการชำระเงินและบันทึกการตรวจสอบถูกเก็บไว้ตามระยะเวลาที่จำเป็นทางบัญชีและกฎหมาย',
+          ],
+        },
+      ],
+    },
+    {
+      heading: '5. สิทธิ์ของคุณ',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ขอดู แก้ไข หรือแก้ไขข้อมูลบัญชีของคุณได้จากหน้าโปรไฟล์และหน้าการตั้งค่า',
+            'ปิดหรือเปิดการแจ้งเตือนแต่ละประเภทได้จากหน้าการตั้งค่า',
+            'ขอลบบัญชีได้จากหน้าโปรไฟล์ การลบบัญชีจะลบข้อมูลการใช้งานของคุณ แต่บันทึกที่จำเป็นทางบัญชีและการตรวจสอบการชำระเงินจะถูกเก็บไว้ตามที่กฎหมายกำหนด',
+            'ติดต่อเราเพื่อสอบถามเรื่องข้อมูลส่วนบุคคลได้ที่หน้าช่วยเหลือ',
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const REFUND_POLICY: LegalDocument = {
+  slug: 'refund-policy',
+  href: '/refund-policy',
+  title: 'นโยบายการคืนเงิน',
+  subtitle: 'ขอคืนเงินอย่างไร ใช้เวลาเท่าไร และมีผลกับสิทธิ์ใช้งานอย่างไร',
+  effectiveDate: EFFECTIVE_DATE,
+  intro:
+    'หน้านี้อธิบายขั้นตอนการขอคืนเงิน สิ่งที่เกิดขึ้นกับสิทธิ์การใช้งานของคุณในแต่ละขั้น '
+    + 'และสิ่งที่เราต้องใช้ในการพิจารณา',
+  sections: [
+    {
+      heading: '1. ขั้นตอนการขอคืนเงิน',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'เข้าหน้า “แพ็กเกจของคุณ” แล้วเลือก “คำขอคืนเงิน”',
+            'เลือกรายการชำระเงินที่ต้องการขอคืน ระบุเหตุผลและรายละเอียด และแนบภาพประกอบได้หากมี',
+            'ทีมงานจะตรวจสอบและอัปเดตสถานะให้คุณทราบผ่านการแจ้งเตือนในระบบ',
+          ],
+        },
+        {
+          kind: 'callout',
+          tone: 'warning',
+          text:
+            'การส่งคำขอคืนเงินและการอนุมัติคำขอ ยังไม่ใช่การคืนเงินและไม่ตัดสิทธิ์การใช้งานของคุณ '
+            + 'สถานะจะเปลี่ยนเป็น “คืนเงินแล้ว” ก็ต่อเมื่อผู้ให้บริการชำระเงินยืนยันการคืนเงินจริง '
+            + 'หรือทีมงานยืนยันว่าดำเนินการคืนเงินเสร็จสิ้นแล้วพร้อมหลักฐานอ้างอิง',
+        },
+      ],
+    },
+    {
+      heading: '2. สถานะของคำขอ',
+      blocks: [
+        {
+          kind: 'definitions',
+          items: [
+            { term: 'รอตรวจสอบ', description: 'เราได้รับคำขอแล้ว และยังไม่ได้เริ่มพิจารณา' },
+            { term: 'กำลังตรวจสอบ', description: 'ทีมงานกำลังตรวจสอบรายการชำระเงินและรายละเอียดที่คุณให้มา' },
+            { term: 'อนุมัติแล้ว', description: 'ทีมงานอนุมัติให้คืนเงิน และกำลังดำเนินการผ่านช่องทางที่คุณชำระมา' },
+            { term: 'ไม่อนุมัติ', description: 'ไม่สามารถคืนเงินตามคำขอนี้ได้ คุณดูเหตุผลและตอบกลับได้ในหน้าคำขอ' },
+            { term: 'คืนเงินแล้ว', description: 'ยืนยันการคืนเงินแล้ว ยอดเงินจะกลับเข้าช่องทางเดิมตามรอบของผู้ให้บริการชำระเงิน' },
+            { term: 'ยกเลิกคำขอ', description: 'คุณถอนคำขอนี้เอง ก่อนที่จะมีการตัดสิน' },
+          ],
+        },
+        {
+          kind: 'paragraph',
+          text: 'หนึ่งรายการชำระเงินมีคำขอที่ยังไม่ได้ข้อยุติได้ครั้งละหนึ่งคำขอเท่านั้น',
+        },
+      ],
+    },
+    {
+      heading: '3. สิ่งที่เราพิจารณา',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ระยะเวลาตั้งแต่ชำระเงิน และปริมาณการใช้งานฟีเจอร์แบบชำระเงินในรอบนั้น',
+            'กรณีชำระซ้ำหรือถูกเรียกเก็บผิดพลาด ซึ่งเราจะแก้ไขให้เสมอเมื่อตรวจสอบพบ',
+            'ปัญหาทางเทคนิคที่ทำให้ใช้งานฟีเจอร์ที่ชำระเงินไม่ได้จริง',
+          ],
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'เราพิจารณาคำขอเป็นรายกรณีตามข้อเท็จจริงของแต่ละรายการ และไม่ได้กำหนดเป็นการรับประกันล่วงหน้าว่าคำขอทุกกรณีจะได้รับอนุมัติ '
+            + 'หากไม่อนุมัติ เราจะแจ้งเหตุผลให้ทราบ',
+        },
+      ],
+    },
+    {
+      heading: '4. ผลของการคืนเงินต่อสิทธิ์ใช้งาน',
+      blocks: [
+        {
+          kind: 'definitions',
+          items: [
+            {
+              term: 'คืนเงินเต็มจำนวน',
+              description:
+                'สิทธิ์แบบชำระเงินของรอบนั้นสิ้นสุดลงเมื่อผู้ให้บริการชำระเงินยืนยันการคืนเงิน และบัญชีกลับไปใช้ Basic',
+            },
+            {
+              term: 'คืนเงินบางส่วน',
+              description: 'ถือเป็นการปรับยอด ไม่มีผลกับสิทธิ์การใช้งาน แพ็กเกจของคุณยังใช้งานได้ตามรอบเดิม',
+            },
+            {
+              term: 'การโต้แย้งการชำระเงินกับธนาคาร',
+              description:
+                'หากมีการแจ้งโต้แย้ง (chargeback) เราจะพักสิทธิ์แบบชำระเงินไว้ระหว่างการตรวจสอบของธนาคาร '
+                + 'และจะคืนสิทธิ์ให้หากผลการตรวจสอบเป็นไปในทางที่ยืนยันการชำระเงินนั้น',
+            },
+          ],
+        },
+        { kind: 'paragraph', text: DATA_ON_DOWNGRADE },
+      ],
+    },
+    {
+      heading: '5. ระยะเวลา',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'หลังจากคืนเงินสำเร็จ ระยะเวลาที่เงินจะกลับเข้าบัญชีหรือวงเงินบัตรของคุณ ขึ้นอยู่กับธนาคารและผู้ให้บริการชำระเงิน '
+            + 'ซึ่งอยู่นอกเหนือการควบคุมของเรา',
+        },
+      ],
+    },
+  ],
+};
+
+const SUBSCRIPTION_POLICY: LegalDocument = {
+  slug: 'subscription-policy',
+  href: '/subscription-policy',
+  title: 'นโยบายแพ็กเกจและการต่ออายุ',
+  subtitle: 'ราคา รอบบิล การต่ออายุของแต่ละช่องทาง และการยกเลิก',
+  effectiveDate: EFFECTIVE_DATE,
+  intro: 'หน้านี้รวมเรื่องราคา รอบบิล การต่ออายุ และการยกเลิกไว้ในที่เดียว',
+  sections: [
+    {
+      heading: '1. ราคาและรอบบิล',
+      blocks: [
+        {
+          kind: 'table',
+          columns: ['แพ็กเกจ', 'รอบบิล', 'รอบแรก', 'รอบต่ออายุ'],
+          rows: planRows(),
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'แพ็กเกจ Basic ใช้งานได้ฟรีโดยไม่มีค่าใช้จ่าย และบัญชีใหม่ที่ยืนยันอีเมลแล้วมีสิทธิ์ทดลอง Elite ฟรี 7 วัน '
+            + 'หนึ่งครั้งต่อบัญชี โดยไม่ต้องผูกบัตร',
+        },
+        { kind: 'callout', tone: 'info', text: FOUNDER_RULE },
+      ],
+    },
+    {
+      heading: '2. การต่ออายุของแต่ละช่องทาง',
+      blocks: [
+        { kind: 'definitions', items: RENEWAL_RULES },
+        {
+          kind: 'paragraph',
+          text:
+            'สำหรับ PromptPay เราจะแจ้งเตือนล่วงหน้า 7 วัน 3 วัน และ 1 วันก่อนครบรอบ '
+            + 'และจะหยุดแจ้งเตือนเมื่อชำระรอบถัดไปเรียบร้อยแล้ว',
+        },
+      ],
+    },
+    {
+      heading: '3. การเปลี่ยนหรือยกเลิกแพ็กเกจ',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ยกเลิกการต่ออายุอัตโนมัติได้จากหน้า “แพ็กเกจของคุณ” เมื่อยกเลิกแล้ว คุณยังใช้งานได้จนถึงวันสิ้นสุดรอบที่ชำระไว้',
+            'ระบบจะแจ้งวันสิ้นสุดสิทธิ์ที่แน่นอนให้คุณทราบในการแจ้งเตือนเมื่อยกเลิก',
+            'สำหรับ PromptPay การไม่ชำระรอบถัดไปคือการสิ้นสุดแพ็กเกจโดยปริยาย ไม่ต้องทำอะไรเพิ่ม',
+            'หนึ่งบัญชีมีแพ็กเกจที่ใช้งานอยู่ได้ครั้งละหนึ่งแพ็กเกจ หากต้องการเปลี่ยนแพ็กเกจระหว่างรอบ โปรดติดต่อทีมงานผ่านหน้าช่วยเหลือ',
+          ],
+        },
+      ],
+    },
+    {
+      heading: '4. เมื่อสิทธิ์สิ้นสุด',
+      blocks: [
+        { kind: 'paragraph', text: DATA_ON_DOWNGRADE },
+        {
+          kind: 'paragraph',
+          text: 'หากต้องการกลับมาใช้แพ็กเกจอีกครั้ง ข้อมูลเดิมของคุณจะยังอยู่และกลับมาใช้งานได้ทันทีเมื่อชำระเงินสำเร็จ',
+        },
+      ],
+    },
+    {
+      heading: '5. การเปลี่ยนแปลงราคา',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'หากมีการปรับราคา เราจะแจ้งล่วงหน้าและปรับปรุงหน้านี้พร้อมวันที่มีผล '
+            + 'ราคาใหม่จะมีผลกับรอบบิลถัดไป ไม่ย้อนหลังกับรอบที่ชำระไปแล้ว',
+        },
+      ],
+    },
+  ],
+};
+
+const INVESTMENT_DISCLAIMER: LegalDocument = {
+  slug: 'investment-disclaimer',
+  href: '/investment-disclaimer',
+  title: 'คำเตือนเรื่องการลงทุน',
+  subtitle: 'ขอบเขตของเครื่องมือนี้ และสิ่งที่เครื่องมือนี้ไม่ใช่',
+  effectiveDate: EFFECTIVE_DATE,
+  intro: 'โปรดอ่านหน้านี้ก่อนใช้ข้อมูลและผลการวิเคราะห์บนแพลตฟอร์มประกอบการตัดสินใจลงทุน',
+  sections: [
+    {
+      heading: '1. เครื่องมือวิเคราะห์ ไม่ใช่คำแนะนำการลงทุน',
+      blocks: [
+        { kind: 'callout', tone: 'warning', text: NOT_ADVICE },
+        {
+          kind: 'paragraph',
+          text:
+            'ตัวเลข สัญญาณ ระดับแนวรับแนวต้าน มูลค่าที่เหมาะสม และผลการจำลองทั้งหมดบนแพลตฟอร์ม '
+            + 'เป็นผลจากการคำนวณตามสูตรและสมมติฐานที่ระบุไว้ ไม่ใช่การชี้นำให้ซื้อหรือขายหลักทรัพย์ใด '
+            + 'และไม่ได้พิจารณาสถานะทางการเงิน เป้าหมาย หรือระดับความเสี่ยงที่ยอมรับได้ของคุณเป็นรายบุคคล',
+        },
+      ],
+    },
+    {
+      heading: '2. ความเสี่ยงที่ควรเข้าใจ',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'การลงทุนมีความเสี่ยง ผู้ลงทุนอาจสูญเสียเงินลงทุนบางส่วนหรือทั้งหมด',
+            'ตราสารอนุพันธ์และสัญญาออปชันมีความเสี่ยงสูงเป็นพิเศษ และอาจขาดทุนได้เกินกว่าเงินลงทุนเริ่มต้นในบางกรณี',
+            'ผลการดำเนินงานในอดีตและผลการจำลองย้อนหลัง ไม่ได้เป็นเครื่องยืนยันผลตอบแทนในอนาคต',
+            'การลงทุนในหลักทรัพย์ต่างประเทศมีความเสี่ยงจากอัตราแลกเปลี่ยนเพิ่มเติม',
+          ],
+        },
+      ],
+    },
+    {
+      heading: '3. ข้อจำกัดของข้อมูลและแบบจำลอง',
+      blocks: [
+        {
+          kind: 'list',
+          items: [
+            'ข้อมูลราคาบางส่วนเป็นข้อมูลล่าช้า และอาจต่างจากราคาที่คุณซื้อขายได้จริง',
+            'ข้อมูลปัจจัยพื้นฐานมาจากผู้ให้บริการภายนอก อาจมีการปรับปรุงย้อนหลังหรือไม่ครบทุกบริษัท',
+            'แบบจำลองมูลค่าและการจำลองสถานการณ์ใช้สมมติฐานที่เราแสดงไว้ข้างผลลัพธ์ หากสมมติฐานเปลี่ยน ผลลัพธ์ย่อมเปลี่ยนตาม',
+            'เมื่อข้อมูลไม่พอสำหรับคำนวณอย่างมีความหมาย เราจะแสดงว่า “ไม่มีข้อมูลเพียงพอ” แทนการเดาตัวเลขให้',
+          ],
+        },
+      ],
+    },
+    {
+      heading: '4. ความรับผิดชอบของผู้ใช้',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'คุณควรศึกษาข้อมูลจากหลายแหล่ง และพิจารณาปรึกษาผู้แนะนำการลงทุนที่ได้รับใบอนุญาตก่อนตัดสินใจ '
+            + 'การตัดสินใจซื้อขายและผลที่ตามมาเป็นความรับผิดชอบของคุณเอง',
+        },
+      ],
+    },
+  ],
+};
+
+export const legalDocuments: Readonly<Record<LegalDocumentSlug, LegalDocument>> = {
+  terms: TERMS,
+  privacy: PRIVACY,
+  'refund-policy': REFUND_POLICY,
+  'subscription-policy': SUBSCRIPTION_POLICY,
+  'investment-disclaimer': INVESTMENT_DISCLAIMER,
+};
+
+/** The order the links appear in, everywhere they appear. */
+export const legalLinkOrder: readonly LegalDocumentSlug[] = [
+  'terms',
+  'privacy',
+  'subscription-policy',
+  'refund-policy',
+  'investment-disclaimer',
+];
+
+export interface LegalLink {
+  href: string;
+  label: string;
+}
+
+/** The link list the footer, the auth shell and Settings all read. */
+export function legalLinks(): readonly LegalLink[] {
+  return legalLinkOrder.map((slug) => ({
+    href: legalDocuments[slug].href,
+    label: legalDocuments[slug].title,
+  }));
+}

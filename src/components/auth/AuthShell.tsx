@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { appConfig } from '@/src/config/app';
+import { legalLinks } from '@/src/lib/legal/documents';
 import { cn } from '@/src/utils/cn';
 import { AuthBackdrop } from './AuthBackdrop';
 
@@ -58,9 +59,44 @@ export function AuthShell({ children, width = 'form' }: { children: React.ReactN
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
-        <div className={cn('w-full', width === 'wide' ? 'max-w-lg' : 'max-w-[26rem]')}>{children}</div>
+        <div className={cn('w-full', width === 'wide' ? 'max-w-lg' : 'max-w-[26rem]')}>
+          {children}
+          <AuthLegalLinks />
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The policy links, on the green field.
+ *
+ * A separate rendering from `LegalFooterLinks` for one reason: this shell has its
+ * own colour system (`--auth-*`), and the shared component's `--text-muted` is
+ * invisible against it. The link *set* still comes from `legalLinks()`, so the
+ * two surfaces cannot list different documents — only the palette differs.
+ *
+ * Placed under the card rather than inside it: somebody signing in should be able
+ * to find the terms, and should not have to read past them to reach the password
+ * field.
+ */
+function AuthLegalLinks() {
+  return (
+    <nav aria-label="เอกสารและนโยบาย" className="mt-6">
+      <ul className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+        {[...legalLinks(), { href: '/support', label: 'ช่วยเหลือ' }].map((link) => (
+          <li key={link.href}>
+            <Link
+              href={link.href}
+              className="inline-block rounded px-1 py-0.5 text-[11px] underline-offset-4 transition-opacity hover:underline hover:opacity-100 focus-visible:outline-none focus-visible:ring-2"
+              style={{ color: 'var(--auth-on-field-muted)' }}
+            >
+              {link.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 

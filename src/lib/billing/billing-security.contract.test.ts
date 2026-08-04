@@ -124,14 +124,16 @@ describe('billing security contract', () => {
     // helpers may take whatever they need — they are not a request surface.
     const exported = [...actions.matchAll(/export async function \w+\(([\s\S]*?)\): Promise/g)]
       .map((match) => match[1].replace(/\s+/g, ' ').trim());
-    expect(exported).toHaveLength(3);
+    expect(exported).toHaveLength(4);
     for (const parameters of exported) {
       expect(parameters).not.toMatch(/\b(userId|customerId|amount|tier|coupon|discount|price|email|invoice|subscriptionId)\b/);
     }
-    // Starting a purchase names a plan and a rail; the portal and the abandon
-    // action take nothing at all and find the account from the session.
+    // Starting a purchase names a plan and a rail. The portal, the abandon
+    // action and the PromptPay renewal take nothing at all and find the account
+    // from the session — which is the property this count is guarding, so a new
+    // action arriving must either be argument-free or be justified here.
     expect(exported).toContain('planKey: string, paymentMethod: string,');
-    expect(exported.filter((parameters) => parameters === '')).toHaveLength(2);
+    expect(exported.filter((parameters) => parameters === '')).toHaveLength(3);
   });
 
   /*

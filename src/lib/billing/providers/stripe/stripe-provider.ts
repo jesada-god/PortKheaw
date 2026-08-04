@@ -13,7 +13,15 @@ import {
 import { PROMPTPAY_DUE_DAYS } from '../../billing-payment-method';
 import type { BillingPlanDefinition } from '../../billing-plans';
 import { stripeLivemode, stripeProviderMode } from '../../billing-provider-mode';
-import { classifyStripeEvent, normalizeStripeEvent, subscriptionIdFromEvent } from './normalize-stripe-event';
+import type { NormalizedRefundEvent } from '../../billing-refunds';
+import {
+  classifyStripeEvent,
+  classifyStripeRefundEvent,
+  normalizeStripeEvent,
+  normalizeStripeRefundEvent,
+  subscriptionIdFromEvent,
+  type StripeRefundLinkage,
+} from './normalize-stripe-event';
 
 /**
  * The Stripe adapter: the only module in the product that talks to Stripe.
@@ -451,6 +459,92 @@ export async function createStripePortalSession(
   return session.url;
 }
 
+/** Stripe hands back either an id or an expanded object; we only want the id. */
+function stripeIdOf(value: string | { id: string } | null | undefined): string | null {
+  if (!value) return null;
+  return typeof value === 'string' ? value : value.id ?? null;
+}
+
+/**
+ * The invoice a charge paid.
+ *
+ * `charge.invoice` no longer exists in this API version — the link moved onto
+ * the InvoicePayment object, the same way the invoice's subscription link moved
+ * under `parent`. So the route is charge → payment intent → invoice payment →
+ * invoice, and a charge that paid no invoice (a one-off, or a payment made
+ * outside this product) simply resolves to `null`.
+ */
+async function invoiceIdForCharge(client: Stripe, charge: Stripe.Charge): Promise<string | null> {
+  const paymentIntentId = stripeIdOf(charge.payment_intent);
+  if (!paymentIntentId) return null;
+  try {
+    const payments = await client.invoicePayments.list({
+      payment: { type: 'payment_intent', payment_intent: paymentIntentId },
+      limit: 1,
+    });
+    return stripeIdOf(payments.data[0]?.invoice ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Charge → invoice → subscription, for a refund or a dispute.
+ *
+ * Every hop is optional and every failure is absorbed. A refund on a charge that
+ * has no invoice (a one-off, or a payment from another product on the same
+ * account) resolves to a linkage with nulls, which the routine downstream
+ * records as a refund event with no entitlement consequence — the honest answer,
+ * and the safe one. Nothing here throws, because a lookup that fails must not
+ * turn a delivery we could have recorded into a retry loop.
+ */
+async function resolveRefundLinkage(
+  client: Stripe,
+  event: Stripe.Event,
+): Promise<StripeRefundLinkage> {
+  const linkage: StripeRefundLinkage = {
+    chargeId: null,
+    invoiceId: null,
+    subscriptionId: null,
+    chargeAmountMinor: null,
+  };
+
+  let charge: Stripe.Charge | null = null;
+  if (event.type === 'charge.refunded') {
+    charge = event.data.object as Stripe.Charge;
+  } else {
+    const dispute = event.data.object as Stripe.Dispute;
+    const chargeId = stripeIdOf(dispute.charge);
+    linkage.chargeId = chargeId;
+    if (chargeId) {
+      try {
+        charge = await client.charges.retrieve(chargeId);
+      } catch {
+        charge = null;
+      }
+    }
+  }
+
+  if (charge) {
+    linkage.chargeId = charge.id ?? linkage.chargeId;
+    linkage.chargeAmountMinor = typeof charge.amount === 'number' ? charge.amount : null;
+    linkage.invoiceId = await invoiceIdForCharge(client, charge);
+  }
+
+  if (linkage.invoiceId) {
+    try {
+      const invoice = await client.invoices.retrieve(linkage.invoiceId);
+      // `invoice.subscription` was removed in this API version; the link lives
+      // under `parent`, the same place the subscription-event path reads it.
+      linkage.subscriptionId = stripeIdOf(invoice.parent?.subscription_details?.subscription ?? null);
+    } catch {
+      linkage.subscriptionId = null;
+    }
+  }
+
+  return linkage;
+}
+
 export class BillingSignatureError extends Error {
   constructor() {
     super('BILLING_SIGNATURE_INVALID');
@@ -503,26 +597,40 @@ export async function verifyStripeWebhook(
   const signedEventMode = stripeProviderMode(event.livemode);
   if (signedEventMode !== config.providerMode) throw new BillingModeMismatchError();
 
+  /*
+   * A refund or a dispute names a charge, and nothing else. Walking charge →
+   * invoice → subscription is what turns it into an event about an account, and
+   * it is done here because it is I/O — the classifier that decides what to do
+   * about it stays pure.
+   */
+  const refundLinkage = classifyStripeRefundEvent(event.type)
+    ? await resolveRefundLinkage(client, event)
+    : null;
+
   let subscription: Stripe.Subscription | null = null;
-  if (classifyStripeEvent(event.type) !== 'ignored') {
-    const subscriptionId = subscriptionIdFromEvent(event);
-    if (subscriptionId) {
-      try {
-        subscription = await client.subscriptions.retrieve(subscriptionId);
-        if (stripeProviderMode(subscription.livemode) !== signedEventMode) {
-          throw new BillingModeMismatchError();
-        }
-      } catch (error) {
-        if (error instanceof BillingModeMismatchError) throw error;
-        // A subscription we cannot read yields an event with no state, which the
-        // database routine records and applies nothing from. Failing closed here
-        // is what stops a transient API error from clearing someone's plan.
-        subscription = null;
+  const subscriptionId = classifyStripeEvent(event.type) !== 'ignored'
+    ? subscriptionIdFromEvent(event)
+    : refundLinkage?.subscriptionId ?? null;
+  if (subscriptionId) {
+    try {
+      subscription = await client.subscriptions.retrieve(subscriptionId);
+      if (stripeProviderMode(subscription.livemode) !== signedEventMode) {
+        throw new BillingModeMismatchError();
       }
+    } catch (error) {
+      if (error instanceof BillingModeMismatchError) throw error;
+      // A subscription we cannot read yields an event with no state, which the
+      // database routine records and applies nothing from. Failing closed here
+      // is what stops a transient API error from clearing someone's plan.
+      subscription = null;
     }
   }
 
-  const normalized = normalizeStripeEvent(event, subscription);
+  const refund: NormalizedRefundEvent | null = refundLinkage
+    ? normalizeStripeRefundEvent(event, refundLinkage)
+    : null;
+
+  const normalized = normalizeStripeEvent(event, subscription, refund);
   if (
     normalized.state
     && normalized.planKey

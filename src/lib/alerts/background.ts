@@ -12,6 +12,10 @@ import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pip
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import { isDailySummaryDue, zonedClock } from '@/src/lib/notifications/schedule';
 import { runPromptPayRenewalReminders } from '@/src/lib/billing/promptpay-reminders';
+import { runEntitlementExpiryNotices } from '@/src/lib/billing/entitlement-expiry';
+import { runBillingReconciliation } from '@/src/lib/billing/reconciliation-run';
+import { adminReconciliationFailedNotification } from '@/src/lib/notifications/account-events';
+import { notifyAdmins } from '@/src/lib/notifications/dispatch';
 import { targetObservation } from './observation';
 import { describeCondition } from './logic';
 
@@ -236,6 +240,12 @@ export interface BackgroundAlertSummary {
   dailySummaryUnavailable: number;
   promptPayRenewalReminders: number;
   promptPayRenewalUnavailable: number;
+  /** Phase 5. Lapse notices sent, and the daily billing reconciliation. */
+  entitlementExpiryNotices: number;
+  entitlementExpiryUnavailable: number;
+  reconciliationRan: boolean;
+  reconciliationIssues: number;
+  reconciliationUnavailable: number;
   quietItemsReleased: number;
 }
 
@@ -253,6 +263,11 @@ export async function runBackgroundAlerts(
     dailySummaryUnavailable: 0,
     promptPayRenewalReminders: 0,
     promptPayRenewalUnavailable: 0,
+    entitlementExpiryNotices: 0,
+    entitlementExpiryUnavailable: 0,
+    reconciliationRan: false,
+    reconciliationIssues: 0,
+    reconciliationUnavailable: 0,
     quietItemsReleased: 0,
   };
   let { data: run, error: runError } = await client.from('alert_evaluation_runs')
@@ -329,9 +344,43 @@ export async function runBackgroundAlerts(
     const promptPay = await runPromptPayRenewalReminders(client, now);
     empty.promptPayRenewalReminders = promptPay.due;
     empty.promptPayRenewalUnavailable = promptPay.unavailable;
+
+    /*
+     * Phase 5 rides this same tick rather than adding a second scheduled route.
+     *
+     * Both are wrapped: a lapse notice or a reconciliation pass that fails must
+     * not take the price alerts down with it, because alerts are the part of
+     * this run somebody is watching a market for. Each failure is counted, and
+     * the reconciliation failure additionally pages operators — it is the check
+     * that would otherwise fail quietly and forever.
+     */
+    try {
+      const expiry = await runEntitlementExpiryNotices(client, now);
+      empty.entitlementExpiryNotices = expiry.notified;
+      empty.entitlementExpiryUnavailable = expiry.unavailable;
+    } catch {
+      empty.entitlementExpiryUnavailable += 1;
+    }
+
+    try {
+      const reconciliation = await runBillingReconciliation(client, now);
+      empty.reconciliationRan = reconciliation.ran;
+      empty.reconciliationIssues = reconciliation.issues;
+    } catch {
+      empty.reconciliationUnavailable += 1;
+      await notifyAdmins(adminReconciliationFailedNotification({
+        localDate: zonedClock(now, 'Asia/Bangkok').date,
+        providerMode: 'unknown',
+        errorCode: 'reconciliation-failed',
+        observedAt: now.toISOString(),
+      }), client);
+    }
+
     const status = empty.unavailable
       || empty.dailySummaryUnavailable
       || empty.promptPayRenewalUnavailable
+      || empty.entitlementExpiryUnavailable
+      || empty.reconciliationUnavailable
       ? 'partial'
       : 'completed';
     await client.from('alert_evaluation_runs').update({
@@ -340,7 +389,9 @@ export async function runBackgroundAlerts(
       triggered_count: empty.triggered,
       unavailable_count: empty.unavailable
         + empty.dailySummaryUnavailable
-        + empty.promptPayRenewalUnavailable,
+        + empty.promptPayRenewalUnavailable
+        + empty.entitlementExpiryUnavailable
+        + empty.reconciliationUnavailable,
       completed_at: new Date().toISOString(),
     }).eq('id', run.id);
     console.info('background-notifications', {
@@ -350,6 +401,9 @@ export async function runBackgroundAlerts(
       unavailable: empty.unavailable,
       dailySummaries: empty.dailySummaries,
       promptPayRenewalReminders: empty.promptPayRenewalReminders,
+      entitlementExpiryNotices: empty.entitlementExpiryNotices,
+      reconciliationRan: empty.reconciliationRan,
+      reconciliationIssues: empty.reconciliationIssues,
       quietItemsReleased: empty.quietItemsReleased,
     });
     return empty;

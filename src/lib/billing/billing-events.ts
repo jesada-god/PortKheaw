@@ -25,6 +25,7 @@ import type { SubscriptionStatus } from '@/src/lib/subscription/subscription-typ
 import type { BillingCollectionMethod } from './billing-payment-method';
 import type { BillingInterval, BillingPlanKey, PaidTier } from './billing-plans';
 import type { TrustedBillingProviderMode } from './billing-provider-mode';
+import type { NormalizedRefundEvent } from './billing-refunds';
 
 /** Metadata keys we set on the provider objects, so an event can name our user. */
 export const BILLING_METADATA_USER_ID = 'portkheaw_user_id';
@@ -101,6 +102,34 @@ export interface NormalizedBillingEvent {
   collectionMethod: BillingCollectionMethod | null;
   /** Absent on events that carry identity but assert no subscription state. */
   state: NormalizedSubscriptionState | null;
+  /**
+   * Phase 5. What the provider billed, when the event concerned an invoice.
+   *
+   * Recorded separately from entitlement and by a routine that cannot grant
+   * one: "an invoice exists and was paid" and "a plan is open" stay two facts,
+   * which is what lets reconciliation compare them.
+   */
+  invoice: NormalizedInvoiceRecord | null;
+  /**
+   * Phase 5. Money going back. Present only on refund and dispute events, which
+   * carry no subscription state of their own — the entitlement consequence is
+   * decided by `refundEntitlementAction` and applied by its own routine.
+   */
+  refund: NormalizedRefundEvent | null;
+}
+
+/** The subset of a provider invoice worth keeping. No card detail exists here. */
+export interface NormalizedInvoiceRecord {
+  invoiceId: string;
+  /** Only the four states an invoice ledger row may be *written* into. */
+  status: 'open' | 'paid' | 'void' | 'uncollectible';
+  amountDueMinor: number;
+  amountPaidMinor: number;
+  currency: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  issuedAt: string | null;
+  paidAt: string | null;
 }
 
 /** The outcome of the most recent invoice attempt, as shown on the manage page. */
