@@ -163,12 +163,13 @@ async function readRuntimeState(page, testId) {
     returnPct: element.getAttribute('data-return-pct'),
     breakEvenCount: element.getAttribute('data-break-even-count'),
     scoreStatus: element.getAttribute('data-score-status'),
+    scoreValue: element.getAttribute('data-score-value'),
   }));
   const breakEvenText = await section.locator('[data-testid="break-even-values"]').allInnerTexts().catch(() => []);
   return { attributes, breakEvenText, text };
 }
 
-function assertCanonical(scope, apiResult, runtimeState, scoreStatus = null) {
+function assertCanonical(scope, apiResult, runtimeState, scenarioScore = null) {
   const canonicalSummary = {
     breakEvenPrices: apiResult?.breakEvenPrices,
     initialDebit: apiResult?.initialDebit,
@@ -204,9 +205,12 @@ function assertCanonical(scope, apiResult, runtimeState, scoreStatus = null) {
     check(apiResult.valueAtRisk?.p95 > 0, `${scope}: VaR P95 is zero`, apiResult?.valueAtRisk);
     check(apiResult.expectedShortfall?.p95 > 0, `${scope}: ES P95 is zero`, apiResult?.expectedShortfall);
   }
-  if (scoreStatus !== null) {
-    check(scoreStatus === 'available', `${scope}: API Scenario Quality Score is unavailable`, scoreStatus);
+  if (scenarioScore !== null) {
+    const availableStrategy = scenarioScore?.strategies?.find((strategy) => strategy?.status === 'available' && Number.isFinite(strategy?.edgeScore));
+    check(scenarioScore?.status === 'available', `${scope}: API Scenario Quality Score is unavailable`, scenarioScore?.status);
+    check(Number.isFinite(availableStrategy?.edgeScore), `${scope}: API Scenario Quality Score has no numeric score`, scenarioScore);
     check(runtimeState.attributes.scoreStatus === 'available', `${scope}: DOM Scenario Quality Score is unavailable`, runtimeState.attributes.scoreStatus);
+    check(Number(runtimeState.attributes.scoreValue) === availableStrategy?.edgeScore, `${scope}: DOM Scenario Quality Score differs from API`, { api: availableStrategy?.edgeScore, dom: runtimeState.attributes.scoreValue });
   }
 }
 
@@ -265,7 +269,7 @@ try {
   report.fresh.monteCarlo = monteState;
   check(monteNetwork.status === 200, 'fresh Monte Carlo: API did not return 200', monteNetwork.body);
   assertLongCallRequest('fresh Monte Carlo', monteNetwork.request);
-  assertCanonical('fresh Monte Carlo', monteNetwork.body?.data?.result, monteState, monteNetwork.body?.data?.scenarioScore?.status);
+  assertCanonical('fresh Monte Carlo', monteNetwork.body?.data?.result, monteState, monteNetwork.body?.data?.scenarioScore);
   await page.screenshot({ path: `${OUT_DIR}/fresh-long-call.png`, fullPage: true });
 
   const saveResponsePromise = page.waitForResponse((response) => response.url().endsWith('/api/option-simulations') && response.request().method() === 'POST');
@@ -302,7 +306,7 @@ try {
   await page.locator('[data-testid="monte-carlo-results"][data-score-status="available"]').waitFor({ timeout: 90_000 });
   const savedMonteState = await readRuntimeState(page, 'monte-carlo-results');
   report.saved.monteCarlo = savedMonteState;
-  assertCanonical('legacy saved Monte Carlo', monteNetwork.body?.data?.result, savedMonteState, legacySnapshot?.scenarioScore?.status);
+  assertCanonical('legacy saved Monte Carlo', monteNetwork.body?.data?.result, savedMonteState, legacySnapshot?.scenarioScore);
   await page.screenshot({ path: `${OUT_DIR}/saved-long-call.png`, fullPage: true });
 
   report.responsive = [];

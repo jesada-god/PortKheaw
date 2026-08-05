@@ -1316,7 +1316,10 @@ function MonteCarloHighlights({ workspace, result, scenarioScore, currency, fxQu
     && Math.abs(result.probabilityClosingAboveTarget + result.probabilityClosingBelowTarget - 1) <= 1e-10
     ? `${(100 - Number((result.probabilityClosingAboveTarget * 100).toFixed(2))).toFixed(2)}%`
     : formatProbability(result.probabilityClosingBelowTarget);
-  return <section className={box} data-testid="monte-carlo-results" data-initial-risk={result.initialRisk ?? ''} data-max-loss={result.maxLoss ?? ''} data-return-pct={result.returnPct ?? ''} data-break-even-count={result.breakEvenPrices.length} data-score-status={scenarioScore?.status ?? 'missing'}><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">ผลลัพธ์ Monte Carlo</h2><p className="text-xs text-slate-400">สรุปความน่าจะเป็นและการกระจายกำไร/ขาดทุน</p></div><span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">สกุลเงินที่เลือก: {currency}</span></div>
+  const scenarioScoreValue = scenarioScore?.status === 'available'
+    ? scenarioScore.strategies.find((strategy) => strategy.status === 'available' && strategy.edgeScore !== null)?.edgeScore ?? null
+    : null;
+  return <section className={box} data-testid="monte-carlo-results" data-initial-risk={result.initialRisk ?? ''} data-max-loss={result.maxLoss ?? ''} data-return-pct={result.returnPct ?? ''} data-break-even-count={result.breakEvenPrices.length} data-score-status={scenarioScore?.status ?? 'missing'} data-score-value={scenarioScoreValue ?? ''}><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">ผลลัพธ์ Monte Carlo</h2><p className="text-xs text-slate-400">สรุปความน่าจะเป็นและการกระจายกำไร/ขาดทุน</p></div><span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">สกุลเงินที่เลือก: {currency}</span></div>
     <ResultCurrencyControl currency={currency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={onCurrencyChange} />
     <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/40 p-4" data-testid="result-summary">
       <h3 className="font-semibold text-slate-100">สรุปแบบมือใหม่</h3>
