@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runMonteCarlo } from './monte-carlo';
 import { valuePortfolio } from './portfolio';
-import { isPortfolioValuation, normalizeStoredMonteCarloResult, normalizeStoredWhatIfResult } from './stored-result-contract';
+import { isPortfolioValuation, isWhatIfResult, normalizeStoredMonteCarloResult, normalizeStoredWhatIfResult } from './stored-result-contract';
 import type { SimulationWorkspace } from './types';
 
 const workspace: SimulationWorkspace = {
@@ -38,6 +38,13 @@ describe('stored simulator result contract', () => {
     expect(normalized?.breakEvenPrices).toEqual([105]);
     expect(normalized?.breakEvenPrices).not.toEqual(legacy.breakEvens);
     expect(normalized?.returnPct).toBeCloseTo(current.profitLoss / 500 * 100, 10);
+    expect(normalized?.simulatedValue).toBe(current.theoreticalValue);
+    expect(normalized?.costBasis).toBe(500);
+    expect(normalized?.projectedPnL).toBe(current.profitLoss);
+    expect(normalized?.projectedPnL).toBeCloseTo((normalized?.simulatedValue ?? 0) - (normalized?.costBasis ?? 0), 10);
+    expect(normalized?.changeFromCurrent).toBeCloseTo((normalized?.simulatedValue ?? 0) - (normalized?.currentValue ?? 0), 10);
+    expect(normalized?.projectedPnL).not.toBe(normalized?.simulatedValue);
+    expect(isWhatIfResult(normalized)).toBe(true);
   });
 
   it('rehydrates a pre-contract Monte Carlo snapshot without reading histogram bins or paths as break-evens', () => {
@@ -56,5 +63,16 @@ describe('stored simulator result contract', () => {
   it('rejects a result whose return percentage does not reconcile to its canonical risk', () => {
     const current = valuePortfolio(workspace, workspace.scenarios[0]);
     expect(isPortfolioValuation({ ...current, returnPct: current.returnPct === null ? 1 : current.returnPct + 1 })).toBe(false);
+  });
+
+  it('rejects a legacy Long Call missing a positive per-share premium instead of mapping risk to unlimited', () => {
+    const invalidWorkspace = {
+      ...workspace,
+      legs: [{ ...workspace.legs[0], entryPremium: 0 }],
+    };
+    const current = valuePortfolio(invalidWorkspace, invalidWorkspace.scenarios[0]);
+
+    expect(normalizeStoredWhatIfResult(current, invalidWorkspace)).toBeNull();
+    expect(normalizeStoredMonteCarloResult(runMonteCarlo(invalidWorkspace, invalidWorkspace.monteCarlo), invalidWorkspace)).toBeNull();
   });
 });

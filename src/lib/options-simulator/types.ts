@@ -86,7 +86,7 @@ export interface SimulationWorkspace {
   dataSource: string | null;
   dataTimestamp: string | null;
   dataStatus: DataStatus;
-  resultSnapshot: { whatIf?: PortfolioValuation; monteCarlo?: MonteCarloResult; scenarioScore?: unknown } | null;
+  resultSnapshot: { whatIf?: WhatIfResult; monteCarlo?: MonteCarloResult; scenarioScore?: unknown } | null;
   methodologyVersion: 'options-simulator-v1';
   updatedAt?: string;
 }
@@ -133,6 +133,15 @@ export interface PortfolioValuation extends CanonicalStrategyResult {
   unlimitedProfit: boolean;
   unlimitedLoss: boolean;
   payoff: Array<{ price: number; profitLoss: number }>;
+}
+
+/** Canonical position-value semantics shared by the API, snapshots, and UI. */
+export interface WhatIfResult extends PortfolioValuation {
+  currentValue: number;
+  simulatedValue: number;
+  changeFromCurrent: number;
+  costBasis: number;
+  projectedPnL: number;
 }
 
 export interface MonteCarloResult extends CanonicalStrategyResult {

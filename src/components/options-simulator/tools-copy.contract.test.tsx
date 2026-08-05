@@ -159,8 +159,10 @@ describe('Tools copy leaves the numbers alone', () => {
     expect(Object.keys(seeded.legs[0]).sort()).toEqual([
       'entryPremium', 'expiration', 'fees', 'id', 'impliedVolatility', 'kind', 'multiplier', 'quantity', 'side', 'strike', 'style',
     ]);
-    // The seed still satisfies the unchanged persistence schema.
-    expect(optionLegSchema.safeParse({ ...seeded.legs[0], expiration: '2026-09-01', strike: 100, impliedVolatility: 0.5 }).success).toBe(true);
+    // An untouched seed is incomplete: premium=0 must not persist as real risk data.
+    const otherwiseComplete = { ...seeded.legs[0], expiration: '2026-09-01', strike: 100, impliedVolatility: 0.5 };
+    expect(optionLegSchema.safeParse(otherwiseComplete).success).toBe(false);
+    expect(optionLegSchema.safeParse({ ...otherwiseComplete, entryPremium: 5 }).success).toBe(true);
     expect(monteCarloSettingsSchema.safeParse(seeded.monteCarlo).success).toBe(true);
   });
 

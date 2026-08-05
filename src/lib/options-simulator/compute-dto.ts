@@ -1,5 +1,5 @@
 import type { CallPutScenarioScore } from './scenario-score';
-import type { DataStatus, MonteCarloResult, MonteCarloSettings, OptionLeg, PortfolioValuation } from './types';
+import type { DataStatus, MonteCarloResult, MonteCarloSettings, OptionLeg, WhatIfResult } from './types';
 
 export type CalculationLeg = Pick<OptionLeg,
   | 'id'
@@ -59,14 +59,13 @@ export interface MonteCarloCalculationInput {
 }
 
 export interface WhatIfDecomposition {
-  currentValue: number;
   priceImpact: number;
   timeImpact: number;
   ivImpact: number;
 }
 
 export interface WhatIfComputeResult {
-  valuation: PortfolioValuation;
+  valuation: WhatIfResult;
   decomposition: WhatIfDecomposition;
 }
 

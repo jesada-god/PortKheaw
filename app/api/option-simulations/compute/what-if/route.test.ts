@@ -52,8 +52,8 @@ describe('POST /api/option-simulations/compute/what-if', () => {
   it('computes for Pro and marks the result private', async () => {
     mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
     mocks.computeWhatIf.mockReturnValue({
-      valuation: { theoreticalValue: 321 },
-      decomposition: { currentValue: 300, priceImpact: 10, timeImpact: -2, ivImpact: 13 },
+      valuation: { theoreticalValue: 321, currentValue: 300, simulatedValue: 321, changeFromCurrent: 21, costBasis: 250, projectedPnL: 71 },
+      decomposition: { priceImpact: 10, timeImpact: -2, ivImpact: 13 },
     });
 
     const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
@@ -64,8 +64,8 @@ describe('POST /api/option-simulations/compute/what-if', () => {
     expect(response.status).toBe(200);
     expect(mocks.computeWhatIf).toHaveBeenCalledWith(calculationInput());
     expect(payload.data).toEqual({
-      valuation: { theoreticalValue: 321 },
-      decomposition: { currentValue: 300, priceImpact: 10, timeImpact: -2, ivImpact: 13 },
+      valuation: { theoreticalValue: 321, currentValue: 300, simulatedValue: 321, changeFromCurrent: 21, costBasis: 250, projectedPnL: 71 },
+      decomposition: { priceImpact: 10, timeImpact: -2, ivImpact: 13 },
     });
     expect(response.headers.get('Cache-Control')).toContain('private');
     expect(response.headers.get('X-Entitlement-Tier')).toBe('pro');
@@ -103,7 +103,35 @@ describe('POST /api/option-simulations/compute/what-if', () => {
     expect(payload.data.valuation.returnPct).toBeCloseTo(payload.data.valuation.profitLoss / 200 * 100, 10);
     expect(payload.data.valuation.breakEvenPrices).toEqual([9]);
     expect(payload.data.valuation.breakEvenPrices).toHaveLength(1);
+    expect(payload.data.valuation.currentValue).toBeGreaterThan(0);
+    expect(payload.data.valuation.simulatedValue).toBe(payload.data.valuation.theoreticalValue);
+    expect(payload.data.valuation.changeFromCurrent).toBeCloseTo(
+      payload.data.valuation.simulatedValue - payload.data.valuation.currentValue,
+      10,
+    );
+    expect(payload.data.valuation.costBasis).toBe(200);
+    expect(payload.data.valuation.projectedPnL).toBeCloseTo(
+      payload.data.valuation.simulatedValue - payload.data.valuation.costBasis,
+      10,
+    );
+    expect(payload.data.valuation.projectedPnL).toBe(payload.data.valuation.profitLoss);
+    expect(payload.data.valuation.projectedPnL).not.toBe(payload.data.valuation.simulatedValue);
     expect(payload.data.valuation.payoff).toHaveLength(241);
+  });
+
+  it('rejects a missing/zero per-share premium with the exact field path', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const valid = calculationInput();
+    const invalid = { ...valid, legs: [{ ...valid.legs[0], entryPremium: 0 }] };
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: invalid }),
+    }));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.issues).toContain('legs.0.entryPremium: ราคาสัญญาต่อหุ้นต้องมากกว่า 0');
+    expect(mocks.computeWhatIf).not.toHaveBeenCalled();
   });
 
   it('returns safe Thai field issues when Target Date exceeds expiration', async () => {

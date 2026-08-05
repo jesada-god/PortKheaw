@@ -21,8 +21,8 @@ import { importOptionContract } from '@/src/lib/options-simulator/contract-impor
 import { detectStrategy } from '@/src/lib/options-simulator/portfolio-inputs';
 import type { MonteCarloDisplayResult, WhatIfDecomposition } from '@/src/lib/options-simulator/compute-dto';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
-import type { DataStatus, MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace } from '@/src/lib/options-simulator/types';
-import { isMonteCarloDisplayResult, isPortfolioValuation, normalizeStoredMonteCarloResult, normalizeStoredWhatIfResult } from '@/src/lib/options-simulator/stored-result-contract';
+import type { DataStatus, MonteCarloResult, OptionLeg, PortfolioValuation, ScenarioInput, SimulationType, SimulationWorkspace, WhatIfResult } from '@/src/lib/options-simulator/types';
+import { isMonteCarloDisplayResult, isWhatIfResult, normalizeStoredMonteCarloResult, normalizeStoredWhatIfResult } from '@/src/lib/options-simulator/stored-result-contract';
 import { calculationValidationMessages, prepareMonteCarloCalculationInput, prepareWhatIfCalculationInput } from '@/src/lib/options-simulator/validation';
 import { presentEdgeGate, presentError, presentUnavailableReason } from './error-presentation';
 import { buildPathSummaryData, buildPriceMarkers, MONTE_CARLO_PATH_SERIES } from './simulator-charts';
@@ -54,7 +54,7 @@ function calculationPayloadIssues(payload: unknown): string[] {
 }
 
 function isWhatIfDecomposition(value: unknown): value is WhatIfDecomposition {
-  return recordValue(value) && ['currentValue', 'priceImpact', 'timeImpact', 'ivImpact'].every((key) => finiteValue(value[key]));
+  return recordValue(value) && ['priceImpact', 'timeImpact', 'ivImpact'].every((key) => finiteValue(value[key]));
 }
 
 function isCallPutScenarioScore(value: unknown): value is CallPutScenarioScore {
@@ -279,7 +279,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const [pending, setPending] = useState<SymbolSearchResult | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [valuation, setValuation] = useState<PortfolioValuation | null>(null);
+  const [valuation, setValuation] = useState<WhatIfResult | null>(null);
   const [whatIfDecomposition, setWhatIfDecomposition] = useState<WhatIfDecomposition | null>(null);
   const [mc, setMc] = useState<MonteCarloDisplayResult | null>(null);
   const [callPutScore, setCallPutScore] = useState<CallPutScenarioScore | null>(null);
@@ -297,6 +297,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const [resultCurrency, setResultCurrency] = useState<ResultCurrency>('USD');
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
   const [fxState, setFxState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [savedWhatIfRefreshVersion, setSavedWhatIfRefreshVersion] = useState(0);
   const calculationController = useRef<AbortController | null>(null);
   const calculationRunId = useRef(0);
   const hasResults = useRef(false);
@@ -305,6 +306,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const hydrated = useRef(false);
   const contractImportHandled = useRef(false);
   const pendingSavedScoreRefresh = useRef<string | null>(null);
+  const pendingSavedWhatIfRefresh = useRef<string | null>(null);
   const analyzeLatest = useRef<() => void>(() => undefined);
   const analysisWorkspaceValue = useMemo(() => (
     selectedLegId === 'portfolio' || !workspace.legs.some((leg) => leg.id === selectedLegId)
@@ -627,7 +629,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
           throw new Error(calculationPayloadMessage(payload, 'ระบบคำนวณผลไม่สำเร็จ กรุณาลองใหม่'));
         }
         const data = calculationPayloadData(payload);
-        if (!recordValue(data) || !isPortfolioValuation(data.valuation) || !isWhatIfDecomposition(data.decomposition)) throw new Error('ผลการคำนวณจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
+        if (!recordValue(data) || !isWhatIfResult(data.valuation) || !isWhatIfDecomposition(data.decomposition)) throw new Error('ผลการคำนวณจากเซิร์ฟเวอร์ไม่ครบถ้วน กรุณาลองใหม่');
         const result = data.valuation;
         const decomposition = data.decomposition;
         if (runId !== calculationRunId.current) return;
@@ -644,6 +646,12 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   }
 
   analyzeLatest.current = () => { void analyze(); };
+  useEffect(() => {
+    const pendingId = pendingSavedWhatIfRefresh.current;
+    if (!pendingId || workspace.id !== pendingId || tab !== 'What-If Analysis') return;
+    pendingSavedWhatIfRefresh.current = null;
+    analyzeLatest.current();
+  }, [savedWhatIfRefreshVersion, tab, workspace.id]);
   useEffect(() => {
     const pendingId = pendingSavedScoreRefresh.current;
     if (!pendingId || workspace.id !== pendingId || tab !== 'Monte Carlo Simulation') return;
@@ -705,14 +713,33 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
 
   function openSaved(item: Saved) {
     if (saveStatus !== 'Saved' && !confirm('ข้อมูลที่ยังไม่ได้บันทึกจะหายไป ต้องการทำต่อหรือไม่?')) return;
+    const whatIfPrepared = prepareWhatIfCalculationInput(item);
+    const monteCarloPrepared = item.simulationType === 'monte-carlo' || item.resultSnapshot?.monteCarlo !== undefined
+      ? prepareMonteCarloCalculationInput(item, item, item.monteCarlo)
+      : null;
+    const issues = [
+      ...(whatIfPrepared.success ? [] : whatIfPrepared.issues),
+      ...(monteCarloPrepared === null || monteCarloPrepared.success ? [] : monteCarloPrepared.issues),
+    ];
+    if (issues.length > 0) {
+      setValidationErrors([...new Set(issues)]);
+      setOperationError(`ผลที่บันทึกไว้มีข้อมูลไม่ครบ: ${issues[0]}`);
+      focusFirstValidationField(issues);
+      return;
+    }
     const normalized = normalizeUiWorkspace(item);
     const restoredMonteCarlo = normalizeStoredMonteCarloResult(item.resultSnapshot?.monteCarlo, normalized);
     const restoredScore = isCallPutScenarioScore(item.resultSnapshot?.scenarioScore) ? item.resultSnapshot.scenarioScore : null;
+    const restoredWhatIf = normalizeStoredWhatIfResult(item.resultSnapshot?.whatIf, normalized);
     setWorkspace(normalized);
-    setValuation(normalizeStoredWhatIfResult(item.resultSnapshot?.whatIf, normalized));
+    setValuation(restoredWhatIf);
     setWhatIfDecomposition(null);
     setMc(restoredMonteCarlo);
     setCallPutScore(restoredScore);
+    if (restoredWhatIf) {
+      pendingSavedWhatIfRefresh.current = item.id;
+      setSavedWhatIfRefreshVersion((version) => version + 1);
+    }
     if (restoredMonteCarlo && restoredScore?.status !== 'available') pendingSavedScoreRefresh.current = item.id;
     setSaveStatus('Saved');
   }
@@ -1077,26 +1104,24 @@ function ResultGroup({ title, testId, summary, children }: { title: string; test
   </section>;
 }
 
-function WhatIfHighlights({ workspace, valuation, decomposition, sensitivity, currency, fxQuote, fxState, onCurrencyChange }: { workspace: SimulationWorkspace; valuation: PortfolioValuation; decomposition: WhatIfDecomposition | null; sensitivity: { delta: number; theta: number } } & ResultDisplayProps) {
-  const currentValue = decomposition?.currentValue ?? null;
+function WhatIfHighlights({ workspace, valuation, decomposition, sensitivity, currency, fxQuote, fxState, onCurrencyChange }: { workspace: SimulationWorkspace; valuation: WhatIfResult; decomposition: WhatIfDecomposition | null; sensitivity: { delta: number; theta: number } } & ResultDisplayProps) {
+  const currentValue = valuation.currentValue;
   const priceImpact = decomposition?.priceImpact ?? null;
   const timeImpact = decomposition?.timeImpact ?? null;
   const ivImpact = decomposition?.ivImpact ?? null;
   const usdThbRate = fxQuote ? Number(fxQuote.rate) : null;
-  const difference = currentValue === null ? null : valuation.theoreticalValue - currentValue;
-  const initialCostOrCredit = valuation.netDebitCredit + workspace.stockQuantity * (workspace.underlyingPrice ?? 0);
   const audit = auditResultReconciliation({
     currentValue,
-    simulatedValue: valuation.theoreticalValue,
-    changeFromCurrent: difference,
-    initialCostOrCredit,
-    projectedProfitLoss: valuation.profitLoss,
+    simulatedValue: valuation.simulatedValue,
+    changeFromCurrent: valuation.changeFromCurrent,
+    initialCostOrCredit: valuation.costBasis,
+    projectedProfitLoss: valuation.projectedPnL,
     priceImpact,
     timeDecayImpact: timeImpact,
     ivImpact,
     deltaEstimate: sensitivity.delta,
   });
-  const state = profitLossState(valuation.profitLoss);
+  const state = profitLossState(valuation.projectedPnL);
   const percentage = valuation.returnPct;
   const breakEvenValue = valuation.breakEvenPrices
     .map((value) => `${formatResultMoney(value, currency, usdThbRate)}/หุ้น`)
@@ -1109,23 +1134,23 @@ function WhatIfHighlights({ workspace, valuation, decomposition, sensitivity, cu
     : audit.impactDecomposition.status === 'unavailable'
       ? 'ยังตรวจสอบที่มาของกำไร/ขาดทุนไม่ได้ เพราะข้อมูลบางส่วนยังไม่ครบ'
       : 'พบส่วนต่างเล็กน้อยจากการตรวจสอบ ดูได้ที่ “ผลอื่น ๆ”';
-  return <section className={box} data-testid="what-if-results" data-initial-risk={valuation.initialRisk ?? ''} data-max-loss={valuation.maxLoss ?? ''} data-return-pct={valuation.returnPct ?? ''} data-break-even-count={valuation.breakEvenPrices.length}><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">ผลลัพธ์การทดลอง</h2><p className="text-xs text-slate-400">กำไรหรือขาดทุนที่คาดว่าจะได้ จากสถานการณ์ที่คุณตั้งไว้</p></div><span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">สกุลเงินที่เลือก: {currency}</span></div>
+  return <section className={box} data-testid="what-if-results" data-decomposition-status={decomposition ? 'available' : 'refreshing'} data-current-value={valuation.currentValue} data-simulated-value={valuation.simulatedValue} data-change-from-current={valuation.changeFromCurrent} data-cost-basis={valuation.costBasis} data-projected-pnl={valuation.projectedPnL} data-initial-risk={valuation.initialRisk ?? ''} data-max-loss={valuation.maxLoss ?? ''} data-return-pct={valuation.returnPct ?? ''} data-break-even-count={valuation.breakEvenPrices.length}><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">ผลลัพธ์การทดลอง</h2><p className="text-xs text-slate-400">กำไรหรือขาดทุนที่คาดว่าจะได้ จากสถานการณ์ที่คุณตั้งไว้</p></div><span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">สกุลเงินที่เลือก: {currency}</span></div>
     <ResultCurrencyControl currency={currency} fxQuote={fxQuote} fxState={fxState} onCurrencyChange={onCurrencyChange} />
     <p className={`mt-4 rounded-xl border p-4 text-sm ${state === 'profit' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : state === 'loss' ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-slate-600 bg-slate-800/60 text-slate-200'}`} role="status">
-      {buildProfitLossSummary(valuation.profitLoss, valuation.initialRisk, currency, usdThbRate)}
+      {buildProfitLossSummary(valuation.projectedPnL, valuation.initialRisk, currency, usdThbRate)}
     </p>
 
     <div data-testid="result-summary">
       <ResultGroup title="สรุปผลสำคัญ" testId="result-group-key-summary">
-        <ExplainedResultMetric title="กำไร/ขาดทุนที่คาดจากสถานการณ์ (Projected P&L)" value={formatResultMoney(valuation.profitLoss, currency, usdThbRate, true)} toneClass={profitLossToneClass(state)} helper="กำไรหรือขาดทุนที่คาดว่าจะได้ หากราคาหุ้นและเวลาเป็นไปตามที่ทดลองไว้ รวมค่าธรรมเนียมแล้ว" />
+        <ExplainedResultMetric title="กำไร/ขาดทุนที่คาดจากสถานการณ์ (Projected P&L)" value={formatResultMoney(valuation.projectedPnL, currency, usdThbRate, true)} toneClass={profitLossToneClass(state)} helper="กำไรหรือขาดทุนที่คาดว่าจะได้ หากราคาหุ้นและเวลาเป็นไปตามที่ทดลองไว้ รวมค่าธรรมเนียมแล้ว" />
         <ExplainedResultMetric title="กำไร/ขาดทุน (%)" value={formatSignedPercent(percentage)} toneClass={profitLossToneClass(state)} helper="กำไรหรือขาดทุนคิดเป็นกี่เปอร์เซ็นต์ของเงินที่คุณเสี่ยงไปตั้งแต่แรก" />
         <ExplainedResultMetric title="ราคาคุ้มทุนต่อหุ้น (Break-even)" value={breakEvenValue} helper="ราคาหุ้นในวันหมดอายุที่ทำให้คุณไม่กำไรและไม่ขาดทุน ต่ำกว่านี้เริ่มขาดทุน" testId="break-even-values" />
       </ResultGroup>
 
       <ResultGroup title="มูลค่าสถานะ" testId="result-group-position-value">
-        <ExplainedResultMetric title="มูลค่าปัจจุบัน (Current Value)" value={currentValue === null ? 'ไม่มีข้อมูล' : formatResultMoney(currentValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้ ณ ราคาหุ้นและวันที่ปัจจุบัน ค่าติดลบเกิดได้กับสถานะที่เป็นฝั่งขาย" />
-        <ExplainedResultMetric title="มูลค่าหลังทดลอง (Simulated Value)" value={formatResultMoney(valuation.theoreticalValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้หากสถานการณ์เป็นไปตามที่ทดลองไว้ ยังไม่ได้หักต้นทุนที่จ่ายไปตอนเปิดสถานะ" />
-        <ExplainedResultMetric title="เพิ่ม/ลดจากปัจจุบัน (Change from Current)" value={difference === null ? 'ไม่มีข้อมูล' : formatResultMoney(difference, currency, usdThbRate, true)} toneClass={difference === null ? 'text-slate-100' : profitLossToneClass(profitLossState(difference))} helper="มูลค่าสถานะเพิ่มขึ้นหรือลดลงเท่าไร เมื่อเทียบกับตอนนี้" />
+        <ExplainedResultMetric title="มูลค่าปัจจุบัน (Current Value)" value={formatResultMoney(valuation.currentValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้ ณ ราคาหุ้นและวันที่ปัจจุบัน ค่าติดลบเกิดได้กับสถานะที่เป็นฝั่งขาย" />
+        <ExplainedResultMetric title="มูลค่าหลังทดลอง (Simulated Value)" value={formatResultMoney(valuation.simulatedValue, currency, usdThbRate)} helper="มูลค่าของสถานะนี้หากสถานการณ์เป็นไปตามที่ทดลองไว้ ยังไม่ได้หักต้นทุนที่จ่ายไปตอนเปิดสถานะ" />
+        <ExplainedResultMetric title="เพิ่ม/ลดจากปัจจุบัน (Change from Current)" value={formatResultMoney(valuation.changeFromCurrent, currency, usdThbRate, true)} toneClass={profitLossToneClass(profitLossState(valuation.changeFromCurrent))} helper="มูลค่าสถานะเพิ่มขึ้นหรือลดลงเท่าไร เมื่อเทียบกับตอนนี้" />
       </ResultGroup>
 
       <ResultGroup title="ความเสี่ยงสูงสุด" testId="result-group-maximum-risk">
@@ -1135,13 +1160,13 @@ function WhatIfHighlights({ workspace, valuation, decomposition, sensitivity, cu
         <ExplainedResultMetric title="ขาดทุนสูงสุด (Max Loss)" value={valuation.unlimitedLoss ? 'ไม่จำกัด' : formatResultMoney(-(valuation.maxLoss ?? Number.NaN), currency, usdThbRate, true)} toneClass="text-red-400" helper="เงินมากที่สุดที่คุณเสี่ยงจะเสียไปกับสถานะนี้ ถ้าขาดทุนเพิ่มได้ไม่สิ้นสุดจะแสดงว่าไม่จำกัด" />
       </ResultGroup>
 
-      <ResultGroup title="ที่มาของกำไร/ขาดทุน" testId="result-group-estimate-details" summary="แยกให้เห็นว่ากำไรหรือขาดทุนมาจากราคาหุ้น จากเวลา และจากความผันผวน อย่างละเท่าไร">
+      {decomposition ? <ResultGroup title="ที่มาของกำไร/ขาดทุน" testId="result-group-estimate-details" summary="แยกให้เห็นว่ากำไรหรือขาดทุนมาจากราคาหุ้น จากเวลา และจากความผันผวน อย่างละเท่าไร">
         <ExplainedResultMetric title="ผลจากราคาหุ้น (Price Impact)" value={priceImpact === null ? 'ไม่มีข้อมูล' : formatResultMoney(priceImpact, currency, usdThbRate, true)} helper={PRICE_IMPACT_HELP} />
         <ExplainedResultMetric title="ผลจากเวลาที่ผ่านไป (Time Decay)" value={timeImpact === null ? 'ไม่มีข้อมูล' : formatResultMoney(timeImpact, currency, usdThbRate, true)} helper={TIME_IMPACT_HELP} />
         <ExplainedResultMetric title="ผลจาก IV (IV Impact)" value={ivImpact === null ? 'ไม่มีข้อมูล' : formatResultMoney(ivImpact, currency, usdThbRate, true)} helper="ส่วนที่เปลี่ยนไปเพราะตลาดคาดว่าราคาหุ้นจะเหวี่ยงมากขึ้นหรือน้อยลงกว่าเดิม" />
         <ExplainedResultMetric title="ค่าประมาณจาก Delta (ทั้งสถานะ)" value={audit.deltaEstimate === null ? 'ไม่มีข้อมูล' : `${formatResultMoney(audit.deltaEstimate, currency, usdThbRate, true)} ต่อราคาหุ้นเปลี่ยน $1 USD`} helper="ค่าเทียบเคียงจาก Delta ว่ามูลค่าน่าจะเปลี่ยนเท่าไรเมื่อราคาหุ้นขยับ 1 ดอลลาร์ เป็นตัวเลขไว้เทียบเท่านั้น ไม่ใช่กำไรที่ได้เพิ่ม" />
         {audit.impactDecomposition.residual !== null && audit.impactDecomposition.residual !== 0 && <ExplainedResultMetric title="ผลอื่น ๆ (Other Impact)" value={formatResultMoney(audit.impactDecomposition.residual, currency, usdThbRate, true)} helper="ส่วนต่างเล็กน้อยที่เหลือจากการแยกผลข้างต้น เกิดจากปัจจัยที่ส่งผลพร้อมกันและการปัดเศษ" />}
-      </ResultGroup>
+      </ResultGroup> : <p className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-200" role="status">กำลังคำนวณที่มาของกำไร/ขาดทุนจากข้อมูลสัญญาที่บันทึกไว้…</p>}
     </div>
 
     <p className={`mt-4 rounded-lg p-3 text-xs ${reconciled ? 'bg-emerald-500/10 text-emerald-200' : 'bg-amber-500/10 text-amber-200'}`} data-testid="reconciliation-status" role="status">{reconciliationMessage}</p>

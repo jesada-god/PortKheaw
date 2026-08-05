@@ -1,4 +1,4 @@
-import type { CanonicalStrategyResult, OptionLeg, SimulationWorkspace } from './types';
+import type { CanonicalStrategyResult, OptionLeg, PortfolioValuation, SimulationWorkspace, WhatIfResult } from './types';
 
 type StrategyWorkspace = Pick<SimulationWorkspace,
   'legs' | 'stockQuantity' | 'cashPosition' | 'underlyingPrice'
@@ -137,4 +137,20 @@ export function buildCanonicalStrategyResult(
     maxLoss: analysis.maxLoss,
     breakEvenPrices: analysis.breakEvenPrices,
   };
+}
+
+/** One position-value mapper for fresh responses and saved/legacy snapshots. */
+export function buildCanonicalWhatIfResult(
+  valuation: PortfolioValuation,
+  currentValue: number,
+): WhatIfResult {
+  if (!Number.isFinite(currentValue)) throw new Error('Current value must be finite');
+  const simulatedValue = valuation.theoreticalValue;
+  const costBasis = simulatedValue - valuation.profitLoss;
+  const projectedPnL = simulatedValue - costBasis;
+  const changeFromCurrent = simulatedValue - currentValue;
+  if (![simulatedValue, costBasis, projectedPnL, changeFromCurrent].every(Number.isFinite)) {
+    throw new Error('What-If position values must be finite');
+  }
+  return { ...valuation, currentValue, simulatedValue, changeFromCurrent, costBasis, projectedPnL };
 }

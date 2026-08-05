@@ -12,7 +12,7 @@ export const optionLegSchema = z.object({
   quantity: z.number().finite().int().positive().max(1_000_000),
   strike: finite.positive().max(1_000_000_000),
   expiration: date,
-  entryPremium: finite.nonnegative().max(1_000_000_000),
+  entryPremium: finite.positive().max(1_000_000_000),
   impliedVolatility: finite.positive().max(10),
   multiplier: finite.positive().max(100_000),
   fees: finite.nonnegative().max(1_000_000_000),
@@ -69,7 +69,7 @@ const calculationOptionLegSchema = z.object({
   quantity: z.number().finite().int().positive().max(1_000_000),
   strike: finite.positive().max(1_000_000_000),
   expiration: date,
-  entryPremium: finite.nonnegative().max(1_000_000_000),
+  entryPremium: finite.positive().max(1_000_000_000),
   // Engine unit: decimal volatility. The UI converts percentage points exactly once.
   impliedVolatility: finite.positive().max(10),
   multiplier: finite.positive().max(100_000),
@@ -112,7 +112,7 @@ const calculationLegSchema = z.object({
   quantity: z.number().finite().int().positive().max(1_000_000),
   strike: finite.positive().max(1_000_000_000),
   expiration: date,
-  entryPremium: finite.nonnegative().max(1_000_000_000),
+  entryPremium: finite.positive().max(1_000_000_000),
   // Wire and engine unit: decimal volatility (115.27% is exactly 1.1527 here).
   impliedVolatility: finite.positive().max(10),
   multiplier: finite.positive().max(100_000),
@@ -228,7 +228,7 @@ function calculationIssueMessage(path: string): string {
   if (/^legs\.\d+\.kind$/.test(path)) return 'ประเภทสัญญาต้องเป็น Call หรือ Put';
   if (/^legs\.\d+\.side$/.test(path)) return 'ฝั่งซื้อ/ขายต้องเป็น Buy หรือ Sell';
   if (/^legs\.\d+\.strike$/.test(path)) return 'ราคาใช้สิทธิต้องมากกว่า 0';
-  if (/^legs\.\d+\.entryPremium$/.test(path)) return 'ราคาสัญญาต่อหุ้นต้องไม่ติดลบ';
+  if (/^legs\.\d+\.entryPremium$/.test(path)) return 'ราคาสัญญาต่อหุ้นต้องมากกว่า 0';
   if (/^legs\.\d+\.impliedVolatility$/.test(path)) return 'ความผันผวนที่ตลาดคาดต้องมากกว่า 0% และไม่เกิน 1,000%';
   if (/^legs\.\d+\.multiplier$/.test(path)) return 'จำนวนหุ้นต่อ 1 สัญญาต้องมากกว่า 0';
   if (/^legs\.\d+\.delta$/.test(path)) return 'Delta ต้องอยู่ระหว่าง -1 ถึง 1';
@@ -371,7 +371,7 @@ export function validationMessages(input: unknown): string[] {
     let message = 'กรุณาตรวจสอบช่องที่กรอกไม่ครบ';
     if (path === 'symbol' || path === 'companyName') message = 'กรุณาเลือกหุ้นก่อนคำนวณ';
     else if (/^legs\.\d+\.strike$/.test(path)) message = 'Strike Price ต้องมากกว่า 0';
-    else if (/^legs\.\d+\.entryPremium$/.test(path)) message = 'Premium ต้องไม่ติดลบ';
+    else if (/^legs\.\d+\.entryPremium$/.test(path)) message = 'Premium ต้องมากกว่า 0';
     else if (/^legs\.\d+\.impliedVolatility$/.test(path)) message = 'IV ต้องมากกว่า 0';
     else if (/^legs\.\d+\.multiplier$/.test(path)) message = 'Multiplier ต้องมากกว่า 0';
     else if (/^legs\.\d+\.delta$/.test(path)) message = 'Delta ต้องอยู่ระหว่าง -1 ถึง 1';

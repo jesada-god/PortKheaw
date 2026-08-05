@@ -305,6 +305,10 @@ describe('validation and Monte Carlo', () => {
     invalidPremium.legs[0].entryPremium = Number.NaN;
     expect(calculationValidationMessages(invalidPremium)[0]).toContain('legs.0.entryPremium');
 
+    const missingPremium = visibleContract();
+    missingPremium.legs[0].entryPremium = 0;
+    expect(calculationValidationMessages(missingPremium)).toContain('legs.0.entryPremium: ราคาสัญญาต่อหุ้นต้องมากกว่า 0');
+
     const invalidTheta = visibleContract();
     invalidTheta.legs[0].theta = Number.POSITIVE_INFINITY;
     expect(calculationValidationMessages(invalidTheta)[0]).toContain('legs.0.theta');

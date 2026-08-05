@@ -4,6 +4,7 @@ import { generateMonteCarloPathSet, runMonteCarlo } from './monte-carlo';
 import { valuePortfolio } from './portfolio';
 import { calculateCallPutScenarioScore } from './scenario-score';
 import { calculationPortfolioToWorkspace } from './calculation-workspace';
+import { buildCanonicalWhatIfResult } from './result-contract';
 import type { MonteCarloCalculationInput, MonteCarloComputeResult, WhatIfCalculationInput, WhatIfComputeResult } from './compute-dto';
 
 /** Premium calculations live behind route entitlement guards, never in a browser worker. */
@@ -19,11 +20,10 @@ export function computeWhatIf(input: WhatIfCalculationInput): WhatIfComputeResul
   const current = valuePortfolio(workspace, currentScenario);
   const afterPrice = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice });
   const afterTime = valuePortfolio(workspace, { ...currentScenario, targetPrice: scenario.targetPrice, valuationDate: scenario.valuationDate });
-  const valuation = valuePortfolio(workspace, scenario);
+  const valuation = buildCanonicalWhatIfResult(valuePortfolio(workspace, scenario), current.theoreticalValue);
   return {
     valuation,
     decomposition: {
-      currentValue: current.theoreticalValue,
       priceImpact: afterPrice.theoreticalValue - current.theoreticalValue,
       timeImpact: afterTime.theoreticalValue - afterPrice.theoreticalValue,
       ivImpact: valuation.theoreticalValue - afterTime.theoreticalValue,

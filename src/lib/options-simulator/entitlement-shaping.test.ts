@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MonteCarloResult, PortfolioValuation, SimulationWorkspace } from './types';
+import type { MonteCarloResult, SimulationWorkspace, WhatIfResult } from './types';
 import { shapeSimulationForTier, simulationCapability } from './entitlement-shaping';
 
 const workspace = (overrides: Partial<SimulationWorkspace> = {}): SimulationWorkspace => ({
@@ -13,8 +13,9 @@ const workspace = (overrides: Partial<SimulationWorkspace> = {}): SimulationWork
   ...overrides,
 });
 
-const whatIfResult: PortfolioValuation = {
+const whatIfResult: WhatIfResult = {
   legs: [], theoreticalValue: 123, profitLoss: 23, initialDebit: 100, initialRisk: 100, returnPct: 23, netDebitCredit: 100,
+  currentValue: 100, simulatedValue: 123, changeFromCurrent: 23, costBasis: 100, projectedPnL: 23,
   greeks: { delta: 0.5, gamma: 0.01, theta: -0.02, vega: 0.1, rho: 0.01 }, breakEvenPrices: [105],
   maxProfit: null, maxLoss: 100, unlimitedProfit: true, unlimitedLoss: false, payoff: [],
 };
