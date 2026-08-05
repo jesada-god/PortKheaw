@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
 import { resolveBetaAccessForRequest, recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
-import { betaWaitlistCopy } from '@/src/lib/beta/beta-stages';
+import { BETA_ACCESS_UNAVAILABLE_MESSAGE, betaWaitlistCopy } from '@/src/lib/beta/beta-stages';
 import { captureServerError } from '@/src/lib/monitoring/report';
 import {
   consumeRateLimit, rateLimitMessage, resolveClientAddress, type RateLimitScope,
@@ -75,6 +75,8 @@ export type CheckoutFailureCode =
   | 'PROMPTPAY_INVOICE_OPEN'
   /** The controlled rollout has not admitted this account yet. */
   | 'BETA_NOT_ADMITTED'
+  /** The rollout could not be read, so no purchase is started. Retryable. */
+  | 'BETA_ACCESS_UNAVAILABLE'
   /** Too many attempts in a short window. */
   | 'RATE_LIMITED'
   | 'UNAVAILABLE';
@@ -153,6 +155,7 @@ type AuditEvent =
   | 'billing_checkout_started'
   | 'billing_checkout_rate_limited'
   | 'billing_checkout_beta_refused'
+  | 'billing_checkout_beta_unresolved'
   | 'billing_checkout_refused'
   | 'billing_checkout_failed'
   | 'billing_portal_opened'
@@ -170,8 +173,9 @@ type AuditEvent =
  */
 function record(event: AuditEvent, detail?: string) {
   const payload = JSON.stringify({ event, ...(detail ? { detail } : {}) });
-  if (event.endsWith('_failed') || event.endsWith('_refused')) console.warn(payload);
-  else console.info(payload);
+  if (event.endsWith('_failed') || event.endsWith('_refused') || event.endsWith('_unresolved')) {
+    console.warn(payload);
+  } else console.info(payload);
 }
 
 /**
@@ -259,6 +263,22 @@ export async function startCheckoutAction(
    */
   if (authenticated) {
     const beta = await resolveBetaAccessForRequest();
+    /*
+     * An unreadable rollout stops a *new* purchase here, before the provider SDK
+     * could be loaded and long before anything payable exists. Refusing costs a
+     * reader one retry; admitting on an answer nobody gave would open the door a
+     * closed stage exists to hold shut, and a checkout is the expensive half of
+     * that mistake to undo. Renewal, the portal, refunds and every entitlement an
+     * account already holds are on other paths and are untouched by this.
+     */
+    if (beta.resolution === 'unavailable') {
+      record('billing_checkout_beta_unresolved');
+      return {
+        ok: false,
+        code: 'BETA_ACCESS_UNAVAILABLE',
+        message: BETA_ACCESS_UNAVAILABLE_MESSAGE,
+      };
+    }
     if (!beta.admitted) {
       record('billing_checkout_beta_refused', beta.reason);
       return {

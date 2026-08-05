@@ -32,6 +32,7 @@ type AuditEvent =
   | 'trial_started'
   | 'trial_start_failed'
   | 'trial_start_beta_refused'
+  | 'trial_start_beta_unresolved'
   | 'admin_access_preview_started'
   | 'admin_access_preview_changed'
   | 'admin_access_preview_cleared'
@@ -45,7 +46,9 @@ type AuditEvent =
  */
 function record(event: AuditEvent, detail?: string) {
   const payload = JSON.stringify({ event, ...(detail ? { detail } : {}) });
-  if (event.endsWith('_failed') || event.endsWith('_refused')) console.warn(payload);
+  if (event.endsWith('_failed') || event.endsWith('_refused') || event.endsWith('_unresolved')) {
+    console.warn(payload);
+  }
   else console.info(payload);
 }
 
@@ -101,6 +104,24 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
    * decides with.
    */
   const beta = await resolveBetaAccessForRequest();
+  /*
+   * An unreadable rollout refuses the grant rather than waving it through.
+   *
+   * This is the one place where "we could not ask" must not resolve to "yes": a
+   * trial is a way *in*, it is spent once per account and it cannot be taken
+   * back, so granting one on an answer nobody gave would let an outage of the
+   * flag hand out what a closed stage exists to withhold. Nothing an account
+   * already holds is touched — a running trial, a paid plan, the renewal and the
+   * portal never consult this — and the refusal is retryable by design.
+   */
+  if (beta.resolution === 'unavailable') {
+    record('trial_start_beta_unresolved');
+    return {
+      ok: false,
+      code: 'BETA_ACCESS_UNAVAILABLE',
+      message: trialFailureMessage('BETA_ACCESS_UNAVAILABLE'),
+    };
+  }
   if (!beta.admitted) {
     record('trial_start_beta_refused', beta.reason);
     return {

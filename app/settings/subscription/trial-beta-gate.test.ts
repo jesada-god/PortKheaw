@@ -52,6 +52,9 @@ import { startEliteTrialAction } from './actions';
 /** The exact sentence a blocked reader is shown, on the button and in the action. */
 const BLOCKED_COPY = 'ขณะนี้เปิดให้ทดลองเฉพาะผู้ได้รับสิทธิ์เบต้า';
 
+/** The temporary, retryable sentence for a rollout that could not be read. */
+const UNRESOLVED_COPY = 'ไม่สามารถตรวจสอบสิทธิ์การเข้าร่วมได้ชั่วคราว กรุณาลองใหม่อีกครั้ง';
+
 function betaAccess(overrides: Partial<BetaAccess>): BetaAccess {
   return {
     stage: 'public',
@@ -60,6 +63,7 @@ function betaAccess(overrides: Partial<BetaAccess>): BetaAccess {
     isAdmin: false,
     participantCap: -1,
     activeInvites: 0,
+    resolution: 'resolved',
     ...overrides,
   };
 }
@@ -112,13 +116,55 @@ describe('Elite trial under the controlled beta', () => {
     ['an account that predates the program', betaAccess({ stage: 'closed', reason: 'pre_existing_account' })],
     ['an account that already subscribes', betaAccess({ stage: 'beta_20_50', reason: 'existing_subscriber' })],
     ['every account once the stage is public', betaAccess({ stage: 'public', reason: 'public_stage' })],
-    ['an unreadable program state, which fails open', betaAccess({ reason: 'unconfigured' })],
+    ['a program the database itself reports as unconfigured', betaAccess({ reason: 'unconfigured' })],
   ])('lets %s start the trial', async (_label, access) => {
     mocks.resolveBetaAccessForRequest.mockResolvedValue(access);
 
     const result = await startEliteTrialAction();
     expect(result.ok).toBe(true);
     expect(mocks.startEliteTrial).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The third answer: not "in", not "out", but "we could not ask".
+   *
+   * A trial is spent once per account and cannot be taken back, so an outage of
+   * the rollout reader must not be the way somebody gets one. The refusal is
+   * retryable and says nothing about admission, because nothing was decided.
+   */
+  it('refuses when the rollout cannot be read, whatever the stand-in says', async () => {
+    mocks.resolveBetaAccessForRequest.mockResolvedValue(
+      // The shape of `UNKNOWN_BETA_ACCESS`: admitted, and unresolved.
+      betaAccess({ admitted: true, reason: 'unconfigured', resolution: 'unavailable' }),
+    );
+
+    await expect(startEliteTrialAction()).resolves.toEqual({
+      ok: false,
+      code: 'BETA_ACCESS_UNAVAILABLE',
+      message: UNRESOLVED_COPY,
+    });
+    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+  });
+
+  it('tells an unreadable rollout apart from a refusal, in both copy and code', async () => {
+    mocks.resolveBetaAccessForRequest.mockResolvedValue(
+      betaAccess({ stage: 'closed', admitted: false, reason: 'closed_stage', resolution: 'unavailable' }),
+    );
+
+    const result = await startEliteTrialAction();
+    // Unresolved outranks a refusal read off a stand-in stage: the stage in an
+    // unresolved answer was never the program's, so it must not be quoted back.
+    expect(result).toEqual({ ok: false, code: 'BETA_ACCESS_UNAVAILABLE', message: UNRESOLVED_COPY });
+    expect(UNRESOLVED_COPY).not.toBe(BLOCKED_COPY);
+  });
+
+  it('keeps the administrator refusal ahead of the unreadable rollout', async () => {
+    mocks.resolveRequestAccountAccess.mockResolvedValue({ isAdmin: true, role: 'admin' });
+    mocks.resolveBetaAccessForRequest.mockResolvedValue(betaAccess({ resolution: 'unavailable' }));
+
+    const result = await startEliteTrialAction();
+    expect(result.ok ? '' : result.message).toContain('บัญชีผู้ดูแลระบบ');
+    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
   });
 
   it('keeps the administrator refusal ahead of the rollout refusal', async () => {

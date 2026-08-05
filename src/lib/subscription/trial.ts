@@ -1,3 +1,4 @@
+import { BETA_ACCESS_UNAVAILABLE_MESSAGE } from '@/src/lib/beta/beta-stages';
 import { resolveEffectiveTier } from './resolve-effective-tier';
 import type { SubscriptionSnapshot, SubscriptionTier } from './subscription-types';
 
@@ -16,6 +17,8 @@ export type TrialFailureCode =
   | 'UNAUTHENTICATED'
   /** The controlled rollout has not admitted this account yet. */
   | 'BETA_NOT_ADMITTED'
+  /** The rollout could not be read, so no grant is made. Retryable. */
+  | 'BETA_ACCESS_UNAVAILABLE'
   | 'UNAVAILABLE';
 
 export const TRIAL_DURATION_DAYS = 7;
@@ -160,6 +163,12 @@ const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
   SUBSCRIPTION_NOT_FOUND: 'ไม่พบข้อมูลแพ็กเกจของบัญชีนี้ กรุณาเข้าสู่ระบบใหม่อีกครั้ง',
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบอีกครั้งก่อนเริ่มทดลอง',
   BETA_NOT_ADMITTED: TRIAL_BETA_BLOCKED_MESSAGE,
+  /*
+   * Not a refusal by the rollout — the rollout said nothing. The trial and the
+   * checkout share one sentence for it, so a reader who tries both is not told
+   * two different stories about one outage.
+   */
+  BETA_ACCESS_UNAVAILABLE: BETA_ACCESS_UNAVAILABLE_MESSAGE,
   UNAVAILABLE: 'เริ่มทดลองไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
 };
 

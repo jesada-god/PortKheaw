@@ -84,6 +84,17 @@ export const betaAccessReasons = [
 ] as const;
 export type BetaAccessReason = typeof betaAccessReasons[number];
 
+/**
+ * Whether the answer below is the program's, or a stand-in for one that could
+ * not be read.
+ *
+ * `admitted` cannot carry this on its own. A reader is either let in or not, and
+ * both of those are answers; "we could not ask" is a third state, and the two
+ * callers that hand out access — a new trial and a new purchase — have to be
+ * able to tell it apart from an admission.
+ */
+export type BetaAccessResolution = 'resolved' | 'unavailable';
+
 export interface BetaAccess {
   stage: BetaStage;
   admitted: boolean;
@@ -92,16 +103,23 @@ export interface BetaAccess {
   /** `-1` when uncapped. */
   participantCap: number;
   activeInvites: number;
+  /** `unavailable` means the program state could not be read at all. */
+  resolution: BetaAccessResolution;
 }
 
 /**
  * What an unreadable program state resolves to.
  *
- * Admitted, deliberately. This value is reached only when the database could not
- * be asked at all — and at that point the product is already selling to people
- * who have paid. A rollout flag that cannot be read must not become an outage of
- * the checkout page; the *authorization* is re-checked in the database on the way
- * to the provider, which is the boundary that matters.
+ * Still `admitted`, and still deliberately so: every surface that belongs to a
+ * reader who is already inside — a running trial, a live subscription, the
+ * renewal, the portal, support — must keep rendering when a rollout flag cannot
+ * be read, and none of them may go dark over a flag.
+ *
+ * What it is *not* is a licence to hand out new access. `resolution` marks the
+ * answer as absent, and the two acquisition paths refuse on it rather than on
+ * `admitted` — see `startEliteTrialAction` and `startCheckoutAction`. The
+ * database re-checks authorization either way; this is the gate that stops a
+ * closed stage from being walked around during an outage of its own reader.
  */
 export const UNKNOWN_BETA_ACCESS: BetaAccess = {
   stage: 'public',
@@ -110,7 +128,24 @@ export const UNKNOWN_BETA_ACCESS: BetaAccess = {
   isAdmin: false,
   participantCap: -1,
   activeInvites: 0,
+  resolution: 'unavailable',
 };
+
+/**
+ * What a reader is told when the rollout could not be read.
+ *
+ * Temporary, and says so: nothing is wrong with their account, the attempt is
+ * worth repeating, and no waitlist or refusal is implied — because none was
+ * decided. Shared by the trial and the checkout so one outage speaks with one
+ * voice.
+ */
+export const BETA_ACCESS_UNAVAILABLE_MESSAGE =
+  'ไม่สามารถตรวจสอบสิทธิ์การเข้าร่วมได้ชั่วคราว กรุณาลองใหม่อีกครั้ง';
+
+/** Whether a new trial or a new purchase may be started from this answer. */
+export function betaAccessAdmitsAcquisition(access: BetaAccess): boolean {
+  return access.resolution === 'resolved' && access.admitted;
+}
 
 export interface BetaAccessInput {
   stage: unknown;

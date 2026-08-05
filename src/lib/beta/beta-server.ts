@@ -34,13 +34,13 @@ import {
  */
 export const resolveBetaAccessForRequest = cache(async (): Promise<BetaAccess> => {
   const client = await createClient();
-  if (!client) return UNKNOWN_BETA_ACCESS;
+  if (!client) return unresolved('no_session_client');
 
   try {
     const { data, error } = await client.rpc('resolve_my_beta_access');
     if (error) throw error;
     const row = data?.[0];
-    if (!row) return UNKNOWN_BETA_ACCESS;
+    if (!row) return unresolved('empty_result');
     return {
       stage: normalizeBetaStage(row.stage),
       admitted: row.admitted,
@@ -48,18 +48,47 @@ export const resolveBetaAccessForRequest = cache(async (): Promise<BetaAccess> =
       isAdmin: row.is_admin,
       participantCap: row.participant_cap,
       activeInvites: row.active_invites,
+      resolution: 'resolved',
     };
   } catch (cause) {
-    /*
-     * Fails open, and says so out loud. See `UNKNOWN_BETA_ACCESS`: a rollout flag
-     * that cannot be read must not close checkout for a product that is already
-     * selling, and the authorization that matters is re-applied in the database
-     * on the way to the provider.
-     */
-    captureServerError({ scope: 'beta.access', cause, level: 'warning' });
-    return UNKNOWN_BETA_ACCESS;
+    return unresolved('rpc_failed', cause);
   }
 });
+
+/**
+ * How often one process may report the same outage.
+ *
+ * Every page view and every refused button press runs this resolver, so an
+ * unreported gap and an alert per request are both wrong: the first hides an
+ * outage that is silently refusing purchases, the second buries it. One line per
+ * window per instance is enough to notice and to measure the duration from.
+ */
+const UNRESOLVED_ALERT_INTERVAL_MS = 5 * 60_000;
+let lastUnresolvedAlertAt = 0;
+
+/**
+ * The stand-in answer, reported once per window.
+ *
+ * `detail` names which of the three ways the read failed and carries nothing
+ * else — no account, no mailbox, no row. The reporter sanitizes the cause on top
+ * of that, so a database error string cannot smuggle an identifier into the log.
+ */
+function unresolved(detail: 'no_session_client' | 'empty_result' | 'rpc_failed', cause?: unknown): BetaAccess {
+  const now = Date.now();
+  if (now - lastUnresolvedAlertAt >= UNRESOLVED_ALERT_INTERVAL_MS) {
+    lastUnresolvedAlertAt = now;
+    captureServerError({
+      scope: 'beta.access',
+      message: 'beta access unresolved; new trials and checkouts are refused',
+      cause,
+      level: 'warning',
+      // `code` because the reporter's context allowlist is the thing that keeps
+      // an identifier out of a report; a key it does not know is dropped.
+      context: { code: detail },
+    });
+  }
+  return UNKNOWN_BETA_ACCESS;
+}
 
 /**
  * Record one funnel event.
