@@ -245,8 +245,9 @@ try {
   const session = await context.newCDPSession(page);
   await session.send('Network.enable');
   await session.send('Network.setCacheDisabled', { cacheDisabled: true });
-  page.on('console', (message) => { if (message.type() === 'error') report.runtime.push({ type: 'console', text: message.text() }); });
-  page.on('pageerror', (error) => report.runtime.push({ type: 'pageerror', text: error.message }));
+  // Page and stack are recorded too: "a runtime error happened somewhere" is not actionable.
+  page.on('console', (message) => { if (message.type() === 'error') report.runtime.push({ type: 'console', url: page.url(), text: message.text() }); });
+  page.on('pageerror', (error) => report.runtime.push({ type: 'pageerror', url: page.url(), text: error.message, stack: error.stack }));
   page.on('dialog', (dialog) => void dialog.accept());
   await page.route(/\/api\/market\/search(?:\?|$)/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [{ symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', currency: 'USD', assetType: 'Stock', status: 'active' }] }) }));
   await page.route('**/api/market/quote/AAPL', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { symbol: 'AAPL', price: 100 }, meta: { provider: 'e2e-fixture', timestamp: new Date().toISOString(), freshness: { status: 'delayed', asOf: new Date().toISOString() } } }) }));
