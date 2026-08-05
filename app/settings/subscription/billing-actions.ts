@@ -3,6 +3,12 @@
 import { createHash } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { getBillingAvailability, getBillingConfig } from '@/src/lib/billing/billing-server';
+import { resolveBetaAccessForRequest, recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
+import { betaWaitlistCopy } from '@/src/lib/beta/beta-stages';
+import { captureServerError } from '@/src/lib/monitoring/report';
+import {
+  consumeRateLimit, rateLimitMessage, resolveClientAddress, type RateLimitScope,
+} from '@/src/lib/security/rate-limit';
 import {
   cancelPendingPromptPayPayment,
   readBillingCustomerId,
@@ -67,6 +73,10 @@ export type CheckoutFailureCode =
   | 'ALREADY_SUBSCRIBED'
   /** An unpaid PromptPay invoice is still payable; pay or abandon it first. */
   | 'PROMPTPAY_INVOICE_OPEN'
+  /** The controlled rollout has not admitted this account yet. */
+  | 'BETA_NOT_ADMITTED'
+  /** Too many attempts in a short window. */
+  | 'RATE_LIMITED'
   | 'UNAVAILABLE';
 
 export type StartCheckoutResult =
@@ -116,8 +126,33 @@ const INVOICE_ALREADY_PAID = 'ใบแจ้งหนี้นี้ชำร�
 
 const PROMPTPAY_RENEWAL_NOT_READY = 'ชำระได้เมื่อใกล้หมดอายุ';
 
+/**
+ * The shared bound on every money path in this file.
+ *
+ * Each of these actions creates or opens an object at the provider, so the cost
+ * of a loop is not ours alone. The limiter lives in the database because this
+ * runs on serverless instances that share no memory; it fails open, because a
+ * limiter that cannot be reached must not close checkout. See `rate-limit.ts`.
+ */
+async function withinRateLimit(
+  client: NonNullable<Awaited<ReturnType<typeof createClient>>>,
+  scope: RateLimitScope,
+  userId: string | null,
+): Promise<{ allowed: true } | { allowed: false; message: string }> {
+  const outcome = await consumeRateLimit(client, {
+    scope,
+    userId,
+    clientAddress: await resolveClientAddress(),
+  });
+  return outcome.allowed
+    ? { allowed: true }
+    : { allowed: false, message: rateLimitMessage(outcome.retryAfterSeconds) };
+}
+
 type AuditEvent =
   | 'billing_checkout_started'
+  | 'billing_checkout_rate_limited'
+  | 'billing_checkout_beta_refused'
   | 'billing_checkout_refused'
   | 'billing_checkout_failed'
   | 'billing_portal_opened'
@@ -206,6 +241,33 @@ export async function startCheckoutAction(
 
   const { data: { user }, error: authError } = await client.auth.getUser();
   const authenticated = !authError && Boolean(user);
+
+  const bound = await withinRateLimit(client, 'checkout.start', user?.id ?? null);
+  if (!bound.allowed) {
+    record('billing_checkout_rate_limited');
+    return { ok: false, code: 'RATE_LIMITED', message: bound.message };
+  }
+
+  /*
+   * The controlled rollout, checked before anything is looked up and before the
+   * provider SDK could possibly be loaded.
+   *
+   * It gates *starting a new purchase* and nothing else. A reader who already
+   * pays is admitted by the database's own rule, so a rollout stage can never
+   * strand an existing subscriber — and this action is not on the renewal or
+   * portal path, which stay open in every stage by construction.
+   */
+  if (authenticated) {
+    const beta = await resolveBetaAccessForRequest();
+    if (!beta.admitted) {
+      record('billing_checkout_beta_refused', beta.reason);
+      return {
+        ok: false,
+        code: 'BETA_NOT_ADMITTED',
+        message: betaWaitlistCopy(beta.reason, beta.stage).body,
+      };
+    }
+  }
 
   /*
    * The mailbox confirmation is read from the verified user record on the
@@ -376,14 +438,34 @@ export async function startCheckoutAction(
 
       revalidatePath('/settings/subscription');
       record('billing_checkout_started', `${eligibility.plan.key}:promptpay`);
+      await recordBetaFunnelEvent({
+        event: 'checkout_started',
+        planKey: eligibility.plan.key,
+        paymentRail: 'promptpay',
+      });
       return { ok: true, url: invoice.hostedInvoiceUrl, paymentMethod: 'promptpay' };
     }
 
     const session = await provider.createStripeCheckoutSession(request);
     record('billing_checkout_started', eligibility.plan.key);
+    await recordBetaFunnelEvent({
+      event: 'checkout_started',
+      planKey: eligibility.plan.key,
+      paymentRail: 'card',
+    });
     return { ok: true, url: session.url, paymentMethod: 'card' };
-  } catch {
+  } catch (cause) {
     record('billing_checkout_failed', `${eligibility.plan.key}:${eligibility.paymentMethod}`);
+    captureServerError({
+      scope: 'billing.checkout',
+      cause,
+      context: {
+        operation: 'create_session',
+        planKey: eligibility.plan.key,
+        paymentRail: eligibility.paymentMethod,
+        providerMode: config.providerMode,
+      },
+    });
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
   }
 }
@@ -414,6 +496,14 @@ export async function openPromptPayRenewalAction(): Promise<PromptPayRenewalResu
       message: checkoutRefusalMessage('unauthenticated'),
     };
   }
+
+  /*
+   * Bounded, but never gated by the rollout stage. This opens the next invoice
+   * on a subscription somebody already bought; refusing it because a cohort is
+   * closed would strand a paying reader mid-renewal.
+   */
+  const bound = await withinRateLimit(client, 'checkout.promptpay-renewal', user.id);
+  if (!bound.allowed) return { ok: false, code: 'RATE_LIMITED', message: bound.message };
 
   try {
     const [snapshot, existingPending] = await Promise.all([
@@ -501,8 +591,13 @@ export async function openPromptPayRenewalAction(): Promise<PromptPayRenewalResu
     revalidatePath('/settings/subscription');
     record('billing_promptpay_renewal_opened');
     return { ok: true, url: invoice.hostedInvoiceUrl };
-  } catch {
+  } catch (cause) {
     record('billing_promptpay_renewal_failed', 'UNAVAILABLE');
+    captureServerError({
+      scope: 'billing.promptpay-renewal',
+      cause,
+      context: { operation: 'open_renewal', paymentRail: 'promptpay' },
+    });
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
   }
 }
@@ -607,6 +702,11 @@ export async function openBillingPortalAction(): Promise<BillingPortalResult> {
     };
   }
 
+  // Also ungated by the rollout: the portal is how somebody cancels, updates a
+  // card or reads their own invoices, and every one of those must stay reachable.
+  const bound = await withinRateLimit(client, 'billing.portal', user.id);
+  if (!bound.allowed) return { ok: false, code: 'RATE_LIMITED', message: bound.message };
+
   try {
     const customerId = await readBillingCustomerId(user.id, config.providerMode);
     if (!customerId) {
@@ -617,8 +717,13 @@ export async function openBillingPortalAction(): Promise<BillingPortalResult> {
     const url = await createStripePortalSession(config, customerId);
     record('billing_portal_opened');
     return { ok: true, url };
-  } catch {
+  } catch (cause) {
     record('billing_portal_failed', 'PROVIDER_ERROR');
+    captureServerError({
+      scope: 'billing.portal',
+      cause,
+      context: { operation: 'open_portal', providerMode: config.providerMode },
+    });
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
   }
 }

@@ -21,6 +21,7 @@ import { refundEntitlementAction } from '@/src/lib/billing/billing-refunds';
 import { webhookFailureDisposition } from '@/src/lib/billing/webhook-retry';
 import { adminDeadLetterNotification } from '@/src/lib/notifications/account-events';
 import { notifyAccount, notifyAdmins } from '@/src/lib/notifications/dispatch';
+import { captureServerError } from '@/src/lib/monitoring/report';
 import type { NormalizedBillingEvent } from '@/src/lib/billing/billing-events';
 import {
   BillingModeMismatchError,
@@ -223,6 +224,25 @@ async function failDelivery(
   }
 
   record('billing_webhook_dead_lettered', event.eventType, detail);
+  /*
+   * The one webhook outcome that needs a human. Reported to monitoring as well
+   * as to the operator Inbox, because a dead letter is a paid invoice that may
+   * never have opened a plan — and the Inbox is read when somebody looks, while
+   * monitoring is what pages.
+   *
+   * The context is the event *type* and a code, never the provider's event id or
+   * payload; the reporter's redactor would strip them anyway.
+   */
+  captureServerError({
+    scope: 'billing.webhook.dead-letter',
+    message: 'billing webhook dead-lettered',
+    context: {
+      eventType: event.eventType,
+      providerMode: event.providerMode,
+      attempt: attempt.attemptCount,
+      code: detail,
+    },
+  });
   return Response.json({ received: true, outcome: 'dead_letter' }, { status: 200 });
 }
 

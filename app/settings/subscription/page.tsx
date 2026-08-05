@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import Header from '@/src/components/layout/Header';
 import { ConfigurationRequired } from '@/src/components/auth/ConfigurationRequired';
@@ -5,6 +6,8 @@ import { LegalFooterLinks } from '@/src/components/legal/LegalFooterLinks';
 import { BillingHistoryCard } from '@/src/components/refunds/BillingHistoryCard';
 import { listMyBillingInvoices } from '@/src/lib/support/refund-repository';
 import { AdminAccessCard } from '@/src/components/subscription/AdminAccessCard';
+import { BetaWaitlistCard } from '@/src/components/subscription/BetaWaitlistCard';
+import { CheckoutReturnFunnel } from '@/src/components/subscription/CheckoutReturnFunnel';
 import { CurrentPlanHero } from '@/src/components/subscription/CurrentPlanHero';
 import { ManageSubscriptionCard } from '@/src/components/subscription/ManageSubscriptionCard';
 import { PendingInvoiceCard } from '@/src/components/subscription/PendingInvoiceCard';
@@ -24,6 +27,7 @@ import {
 } from '@/src/lib/billing/promptpay-pending';
 import { isBillingPlanKey } from '@/src/lib/billing/billing-plans';
 import { createClient } from '@/src/lib/supabase/server';
+import { recordBetaFunnelEvent, resolveBetaAccessForRequest } from '@/src/lib/beta/beta-server';
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 import { resolveEffectiveTier } from '@/src/lib/subscription/resolve-effective-tier';
@@ -142,6 +146,64 @@ export default async function SubscriptionPage() {
     })
   );
 
+  /*
+   * The controlled rollout, resolved once for this render. The plan cards and
+   * the checkout action read the same answer — the action re-asks the database,
+   * so what is *shown* and what is *authorized* cannot drift apart.
+   *
+   * Only new purchases are gated. The hero, the manage card, the pending invoice,
+   * the billing history and the FAQ are rendered in every stage, because every
+   * one of them belongs to a reader who has already paid.
+   */
+  const beta = await resolveBetaAccessForRequest();
+
+  /*
+   * The funnel, recorded from the server where the fact is already known.
+   *
+   * `payment_succeeded` is deliberately observed here rather than in the webhook:
+   * the webhook runs as the service role with no session, so a row written there
+   * could not be attributed to an account at all. Recording "this account holds a
+   * live paid subscription" on the first page view after paying is both
+   * attributable and true — and the report counts distinct accounts, so a
+   * subscriber visiting daily is still one conversion.
+   *
+   * None of these is awaited for its result; each is deduplicated inside the
+   * database, and a funnel row is never worth failing a page render over.
+   *
+   * `checkout_returned` and `checkout_canceled` are deliberately *not* here.
+   * They are carried by the provider's return URL, and this page must never read
+   * a query parameter — the billing security contract asserts that, because a
+   * page anybody can type into an address bar must not be able to grant
+   * anything. `CheckoutReturnFunnel` records them from the browser instead, and
+   * the routine it calls can only ever insert a telemetry row.
+   */
+  await Promise.all([
+    recordBetaFunnelEvent({ event: 'subscription_viewed' }),
+    billingSummary && blocksNewCheckout
+      ? recordBetaFunnelEvent({
+        event: 'payment_succeeded',
+        planKey: storedPlanKey,
+        paymentRail: billingSnapshot?.billing_collection_method === 'send_invoice' ? 'promptpay' : 'card',
+      })
+      : null,
+    /*
+     * The PromptPay renewal funnel, as two halves of one question: a reader on
+     * that rail with an invoice still open is looking at *how to pay it*, and the
+     * same reader with no open invoice and a live period has paid. Recording both
+     * for every PromptPay reader would make the conversion read as 100% and
+     * measure nothing.
+     */
+    billingSnapshot?.billing_collection_method === 'send_invoice' && hasOpenInvoice
+      ? recordBetaFunnelEvent({ event: 'promptpay_renewal_help_viewed', paymentRail: 'promptpay' })
+      : null,
+    billingSummary
+      && blocksNewCheckout
+      && billingSnapshot?.billing_collection_method === 'send_invoice'
+      && !hasOpenInvoice
+      ? recordBetaFunnelEvent({ event: 'promptpay_renewal_paid', paymentRail: 'promptpay' })
+      : null,
+  ]);
+
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
   const metadataName = typeof user.user_metadata.full_name === 'string' ? user.user_metadata.full_name : null;
   const displayName = profile?.full_name || metadataName || user.email?.split('@')[0] || 'PortKheaw User';
@@ -150,6 +212,9 @@ export default async function SubscriptionPage() {
     <div className="min-w-0">
       <Header title="แพ็กเกจของคุณ" subtitle="ดูสิทธิ์ปัจจุบัน และเลือกแพ็กเกจที่เหมาะกับพอร์ตของคุณ" />
       <main className="mx-auto flex max-w-5xl min-w-0 flex-col gap-8 p-4 md:p-8">
+        {/* Renders nothing. It observes the provider's checkout return so this
+            page never has to read a query parameter. */}
+        <Suspense fallback={null}><CheckoutReturnFunnel /></Suspense>
         <CurrentPlanHero
           state={trialState}
           effectiveTier={effectiveTier}
@@ -164,16 +229,32 @@ export default async function SubscriptionPage() {
           />
         )}
         {access.isAdmin && <AdminAccessCard access={access} name={displayName} />}
-        <PlanCards
-          effectiveTier={effectiveTier}
-          availability={billingAvailability}
-          /*
-           * The same predicates the checkout action gates on, so the cards
-           * cannot offer a purchase the server would refuse.
-           */
-          hasLiveSubscription={blocksNewCheckout}
-          hasOpenInvoice={hasOpenInvoice}
-        />
+        {/*
+          Outside the active rollout stage the plan cards are replaced rather than
+          disabled: a row of buttons that all refuse is worse than one sentence
+          saying why. `PlanComparison` stays either way — knowing what the plans
+          contain is useful to somebody waiting for an invitation.
+        */}
+        {beta.admitted ? (
+          <PlanCards
+            effectiveTier={effectiveTier}
+            /*
+             * Availability already carries the deployment's own answer (billing
+             * off, or no price configured). The rollout is the second gate, and
+             * the branch above is where it applies — so the cards never have to
+             * know a stage exists.
+             */
+            availability={billingAvailability}
+            /*
+             * The same predicates the checkout action gates on, so the cards
+             * cannot offer a purchase the server would refuse.
+             */
+            hasLiveSubscription={blocksNewCheckout}
+            hasOpenInvoice={hasOpenInvoice}
+          />
+        ) : (
+          <BetaWaitlistCard reason={beta.reason} stage={beta.stage} />
+        )}
         <PlanComparison />
         {/*
          * Purchases, and the way into a refund request. Read through the

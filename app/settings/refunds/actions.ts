@@ -2,6 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
+import {
+  consumeRateLimit, rateLimitMessage, resolveClientAddress,
+} from '@/src/lib/security/rate-limit';
 import { storeSupportAttachment } from '@/src/lib/support/attachments';
 import {
   adminRefundRequestCreatedNotification,
@@ -293,6 +296,22 @@ export async function adminReplyToRefundRequestAction(formData: FormData): Promi
 export async function adminSetRefundStatusAction(formData: FormData): Promise<RefundActionResult> {
   const client = await createClient();
   if (!client) return refusal('UNAVAILABLE');
+
+  /*
+   * Same bound as the ticket console, for the same reason: the routine below
+   * decides *whether* an operator may move a refund, and this decides how fast.
+   * It deliberately sits above the transition graph, so a refused burst never
+   * reaches the routine that claims money moved.
+   */
+  const { data: { user } } = await client.auth.getUser();
+  const bound = await consumeRateLimit(client, {
+    scope: 'admin.mutation',
+    userId: user?.id ?? null,
+    clientAddress: await resolveClientAddress(),
+  });
+  if (!bound.allowed) {
+    return { ok: false, code: 'RATE_LIMITED', message: rateLimitMessage(bound.retryAfterSeconds) };
+  }
 
   const requestId = String(formData.get('requestId') ?? '');
   const status = String(formData.get('status') ?? '') as RefundRequestStatus;

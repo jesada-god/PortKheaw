@@ -114,6 +114,20 @@ export function parseServerEnv(input: Record<string, unknown>) {
        */
       STRIPE_COUPON_FOUNDER_PRO: read('STRIPE_COUPON_FOUNDER_PRO', optionalSecret, undefined),
       STRIPE_COUPON_FOUNDER_ELITE: read('STRIPE_COUPON_FOUNDER_ELITE', optionalSecret, undefined),
+      /*
+       * Error monitoring. Optional, like every integration above, and for the
+       * same reason: the product must run without it. With no DSN configured the
+       * reporter still runs and still sanitizes — it writes a structured line to
+       * the platform's own logs instead of shipping an event — so the capture
+       * points, the redaction and its tests are all exercised whether or not a
+       * provider is ever connected.
+       *
+       * `SENTRY_DSN` is a *public* DSN: it authorizes writing events and nothing
+       * else. It is still read server-side only, because there is no reason for a
+       * browser to hold it and a public ingest endpoint invites noise.
+       */
+      SENTRY_DSN: read('SENTRY_DSN', optionalUrl, undefined),
+      SENTRY_ENVIRONMENT: read('SENTRY_ENVIRONMENT', optionalSecret, undefined),
     },
     issues,
   };

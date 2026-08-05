@@ -53,6 +53,15 @@ export type RefundRequestStatus =
 export type RefundRequestReason =
   'duplicate_charge' | 'not_as_expected' | 'accidental_purchase' | 'technical_issue' | 'other';
 export type SupportAuthorRole = 'user' | 'admin' | 'system';
+export type BetaStage = 'closed' | 'beta_5_10' | 'beta_20_50' | 'public';
+export type BetaAccessReason =
+  | 'unconfigured' | 'admin' | 'public_stage' | 'pre_existing_account'
+  | 'existing_subscriber' | 'invited' | 'closed_stage' | 'not_invited' | 'unauthenticated';
+export type BetaFunnelEventKey =
+  | 'signup_completed' | 'subscription_viewed' | 'checkout_started' | 'checkout_returned'
+  | 'checkout_canceled' | 'payment_succeeded' | 'paywall_blocked'
+  | 'promptpay_renewal_help_viewed' | 'promptpay_renewal_paid' | 'feature_used_before_purchase';
+export type SchedulerStatus = 'ok' | 'lagging' | 'stale' | 'unknown';
 /** The only image types an attachment may be. Nothing executable is storable. */
 export type SupportAttachmentMimeType =
   'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
@@ -1437,6 +1446,196 @@ export interface Database {
       claim_push_test: { Args: { input_endpoint: string; input_now: string }; Returns: Array<{ subscription_id: string; allowed: boolean; retry_after_seconds: number }> };
       create_push_test_notification: { Args: { input_subscription_id: string; input_now: string }; Returns: Array<{ notification_id: string; delivery_id: string }> };
       claim_push_deliveries_service: { Args: { input_limit: number; input_now: string; input_claim_token: string }; Returns: Array<Database['public']['Tables']['push_deliveries']['Row']> };
+
+      /*
+       * Phase 6 — the operator dashboard, the controlled beta, and production
+       * safety. Every `admin_*` routine below checks `is_platform_admin` inside
+       * the database and raises `ADMIN_REQUIRED` otherwise; none of them is
+       * reachable by a client holding an ordinary session.
+       */
+
+      /**
+       * Whether *this* caller may start a new purchase. Takes no arguments: the
+       * account, the stage and the clock are all read inside the database, so a
+       * client cannot claim admission it does not have.
+       */
+      resolve_my_beta_access: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          stage: BetaStage;
+          admitted: boolean;
+          reason: BetaAccessReason;
+          is_admin: boolean;
+          /** `-1` means uncapped. */
+          participant_cap: number;
+          active_invites: number;
+          database_now: string;
+        }>;
+      };
+      admin_set_beta_stage: {
+        Args: { input_stage: BetaStage; input_cap: number | null; input_request_id: string | null };
+        Returns: 'updated' | 'unchanged' | 'invalid_stage' | 'cap_out_of_band' | 'not_found';
+      };
+      admin_add_beta_invite: {
+        Args: { input_email: string; input_request_id: string | null };
+        Returns: Array<{
+          invite_id: string | null;
+          outcome: 'invited' | 'already_invited' | 'cap_reached' | 'invalid_email';
+          active_invites: number;
+          participant_cap: number;
+        }>;
+      };
+      admin_revoke_beta_invite: {
+        Args: { input_invite_id: string; input_request_id: string | null };
+        Returns: 'revoked' | 'unchanged' | 'not_found';
+      };
+      admin_beta_program_state: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          stage: BetaStage;
+          participant_cap: number | null;
+          effective_cap: number;
+          active_invites: number;
+          enforced_from: string;
+          updated_at: string;
+          database_now: string;
+        }>;
+      };
+      admin_beta_invites: {
+        Args: { input_query: string | null; input_limit: number; input_offset: number };
+        Returns: Array<{
+          invite_id: string;
+          email: string;
+          invited_at: string;
+          revoked_at: string | null;
+          has_account: boolean;
+          has_paid: boolean;
+          total_count: number;
+        }>;
+      };
+      admin_beta_report: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          stage: BetaStage | 'unknown';
+          invited: number;
+          signed_up: number;
+          paid: number;
+          signup_completed: number;
+          subscription_viewed: number;
+          checkout_started: number;
+          checkout_returned: number;
+          checkout_canceled: number;
+          payment_succeeded: number;
+          paywall_blocked: number;
+          promptpay_help_viewed: number;
+          promptpay_renewal_paid: number;
+          features_used_before_purchase: number;
+        }>;
+      };
+      admin_beta_feature_report: {
+        Args: { input_limit: number };
+        Returns: Array<{
+          event_key: BetaFunnelEventKey;
+          feature_key: string;
+          accounts: number;
+          occurrences: number;
+          last_seen_at: string;
+        }>;
+      };
+      /**
+       * The funnel writer. The account, the timestamp, the Bangkok date and the
+       * beta stage are stamped inside the database — a caller supplies only the
+       * approved key and the product-configuration labels.
+       */
+      record_beta_funnel_event: {
+        Args: {
+          input_event_key: BetaFunnelEventKey;
+          input_plan_key: string | null;
+          input_payment_rail: BillingPaymentMethod | null;
+          input_feature_key: string | null;
+          input_dedupe_scope: string;
+        };
+        Returns: 'recorded' | 'duplicate' | 'invalid_event' | 'invalid_rail'
+          | 'invalid_plan' | 'invalid_feature' | 'invalid_scope';
+      };
+      admin_dashboard_overview: {
+        Args: { input_from_date: string | null; input_to_date: string | null };
+        Returns: Array<{
+          basic_members: number;
+          pro_members: number;
+          elite_members: number;
+          trial_members: number;
+          promptpay_pending: number;
+          past_due_members: number;
+          new_members_today: number;
+          new_members_7d: number;
+          new_members_30d: number;
+          /** Minor units. Confirmed money in, minus confirmed money back. */
+          revenue_today_minor: number;
+          revenue_month_minor: number;
+          revenue_period_minor: number;
+          refunds_period_minor: number;
+          failed_webhooks: number;
+          dead_letter_webhooks: number;
+          open_reconciliation_issues: number;
+          critical_reconciliation_issues: number;
+          open_tickets: number;
+          open_refund_requests: number;
+          period_from: string;
+          period_to: string;
+          database_now: string;
+        }>;
+      };
+      admin_recent_billing_activity: {
+        Args: {
+          input_kind: 'all' | 'payment' | 'cancellation' | 'refund' | 'dispute';
+          input_query: string | null;
+          input_limit: number;
+          input_offset: number;
+        };
+        Returns: Array<{
+          activity_kind: 'payment' | 'cancellation' | 'refund' | 'dispute';
+          occurred_at: string;
+          user_id: string | null;
+          email: string | null;
+          plan_key: BillingPlanKey | null;
+          status: string;
+          amount_minor: number;
+          currency: string;
+          payment_rail: BillingPaymentMethod | null;
+          /**
+           * The provider's own identifier, for building a server-side deep link
+           * only. It is never rendered as text — the console shows a masked
+           * label — and this projection is reachable only behind the operator gate.
+           */
+          provider_ref: string | null;
+          total_count: number;
+        }>;
+      };
+      admin_audit_feed: {
+        Args: { input_limit: number; input_offset: number };
+        Returns: Array<{
+          source: 'admin' | 'support';
+          action: string;
+          target_type: string;
+          target_ref: string | null;
+          actor_user_id: string | null;
+          before_summary: Json;
+          after_summary: Json;
+          request_id: string | null;
+          created_at: string;
+          total_count: number;
+        }>;
+      };
+      consume_rate_limit: {
+        Args: { input_bucket_key: string; input_limit: number; input_window_seconds: number };
+        Returns: Array<{ allowed: boolean; remaining: number; retry_after_seconds: number }>;
+      };
+      /** Coarse by design: a word, never a timestamp, a count or an error. */
+      platform_readiness: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{ database_ready: boolean; scheduler_status: SchedulerStatus }>;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

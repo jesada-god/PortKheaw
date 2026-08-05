@@ -2,6 +2,29 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/src/lib/supabase/server';
 import { getSafeReturnPath } from '@/src/lib/auth/paths';
 import { describeAuthError, describeOAuthCallbackError } from '@/src/lib/auth/errors';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
+
+/**
+ * The top of the rollout funnel, recorded where the account first has a session.
+ *
+ * This handler also serves password recovery and a returning Google sign-in, so
+ * "somebody arrived here" is not the same as "somebody signed up". The account's
+ * own `created_at` is what distinguishes them: a confirmation link or a first
+ * OAuth login lands here minutes after the record was made, and a recovery link
+ * for a year-old account does not. The event is additionally once-per-account
+ * forever inside the database, so a retried callback cannot double-count.
+ *
+ * Never awaited for a result and never able to throw: an analytics row must not
+ * stand between somebody and the session they just confirmed.
+ */
+const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
+
+function noteSignupIfNew(createdAt: string | undefined): void {
+  if (!createdAt) return;
+  const created = Date.parse(createdAt);
+  if (!Number.isFinite(created) || Date.now() - created > SIGNUP_WINDOW_MS) return;
+  void recordBetaFunnelEvent({ event: 'signup_completed' }).catch(() => {});
+}
 
 /**
  * The single landing point for every link Supabase issues: the sign-up
@@ -32,8 +55,11 @@ export async function GET(request: NextRequest) {
   }
 
   if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(new URL(next, request.url));
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (!error) {
+      noteSignupIfNew(data.user?.created_at);
+      return NextResponse.redirect(new URL(next, request.url));
+    }
 
     // A code can only be spent once. Reloading the callback, or a second tab
     // racing the first, lands here with a session already established — that is

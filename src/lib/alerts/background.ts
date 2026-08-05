@@ -16,6 +16,7 @@ import { runEntitlementExpiryNotices } from '@/src/lib/billing/entitlement-expir
 import { runBillingReconciliation } from '@/src/lib/billing/reconciliation-run';
 import { adminReconciliationFailedNotification } from '@/src/lib/notifications/account-events';
 import { notifyAdmins } from '@/src/lib/notifications/dispatch';
+import { captureServerError } from '@/src/lib/monitoring/report';
 import { targetObservation } from './observation';
 import { describeCondition } from './logic';
 
@@ -366,8 +367,21 @@ export async function runBackgroundAlerts(
       const reconciliation = await runBillingReconciliation(client, now);
       empty.reconciliationRan = reconciliation.ran;
       empty.reconciliationIssues = reconciliation.issues;
-    } catch {
+      if (reconciliation.critical > 0) {
+        // A disagreement between what was billed and what is granted. Reported
+        // as a warning rather than an error: nothing threw, and somebody has to
+        // decide what the right repair is — see `reconciliation.ts` on why this
+        // is never fixed automatically.
+        captureServerError({
+          scope: 'billing.reconciliation.issues',
+          message: 'reconciliation found critical disagreements',
+          level: 'warning',
+          context: { outcome: reconciliation.outcome, attempt: reconciliation.critical },
+        });
+      }
+    } catch (cause) {
       empty.reconciliationUnavailable += 1;
+      captureServerError({ scope: 'billing.reconciliation', cause });
       await notifyAdmins(adminReconciliationFailedNotification({
         localDate: zonedClock(now, 'Asia/Bangkok').date,
         providerMode: 'unknown',
@@ -414,6 +428,17 @@ export async function runBackgroundAlerts(
       completed_at: new Date().toISOString(),
     }).eq('id', run.id);
     console.error('background-notifications', { status: 'failed', code: 'run-failed' });
+    /*
+     * The scheduler tick itself died. Everything this run owes somebody — price
+     * alerts, daily summaries, renewal reminders, entitlement expiry notices and
+     * the reconciliation pass — did not happen, and unlike a per-item failure
+     * there is nobody left in this process to notice.
+     */
+    captureServerError({
+      scope: 'scheduler.background-run',
+      cause,
+      context: { operation: 'run_background_alerts', code: 'run-failed' },
+    });
     throw cause;
   }
 }

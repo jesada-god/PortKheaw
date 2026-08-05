@@ -2,6 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
+import {
+  consumeRateLimit, rateLimitMessage, resolveClientAddress,
+} from '@/src/lib/security/rate-limit';
 import { signAttachmentUrl, storeSupportAttachment } from '@/src/lib/support/attachments';
 import {
   supportTicketReceivedNotification,
@@ -248,6 +251,22 @@ export async function adminReplyToTicketAction(formData: FormData): Promise<Repl
 export async function adminSetTicketStatusAction(formData: FormData): Promise<ReplyResult> {
   const client = await createClient();
   if (!client) return refusal('UNAVAILABLE');
+
+  /*
+   * A bound on operator mutations. The routine below already refuses a
+   * non-operator, so this is not an authorization control — it is a cap on how
+   * fast a session that *is* an operator can move records, which is what a
+   * compromised or scripted console would do.
+   */
+  const { data: { user } } = await client.auth.getUser();
+  const bound = await consumeRateLimit(client, {
+    scope: 'admin.mutation',
+    userId: user?.id ?? null,
+    clientAddress: await resolveClientAddress(),
+  });
+  if (!bound.allowed) {
+    return { ok: false, code: 'RATE_LIMITED', message: rateLimitMessage(bound.retryAfterSeconds) };
+  }
 
   const ticketId = String(formData.get('ticketId') ?? '');
   const status = String(formData.get('status') ?? '');

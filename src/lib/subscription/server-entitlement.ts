@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { NextResponse } from 'next/server';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 import { resolveRequestAccountAccess } from './account-access';
 import type { SubscriptionCapability } from './capabilities';
 import {
@@ -68,8 +69,40 @@ export function entitlementDenialResponse(denial: EntitlementDenial): NextRespon
 export async function guardRouteEntitlement(capability: SubscriptionCapability): Promise<
   { denied: NextResponse; entitlement: null } | { denied: null; entitlement: RequestEntitlement }
 > {
-  const entitlement = await resolveRequestEntitlement();
+  const access = await resolveRequestAccountAccess();
+  const entitlement: RequestEntitlement = {
+    authenticated: access.authenticated,
+    tier: access.effectiveAccessTier,
+  };
   const denial = denyEntitlement(entitlement, capability);
+
+  /*
+   * The rollout funnel's two feature signals, taken here because this is the one
+   * place both facts are already true and server-verified: a refusal really was a
+   * refusal, and a grant really was somebody using a feature. Reading either from
+   * a browser would mean trusting a client to report its own paywalls.
+   *
+   * `feature_used_before_purchase` is narrowed to accounts that have not bought
+   * anything — read from `subscriptionEffectiveTier`, the plan actually held,
+   * never from the access tier. Using the access tier would count every Elite
+   * subscriber, and every administrator, as somebody "using a feature before
+   * purchase", which is the opposite of what the report is for.
+   *
+   * Both are deduplicated per account, per feature, per Bangkok day inside the
+   * database, so a chart that polls does not become a thousand rows. Neither is
+   * awaited: telemetry must never delay or fail a data response.
+   */
+  if (access.authenticated) {
+    const beforePurchase = access.subscriptionEffectiveTier === 'basic' && !access.isAdmin;
+    if (denial || beforePurchase) {
+      void recordBetaFunnelEvent(
+        denial
+          ? { event: 'paywall_blocked', featureKey: capability }
+          : { event: 'feature_used_before_purchase', featureKey: capability },
+      ).catch(() => {});
+    }
+  }
+
   if (denial) return { denied: entitlementDenialResponse(denial), entitlement: null };
   return { denied: null, entitlement };
 }

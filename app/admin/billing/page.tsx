@@ -5,6 +5,8 @@ import { StatusChip } from '@/src/components/support/StatusChip';
 import { Input } from '@/src/components/ui/Input';
 import { Button } from '@/src/components/ui/Button';
 import { createClient } from '@/src/lib/supabase/server';
+import { withinAdminSearchLimit } from '@/src/lib/admin/admin-repository';
+import { maskEmail } from '@/src/lib/admin/masking';
 import { billingPlans } from '@/src/lib/billing/billing-plans';
 import { displayBaht } from '@/src/lib/support/presentation';
 import type { Database } from '@/src/types/database';
@@ -84,6 +86,7 @@ export default async function AdminBillingPage({
   let accounts: AccountRow[] | null = null;
   let issues: IssueRow[] = [];
   let unavailable = false;
+  let searchAllowed = true;
 
   if (supabase) {
     try {
@@ -95,12 +98,22 @@ export default async function AdminBillingPage({
       issues = openIssues.data ?? [];
 
       if (query) {
-        const search = await supabase.rpc('admin_search_accounts', {
-          input_query: query,
-          input_limit: 20,
-        });
-        if (search.error) throw search.error;
-        accounts = search.data ?? [];
+        /*
+         * The account search joins `auth.users` and is the one query on this page
+         * a caller can point anywhere, so it is bounded. The issue list above is
+         * not: it is a fixed projection, and an operator refreshing it during an
+         * incident must never be turned away.
+         */
+        const { data: { user } } = await supabase.auth.getUser();
+        searchAllowed = await withinAdminSearchLimit(supabase, user?.id ?? null);
+        if (searchAllowed) {
+          const search = await supabase.rpc('admin_search_accounts', {
+            input_query: query,
+            input_limit: 20,
+          });
+          if (search.error) throw search.error;
+          accounts = search.data ?? [];
+        }
       }
     } catch {
       unavailable = true;
@@ -149,8 +162,11 @@ export default async function AdminBillingPage({
                   className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)]"
                 >
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Masked, like everywhere else in the console. An operator
+                        who searched by address still recognises the result, and a
+                        screenshot of this page carries no full mailbox. */}
                     <span className="min-w-0 flex-1 truncate font-medium text-[var(--text)]">
-                      {account.email ?? account.user_id}
+                      {account.email ? maskEmail(account.email) : account.user_id}
                     </span>
                     <StatusChip
                       label={`สิทธิ์ปัจจุบัน: ${account.effective_tier}`}
@@ -179,7 +195,13 @@ export default async function AdminBillingPage({
           </section>
         )}
 
-        {query && Array.isArray(accounts) && accounts.length === 0 && !unavailable && (
+        {!searchAllowed && (
+          <p className="rounded-xl border border-[var(--border-strong)] p-4 text-sm text-[var(--text)]">
+            ค้นหาถี่เกินไป กรุณารอสักครู่แล้วค้นหาอีกครั้ง
+          </p>
+        )}
+
+        {searchAllowed && query && Array.isArray(accounts) && accounts.length === 0 && !unavailable && (
           <p className="rounded-xl border border-dashed border-[var(--border-strong)] p-4 text-sm text-[var(--text-muted)]">
             ไม่พบบัญชีที่ตรงกับคำค้นนี้
           </p>
