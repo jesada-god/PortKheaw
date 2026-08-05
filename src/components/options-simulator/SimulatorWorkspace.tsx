@@ -17,7 +17,7 @@ import { fetchFxRate } from '@/src/lib/market-data/fx/client';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import type { MarketDataEnvelope, Quote, SymbolSearchResult } from '@/src/lib/market-data/types';
 import { gatedOptionsChainSchema, normalizeGatedOptionsChain } from '@/src/lib/market-data/options/contracts';
-import { importOptionContract } from '@/src/lib/options-simulator/contract-import';
+import { findChainContract, importOptionContract, providerContractGaps } from '@/src/lib/options-simulator/contract-import';
 import { detectStrategy } from '@/src/lib/options-simulator/portfolio-inputs';
 import type { MonteCarloDisplayResult, WhatIfDecomposition } from '@/src/lib/options-simulator/compute-dto';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
@@ -410,10 +410,19 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         const parsed = gatedOptionsChainSchema.safeParse(payload.data);
         if (!parsed.success) throw new Error('Options chain response ไม่ผ่าน schema validation');
         const chain = normalizeGatedOptionsChain(parsed.data);
-        let imported = false;
+        /*
+          Both failure modes are decided here, from the snapshot alone. Reading a
+          flag that `setWorkspace`'s updater assigns would report every import as
+          failed: React applies the updater after this line runs, so the error
+          banner replaced the success toast and the reader never landed on the
+          inputs step. Once the identity resolves and the snapshot predates the
+          expiration, `importOptionContract` cannot return null.
+        */
+        const contract = findChainContract(chain, contractSymbol);
+        if (!contract) throw new Error('ไม่พบ contract identity ที่เลือกใน chain snapshot นี้');
+        if (chain.asOf.slice(0, 10) >= contract.expiration) throw new Error('สัญญาที่เลือกหมดอายุแล้วใน chain snapshot นี้');
         setWorkspace((current) => {
           const next = importOptionContract(current, chain, contractSymbol);
-          imported = Boolean(next);
           if (!next) return current;
           const canonicalUnderlying = hasAcceptedPrice && acceptedStatus ? {
             ...next,
@@ -427,7 +436,6 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
           } : next;
           return normalizeUiWorkspace(canonicalUnderlying);
         });
-        if (!imported) throw new Error('ไม่พบ contract identity ที่เลือกใน chain snapshot นี้');
         setSelectedLegId('portfolio');
         setValuation(null); setWhatIfDecomposition(null); setMc(null); setCallPutScore(null);
         setSaveStatus('Unsaved'); setTab('Inputs');
@@ -748,6 +756,7 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
   const activeLeg = selectedLegId === 'portfolio' ? null : workspace.legs.find((leg) => leg.id === selectedLegId) ?? null;
   const analysisSelection = activeLeg ? selectedLegId : 'portfolio';
   const scopedLegs = activeLeg ? [activeLeg] : workspace.legs;
+  const contractGaps = providerContractGaps(workspace);
   const earliestExpiration = scopedLegs.map((leg) => leg.expiration).sort()[0] ?? workspace.valuationDate;
   const minimumTargetDate = addCalendarDays(workspace.valuationDate, 1);
   const maximumTargetDate = addCalendarDays(earliestExpiration, -1);
@@ -836,6 +845,8 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
         <div className="mb-4"><h1 className="text-xl font-bold">{stepHeadings.Inputs}</h1><p className="mt-1 text-sm text-slate-400">{stepDescriptions.Inputs}</p>{createdAt && <p className="mt-1 text-xs text-slate-500" data-testid="workspace-created-at">สร้างแบบจำลองเมื่อ {formatTimestamp(createdAt)}</p>}</div>
         <div className="grid gap-3 md:grid-cols-3"><Field title="ชื่อแบบจำลอง" placeholder="เช่น Earnings Call" helper="ชื่อสำหรับค้นหาแบบจำลองภายหลัง" value={workspace.name} onChange={(value) => change({ name: value })} /><Field title="รูปแบบกลยุทธ์ (Strategy)" placeholder="เช่น Long Call" helper="ชื่อกลยุทธ์ที่ตรวจจับจากรายละเอียดสัญญา" value={workspace.strategyType} onChange={(value) => change({ strategyType: value })} /><div><FieldLabel title="วันที่ใช้คำนวณ (Valuation Date)" helper="วันที่ฐานสำหรับการคำนวณ" /><Input type="date" aria-label="วันที่ใช้คำนวณ (Valuation Date)" value={workspace.valuationDate} onChange={(event) => { if (hasResults.current) setInputsOutdated(true); change({ valuationDate: event.target.value, scenarios: workspace.scenarios.map((item, index) => index === 0 ? { ...item, valuationDate: clampTargetDate(item.valuationDate, event.target.value, workspace.legs.map((leg) => leg.expiration).sort()[0] ?? item.valuationDate) } : item) }); }} /></div></div>
         <div className="my-4"><h2 className="text-lg font-bold">รายละเอียดสัญญา (Option Legs)</h2><p className="text-xs text-slate-400">กรอกและแก้ไขข้อมูลสัญญาได้ที่นี่ที่เดียว</p></div>
+        {/* A provider that could not supply a field says so by name here, rather than leaving a fabricated 0 in the input. */}
+        {contractGaps.length > 0 && <section role="status" data-testid="provider-contract-gaps" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200"><strong>ข้อมูลจากผู้ให้บริการยังไม่ครบ กรุณากรอกเองก่อนคำนวณ:</strong><ul className="mt-1 list-disc pl-5">{contractGaps.map((gap) => <li key={gap.path}>สัญญาที่ {Number(gap.path.split('.')[1]) + 1} · {gap.label}</li>)}</ul></section>}
         <div className="space-y-4">{workspace.legs.map((leg, index) => { const resolved = whatIfEntitled ? legSensitivity(leg) : { delta: null, theta: null, deltaSource: 'model' as const, thetaSource: 'model' as const }; return <article key={leg.id} className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/20 p-4"><div className="mb-4 flex items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><strong>สัญญาที่ {index + 1}</strong><span className="rounded-full bg-violet-500/10 px-2 py-1 text-[10px] font-semibold text-violet-300">{leg.kind === 'call' ? 'Call' : 'Put'}</span><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.side === 'buy' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.side === 'buy' ? 'Buy' : 'Sell'}</span>{leg.inputMode && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${leg.inputMode === 'provider' ? 'bg-sky-500/10 text-sky-300' : 'bg-amber-500/10 text-amber-300'}`}>{leg.inputMode === 'provider' ? 'ข้อมูลจริง' : 'กำหนดเอง'}</span>}</div><div className="flex shrink-0 gap-1"><Button className="min-h-11 px-3" variant="ghost" aria-label={`ทำสำเนาสัญญาที่ ${index + 1}`} onClick={() => change({ legs: [...workspace.legs.slice(0, index + 1), { ...leg, id: uid(), inputMode: 'custom' }, ...workspace.legs.slice(index + 1)] })}><Copy size={15} /><span className="sr-only sm:not-sr-only sm:ml-2">ทำสำเนา</span></Button><Button className="min-h-11 min-w-11" variant="danger" aria-label={`ลบสัญญาที่ ${index + 1}`} disabled={workspace.legs.length === 1} onClick={() => change({ legs: workspace.legs.filter((_, i) => i !== index) })}><Trash2 size={15} /></Button></div></div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><Choice title="ประเภทสัญญา (Call/Put)" value={leg.kind} options={['call', 'put']} optionLabels={{ call: 'Call', put: 'Put' }} validationPath={`legs.${index}.kind`} onChange={(value) => legChange(index, { kind: value as OptionLeg['kind'] })} /><Choice title="ฝั่งซื้อ/ขาย (Buy/Sell)" value={leg.side} options={['buy', 'sell']} optionLabels={{ buy: 'Buy', sell: 'Sell' }} validationPath={`legs.${index}.side`} onChange={(value) => legChange(index, { side: value as OptionLeg['side'] })} /><Numeric title="จำนวนสัญญา (Quantity)" placeholder="เช่น 1" min={1} integer helper="จำนวนสัญญาที่ต้องการวิเคราะห์" externalError={fieldError(`legs.${index}.quantity`)} validationPath={`legs.${index}.quantity`} value={leg.quantity} onChange={(value) => legChange(index, { quantity: value })} /><Numeric title="ราคาใช้สิทธิ (Strike Price)" placeholder="เช่น 120" min={0.0000001} helper="ราคาใช้สิทธิตามสัญญา" externalError={fieldError(`legs.${index}.strike`)} validationPath={`legs.${index}.strike`} value={leg.strike} onChange={(value) => legChange(index, { strike: value })} /></div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"><div><FieldLabel title="วันหมดอายุ (Expiration)" helper="วันหมดอายุของสัญญา" /><Input type="date" aria-label={`วันหมดอายุ ของสัญญาที่ ${index + 1}`} min={addCalendarDays(workspace.valuationDate, 1)} value={leg.expiration} data-validation-path={`legs.${index}.expiration`} onChange={(event) => legChange(index, { expiration: event.target.value })} />{fieldError(`legs.${index}.expiration`) && <p role="alert" className="mt-1 text-xs text-red-300">{fieldError(`legs.${index}.expiration`)}</p>}</div><PremiumInput value={leg.entryPremium} helper="ต้นทุนต่อหุ้น เช่น $1.40" externalError={fieldError(`legs.${index}.entryPremium`)} validationPath={`legs.${index}.entryPremium`} onChange={(value) => legChange(index, { entryPremium: value })} /><PercentInput title="ความผันผวนที่ตลาดคาด (IV %)" value={engineVolatilityToPercent(leg.impliedVolatility)} placeholder="เช่น 114.50" helper="กรอกเป็นเปอร์เซ็นต์ เช่น 114.50 = 114.50%" externalError={fieldError(`legs.${index}.impliedVolatility`)} validationPath={`legs.${index}.impliedVolatility`} onChange={(value) => legChange(index, { impliedVolatility: percentVolatilityToEngine(value) })} /><Numeric title="จำนวนหุ้นต่อ 1 สัญญา (Contract Multiplier)" placeholder="เช่น 100" min={0.0000001} helper="หุ้นสหรัฐฯ ส่วนใหญ่ 1 สัญญา = 100 หุ้น" externalError={fieldError(`legs.${index}.multiplier`)} validationPath={`legs.${index}.multiplier`} value={leg.multiplier} onChange={(value) => legChange(index, { multiplier: value })} /></div>

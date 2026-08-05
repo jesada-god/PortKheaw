@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
-import { importOptionContract, selectProviderPremium } from './contract-import';
+import { findChainContract, importOptionContract, providerContractGaps, selectProviderPremium } from './contract-import';
 import type { SimulationWorkspace } from './types';
 
 const contract = (overrides: Partial<OptionContract> = {}): OptionContract => ({
@@ -71,7 +71,62 @@ describe('simulator provider contract import', () => {
     expect(selectProviderPremium(contract({ status: 'stale' }), 'buy')).toBeNull();
   });
 
+  /*
+    Alpaca is the only entitled options provider and it never publishes a `live`
+    chain; the import also re-reads a chain the panel has usually just fetched,
+    which comes back `cached`. Those two are the only statuses a real import ever
+    sees, and refusing them left every imported Long Call with a zero premium.
+  */
+  it('prefills the quoted executable side of a delayed or cached snapshot', () => {
+    expect(selectProviderPremium(contract({ status: 'delayed' }), 'buy')).toEqual({ value: 5.2, source: 'ask' });
+    expect(selectProviderPremium(contract({ status: 'delayed' }), 'sell')).toEqual({ value: 4.8, source: 'bid' });
+    expect(selectProviderPremium(contract({ status: 'cached' }), 'buy')).toEqual({ value: 5.2, source: 'ask' });
+    expect(selectProviderPremium(contract({ status: 'stale' }), 'sell')).toBeNull();
+  });
+
+  it('treats a zero quoted side as an absent quote, never as a fill', () => {
+    expect(selectProviderPremium(contract({ ask: 0 }), 'buy')).toBeNull();
+    expect(selectProviderPremium(contract({ bid: 0 }), 'sell')).toBeNull();
+  });
+
+  it('imports a delayed Long Call with a positive premium, debit and break-even', () => {
+    const delayed = contract({ status: 'delayed' });
+    const result = importOptionContract(workspace(), chain(delayed), delayed.contractSymbol);
+    const leg = result?.legs[0];
+    expect(leg).toEqual(expect.objectContaining({ entryPremium: 5.2, premiumSource: 'ask', contractStatus: 'delayed' }));
+    expect(leg && leg.entryPremium * leg.quantity * leg.multiplier).toBe(1_040);
+    expect(providerContractGaps(result!)).toEqual([]);
+  });
+
+  it('names every field the provider could not supply', () => {
+    const missing = contract({ bid: null, ask: null, mark: null, last: null, impliedVolatility: null });
+    const result = importOptionContract(workspace(), chain(missing), missing.contractSymbol);
+    expect(providerContractGaps(result!)).toEqual([
+      { path: 'legs.0.entryPremium', label: 'ราคาสัญญาต่อหุ้น (Premium)' },
+      { path: 'legs.0.impliedVolatility', label: 'ความผันผวนที่ตลาดคาด (IV)' },
+    ]);
+  });
+
+  it('stays quiet for a leg that carries no provider contract identity', () => {
+    expect(providerContractGaps(workspace())).toEqual([]);
+  });
+
   it('rejects an unknown contract identity', () => {
     expect(importOptionContract(workspace(), chain(), 'unknown')).toBeNull();
+    expect(findChainContract(chain(), 'unknown')).toBeNull();
+    expect(findChainContract(chain(), contract().contractSymbol)?.strike).toBe(25);
+  });
+
+  /*
+    The import effect decides success from the snapshot alone, because React
+    applies a `setWorkspace` updater after the calling line has already run.
+    That decision is only sound while these two conditions imply an import.
+  */
+  it('always imports when the identity resolves and the snapshot predates expiration', () => {
+    const item = contract({ status: 'delayed' });
+    const snapshot = chain(item);
+    expect(snapshot.asOf.slice(0, 10) < item.expiration).toBe(true);
+    expect(importOptionContract(workspace(), snapshot, item.contractSymbol)).not.toBeNull();
+    expect(importOptionContract({ ...workspace(), valuationDate: '2028-01-01' }, snapshot, item.contractSymbol)).not.toBeNull();
   });
 });

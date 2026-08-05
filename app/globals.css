@@ -274,6 +274,7 @@
   [class~="bg-slate-800/80"],
   [class~="bg-slate-700/60"] { background-color: color-mix(in srgb, var(--surface-hover) 65%, transparent) !important; }
   [class~="hover:bg-slate-800/30"]:hover,
+  [class~="hover:bg-slate-800/40"]:hover,
   [class~="hover:bg-slate-800/50"]:hover,
   [class~="hover:bg-slate-800/70"]:hover { background-color: color-mix(in srgb, var(--surface-hover) 65%, transparent) !important; }
   [class~="bg-slate-500/5"],
@@ -300,6 +301,7 @@
   [class~="hover:bg-[#1e293b]"]:hover { background-color: var(--surface-hover) !important; }
   [class~="hover:bg-white/5"]:hover { background-color: color-mix(in srgb, var(--text) 6%, transparent) !important; }
   [class~="hover:border-slate-500"]:hover,
+  [class~="hover:border-slate-600"]:hover,
   [class~="hover:border-slate-700"]:hover { border-color: var(--border-strong) !important; }
   [class~="placeholder:text-slate-500"]::placeholder { color: var(--text-muted) !important; }
   [class~="hover:text-[#D4FF00]"]:hover { color: var(--accent) !important; }

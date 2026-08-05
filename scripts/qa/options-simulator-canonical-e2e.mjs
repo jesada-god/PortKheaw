@@ -20,6 +20,7 @@ const report = {
   network: {},
   fresh: {},
   saved: {},
+  providerImport: null,
   runtime: [],
   failures: [],
   cleanup: {},
@@ -27,6 +28,9 @@ const report = {
 
 const LONG_CALL = Object.freeze({ spot: 100, strike: 100, premiumPerShare: 5, contracts: 1, multiplier: 100, costBasis: 500, breakEven: 105 });
 const PROHIBITED_RESULT_TEXT = ['คำนวณ % ไม่ได้', 'ไม่มีข้อมูล', 'Score Unavailable'];
+const IMPORT_SYMBOL = process.env.QA_IMPORT_SYMBOL ?? 'AAPL';
+const close = (left, right) => Number.isFinite(left) && Number.isFinite(right)
+  && Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(right));
 
 let browser;
 let userId;
@@ -125,10 +129,10 @@ async function enterLongCall(page) {
   await setInput(page, '[data-validation-path="legs.0.multiplier"]', 100);
 }
 
-async function runWhatIf(page) {
+async function runWhatIf(page, { targetPrice = 110, targetDate = isoDate(30) } = {}) {
   await page.getByRole('button', { name: 'What-If', exact: true }).click();
-  await setInput(page, '[data-validation-path="scenarios.0.targetPrice"]', 110);
-  await setInput(page, '[data-validation-path="scenarios.0.valuationDate"]', isoDate(30));
+  await setInput(page, '[data-validation-path="scenarios.0.targetPrice"]', targetPrice);
+  await setInput(page, '[data-validation-path="scenarios.0.valuationDate"]', targetDate);
   const responsePromise = page.waitForResponse((response) => response.url().includes('/api/option-simulations/compute/what-if') && response.request().method() === 'POST');
   await page.locator('[data-testid="desktop-calculate-action"] button').click();
   const response = await responsePromise;
@@ -169,18 +173,19 @@ async function readRuntimeState(page, testId) {
   return { attributes, breakEvenText, text };
 }
 
-function assertCanonical(scope, apiResult, runtimeState, scenarioScore = null) {
+function assertCanonical(scope, apiResult, runtimeState, scenarioScore = null, expected = LONG_CALL) {
   const canonicalSummary = {
     breakEvenPrices: apiResult?.breakEvenPrices,
     initialDebit: apiResult?.initialDebit,
     initialRisk: apiResult?.initialRisk,
     maxLoss: apiResult?.maxLoss,
     returnPct: apiResult?.returnPct,
+    expected,
   };
-  check(apiResult?.initialDebit === LONG_CALL.costBasis, `${scope}: API initialDebit is not the entered Long Call debit`, canonicalSummary);
-  check(apiResult?.initialRisk === LONG_CALL.costBasis, `${scope}: API initialRisk is not the entered Long Call debit`, canonicalSummary);
-  check(apiResult?.maxLoss === LONG_CALL.costBasis, `${scope}: API maxLoss is not the entered Long Call debit`, canonicalSummary);
-  check(Array.isArray(apiResult?.breakEvenPrices) && apiResult.breakEvenPrices.length === 1 && apiResult.breakEvenPrices[0] === LONG_CALL.breakEven, `${scope}: API break-even is not strike + premium/share`, canonicalSummary);
+  check(close(apiResult?.initialDebit, expected.costBasis), `${scope}: API initialDebit is not the entered Long Call debit`, canonicalSummary);
+  check(close(apiResult?.initialRisk, expected.costBasis), `${scope}: API initialRisk is not the entered Long Call debit`, canonicalSummary);
+  check(close(apiResult?.maxLoss, expected.costBasis), `${scope}: API maxLoss is not the entered Long Call debit`, canonicalSummary);
+  check(Array.isArray(apiResult?.breakEvenPrices) && apiResult.breakEvenPrices.length === 1 && close(apiResult.breakEvenPrices[0], expected.breakEven), `${scope}: API break-even is not strike + premium/share`, canonicalSummary);
   check(Number.isFinite(apiResult?.returnPct), `${scope}: API returnPct is unavailable`, apiResult?.returnPct);
   check(Number(runtimeState.attributes.breakEvenCount) === 1, `${scope}: rendered state break-even count is not one`, runtimeState.attributes);
   check(Number(runtimeState.attributes.initialRisk) === apiResult?.initialRisk, `${scope}: state initialRisk differs from API`, { api: apiResult?.initialRisk, dom: runtimeState.attributes.initialRisk });
@@ -191,7 +196,7 @@ function assertCanonical(scope, apiResult, runtimeState, scenarioScore = null) {
   if (Number.isFinite(apiResult?.currentValue)) {
     check(apiResult.simulatedValue === apiResult.theoreticalValue, `${scope}: simulatedValue does not match the modeled position value`, apiResult);
     check(Math.abs(apiResult.changeFromCurrent - (apiResult.simulatedValue - apiResult.currentValue)) < 1e-9, `${scope}: changeFromCurrent does not reconcile`, apiResult);
-    check(apiResult.costBasis === LONG_CALL.costBasis, `${scope}: costBasis does not match premium × contracts × multiplier`, apiResult);
+    check(close(apiResult.costBasis, expected.costBasis), `${scope}: costBasis does not match premium × contracts × multiplier`, apiResult);
     check(Math.abs(apiResult.projectedPnL - (apiResult.simulatedValue - apiResult.costBasis)) < 1e-9, `${scope}: projectedPnL does not reconcile`, apiResult);
     check(apiResult.projectedPnL === apiResult.profitLoss, `${scope}: projectedPnL differs from engine net P&L`, apiResult);
     check(apiResult.projectedPnL !== apiResult.simulatedValue, `${scope}: projectedPnL incorrectly equals simulatedValue`, apiResult);
@@ -214,14 +219,14 @@ function assertCanonical(scope, apiResult, runtimeState, scenarioScore = null) {
   }
 }
 
-function assertLongCallRequest(scope, request) {
+function assertLongCallRequest(scope, request, expected = LONG_CALL) {
   const leg = request?.input?.portfolio?.legs?.[0] ?? request?.input?.legs?.[0];
   check(leg?.kind === 'call', `${scope}: request kind was not call`, leg);
   check(leg?.side === 'buy', `${scope}: request side was not buy`, leg);
-  check(leg?.quantity === LONG_CALL.contracts, `${scope}: request contract count was lost`, leg);
-  check(leg?.strike === LONG_CALL.strike, `${scope}: request strike was lost`, leg);
-  check(leg?.entryPremium === LONG_CALL.premiumPerShare, `${scope}: request per-share premium was lost`, leg);
-  check(leg?.multiplier === LONG_CALL.multiplier, `${scope}: request multiplier was lost`, leg);
+  check(leg?.quantity === expected.contracts, `${scope}: request contract count was lost`, leg);
+  check(close(leg?.strike, expected.strike), `${scope}: request strike was lost`, leg);
+  check(close(leg?.entryPremium, expected.premiumPerShare), `${scope}: request per-share premium was lost`, leg);
+  check(close(leg?.multiplier, expected.multiplier), `${scope}: request multiplier was lost`, leg);
 }
 
 async function hardReload(page, path) {
@@ -229,7 +234,7 @@ async function hardReload(page, path) {
   await session.send('Network.enable');
   await session.send('Network.setCacheDisabled', { cacheDisabled: true });
   await session.send('Network.clearBrowserCache');
-  await page.goto(`${BASE_URL}${path}?qa=${Date.now()}`, { waitUntil: 'networkidle', timeout: 60_000 });
+  await page.goto(`${BASE_URL}${path}${path.includes('?') ? '&' : '?'}qa=${Date.now()}`, { waitUntil: 'networkidle', timeout: 60_000 });
 }
 
 try {
@@ -334,6 +339,85 @@ try {
       report.responsive.push({ ...target, viewport, layout, attributes: state.attributes });
     }
   }
+  /*
+    The path a reader actually takes: a real contract carried in from the options
+    chain. It never enters a premium by hand, so a provider field that arrives
+    empty becomes a zero input — and a zero premium is exactly what collapses the
+    debit, the risk, the break-even root, the return percentage and the Monte
+    Carlo lower tail. This asserts the contract survives the whole active path.
+  */
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const expirationsResponse = await context.request.get(`${BASE_URL}/api/market/options/expirations?symbol=${IMPORT_SYMBOL}&qa=${Date.now()}`);
+  const expirationsBody = await expirationsResponse.json();
+  const expirations = expirationsBody?.data?.expirations ?? [];
+  const expiration = expirations.find((value) => value >= isoDate(30));
+  check(Boolean(expiration), 'provider import: no expiration at least 30 days out', { status: expirationsResponse.status(), expirations: expirations.slice(0, 8), error: expirationsBody?.error });
+
+  if (expiration) {
+    const chainResponse = await context.request.get(`${BASE_URL}/api/market/options/chain?symbol=${IMPORT_SYMBOL}&expiration=${expiration}&qa=${Date.now()}`);
+    const chainBody = await chainResponse.json();
+    const chain = chainBody?.data;
+    const spot = chain?.spot;
+    const contract = (chain?.calls ?? [])
+      .filter((item) => Number.isFinite(item.ask) && item.ask > 0)
+      .sort((left, right) => Math.abs(left.strike - spot) - Math.abs(right.strike - spot))[0];
+    report.network.importedChain = { status: chainResponse.status(), provider: chain?.provider, asOf: chain?.asOf, status_: chain?.status, spot, contract, error: chainBody?.error };
+    check(Boolean(contract), 'provider import: the chain returned no quoted call', report.network.importedChain);
+
+    if (contract) {
+      const importUrl = `/tools/monte-carlo?symbol=${IMPORT_SYMBOL}&expiration=${expiration}&contract=${encodeURIComponent(contract.contractSymbol)}`
+        + `&underlyingPrice=${spot}&underlyingMode=DELAYED&underlyingProvider=${encodeURIComponent(chain.provider)}&underlyingAsOf=${encodeURIComponent(chain.asOf)}`;
+      await hardReload(page, importUrl);
+      await page.locator('[data-testid="option-legs-form"]').waitFor({ timeout: 60_000 });
+
+      const importedInputs = await page.evaluate(() => Object.fromEntries(
+        [...document.querySelectorAll('[data-validation-path]')].map((element) => [element.dataset.validationPath, element.value ?? null]),
+      ));
+      const gaps = await page.locator('[data-testid="provider-contract-gaps"]').innerText().catch(() => '');
+      const importErrors = await page.locator('[role="alert"]').allInnerTexts().catch(() => []);
+      report.providerImport = { contractSymbol: contract.contractSymbol, ask: contract.ask, strike: contract.strike, importedInputs, gaps, importErrors };
+
+      check(!importErrors.some((text) => text.includes('นำเข้าสัญญาไม่สำเร็จ') || text.includes('ข้อมูลสัญญาที่ได้รับกลับมาไม่ตรงกับที่เลือกไว้')), 'provider import: a successful import reported a failure', importErrors);
+      check(!gaps.includes('ราคาสัญญาต่อหุ้น'), 'provider import: the quoted ask did not reach the premium input', { gaps, ask: contract.ask });
+      check(Number(importedInputs['legs.0.entryPremium']) > 0, 'provider import: the premium input is zero', importedInputs);
+      check(close(Number(importedInputs['legs.0.entryPremium']), contract.ask), 'provider import: the premium input is not the quoted ask', { input: importedInputs['legs.0.entryPremium'], ask: contract.ask });
+      check(Number(importedInputs['legs.0.strike']) === contract.strike, 'provider import: the strike was lost', importedInputs);
+      check(Number(importedInputs['legs.0.multiplier']) === contract.multiplier, 'provider import: the multiplier was lost', importedInputs);
+
+      // Any field the provider genuinely could not supply is named, then entered by hand — never left as a silent zero.
+      if (!(Number(importedInputs['legs.0.impliedVolatility']) > 0)) {
+        check(gaps.includes('ความผันผวนที่ตลาดคาด'), 'provider import: a missing IV was not named', { gaps, importedInputs });
+        await setInput(page, '[data-validation-path="legs.0.impliedVolatility"]', 30);
+      }
+
+      const premiumPerShare = Number(importedInputs['legs.0.entryPremium']);
+      const contracts = Number(importedInputs['legs.0.quantity']);
+      const multiplier = Number(importedInputs['legs.0.multiplier']);
+      const expected = {
+        spot, strike: contract.strike, premiumPerShare, contracts, multiplier,
+        costBasis: premiumPerShare * contracts * multiplier,
+        breakEven: contract.strike + premiumPerShare,
+      };
+
+      const importedWhatIf = await runWhatIf(page, { targetPrice: Math.round(spot * 1.08 * 100) / 100, targetDate: isoDate(21) });
+      const importedWhatIfState = await readRuntimeState(page, 'what-if-results');
+      report.network.importedWhatIf = importedWhatIf;
+      check(importedWhatIf.status === 200, 'provider import What-If: API did not return 200', importedWhatIf.body);
+      assertLongCallRequest('provider import What-If', importedWhatIf.request, expected);
+      assertCanonical('provider import What-If', importedWhatIf.body?.data?.valuation, importedWhatIfState, null, expected);
+
+      const importedMonte = await runMonteCarlo(page);
+      const importedMonteState = await readRuntimeState(page, 'monte-carlo-results');
+      report.network.importedMonteCarlo = importedMonte;
+      check(importedMonte.status === 200, 'provider import Monte Carlo: API did not return 200', importedMonte.body);
+      assertLongCallRequest('provider import Monte Carlo', importedMonte.request, expected);
+      assertCanonical('provider import Monte Carlo', importedMonte.body?.data?.result, importedMonteState, importedMonte.body?.data?.scenarioScore, expected);
+      report.providerImport.whatIf = importedWhatIfState.attributes;
+      report.providerImport.monteCarlo = importedMonteState.attributes;
+      await page.screenshot({ path: `${OUT_DIR}/provider-import-long-call.png`, fullPage: true });
+    }
+  }
+
   check(report.runtime.length === 0, 'Browser runtime emitted errors', report.runtime);
 } catch (error) {
   report.failures.push({ message: 'E2E aborted', details: { name: error.name, message: error.message, stack: error.stack } });
@@ -371,6 +455,7 @@ if (report.failures.length) {
       whatIf: summarize(report.saved.whatIf),
       monteCarlo: summarize(report.saved.monteCarlo),
     },
+    providerImport: report.providerImport,
     cleanup: report.cleanup,
   }, null, 2));
 }

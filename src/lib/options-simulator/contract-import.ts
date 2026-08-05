@@ -13,16 +13,61 @@ function daysBetween(from: string, to: string): number {
   return Math.max(1, Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000));
 }
 
+/**
+ * Only a quoted executable side is safe to prefill. Last and the provider mark
+ * remain reference observations and are never silently treated as a fill.
+ *
+ * `delayed` and `cached` snapshots still carry a real quoted side. Alpaca is the
+ * only entitled options provider, it never publishes a `live` chain, and the
+ * import re-reads a chain the panel has usually just fetched — so in production
+ * the status is always `delayed` or `cached`. Accepting `live` alone meant every
+ * imported leg arrived with no premium at all, and a leg with no premium is
+ * exactly the input that collapses initial debit, max loss, the break-even root
+ * and the return percentage to zero.
+ *
+ * `stale` stays refused: that snapshot is old enough that the workspace already
+ * makes the reader confirm it before calculating, so its quote is not a fill. A
+ * zero on the executable side is refused for the same reason — it is an absent
+ * quote, not a price someone could pay.
+ */
 export function selectProviderPremium(
   contract: OptionContract,
   side: OptionLeg['side'] = 'buy',
 ): { value: number; source: PremiumSource } | null {
-  // Only a current executable side is safe to prefill. Last and provider mark
-  // remain reference observations and are never silently treated as a fill.
-  if (contract.status !== 'live') return null;
+  if (contract.status === 'stale') return null;
   const source = side === 'buy' ? 'ask' : 'bid';
   const value = contract[source];
-  return value !== null && Number.isFinite(value) && value >= 0 ? { value, source } : null;
+  return value !== null && Number.isFinite(value) && value > 0 ? { value, source } : null;
+}
+
+export function findChainContract(chain: OptionsChain, contractSymbol: string): OptionContract | null {
+  return [...chain.calls, ...chain.puts].find((item) => item.contractSymbol === contractSymbol) ?? null;
+}
+
+export interface ProviderContractGap {
+  /** The same validation path the inputs form and the schema messages use. */
+  path: string;
+  label: string;
+}
+
+const GAP_LABELS = {
+  entryPremium: 'ราคาสัญญาต่อหุ้น (Premium)',
+  impliedVolatility: 'ความผันผวนที่ตลาดคาด (IV)',
+} as const;
+
+/**
+ * Names every field a provider snapshot could not supply, so an imported leg
+ * says which input is still missing instead of presenting a fabricated zero as
+ * a real number. Only legs that carry a provider contract identity are reported,
+ * so an untouched blank workspace stays quiet.
+ */
+export function providerContractGaps(workspace: Pick<SimulationWorkspace, 'legs'>): ProviderContractGap[] {
+  return workspace.legs.flatMap((leg, index) => {
+    if (!leg.contractSymbol) return [];
+    return (['entryPremium', 'impliedVolatility'] as const)
+      .filter((field) => !(Number.isFinite(leg[field]) && leg[field] > 0))
+      .map((field) => ({ path: `legs.${index}.${field}`, label: GAP_LABELS[field] }));
+  });
 }
 
 export function importOptionContract(
@@ -30,14 +75,28 @@ export function importOptionContract(
   chain: OptionsChain,
   contractSymbol: string,
 ): SimulationWorkspace | null {
-  const contract = [...chain.calls, ...chain.puts].find((item) => item.contractSymbol === contractSymbol);
+  const contract = findChainContract(chain, contractSymbol);
   if (!contract) return null;
   const existing = current.legs[0];
   const side = existing?.side ?? 'buy';
   const premium = selectProviderPremium(contract, side);
   const marketQuote = optionMarketQuote(contract);
-  const valuationDate = current.valuationDate < contract.expiration ? current.valuationDate : chain.asOf.slice(0, 10);
+  /*
+    The seed workspace carries no dates until the mount effect applies the
+    reader's calendar day, and a fast chain response can land first. An undated
+    workspace therefore falls back to the snapshot's own date rather than being
+    treated as a date that sorts before every expiration.
+  */
+  const valuationDate = current.valuationDate && current.valuationDate < contract.expiration
+    ? current.valuationDate
+    : chain.asOf.slice(0, 10);
   if (valuationDate >= contract.expiration) return null;
+  /*
+    A field the provider could not supply stays 0 here only because the form
+    renders an empty input for 0. It is never presented as a real number:
+    `providerContractGaps` names every such field, and the calculation schemas
+    reject it by path, so no zero premium or zero IV can reach an engine.
+  */
   const leg: OptionLeg = {
     id: existing?.id ?? globalThis.crypto.randomUUID(),
     kind: contract.type,
