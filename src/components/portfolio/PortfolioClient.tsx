@@ -4,36 +4,40 @@ import { useCallback, useEffect, useMemo, useState, useTransition, type FormEven
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  AlertTriangle, Briefcase, ChevronDown, ChevronUp, Edit3, Eye, EyeOff,
-  ArrowDownCircle, ArrowUpCircle, History, Lock, LoaderCircle, Plus, RefreshCw, Repeat2, Trash2, WalletCards,
+  AlertTriangle, Briefcase, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff,
+  ArrowDownCircle, ArrowUpCircle, History, Lock, LoaderCircle, PencilLine, Plus, RefreshCw, Repeat2, WalletCards,
 } from 'lucide-react';
 import {
   createPortfolioTransactionAction,
-  deletePortfolioTransactionAction,
   setPortfolioBaseCurrencyAction,
-  updatePortfolioTransactionAction,
 } from '@/app/portfolio/actions';
+import { reconcilePortfolioValueAction } from '@/app/portfolio/reconcile-actions';
 import { Button } from '@/src/components/ui/Button';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
-import { Modal } from '@/src/components/ui/Modal';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
-import type { HoldingSummary, MarketPriceInput, PortfolioGoal, PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
+import type { HoldingSummary, MarketPriceInput, PortfolioGoal, PortfolioRecord, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
-import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
+import {
+  formatPortfolioMoney,
+  gainColor,
+  portfolioReturnToneClass,
+  signedMoney,
+  signedPercent,
+} from '@/src/lib/portfolio/presentation';
 import {
   currentDateTimeLocal,
-  formatDateTimeLocal,
   validateTransactionDateTime,
 } from '@/src/lib/portfolio/transaction-datetime';
 import { OptionsSection } from './OptionsSection';
 import { PortfolioManager } from './PortfolioManager';
-import { TransactionFormModal, transactionLabels, type TransactionFormState } from './TransactionFormModal';
+import { PortfolioValueSheet, type PortfolioValueSubmission } from './PortfolioValueSheet';
+import { TransactionFormModal, type TransactionFormState } from './TransactionFormModal';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -44,11 +48,6 @@ import {
   portfolioWriteBlock,
 } from '@/src/lib/subscription/portfolio-write-access';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
-import { cashEffectForTransaction } from '@/src/lib/portfolio/cash-preview';
-
-const OPTION_TYPES = new Set<PortfolioTransactionType>([
-  'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
-]);
 
 const emptyForm = (portfolioId = '', timezone = 'Asia/Bangkok'): TransactionFormState => ({
   portfolioId,
@@ -85,11 +84,6 @@ function transactionDate(value: string, timezone: string) {
     .format(parsed);
 }
 
-function editDateTime(value: string, timezone: string) {
-  const formatted = formatDateTimeLocal(value, timezone);
-  return formatted || `${value}T12:00`;
-}
-
 export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx, timezone, effectiveTier }: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
@@ -113,11 +107,15 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const [currentFx, setCurrentFx] = useState(fx);
   const [fxLoading, setFxLoading] = useState(true);
   const [fxError, setFxError] = useState(fx.quote === null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historySymbol, setHistorySymbol] = useState<string | null>(null);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const [editing, setEditing] = useState<PortfolioTransaction | null>(null);
-  const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
+  const [valueSheetOpen, setValueSheetOpen] = useState(false);
+  const [valueSheetError, setValueSheetError] = useState('');
+  /*
+   * Minted when the sheet opens, and used both as the sheet's `key` — so every
+   * opening starts from a clean form — and as the ledger idempotency key, so a
+   * double submit lands on the same row instead of two.
+   */
+  const [valueSheetKey, setValueSheetKey] = useState('');
   const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id, timezone));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
@@ -145,18 +143,6 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const aggregateSummary = useMemo(
     () => aggregatePortfolioSummaries(portfolios.map((item) => summaries[item.id])),
     [portfolios, summaries],
-  );
-  const stockHistory = useMemo(
-    () => [...portfolio.transactions]
-      .filter((item) => !OPTION_TYPES.has(item.type))
-      .filter((item) => !historySymbol || item.symbol === historySymbol)
-      .reverse(),
-    [historySymbol, portfolio.transactions],
-  );
-  const timeline = useMemo(
-    () => [...portfolio.transactions].sort((left, right) =>
-      Date.parse(right.occurredAtTime ?? right.occurredAt) - Date.parse(left.occurredAtTime ?? left.occurredAt)),
-    [portfolio.transactions],
   );
 
   async function loadFx() {
@@ -187,10 +173,15 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   }, []);
 
   function openCreate(type: PortfolioTransactionType = 'acquisition', symbol = '', quantity = '') {
-    setEditing(null);
     setErrors({});
     setForm({ ...emptyForm(portfolio.id, timezone), type, symbol, quantity });
     setFormOpen(true);
+  }
+
+  function openValueSheet() {
+    setValueSheetKey(crypto.randomUUID());
+    setValueSheetError('');
+    setValueSheetOpen(true);
   }
 
   function requestPortfolioWrite() {
@@ -207,37 +198,8 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
 
   const handleOptionActionRequest = useCallback(() => setOptionActionRequest(null), []);
 
-  function openHistory(symbol: string | null = null) {
-    setHistorySymbol(symbol);
-    setHistoryOpen(true);
-  }
-
-  function openEdit(transaction: PortfolioTransaction) {
-    setEditing(transaction);
-    setErrors({});
-    setForm({
-      ...emptyForm(transaction.portfolioId, timezone),
-      portfolioId: transaction.portfolioId,
-      type: transaction.type,
-      symbol: transaction.symbol ?? '',
-      quantity: transaction.quantity ?? '',
-      price: transaction.price ?? '',
-      amount: transaction.originalAmount ?? transaction.amount ?? '',
-      fee: transaction.fee ?? '0',
-      originalCurrency: transaction.originalCurrency ?? 'USD',
-      fxRateAtTransaction: transaction.fxRateAtTransaction ?? '',
-      occurredAt: editDateTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone),
-      broker: transaction.broker ?? '',
-      note: transaction.note ?? '',
-      idempotencyKey: transaction.idempotencyKey ?? crypto.randomUUID(),
-    });
-    setHistoryOpen(false);
-    setFormOpen(true);
-  }
-
   function closeForm() {
     setFormOpen(false);
-    setEditing(null);
     setErrors({});
     setForm(emptyForm(portfolio.id, timezone));
   }
@@ -260,30 +222,38 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       return;
     }
     startTransition(async () => {
-      const result = editing
-        ? await updatePortfolioTransactionAction(editing.id, form)
-        : await createPortfolioTransactionAction(form);
+      const result = await createPortfolioTransactionAction(form);
       if (!result.ok) {
         setErrors(result.fields ?? {});
         addToast({ title: 'บันทึกไม่สำเร็จ', message: result.message, type: 'error' });
         return;
       }
       closeForm();
-      addToast({ title: editing ? 'แก้ไขรายการแล้ว' : 'เพิ่มรายการแล้ว', message: 'พอร์ตจะคำนวณใหม่จาก Ledger ทั้งหมด', type: 'success' });
+      addToast({ title: 'เพิ่มรายการแล้ว', message: 'พอร์ตจะคำนวณใหม่จาก Ledger ทั้งหมด', type: 'success' });
       router.refresh();
     });
   }
 
-  function confirmDelete() {
-    if (!deleting || pending || !isOnline) return;
+  /*
+   * The wanted total goes to the server as typed; the server recomputes the
+   * portfolio from the ledger, decides the delta itself and writes one deposit
+   * or one withdrawal. Nothing here is trusted as the source of the change.
+   */
+  function submitPortfolioValue(submission: PortfolioValueSubmission) {
+    if (pending || !isOnline) return;
+    setValueSheetError('');
     startTransition(async () => {
-      const result = await deletePortfolioTransactionAction(deleting.id);
+      const result = await reconcilePortfolioValueAction(submission);
       if (!result.ok) {
-        addToast({ title: 'ลบไม่สำเร็จ', message: result.message, type: 'error' });
+        setValueSheetError(result.message);
         return;
       }
-      setDeleting(null);
-      addToast({ title: 'ลบรายการแล้ว', message: 'พอร์ตคำนวณใหม่จากรายการที่เหลือ', type: 'success' });
+      setValueSheetOpen(false);
+      addToast({
+        title: result.plan.type === 'deposit' ? 'ปรับยอดขึ้นแล้ว' : 'ปรับยอดลงแล้ว',
+        message: 'บันทึกเป็นเงินเข้า–ออกใน Ledger จำนวนสินทรัพย์และกำไร/ขาดทุนไม่เปลี่ยน',
+        type: 'success',
+      });
       router.refresh();
     });
   }
@@ -333,21 +303,48 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
           </div>
           <div className="mt-2 flex min-w-0 items-center gap-2">
             <h2 className="min-w-0 break-all font-mono text-3xl font-bold tracking-tight text-white sm:text-5xl">{money(aggregateSummary.totalValue)}</h2>
-            <button className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={toggleVisibility} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินชั่วคราว'}>
+            <button
+              type="button"
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40"
+              disabled={!isOnline || Boolean(portfolio.archivedAt)}
+              onClick={() => { if (requestPortfolioWrite()) openValueSheet(); }}
+              aria-label="ปรับยอดพอร์ต"
+              data-testid="portfolio-value-edit"
+            >
+              <PencilLine size={19} />
+            </button>
+            <button type="button" className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={toggleVisibility} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินชั่วคราว'}>
               {showBalances ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
+          {/*
+            One profit/loss colour mapping, shared with the goal card. Masking
+            passes `null` on purpose — a green or red figure behind the mask
+            still says which way the portfolio moved.
+          */}
           <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            <Metric label="P/L วันนี้" value={`${signed(aggregateSummary.todayChange)} · ${percent(aggregateSummary.todayChangePercent)}`} tone={aggregateSummary.todayChange === null ? 'text-slate-400' : gainColor(aggregateSummary.todayChange)} />
-            <Metric label="P/L รวม" value={`${signed(aggregateSummary.totalGain)} · ${percent(aggregateSummary.totalGainPercent)}`} tone={aggregateSummary.totalGain === null ? 'text-slate-400' : gainColor(aggregateSummary.totalGain)} />
+            <Metric
+              label="กำไร/ขาดทุนวันนี้"
+              value={`${signed(aggregateSummary.todayChange)} · ${percent(aggregateSummary.todayChangePercent)}`}
+              tone={portfolioReturnToneClass(showBalances ? aggregateSummary.todayChange : null, 'text-slate-400')}
+            />
+            <Metric
+              label="กำไร/ขาดทุนรวม"
+              value={`${signed(aggregateSummary.totalGain)} · ${percent(aggregateSummary.totalGainPercent)}`}
+              tone={portfolioReturnToneClass(showBalances ? aggregateSummary.totalGain : null, 'text-slate-400')}
+            />
             <Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />
           </div>
           {aggregateSummary.hasMissingPrices && <p className="mt-2 text-xs text-amber-300">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>}
-          {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-amber-300">Today P&amp;L ยังไม่พร้อม: ไม่มีราคาปิดวันก่อนสำหรับบางสถานะ</p>}
+          {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-slate-400" data-testid="portfolio-today-unavailable">ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน</p>}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto">
           <Button disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}><Plus size={17} /> เพิ่มรายการ</Button>
-          <Button variant="outline" onClick={() => openHistory()}><History size={17} /> ประวัติพอร์ตที่เลือก</Button>
+          <Link
+            href="/portfolio/transactions"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
+            data-testid="portfolio-history-link"
+          ><History aria-hidden="true" size={17} /> ประวัติเงินเข้า–ออก</Link>
         </div>
       </div>
       <div className="mt-7 grid grid-cols-2 gap-4 border-t border-slate-800 pt-5 sm:grid-cols-3 lg:grid-cols-5">
@@ -388,7 +385,6 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       percent={percent}
       onSelect={(portfolioId) => {
         setSelectedPortfolioId(portfolioId);
-        setHistoryOpen(false);
         closeForm();
       }}
       transferOpenRequest={transferRequest}
@@ -401,15 +397,24 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
         <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <Metric label="มูลค่าพอร์ต" value={money(summary.totalValue)} />
           <Metric label="เงินสด" value={money(summary.cashBalance)} />
-          <Metric label="Total P&L" value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`} />
-          <Metric label="Today P&L" value={summary.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : signed(summary.todayChange)} />
+          <Metric
+            label="กำไร/ขาดทุนรวม"
+            value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`}
+            tone={portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-slate-400')}
+          />
+          <Metric
+            label="กำไร/ขาดทุนวันนี้"
+            value={summary.todayChange === null ? '—' : signed(summary.todayChange)}
+            tone={portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-slate-400')}
+          />
         </div>
       </div>
+      {summary.todayChange === null && <p className="mt-2 text-xs text-slate-400">ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน</p>}
       {portfolio.archivedAt && <p className="mt-3 text-xs text-amber-300">พอร์ตนี้ถูก Archive แล้ว จึงรับ transaction ใหม่ไม่ได้ แต่ยังรวมในพอร์ตรวมและเก็บ history ครบถ้วน</p>}
       {/*
-        Says what is still possible before what is not: the history below is
-        fully readable, and only writing needs a higher tier. The database is
-        what actually refuses the write; this only explains it in advance.
+        Says what is still possible before what is not: the ledger is fully
+        readable on the statement route, and only writing needs a higher tier.
+        The database is what actually refuses the write; this explains it first.
       */}
       {writeBlock && <p className="mt-3 flex items-start gap-2 text-xs text-[var(--warning)]">
         <Lock aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
@@ -425,24 +430,25 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       </p>}
     </section>
 
-    <section className="min-w-0 rounded-2xl border border-slate-800 bg-[#151B28] p-4 sm:p-5" data-testid="portfolio-transaction-timeline">
-      <div className="flex items-center justify-between gap-3">
-        <div><h3 className="font-bold text-white">รายการเงินเข้า–ออก</h3><p className="mt-1 text-xs text-slate-400">เรียงจาก Transaction Ledger ล่าสุด</p></div>
-        <Button size="sm" variant="outline" onClick={() => openHistory()}><History size={15} /> ดูทั้งหมด</Button>
-      </div>
-      {timeline.length === 0
-        ? <p className="py-8 text-center text-sm text-slate-500">ยังไม่มีรายการในพอร์ตนี้</p>
-        : <div className="mt-3 divide-y divide-slate-800">{timeline.slice(0, 8).map((transaction) => {
-          const cashEffect = cashEffectForTransaction(transaction);
-          return <article key={transaction.id} className="flex min-w-0 items-center gap-3 py-3">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${cashEffect > 0 ? 'bg-emerald-500/15 text-emerald-300' : cashEffect < 0 ? 'bg-red-500/15 text-red-300' : 'bg-slate-800 text-slate-400'}`}>
-              {cashEffect > 0 ? <ArrowDownCircle size={18} /> : cashEffect < 0 ? <ArrowUpCircle size={18} /> : <Repeat2 size={18} />}
-            </span>
-            <span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100">{transactionLabels[transaction.type]}{transaction.symbol ? ` · ${transaction.symbol}` : transaction.contractSymbol ? ` · ${transaction.contractSymbol}` : ''}</strong><span className="block text-xs text-slate-500">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)}</span></span>
-            <strong className={`max-w-[42%] break-all text-right font-mono text-sm ${cashEffect > 0 ? 'text-emerald-300' : cashEffect < 0 ? 'text-red-300' : 'text-slate-400'}`}>{cashEffect === 0 ? 'ไม่กระทบเงินสด' : `${cashEffect > 0 ? '+' : '−'}${money(Math.abs(cashEffect))}`}</strong>
-          </article>;
-        })}</div>}
-    </section>
+    {/*
+      No ledger rows live on this page any more — not even a preview of the
+      latest one. A portfolio page is about what is held now; what happened is
+      a statement, and it has its own route.
+    */}
+    <Link
+      href={`/portfolio/transactions?portfolio=${portfolio.id}`}
+      className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-[#151B28] p-4 hover:border-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
+      data-testid="portfolio-history-entry"
+    >
+      <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[#D4FF00]">
+        <History size={19} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <strong className="block text-sm font-bold text-white">ประวัติเงินเข้า–ออก</strong>
+        <span className="mt-0.5 block text-xs text-slate-400">ดูรายการซื้อ ขาย ฝาก ถอน โอน และปรับยอดทั้งหมด</span>
+      </span>
+      <ChevronRight aria-hidden="true" className="shrink-0 text-slate-500" size={18} />
+    </Link>
 
     {portfolio.type !== 'OPTION' && <>
     <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
@@ -479,7 +485,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
                 onBuy={() => openCreate('acquisition', holding.symbol)}
                 onSell={() => openCreate('disposal', holding.symbol)}
                 onClose={() => openCreate('disposal', holding.symbol, String(holding.quantity))}
-                onEdit={openEdit}
+                portfolioId={portfolio.id}
               />)}</tbody>
             </table>
           </div>
@@ -497,7 +503,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
               onBuy={() => openCreate('acquisition', holding.symbol)}
               onSell={() => openCreate('disposal', holding.symbol)}
               onClose={() => openCreate('disposal', holding.symbol, String(holding.quantity))}
-              onEdit={openEdit}
+              portfolioId={portfolio.id}
             />)}
           </div>
         </>}
@@ -537,45 +543,33 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
 
     <TransactionFormModal
       open={formOpen}
-      editing={Boolean(editing)}
+      editing={false}
       form={form}
       errors={errors}
       pending={pending || !isOnline}
       portfolios={portfolios.filter((item) => item.archivedAt === null)}
       cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
-      replacedTransaction={editing}
+      replacedTransaction={null}
       onChange={change}
       onClose={() => !pending && closeForm()}
       onSubmit={submit}
     />
-    <Modal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} title={historySymbol ? `Transaction Ledger ของ ${historySymbol}` : 'Transaction Ledger'} className="max-w-2xl">
-      {stockHistory.length === 0
-        ? <p className="py-8 text-center text-sm text-slate-400">ยังไม่มีรายการที่บันทึก</p>
-        : <div className="divide-y divide-slate-800">{stockHistory.map((transaction) => <article key={transaction.id} className="flex min-w-0 items-center gap-2 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="break-words font-semibold text-white">{transactionLabels[transaction.type]} {transaction.symbol && `· ${transaction.symbol}`}</p>
-            <p className="text-xs text-slate-400">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)} · {transaction.quantity
-              ? `${hidden(number(Number(transaction.quantity)))} × ${money(Number(transaction.normalizedPriceUsd ?? transaction.price))}`
-              : money(Number(transaction.normalizedAmountUsd ?? transaction.amount))}</p>
-            {Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0) > 0 && <p className="text-xs text-slate-500">ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee))}</p>}
-            {transaction.broker && <p className="text-xs text-slate-500">โบรกเกอร์ {transaction.broker}</p>}
-            {transaction.note && <p className="mt-1 break-words text-xs text-slate-500">{transaction.note}</p>}
-          </div>
-          {transaction.transferId
-            ? <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] text-slate-400">paired transfer</span>
-            : <>
-              <button disabled={!isOnline} aria-label={`แก้ไขรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40" onClick={() => openEdit(transaction)}><Edit3 size={17} /></button>
-              <button disabled={!isOnline} aria-label={`ลบรายการ ${transactionLabels[transaction.type]}`} className="flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-red-400 disabled:opacity-40" onClick={() => { setHistoryOpen(false); setDeleting(transaction); }}><Trash2 size={17} /></button>
-            </>}
-        </article>)}</div>}
-    </Modal>
-    <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบรายการ ${deleting?.symbol ?? transactionLabels[deleting?.type ?? 'adjustment']} หรือไม่`}>
-      <p className="text-sm text-slate-300">ระบบจะคำนวณจำนวน ต้นทุน เงินสด และ P&amp;L ใหม่ทั้งหมด การลบอาจไม่สำเร็จหากทำให้รายการขายภายหลังเกินจำนวนที่มี</p>
-      <div className="mt-5 flex gap-2">
-        <Button variant="outline" className="flex-1" disabled={pending} onClick={() => setDeleting(null)}>ยกเลิก</Button>
-        <Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline} onClick={confirmDelete}>{pending ? 'กำลังลบ…' : 'ยืนยันการลบ'}</Button>
-      </div>
-    </Modal>
+    <PortfolioValueSheet
+      key={valueSheetKey}
+      idempotencyKey={valueSheetKey}
+      open={valueSheetOpen}
+      portfolios={portfolios.filter((item) => item.archivedAt === null)}
+      summaries={summaries}
+      defaultPortfolioId={portfolio.id}
+      currency={currency}
+      usdThbRate={rate}
+      timezone={timezone}
+      pending={pending}
+      isOnline={isOnline}
+      error={valueSheetError}
+      onClose={() => { setValueSheetOpen(false); setValueSheetError(''); }}
+      onSubmit={submitPortfolioValue}
+    />
   </main>;
 }
 
@@ -597,7 +591,7 @@ function totalPnlPercent(holding: HoldingSummary) {
   return holding.unrealizedGain === null || holding.costBasis === 0 ? null : holding.unrealizedGain / holding.costBasis * 100;
 }
 
-function HoldingDesktopRows({ holding, expanded, showBalances, timezone, money, signed, hidden, onToggle, onBuy, onSell, onClose, onEdit }: HoldingViewProps) {
+function HoldingDesktopRows({ holding, expanded, showBalances, timezone, portfolioId, money, signed, hidden, onToggle, onBuy, onSell, onClose }: HoldingViewProps) {
   return <>
     <tr className="border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
       <td className="p-0">
@@ -615,7 +609,7 @@ function HoldingDesktopRows({ holding, expanded, showBalances, timezone, money, 
       <td className={`px-3 py-3 text-right font-mono ${holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain)}<span className="block text-[10px]">{holding.unrealizedGain === null ? '—' : signedPercent(totalPnlPercent(holding)!, showBalances)}</span></td>
       <td className="px-3 py-3 text-right font-mono">{showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</td>
     </tr>
-    {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} timezone={timezone} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} onEdit={onEdit} /></td></tr>}
+    {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} timezone={timezone} portfolioId={portfolioId} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} /></td></tr>}
   </>;
 }
 
@@ -651,10 +645,10 @@ interface HoldingViewProps {
   onBuy: () => void;
   onSell: () => void;
   onClose: () => void;
-  onEdit: (transaction: PortfolioTransaction) => void;
+  portfolioId: string;
 }
 
-function HoldingDetails({ holding, timezone, money, hidden, onBuy, onSell, onClose, onEdit }: Pick<HoldingViewProps, 'holding' | 'timezone' | 'money' | 'hidden' | 'onBuy' | 'onSell' | 'onClose' | 'onEdit'>) {
+function HoldingDetails({ holding, timezone, portfolioId, money, hidden, onBuy, onSell, onClose }: Pick<HoldingViewProps, 'holding' | 'timezone' | 'portfolioId' | 'money' | 'hidden' | 'onBuy' | 'onSell' | 'onClose'>) {
   return <div className="min-w-0 space-y-4">
     <div className="flex flex-wrap gap-2">
       <Button size="sm" onClick={onBuy}>เพิ่มซื้อ</Button>
@@ -669,13 +663,17 @@ function HoldingDetails({ holding, timezone, money, hidden, onBuy, onSell, onClo
         {lot.broker && <p className="text-slate-500">{lot.broker}</p>}
       </div>)}</div>
     </div>
-    <div>
-      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">ประวัติของสินทรัพย์</h4>
-      <div className="mt-2 divide-y divide-slate-800">{holding.transactions.map((transaction) => <div key={transaction.id} className="flex items-center gap-2 py-2 text-xs">
-        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)}</span></span>
-        <button type="button" onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white" aria-label={`แก้ไข ${transactionLabels[transaction.type]}`}><Edit3 size={16} /></button>
-      </div>)}</div>
-    </div>
+    {/*
+      Lots describe what is still held, so they belong here. The transactions
+      behind them are history, and history lives on the statement route where
+      it can be read, filtered and corrected in one place.
+    */}
+    <Link
+      href={`/portfolio/transactions?portfolio=${portfolioId}`}
+      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 hover:border-slate-500 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
+    >
+      <History aria-hidden="true" size={14} /> ดูประวัติของ {holding.symbol} ในประวัติเงินเข้า–ออก
+    </Link>
   </div>;
 }
 

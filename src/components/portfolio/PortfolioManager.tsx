@@ -16,6 +16,7 @@ import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
+import { portfolioReturnToneClass } from '@/src/lib/portfolio/presentation';
 import {
   buildPortfolioGoalCardModel,
   latestPortfolioPriceTime,
@@ -362,8 +363,17 @@ export function PortfolioManager({
           <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
             <CardMetric label="มูลค่าปัจจุบัน" value={money(summary.totalValue)} />
             <CardMetric label="เงินสด" value={money(summary.cashBalance)} />
-            <CardMetric label="Total P&L" value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`} />
-            <CardMetric label="Today P&L" value={summary.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : signed(summary.todayChange)} />
+            <CardMetric
+              label="กำไร/ขาดทุนรวม"
+              value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`}
+              tone={portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-slate-200')}
+            />
+            <CardMetric
+              label="กำไร/ขาดทุนวันนี้"
+              value={summary.todayChange === null ? '—' : signed(summary.todayChange)}
+              tone={portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-slate-200')}
+              helper={summary.todayChange === null ? 'ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน' : undefined}
+            />
           </dl>
           <div className="mt-3 min-w-0 text-xs"><span className="text-slate-500">สินทรัพย์สำคัญ</span><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{keyHoldings.length ? keyHoldings.map((symbol) => <span key={symbol} className="max-w-full truncate rounded-full bg-slate-800 px-2 py-1 font-mono text-slate-200">{symbol}</span>) : <span className="text-slate-500">ยังไม่มี · {positions} positions</span>}</div></div>
           {goal.targetValueUsd !== null && <div className="mt-3 rounded-lg bg-slate-900/70 p-3 text-xs">
@@ -514,8 +524,17 @@ export function PortfolioManager({
   </section>;
 }
 
-function CardMetric({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0"><dt className="text-slate-500">{label}</dt><dd className="mt-1 break-words font-mono font-semibold text-slate-200">{value}</dd></div>;
+function CardMetric({ label, value, tone = 'text-slate-200', helper }: {
+  label: string;
+  value: string;
+  tone?: string;
+  helper?: string;
+}) {
+  return <div className="min-w-0">
+    <dt className="text-slate-500">{label}</dt>
+    <dd className={`mt-1 break-words font-mono font-semibold ${tone}`}>{value}</dd>
+    {helper && <dd className="mt-1 text-[11px] font-normal text-slate-500">{helper}</dd>}
+  </div>;
 }
 
 function ActionError({ value }: { value: string }) {

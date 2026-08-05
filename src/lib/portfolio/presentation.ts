@@ -30,3 +30,25 @@ export function signedPercent(value: number, visible = true): string {
 export function gainColor(value: number): string {
   return value > 0 ? 'text-emerald-400' : value < 0 ? 'text-red-400' : 'text-slate-300';
 }
+
+export type PortfolioReturnTone = 'positive' | 'negative' | 'neutral';
+
+/*
+ * The one place a profit/loss number turns into a colour.
+ *
+ * Everything that cannot be read as a direction resolves to neutral rather
+ * than to green-by-default: zero, a missing value, a NaN, and — deliberately —
+ * a masked one. Callers pass `null` while privacy masking is on, because a red
+ * or green figure behind "••••" still leaks which way the portfolio moved.
+ */
+export function portfolioReturnTone(value: number | null): PortfolioReturnTone {
+  if (value === null || !Number.isFinite(value) || value === 0) return 'neutral';
+  return value > 0 ? 'positive' : 'negative';
+}
+
+export function portfolioReturnToneClass(value: number | null, neutralClass: string): string {
+  const tone = portfolioReturnTone(value);
+  if (tone === 'positive') return 'text-positive';
+  if (tone === 'negative') return 'text-negative';
+  return neutralClass;
+}

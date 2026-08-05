@@ -6,6 +6,11 @@ import type {
   PortfolioMascotSpecialEvent,
   PortfolioMascotState,
 } from '@/src/lib/portfolio/goal-card';
+import {
+  portfolioReturnTone,
+  portfolioReturnToneClass,
+  type PortfolioReturnTone,
+} from '@/src/lib/portfolio/presentation';
 import styles from './PortfolioGoalCard.module.css';
 
 export const portfolioGoalAppearance: Record<PortfolioMascotMood, {
@@ -45,34 +50,36 @@ export const portfolioGoalAppearance: Record<PortfolioMascotMood, {
   },
 };
 
+/*
+ * PNG, not JPEG: these are drawn over a card gradient, over the Overview
+ * surface and over both themes, so the file itself carries the transparency.
+ * `scripts/normalize-kheaw-assets.mjs` writes them, and it also normalises
+ * Kheaw's body to one width across all nine so an event variant never reads as
+ * a shrunken mascot next to an ordinary one.
+ */
 const moodAssets: Record<PortfolioMascotMood, string> = {
-  strongGain: '/brand/01_gain_strong.jpg',
-  gain: '/brand/02_gain_soft_wink.jpg',
-  neutral: '/brand/03_neutral.jpg',
-  smallLoss: '/brand/04_loss_soft.jpg',
-  loss: '/brand/05_loss_big.jpg',
-  heavyLoss: '/brand/06_loss_heavy_cry.jpg',
+  strongGain: '/brand/01_gain_strong.png',
+  gain: '/brand/02_gain_soft_wink.png',
+  neutral: '/brand/03_neutral.png',
+  smallLoss: '/brand/04_loss_soft.png',
+  loss: '/brand/05_loss_big.png',
+  heavyLoss: '/brand/06_loss_heavy_cry.png',
 };
 
 const specialEventAssets: Record<PortfolioMascotSpecialEvent, string> = {
-  lossOver50: '/brand/08_event_loss_over_50.jpg',
-  gainOver50: '/brand/09_event_gain_over_50.jpg',
-  gainOver100: '/brand/07_event_gain_over_100.jpg',
+  lossOver50: '/brand/08_event_loss_over_50.png',
+  gainOver50: '/brand/09_event_gain_over_50.png',
+  gainOver100: '/brand/07_event_gain_over_100.png',
 };
 
-export type PortfolioGoalReturnTone = 'positive' | 'negative' | 'neutral';
-
-export function portfolioGoalReturnTone(value: number | null): PortfolioGoalReturnTone {
-  if (value === null || !Number.isFinite(value) || value === 0) return 'neutral';
-  return value > 0 ? 'positive' : 'negative';
-}
-
-export function portfolioGoalReturnToneClass(value: number | null, neutralClass: string): string {
-  const tone = portfolioGoalReturnTone(value);
-  if (tone === 'positive') return 'text-positive';
-  if (tone === 'negative') return 'text-negative';
-  return neutralClass;
-}
+/*
+ * The goal card reads the same profit/loss colour mapping as the portfolio
+ * summary card. These aliases exist only so the goal card's call sites keep
+ * their local name; the decision itself lives in `presentation`.
+ */
+export type PortfolioGoalReturnTone = PortfolioReturnTone;
+export const portfolioGoalReturnTone = portfolioReturnTone;
+export const portfolioGoalReturnToneClass = portfolioReturnToneClass;
 
 export function portfolioGoalMascotAsset(state: PortfolioMascotState): string {
   return state.specialEvent
@@ -95,11 +102,11 @@ export function PortfolioGoalMascot({
     alt={`น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`}
     className={`${styles.mascot} ${sizes} aspect-square w-auto object-contain object-center`}
     data-visual-variant={state.specialEvent ?? state.mood}
-    height={1024}
+    height={512}
     sizes={compact
       ? '(max-width: 640px) 64px, (max-width: 1024px) 80px, 96px'
       : '(max-width: 640px) 80px, (max-width: 1024px) 96px, 112px'}
     src={portfolioGoalMascotAsset(state)}
-    width={1024}
+    width={512}
   />;
 }

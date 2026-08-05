@@ -37,16 +37,65 @@ vi.mock('next/image', () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const assetNames = [
-  '01_gain_strong.jpg',
-  '02_gain_soft_wink.jpg',
-  '03_neutral.jpg',
-  '04_loss_soft.jpg',
-  '05_loss_big.jpg',
-  '06_loss_heavy_cry.jpg',
-  '07_event_gain_over_100.jpg',
-  '08_event_loss_over_50.jpg',
-  '09_event_gain_over_50.jpg',
+  '01_gain_strong.png',
+  '02_gain_soft_wink.png',
+  '03_neutral.png',
+  '04_loss_soft.png',
+  '05_loss_big.png',
+  '06_loss_heavy_cry.png',
+  '07_event_gain_over_100.png',
+  '08_event_loss_over_50.png',
+  '09_event_gain_over_50.png',
 ] as const;
+
+/**
+ * Widest opaque scanline of the largest opaque component — Kheaw's body base.
+ * Detached confetti, lightning and warning signs form their own components and
+ * are ignored, which is what makes this a body measurement rather than an
+ * artwork measurement.
+ */
+async function mascotBodyWidth(assetName: string) {
+  const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', assetName))
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  const opaque = new Uint8Array(width * height);
+  for (let index = 0; index < opaque.length; index += 1) {
+    if (data[index * channels + 3] > 24) opaque[index] = 1;
+  }
+  const seen = new Uint8Array(opaque.length);
+  let best = { count: 0, width: 0 };
+  for (let start = 0; start < opaque.length; start += 1) {
+    if (!opaque[start] || seen[start]) continue;
+    const queue = [start];
+    seen[start] = 1;
+    const rowMin = new Int32Array(height).fill(width);
+    const rowMax = new Int32Array(height).fill(-1);
+    let cursor = 0;
+    let count = 0;
+    while (cursor < queue.length) {
+      const current = queue[cursor++];
+      const x = current % width;
+      const y = Math.floor(current / width);
+      count += 1;
+      if (x < rowMin[y]) rowMin[y] = x;
+      if (x > rowMax[y]) rowMax[y] = x;
+      for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy += 1) {
+        for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx += 1) {
+          const next = yy * width + xx;
+          if (opaque[next] && !seen[next]) { seen[next] = 1; queue.push(next); }
+        }
+      }
+    }
+    if (count <= best.count) continue;
+    let widest = 0;
+    for (let y = 0; y < height; y += 1) {
+      if (rowMax[y] < 0) continue;
+      widest = Math.max(widest, rowMax[y] - rowMin[y] + 1);
+    }
+    best = { count, width: widest };
+  }
+  return best.width;
+}
 
 function cardModel(totalGainPercent: number | null) {
   const summary: PortfolioSummary = {
@@ -103,16 +152,35 @@ describe('Portfolio Goal mascot rendering', () => {
     }
   });
 
+  it.each(assetNames)('ships %s with a real alpha channel and no baked background', async (assetName) => {
+    const path = resolve(process.cwd(), 'public', 'brand', assetName);
+    const metadata = await sharp(path).metadata();
+    expect(metadata.hasAlpha).toBe(true);
+
+    const { data, info } = await sharp(path).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const alphaAt = (x: number, y: number) => data[(y * info.width + x) * info.channels + 3];
+    // Every corner is fully see-through: a flattened export would show the card
+    // colour here as an opaque rectangle.
+    for (const [x, y] of [[0, 0], [info.width - 1, 0], [0, info.height - 1], [info.width - 1, info.height - 1]]) {
+      expect(alphaAt(x, y)).toBe(0);
+    }
+    let transparent = 0;
+    for (let offset = 3; offset < data.length; offset += info.channels) {
+      if (data[offset] === 0) transparent += 1;
+    }
+    expect(transparent / (info.width * info.height)).toBeGreaterThan(0.3);
+  });
+
   it.each([
-    ['strongGain', null, '/brand/01_gain_strong.jpg'],
-    ['gain', null, '/brand/02_gain_soft_wink.jpg'],
-    ['neutral', null, '/brand/03_neutral.jpg'],
-    ['smallLoss', null, '/brand/04_loss_soft.jpg'],
-    ['loss', null, '/brand/05_loss_big.jpg'],
-    ['heavyLoss', null, '/brand/06_loss_heavy_cry.jpg'],
-    ['strongGain', 'gainOver100', '/brand/07_event_gain_over_100.jpg'],
-    ['heavyLoss', 'lossOver50', '/brand/08_event_loss_over_50.jpg'],
-    ['strongGain', 'gainOver50', '/brand/09_event_gain_over_50.jpg'],
+    ['strongGain', null, '/brand/01_gain_strong.png'],
+    ['gain', null, '/brand/02_gain_soft_wink.png'],
+    ['neutral', null, '/brand/03_neutral.png'],
+    ['smallLoss', null, '/brand/04_loss_soft.png'],
+    ['loss', null, '/brand/05_loss_big.png'],
+    ['heavyLoss', null, '/brand/06_loss_heavy_cry.png'],
+    ['strongGain', 'gainOver100', '/brand/07_event_gain_over_100.png'],
+    ['heavyLoss', 'lossOver50', '/brand/08_event_loss_over_50.png'],
+    ['strongGain', 'gainOver50', '/brand/09_event_gain_over_50.png'],
   ] as const)('maps %s / %s to %s', (mood, specialEvent, expectedAsset) => {
     const state: PortfolioMascotState = {
       mood,
@@ -151,7 +219,7 @@ describe('Portfolio Goal mascot rendering', () => {
     expect(card()?.getAttribute('data-mood-source')).toBe('total');
     expect(card()?.getAttribute('data-special-event')).toBe('none');
     expect(container.querySelector('img')?.getAttribute('data-visual-variant')).toBe('strongGain');
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/01_gain_strong.jpg');
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/01_gain_strong.png');
 
     await act(async () => root.render(
       <OverviewPortfolioGoalCard
@@ -166,23 +234,31 @@ describe('Portfolio Goal mascot rendering', () => {
     expect(card()?.getAttribute('data-mood')).toBe('heavyLoss');
     expect(card()?.getAttribute('data-special-event')).toBe('lossOver50');
     expect(container.querySelector('img')?.getAttribute('data-visual-variant')).toBe('lossOver50');
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/08_event_loss_over_50.jpg');
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/08_event_loss_over_50.png');
   });
 
-  it('normalizes all nine visible silhouettes to the normal mascot body mass', async () => {
-    const visibleAreas = await Promise.all(assetNames.map(async (assetName) => {
-      const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', assetName))
-        .raw().toBuffer({ resolveWithObject: true });
-      let count = 0;
-      for (let offset = 0; offset < data.length; offset += info.channels) {
-        const distance = Math.abs(data[offset] - 21) + Math.abs(data[offset + 1] - 27) + Math.abs(data[offset + 2] - 40);
-        if (distance > 45) count += 1;
-      }
-      return count;
-    }));
-    const median = [...visibleAreas].sort((a, b) => a - b)[4];
-    for (const area of visibleAreas) expect(area / median).toBeGreaterThan(0.72);
-    for (const area of visibleAreas) expect(area / median).toBeLessThan(1.28);
+  it('renders every mascot on the same square canvas', async () => {
+    for (const assetName of assetNames) {
+      const metadata = await sharp(resolve(process.cwd(), 'public', 'brand', assetName)).metadata();
+      expect(metadata.width).toBe(metadata.height);
+      expect(metadata.width).toBe(512);
+    }
+  });
+
+  it('gives every variant, event ones included, the same visible body width', async () => {
+    const widths: number[] = [];
+    for (const assetName of assetNames) widths.push(await mascotBodyWidth(assetName));
+    const ordinary = widths.slice(0, 6);
+    const median = [...widths].sort((left, right) => left - right)[4];
+    expect(median).toBeGreaterThan(0);
+    for (const width of widths) {
+      expect(width / median).toBeGreaterThan(0.97);
+      expect(width / median).toBeLessThan(1.03);
+    }
+    // The event artwork draws a smaller Kheaw at source; after normalisation it
+    // must never come out smaller than the ordinary moods.
+    const smallestOrdinary = Math.min(...ordinary);
+    for (const width of widths.slice(6)) expect(width).toBeGreaterThanOrEqual(smallestOrdinary * 0.98);
   });
 
   it('gives Overview and Portfolio identical state for the same selected scope', async () => {
