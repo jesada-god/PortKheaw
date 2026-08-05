@@ -203,32 +203,48 @@ export async function readTicket(
   };
 }
 
-/** The audit trail for one ticket. Operator console only; no grant exists. */
-export async function readTicketAudit(
-  client: SupabaseClient<Database>,
-  ticketId: string,
-  limit = 50,
-): Promise<Array<{
+export interface ThreadAuditEntry {
   id: number;
   actorRole: SupportAuthorRole;
   action: string;
   fromStatus: string | null;
   toStatus: string | null;
   createdAt: string;
-}>> {
-  const { data, error } = await client
-    .from('support_audit_events')
-    .select('id, actor_role, action, from_status, to_status, created_at')
-    .eq('ticket_id', ticketId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    actorRole: row.actor_role,
-    action: row.action,
-    fromStatus: row.from_status,
-    toStatus: row.to_status,
-    createdAt: row.created_at,
-  }));
+}
+
+/**
+ * The audit trail for one ticket.
+ *
+ * Read through `admin_thread_audit`, not the table: `support_audit_events` is
+ * granted to nobody at all, which is deliberate — an audit log is evidence
+ * about a record rather than part of it. The routine checks the operator role
+ * inside the database and returns a narrow projection.
+ *
+ * A failure yields an empty list rather than taking the page down. The audit is
+ * a panel at the bottom of a console screen; the ticket above it is what the
+ * operator came for.
+ */
+export async function readTicketAudit(
+  client: SupabaseClient<Database>,
+  ticketId: string,
+  limit = 50,
+): Promise<ThreadAuditEntry[]> {
+  try {
+    const { data, error } = await client.rpc('admin_thread_audit', {
+      input_ticket_id: ticketId,
+      input_refund_request_id: null,
+      input_limit: limit,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      id: row.event_id,
+      actorRole: row.actor_role,
+      action: row.action,
+      fromStatus: row.from_status,
+      toStatus: row.to_status,
+      createdAt: row.created_at,
+    }));
+  } catch {
+    return [];
+  }
 }

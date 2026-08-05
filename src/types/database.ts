@@ -1266,6 +1266,26 @@ export interface Database {
           processed_at: string | null;
         }>;
       };
+      /**
+       * The audit trail for one thread, for an operator.
+       *  itself is granted to nobody; this is the only
+       * read path, and it checks the role inside the database.
+       */
+      admin_thread_audit: {
+        Args: {
+          input_ticket_id: string | null;
+          input_refund_request_id: string | null;
+          input_limit: number;
+        };
+        Returns: Array<{
+          event_id: number;
+          actor_role: SupportAuthorRole;
+          action: string;
+          from_status: string | null;
+          to_status: string | null;
+          created_at: string;
+        }>;
+      };
       admin_open_billing_issues: {
         Args: { input_user_id: string | null; input_limit: number };
         Returns: Array<{

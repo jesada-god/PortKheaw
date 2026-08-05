@@ -8,7 +8,7 @@ import type {
   RefundRequestReason,
   RefundRequestStatus,
 } from '@/src/types/database';
-import type { SupportAttachmentRef, SupportThreadMessage } from './ticket-repository';
+import type { SupportAttachmentRef, SupportThreadMessage, ThreadAuditEntry } from './ticket-repository';
 
 /**
  * Reading refund requests and the purchases they point at.
@@ -222,31 +222,28 @@ export async function readRefundRequest(
   };
 }
 
+/** The audit trail for one refund request. See `readTicketAudit` for why. */
 export async function readRefundAudit(
   client: SupabaseClient<Database>,
   requestId: string,
   limit = 50,
-): Promise<Array<{
-  id: number;
-  actorRole: string;
-  action: string;
-  fromStatus: string | null;
-  toStatus: string | null;
-  createdAt: string;
-}>> {
-  const { data, error } = await client
-    .from('support_audit_events')
-    .select('id, actor_role, action, from_status, to_status, created_at')
-    .eq('refund_request_id', requestId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    actorRole: row.actor_role,
-    action: row.action,
-    fromStatus: row.from_status,
-    toStatus: row.to_status,
-    createdAt: row.created_at,
-  }));
+): Promise<ThreadAuditEntry[]> {
+  try {
+    const { data, error } = await client.rpc('admin_thread_audit', {
+      input_ticket_id: null,
+      input_refund_request_id: requestId,
+      input_limit: limit,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      id: row.event_id,
+      actorRole: row.actor_role,
+      action: row.action,
+      fromStatus: row.from_status,
+      toStatus: row.to_status,
+      createdAt: row.created_at,
+    }));
+  } catch {
+    return [];
+  }
 }

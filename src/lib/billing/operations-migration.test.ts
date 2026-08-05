@@ -46,6 +46,8 @@ const MIGRATION_CHAIN = [
   '202608040003_prevent_billing_mode_downgrade.sql',
   '202608050001_promptpay_invoice_subscriptions.sql',
   MIGRATION_FILE,
+  '202608050004_audit_allows_parent_cascade.sql',
+  '202608050005_admin_thread_audit.sql',
 ];
 
 /** The owner UUID the Phase 3.1 migration seeds; its account must exist first. */
@@ -651,6 +653,91 @@ describe('audit is append-only and invoices are private', () => {
     await expect(db.exec(
       'delete from public.support_audit_events',
     )).rejects.toThrow(/AUDIT_APPEND_ONLY/);
+  });
+
+  /*
+   * The append-only rule must not become a reason an account cannot be deleted.
+   *
+   * Removing an account cascades auth.users → support_tickets / refund_requests
+   * → support_audit_events. The first version of the trigger refused that
+   * cascade too, which broke `delete_own_account` in production — a privacy
+   * feature failing closed in the worst direction. This is the regression.
+   */
+  it('lets an account be deleted, taking its tickets and audit with it', async () => {
+    await as(null);
+    const DEPARTING = '99999999-9999-4999-8999-999999999999';
+    // `handle_new_user()` populates the profile, settings, role and
+    // subscription, so inserting the account is the whole setup.
+    await db.exec(`
+      insert into auth.users (id, email, email_confirmed_at)
+        values ('${DEPARTING}', 'departing@example.com', now());
+    `);
+
+    await as(DEPARTING);
+    const created = await query<{ ticket_id: string }>(
+      `select ticket_id from public.create_support_ticket('other','ลาก่อน','กำลังจะลบบัญชีนี้ทิ้ง')`,
+    );
+    const ticketId = created[0].ticket_id;
+
+    await as(OWNER);
+    await query(`select * from public.admin_reply_support_ticket($1,'บันทึกภายใน',true)`, [ticketId]);
+
+    await as(null);
+    const before = await query<{ count: number }>(
+      'select count(*)::int as count from public.support_audit_events where ticket_id = $1',
+      [ticketId],
+    );
+    expect(Number(before[0].count)).toBeGreaterThan(0);
+
+    // The delete must simply succeed.
+    await db.exec(`delete from auth.users where id = '${DEPARTING}'`);
+
+    const tickets = await query('select id from public.support_tickets where id = $1', [ticketId]);
+    expect(tickets).toHaveLength(0);
+    const audit = await query(
+      'select id from public.support_audit_events where ticket_id = $1',
+      [ticketId],
+    );
+    expect(audit).toHaveLength(0);
+  });
+
+  it('still refuses a direct delete while the ticket it describes exists', async () => {
+    await as(null);
+    const rows = await query<{ ticket_id: string }>(
+      'select ticket_id from public.support_audit_events where ticket_id is not null limit 1',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    await expect(db.exec(
+      `delete from public.support_audit_events where ticket_id = '${rows[0].ticket_id}'`,
+    )).rejects.toThrow(/AUDIT_APPEND_ONLY/);
+  });
+
+  /*
+   * The operator console reads the audit through a trusted projection, because
+   * the table has no grant at all. Reading it directly through an operator's
+   * own session is what broke the ticket page in production QA.
+   */
+  it('serves the audit trail to an operator through the projection', async () => {
+    await db.exec('set role authenticated');
+    await as(OWNER);
+    const rows = await query<{ action: string }>(
+      `select action from public.admin_thread_audit(
+         (select id from public.support_tickets limit 1), null, 50)`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    await db.exec('reset role');
+  });
+
+  it('refuses the audit projection to a reader, and the table to everybody', async () => {
+    await db.exec('set role authenticated');
+    await as(ALICE);
+    await expect(query(
+      `select * from public.admin_thread_audit(
+         (select id from public.support_tickets limit 1), null, 50)`,
+    )).rejects.toThrow(/ADMIN_REQUIRED/);
+    await expect(db.exec('select * from public.support_audit_events'))
+      .rejects.toThrow(/permission denied/i);
+    await db.exec('reset role');
   });
 
   it('gives no client any grant on the invoice ledger', async () => {
