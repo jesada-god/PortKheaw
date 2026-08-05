@@ -48,6 +48,7 @@ const MIGRATION_CHAIN = [
   MIGRATION_FILE,
   '202608050004_audit_allows_parent_cascade.sql',
   '202608050005_admin_thread_audit.sql',
+  '202608050006_admin_search_email_cast.sql',
 ];
 
 /** The owner UUID the Phase 3.1 migration seeds; its account must exist first. */
@@ -79,7 +80,10 @@ beforeAll(async () => {
     create schema auth;
     create table auth.users (
       id uuid primary key,
-      email text,
+      -- varchar(255), exactly as Supabase declares it. A set-returning function
+      -- that declares this column as text fails at run time with 42804, and
+      -- declaring it text here would hide that.
+      email varchar(255),
       email_confirmed_at timestamptz,
       created_at timestamptz not null default now(),
       raw_user_meta_data jsonb not null default '{}'::jsonb
@@ -104,8 +108,11 @@ beforeAll(async () => {
   // Two ordinary readers, both on a live paid period bought with a card.
   for (const user of [ALICE, BOB]) {
     await db.exec(`
+      -- \`handle_new_user()\` already created the profile with a null name, so
+      -- this has to update rather than skip on conflict — otherwise the name
+      -- stays null and the operator's name search has nothing to find.
       insert into public.profiles (id, full_name) values ('${user}', 'Reader')
-        on conflict (id) do nothing;
+        on conflict (id) do update set full_name = excluded.full_name;
       insert into public.user_settings (user_id) values ('${user}')
         on conflict (user_id) do nothing;
       insert into public.user_roles (user_id) values ('${user}')
@@ -737,6 +744,35 @@ describe('audit is append-only and invoices are private', () => {
     )).rejects.toThrow(/ADMIN_REQUIRED/);
     await expect(db.exec('select * from public.support_audit_events'))
       .rejects.toThrow(/permission denied/i);
+    await db.exec('reset role');
+  });
+
+  /*
+   * Every operator projection is *executed*, not just declared.
+   *
+   * `admin_search_accounts` declared `email text` while `auth.users.email` is
+   * `varchar(255)`, so Postgres refused the result shape at run time (42804) and
+   * every search in production returned nothing. A test that only checked the
+   * function existed agreed with itself; running it is what catches this.
+   */
+  it('runs every operator projection against the real column types', async () => {
+    await db.exec('set role authenticated');
+    await as(OWNER);
+
+    const search = await query<{ email: string; user_id: string }>(
+      `select email, user_id from public.admin_search_accounts('alice@example.com', 20)`,
+    );
+    expect(search).toHaveLength(1);
+    expect(search[0].email).toBe('alice@example.com');
+    expect(search[0].user_id).toBe(ALICE);
+
+    // The other two search inputs the console offers.
+    expect(await query(`select user_id from public.admin_search_accounts('${ALICE}', 20)`)).toHaveLength(1);
+    expect(await query(`select user_id from public.admin_search_accounts('Reader', 20)`)).not.toHaveLength(0);
+
+    await query(`select * from public.admin_account_invoices('${ALICE}')`);
+    await query(`select * from public.admin_account_webhook_history('${ALICE}')`);
+    await query('select * from public.admin_open_billing_issues(null, 20)');
     await db.exec('reset role');
   });
 
