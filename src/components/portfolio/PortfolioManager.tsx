@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Archive, Edit3, FolderOpen, Lock, Plus, RotateCcw, Target, Trash2 } from 'lucide-react';
 import {
@@ -36,6 +36,7 @@ import {
   portfolioWriteBlock,
 } from '@/src/lib/subscription/portfolio-write-access';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 
 type Money = (value: number | string | null) => string;
 
@@ -68,6 +69,8 @@ export function PortfolioManager({
   signed,
   percent,
   onSelect,
+  transferOpenRequest,
+  onTransferRequestHandled,
 }: {
   portfolios: PortfolioRecord[];
   summaries: Record<string, PortfolioSummary>;
@@ -83,9 +86,12 @@ export function PortfolioManager({
   signed: (value: number | null) => string;
   percent: (value: number | null) => string;
   onSelect: (portfolioId: string) => void;
+  transferOpenRequest: number;
+  onTransferRequestHandled: () => void;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
+  const { requestUpgrade } = useEntitlement();
   const [pending, startTransition] = useTransition();
   const [goalScope, setGoalScope] = useState<PortfolioGoalScope>('selected');
   const [tab, setTab] = useState<'STOCK' | 'OPTION'>('STOCK');
@@ -107,6 +113,7 @@ export function PortfolioManager({
   const [transferNote, setTransferNote] = useState('');
   const [transferIdempotencyKey, setTransferIdempotencyKey] = useState('');
   const [error, setError] = useState('');
+  const [limitType, setLimitType] = useState<'STOCK' | 'OPTION' | null>(null);
 
   const visible = portfolios.filter((portfolio) => {
     if (portfolio.type === tab) return true;
@@ -142,12 +149,22 @@ export function PortfolioManager({
     router.refresh();
   }
 
-  function run(task: () => Promise<{ ok: boolean; message?: string }>, done: string, close: () => void) {
+  function run(task: () => Promise<{ ok: boolean; code?: string; message?: string }>, done: string, close: () => void) {
     if (pending || !isOnline) return;
     setError('');
     startTransition(async () => {
       const result = await task();
       if (!result.ok) {
+        if (result.code === 'upgrade_required' || result.code === 'read_only') {
+          requestUpgrade({ capability: createType === 'OPTION' ? 'portfolio.options.create' : 'portfolio.multiple.create', source: 'portfolio.manager-action' });
+          close();
+          return;
+        }
+        if (result.code === 'limit') {
+          setLimitType(createType);
+          close();
+          return;
+        }
         setError(result.message ?? 'บันทึกไม่สำเร็จ');
         return;
       }
@@ -161,6 +178,24 @@ export function PortfolioManager({
     setCreateType(type === 'OPTION' && !optionsEntitlement.canCreate ? 'STOCK' : type);
     setError('');
     setCreateOpen(true);
+  }
+
+  function requestCreate(type: 'STOCK' | 'OPTION' = tab) {
+    const entitlement = portfolioCreationEntitlement(effectiveTier, type);
+    const count = active.filter((portfolio) => portfolio.type === type).length;
+    if (!entitlement.canCreate) {
+      requestUpgrade({ capability: 'portfolio.options.create', source: 'portfolio.create-option' });
+      return;
+    }
+    if (count >= entitlement.maxCount) {
+      if (effectiveTier === 'basic') {
+        requestUpgrade({ capability: 'portfolio.multiple.create', source: 'portfolio.create-limit' });
+      } else {
+        setLimitType(type);
+      }
+      return;
+    }
+    openCreate(type);
   }
 
   function closeCreate() {
@@ -215,6 +250,19 @@ export function PortfolioManager({
     setTransferOpen(true);
   }
 
+  useEffect(() => {
+    if (!transferOpenRequest) return;
+    let activeRequest = true;
+    queueMicrotask(() => {
+      if (!activeRequest) return;
+      openTransfer();
+      onTransferRequestHandled();
+    });
+    return () => { activeRequest = false; };
+    // A monotonically increasing request is the event boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transferOpenRequest]);
+
   function closeTransfer() {
     setTransferOpen(false);
     setTransferSource('');
@@ -257,7 +305,7 @@ export function PortfolioManager({
       </div>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={!isOnline || active.length < 2} onClick={openTransfer}>ย้ายเงิน</Button>
-        <Button size="sm" disabled={!isOnline} onClick={() => openCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
+        <Button size="sm" disabled={!isOnline} onClick={() => requestCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
       </div>
     </div>
 
@@ -292,6 +340,10 @@ export function PortfolioManager({
         const goal = { targetValueUsd: portfolio.targetValueUsd, targetDate: portfolio.targetDate };
         const goalProgress = calculateGoalProgress(summary.totalValue, goal);
         const positions = summary.holdings.length + summary.optionPositions.filter((position) => position.status === 'open').length;
+        const keyHoldings = [
+          ...summary.holdings.map((holding) => holding.symbol),
+          ...summary.optionPositions.filter((position) => position.status === 'open').map((position) => position.contractSymbol),
+        ].slice(0, 3);
         const updated = latestPortfolioPriceTime(summary);
         const canDelete = !portfolio.isLegacy
           && portfolio.transactions.length === 0
@@ -309,10 +361,11 @@ export function PortfolioManager({
           </button>
           <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
             <CardMetric label="มูลค่าปัจจุบัน" value={money(summary.totalValue)} />
-            <CardMetric label="จำนวน Positions" value={String(positions)} />
+            <CardMetric label="เงินสด" value={money(summary.cashBalance)} />
             <CardMetric label="Total P&L" value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`} />
             <CardMetric label="Today P&L" value={summary.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : signed(summary.todayChange)} />
           </dl>
+          <div className="mt-3 min-w-0 text-xs"><span className="text-slate-500">สินทรัพย์สำคัญ</span><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{keyHoldings.length ? keyHoldings.map((symbol) => <span key={symbol} className="max-w-full truncate rounded-full bg-slate-800 px-2 py-1 font-mono text-slate-200">{symbol}</span>) : <span className="text-slate-500">ยังไม่มี · {positions} positions</span>}</div></div>
           {goal.targetValueUsd !== null && <div className="mt-3 rounded-lg bg-slate-900/70 p-3 text-xs">
             <p className="font-semibold text-slate-200">เป้าหมาย {money(goal.targetValueUsd)} · {goalProgress.progressPercent === null ? '—' : `${goalProgress.progressPercent.toFixed(2)}%`}</p>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-[#D4FF00]" style={{ width: `${Math.min(100, Math.max(0, goalProgress.progressPercent ?? 0))}%` }} /></div>
@@ -355,8 +408,14 @@ export function PortfolioManager({
               type="button"
               role="radio"
               aria-checked={createType === 'OPTION'}
-              disabled={!optionsEntitlement.canCreate}
-              onClick={() => setCreateType('OPTION')}
+              onClick={() => {
+                if (!optionsEntitlement.canCreate) {
+                  closeCreate();
+                  requestUpgrade({ capability: 'portfolio.options.create', source: 'portfolio.create-option-choice' });
+                  return;
+                }
+                setCreateType('OPTION');
+              }}
               className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm ${!optionsEntitlement.canCreate ? 'cursor-not-allowed border-slate-800 bg-slate-900/60 text-slate-500' : createType === 'OPTION' ? 'border-[#D4FF00] bg-[#D4FF00]/10 text-white' : 'border-slate-700 text-slate-300'}`}
             >
               <span className="flex items-center gap-2 font-bold">{!optionsEntitlement.canCreate && <Lock size={14} aria-hidden="true" />} พอร์ต Options</span>
@@ -446,6 +505,11 @@ export function PortfolioManager({
         <ActionError value={error} />
         <ModalActions pending={pending} onCancel={closeTransfer} submitLabel="ยืนยันการย้ายเงิน" />
       </form>
+    </Modal>
+
+    <Modal isOpen={Boolean(limitType)} onClose={() => setLimitType(null)} title="พอร์ตเต็มตามแพ็กเกจ">
+      <p className="text-sm text-slate-300">แพ็กเกจ {effectiveTier.toUpperCase()} ใช้พอร์ต {limitType === 'OPTION' ? 'Options' : 'หุ้น/ETF'} ครบ {limitType ? portfolioCreationEntitlement(effectiveTier, limitType).maxCount : 0} พอร์ตแล้ว โปรด Archive พอร์ตที่ไม่ใช้ก่อนสร้างใหม่</p>
+      <div className="mt-5"><Button className="w-full" onClick={() => setLimitType(null)}>เข้าใจแล้ว</Button></div>
     </Modal>
   </section>;
 }

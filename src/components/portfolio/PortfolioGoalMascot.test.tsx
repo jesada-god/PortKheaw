@@ -4,6 +4,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OverviewPortfolioGoalCard } from '@/src/components/dashboard/OverviewPortfolioGoalCard';
 import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
@@ -36,15 +37,15 @@ vi.mock('next/image', () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const assetNames = [
-  'kheaw-goal-strong-gain.png',
-  'kheaw-goal-gain.png',
-  'kheaw-goal-neutral.png',
-  'kheaw-goal-small-loss.png',
-  'kheaw-goal-loss.png',
-  'kheaw-goal-heavy-loss.png',
-  'kheaw-goal-event-loss-over-50.png',
-  'kheaw-goal-event-gain-over-50.png',
-  'kheaw-goal-event-gain-over-100.png',
+  '01_gain_strong.jpg',
+  '02_gain_soft_wink.jpg',
+  '03_neutral.jpg',
+  '04_loss_soft.jpg',
+  '05_loss_big.jpg',
+  '06_loss_heavy_cry.jpg',
+  '07_event_gain_over_100.jpg',
+  '08_event_loss_over_50.jpg',
+  '09_event_gain_over_50.jpg',
 ] as const;
 
 function cardModel(totalGainPercent: number | null) {
@@ -103,15 +104,15 @@ describe('Portfolio Goal mascot rendering', () => {
   });
 
   it.each([
-    ['strongGain', null, '/brand/kheaw-goal-strong-gain.png'],
-    ['gain', null, '/brand/kheaw-goal-gain.png'],
-    ['neutral', null, '/brand/kheaw-goal-neutral.png'],
-    ['smallLoss', null, '/brand/kheaw-goal-small-loss.png'],
-    ['loss', null, '/brand/kheaw-goal-loss.png'],
-    ['heavyLoss', null, '/brand/kheaw-goal-heavy-loss.png'],
-    ['strongGain', 'gainOver100', '/brand/kheaw-goal-event-gain-over-100.png'],
-    ['heavyLoss', 'lossOver50', '/brand/kheaw-goal-event-loss-over-50.png'],
-    ['strongGain', 'gainOver50', '/brand/kheaw-goal-event-gain-over-50.png'],
+    ['strongGain', null, '/brand/01_gain_strong.jpg'],
+    ['gain', null, '/brand/02_gain_soft_wink.jpg'],
+    ['neutral', null, '/brand/03_neutral.jpg'],
+    ['smallLoss', null, '/brand/04_loss_soft.jpg'],
+    ['loss', null, '/brand/05_loss_big.jpg'],
+    ['heavyLoss', null, '/brand/06_loss_heavy_cry.jpg'],
+    ['strongGain', 'gainOver100', '/brand/07_event_gain_over_100.jpg'],
+    ['heavyLoss', 'lossOver50', '/brand/08_event_loss_over_50.jpg'],
+    ['strongGain', 'gainOver50', '/brand/09_event_gain_over_50.jpg'],
   ] as const)('maps %s / %s to %s', (mood, specialEvent, expectedAsset) => {
     const state: PortfolioMascotState = {
       mood,
@@ -150,7 +151,7 @@ describe('Portfolio Goal mascot rendering', () => {
     expect(card()?.getAttribute('data-mood-source')).toBe('total');
     expect(card()?.getAttribute('data-special-event')).toBe('none');
     expect(container.querySelector('img')?.getAttribute('data-visual-variant')).toBe('strongGain');
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/kheaw-goal-strong-gain.png');
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/01_gain_strong.jpg');
 
     await act(async () => root.render(
       <OverviewPortfolioGoalCard
@@ -165,7 +166,23 @@ describe('Portfolio Goal mascot rendering', () => {
     expect(card()?.getAttribute('data-mood')).toBe('heavyLoss');
     expect(card()?.getAttribute('data-special-event')).toBe('lossOver50');
     expect(container.querySelector('img')?.getAttribute('data-visual-variant')).toBe('lossOver50');
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/kheaw-goal-event-loss-over-50.png');
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('/brand/08_event_loss_over_50.jpg');
+  });
+
+  it('normalizes all nine visible silhouettes to the normal mascot body mass', async () => {
+    const visibleAreas = await Promise.all(assetNames.map(async (assetName) => {
+      const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', assetName))
+        .raw().toBuffer({ resolveWithObject: true });
+      let count = 0;
+      for (let offset = 0; offset < data.length; offset += info.channels) {
+        const distance = Math.abs(data[offset] - 21) + Math.abs(data[offset + 1] - 27) + Math.abs(data[offset + 2] - 40);
+        if (distance > 45) count += 1;
+      }
+      return count;
+    }));
+    const median = [...visibleAreas].sort((a, b) => a - b)[4];
+    for (const area of visibleAreas) expect(area / median).toBeGreaterThan(0.72);
+    for (const area of visibleAreas) expect(area / median).toBeLessThan(1.28);
   });
 
   it('gives Overview and Portfolio identical state for the same selected scope', async () => {

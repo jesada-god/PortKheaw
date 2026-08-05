@@ -259,6 +259,7 @@
   [class~="bg-slate-950/30"],
   [class~="bg-slate-950/35"],
   [class~="bg-slate-950/40"],
+  [class~="bg-slate-950/45"],
   [class~="bg-slate-950/50"],
   [class~="bg-slate-950/60"] { background-color: color-mix(in srgb, var(--bg) 45%, transparent) !important; }
   [class~="bg-slate-950/95"] { background-color: color-mix(in srgb, var(--bg) 95%, transparent) !important; }
@@ -304,7 +305,8 @@
   [class~="hover:text-[#D4FF00]"]:hover { color: var(--accent) !important; }
   .group:hover [class~="group-hover:text-[#D4FF00]"] { color: var(--accent) !important; }
   [class~="hover:bg-[#D4FF00]/10"]:hover { background-color: var(--accent-soft) !important; }
-  [class~="hover:border-[#D4FF00]/50"]:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important; }
+  [class~="hover:border-[#D4FF00]/50"]:hover,
+  [class~="hover:border-[#D4FF00]/60"]:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important; }
   [class~="focus:border-[#D4FF00]"]:focus { border-color: var(--accent) !important; }
   [class~="focus:ring-[#D4FF00]/50"]:focus,
   [class~="focus-visible:ring-[#D4FF00]"]:focus-visible { --tw-ring-color: var(--accent) !important; }

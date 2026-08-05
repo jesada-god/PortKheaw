@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
 import type { PortfolioGoal, PortfolioRecord, PortfolioTransaction, PortfolioType } from './types';
 import type { TransactionInput } from './validation';
+import type { OptionPurchaseQuoteSnapshot, OptionPurchaseRequest } from './options/purchase';
 import {
   resolveTransactionTimeZone,
   transactionDateTimeToUtcIso,
@@ -163,6 +164,27 @@ export class PortfolioRepository {
   async createPortfolio(name: string, type: Exclude<PortfolioType, 'LEGACY'>): Promise<string> {
     const { data, error } = await this.client.rpc('create_portfolio', { input_name: name, input_type: type });
     if (error || !data) throw error ?? new Error('Portfolio was not created');
+    return data;
+  }
+
+  async createOptionPurchase(
+    input: OptionPurchaseRequest,
+    quote: OptionPurchaseQuoteSnapshot,
+  ): Promise<string> {
+    const { data, error } = await this.client.rpc('create_portfolio_option_purchase', {
+      input_portfolio_id: input.portfolioId,
+      input_underlying_symbol: quote.underlyingSymbol,
+      input_contract_symbol: quote.contractSymbol,
+      input_option_kind: quote.optionKind,
+      input_strike_price: String(quote.strike),
+      input_expiration_date: quote.expiration,
+      input_contracts: input.contracts,
+      input_purchase_price: input.purchasePrice,
+      input_occurred_at: transactionDateTimeToUtcIso(input.occurredAt, input.timezone),
+      input_quote_timestamp: quote.quoteTimestamp,
+      input_idempotency_key: input.idempotencyKey,
+    });
+    if (error || !data) throw error ?? new Error('Option purchase was not created');
     return data;
   }
 

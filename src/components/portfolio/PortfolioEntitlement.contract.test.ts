@@ -10,7 +10,8 @@ describe('portfolio entitlement vertical slice', () => {
     expect(manager).toContain('portfolioCreationEntitlement');
     expect(manager).toContain('<Lock');
     expect(manager).toContain('ใช้ได้ใน Pro');
-    expect(manager).toContain('disabled={!optionsEntitlement.canCreate}');
+    expect(manager).toContain("requestUpgrade({ capability: 'portfolio.options.create'");
+    expect(manager).toContain("requestUpgrade({ capability: 'portfolio.multiple.create'");
   });
 
   it('derives UI tier from the one effective-access resolver and returns typed server errors', () => {

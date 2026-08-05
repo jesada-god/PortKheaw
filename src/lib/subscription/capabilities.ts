@@ -2,6 +2,7 @@ import { subscriptionTiers, type SubscriptionTier } from './subscription-types';
 
 export interface SubscriptionCapabilities {
   'portfolio.stock.create': boolean;
+  'portfolio.multiple.create': boolean;
   'portfolio.stock.max_count': number;
   'portfolio.options.create': boolean;
   'portfolio.options.max_count': number;
@@ -42,6 +43,7 @@ export type CountCapability = Exclude<SubscriptionCapability, BooleanCapability>
  */
 const LOCKED: Readonly<SubscriptionCapabilities> = {
   'portfolio.stock.create': false,
+  'portfolio.multiple.create': false,
   'portfolio.stock.max_count': 0,
   'portfolio.options.create': false,
   'portfolio.options.max_count': 0,
@@ -89,6 +91,7 @@ const TIER_GRANTS: Readonly<Record<SubscriptionTier, TierGrant>> = {
   pro: {
     unlocks: [
       'portfolio.options.create',
+      'portfolio.multiple.create',
       'chart.sr.context',
       'chart.vpvr',
       'simulator.what_if',

@@ -1391,6 +1391,22 @@ export interface Database {
         };
         Returns: string;
       };
+      create_portfolio_option_purchase: {
+        Args: {
+          input_portfolio_id: string;
+          input_underlying_symbol: string;
+          input_contract_symbol: string;
+          input_option_kind: 'call' | 'put';
+          input_strike_price: string;
+          input_expiration_date: string;
+          input_contracts: number;
+          input_purchase_price: string;
+          input_occurred_at: string;
+          input_quote_timestamp: string;
+          input_idempotency_key: string;
+        };
+        Returns: string;
+      };
       update_portfolio_ledger_transaction: {
         Args: {
           transaction_id: string; input_type: string; input_symbol: string | null; input_quantity: string | null;

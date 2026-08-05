@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronUp, Edit3, Plus, Target, Trash2 } from 'lucide-react';
 import { createPortfolioTransactionAction, deletePortfolioTransactionAction, updatePortfolioTransactionAction } from '@/app/portfolio/actions';
@@ -82,7 +82,7 @@ function quoteNumber(value: number | null, digits?: number) {
   }).format(value);
 }
 
-export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false }: {
+export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, actionRequest = null, onActionRequestHandled }: {
   portfolio: PortfolioRecord;
   portfolios: PortfolioRecord[];
   positions: OptionPositionSummary[];
@@ -95,6 +95,8 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   timezone: string;
   /** True when the subscription may read this portfolio but not write to it. */
   readOnly?: boolean;
+  actionRequest?: { id: number; type: 'buy' | 'sell' } | null;
+  onActionRequestHandled?: () => void;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -142,10 +144,28 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
         multiplier: String(position.multiplier),
       });
     } else {
-      setForm(base);
+      setForm({ ...base, type: type ?? 'buy_to_open' });
     }
     setFormOpen(true);
   }
+
+  useEffect(() => {
+    if (!actionRequest || readOnly) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      if (actionRequest.type === 'sell') {
+        const longPosition = positions.find((position) => position.status === 'open' && position.side === 'long');
+        openCreate(longPosition, 'sell_to_close');
+      } else {
+        openCreate(undefined, 'buy_to_open');
+      }
+      onActionRequestHandled?.();
+    });
+    return () => { active = false; };
+    // The request id is the event boundary; form state and positions are snapshots for that event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionRequest?.id]);
 
   function openEdit(transaction: PortfolioTransaction) {
     setEditing(transaction);

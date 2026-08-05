@@ -117,7 +117,7 @@ describe('portfolio goal card model', () => {
       source: 'total',
       specialEvent: null,
       percent: 12.51,
-      message: 'พอร์ตโดยรวมกำลังสดใส 💚',
+      message: 'วาสนาผู้ใดหนอออ!',
     });
     expect(resolvePortfolioMascotState({
       todayReturnPct: null,
@@ -128,15 +128,15 @@ describe('portfolio goal card model', () => {
       source: 'none',
       specialEvent: null,
       percent: null,
-      message: 'วันนี้ยังไม่มีข้อมูล',
+      message: 'รอเจ้าตื่น',
     });
   });
 
   it.each([
-    [-50, 'lossOver50', 'heavyLoss', 'หนักหน่อยตอนนี้... แต่ยังไม่จบนะ เราค่อย ๆ เอาคืนกัน'],
-    [50, 'gainOver50', 'strongGain', 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย'],
-    [99.99, 'gainOver50', 'strongGain', 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย'],
-    [100, 'gainOver100', 'strongGain', 'เก่งมาก! พอร์ตโตเกิน 100% แล้ว ฉลองได้เลย!'],
+    [-50, 'lossOver50', 'heavyLoss', 'วัดไหนข้าวอร่อยบอกด้วย'],
+    [50, 'gainOver50', 'strongGain', 'มื้อนี้ชาบูต้องเข้าแล้วมะ!'],
+    [99.99, 'gainOver50', 'strongGain', 'มื้อนี้ชาบูต้องเข้าแล้วมะ!'],
+    [100, 'gainOver100', 'strongGain', 'โอ๊ย! รวยไม่ไหวแล้ววว'],
   ] as const)('lets total return %s trigger special event %s', (totalReturnPct, specialEvent, mood, message) => {
     expect(resolvePortfolioMascotState({
       todayReturnPct: -1,
@@ -154,12 +154,12 @@ describe('portfolio goal card model', () => {
   });
 
   it.each([
-    [4, 'พอร์ตโดยรวมกำลังสดใส 💚'],
-    [1, 'พอร์ตโดยรวมเป็นบวก'],
-    [0, 'พอร์ตโดยรวมยังทรงตัว'],
-    [-1, 'พอร์ตโดยรวมลดลงเล็กน้อย'],
-    [-4, 'พอร์ตโดยรวมกำลังติดลบ'],
-    [-8, 'พอร์ตโดยรวมติดลบมาก ควรทบทวนความเสี่ยง'],
+    [4, 'วาสนาผู้ใดหนอออ!'],
+    [1, 'ยกโลว์โชว์เหนือ'],
+    [0, 'รอเจ้าตื่น'],
+    [-1, 'แค่ Pullback (มั้ง?)'],
+    [-4, 'จะวูบของแทร่'],
+    [-8, 'สู้ชีวิตแต่โดนกราฟสู้กลับ!'],
   ] as const)('uses source-safe total copy for normal mood %s', (totalReturnPct, message) => {
     expect(resolvePortfolioMascotState({
       todayReturnPct: null,
@@ -170,12 +170,12 @@ describe('portfolio goal card model', () => {
 
   it('uses all six exact encouragement messages', () => {
     const cases = [
-      [4, 'เย้! วันนี้พอร์ตยิ้มแล้ว~ 💚'],
-      [1, 'ดีเลย! เก็บกำไรทีละนิดก็เก่งมากแล้ว'],
-      [0, 'วันนี้เงียบ ๆ ก่อน รอดูโอกาสนะ'],
-      [-1, 'ไม่เป็นไรน้า แค่ย่อตัวเอง'],
-      [-4, 'สู้ไปด้วยกันนะ อย่าเพิ่งหมดกำลังใจ'],
-      [-9, 'กอด ๆ ก่อน แล้วค่อยวางแผนใหม่ ❤️'],
+      [4, 'วาสนาผู้ใดหนอออ!'],
+      [1, 'ยกโลว์โชว์เหนือ'],
+      [0, 'รอเจ้าตื่น'],
+      [-1, 'แค่ Pullback (มั้ง?)'],
+      [-4, 'จะวูบของแทร่'],
+      [-9, 'สู้ชีวิตแต่โดนกราฟสู้กลับ!'],
     ] as const;
     for (const [value, message] of cases) {
       expect(portfolioTodayState(readySummary(value))).toMatchObject({ kind: 'ready', message });

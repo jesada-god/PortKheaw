@@ -96,34 +96,34 @@ export function portfolioTodayMood(percent: number): PortfolioMascotMood {
 function todayMoodMessage(mood: PortfolioMascotMood): string {
   switch (mood) {
     case 'strongGain':
-      return 'เย้! วันนี้พอร์ตยิ้มแล้ว~ 💚';
+      return 'วาสนาผู้ใดหนอออ!';
     case 'gain':
-      return 'ดีเลย! เก็บกำไรทีละนิดก็เก่งมากแล้ว';
+      return 'ยกโลว์โชว์เหนือ';
     case 'neutral':
-      return 'วันนี้เงียบ ๆ ก่อน รอดูโอกาสนะ';
+      return 'รอเจ้าตื่น';
     case 'smallLoss':
-      return 'ไม่เป็นไรน้า แค่ย่อตัวเอง';
+      return 'แค่ Pullback (มั้ง?)';
     case 'loss':
-      return 'สู้ไปด้วยกันนะ อย่าเพิ่งหมดกำลังใจ';
+      return 'จะวูบของแทร่';
     case 'heavyLoss':
-      return 'กอด ๆ ก่อน แล้วค่อยวางแผนใหม่ ❤️';
+      return 'สู้ชีวิตแต่โดนกราฟสู้กลับ!';
   }
 }
 
 function totalMoodMessage(mood: PortfolioMascotMood): string {
   switch (mood) {
     case 'strongGain':
-      return 'พอร์ตโดยรวมกำลังสดใส 💚';
+      return 'วาสนาผู้ใดหนอออ!';
     case 'gain':
-      return 'พอร์ตโดยรวมเป็นบวก';
+      return 'ยกโลว์โชว์เหนือ';
     case 'neutral':
-      return 'พอร์ตโดยรวมยังทรงตัว';
+      return 'รอเจ้าตื่น';
     case 'smallLoss':
-      return 'พอร์ตโดยรวมลดลงเล็กน้อย';
+      return 'แค่ Pullback (มั้ง?)';
     case 'loss':
-      return 'พอร์ตโดยรวมกำลังติดลบ';
+      return 'จะวูบของแทร่';
     case 'heavyLoss':
-      return 'พอร์ตโดยรวมติดลบมาก ควรทบทวนความเสี่ยง';
+      return 'สู้ชีวิตแต่โดนกราฟสู้กลับ!';
   }
 }
 
@@ -146,7 +146,7 @@ export function resolvePortfolioMascotState({
       source: 'total',
       specialEvent: 'lossOver50',
       percent: finiteTotal,
-      message: 'หนักหน่อยตอนนี้... แต่ยังไม่จบนะ เราค่อย ๆ เอาคืนกัน',
+      message: 'วัดไหนข้าวอร่อยบอกด้วย',
     };
   }
   if (finiteTotal !== null && finiteTotal >= 100) {
@@ -155,7 +155,7 @@ export function resolvePortfolioMascotState({
       source: 'total',
       specialEvent: 'gainOver100',
       percent: finiteTotal,
-      message: 'เก่งมาก! พอร์ตโตเกิน 100% แล้ว ฉลองได้เลย!',
+      message: 'โอ๊ย! รวยไม่ไหวแล้ววว',
     };
   }
   if (finiteTotal !== null && finiteTotal >= 50) {
@@ -164,7 +164,7 @@ export function resolvePortfolioMascotState({
       source: 'total',
       specialEvent: 'gainOver50',
       percent: finiteTotal,
-      message: 'สุดยอด! พอร์ตมาไกลมากแล้ว กำลังไปได้สวยเลย',
+      message: 'มื้อนี้ชาบูต้องเข้าแล้วมะ!',
     };
   }
 
@@ -195,7 +195,7 @@ export function resolvePortfolioMascotState({
     source: 'none',
     specialEvent: null,
     percent: null,
-    message: 'วันนี้ยังไม่มีข้อมูล',
+    message: 'รอเจ้าตื่น',
   };
 }
 

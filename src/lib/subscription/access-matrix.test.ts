@@ -176,7 +176,7 @@ describe('capability inheritance', () => {
 
   it('enforces the published tier matrix', () => {
     const proOnly: SubscriptionCapability[] = [
-      'portfolio.options.create', 'chart.sr.context', 'chart.vpvr',
+      'portfolio.options.create', 'portfolio.multiple.create', 'chart.sr.context', 'chart.vpvr',
       'simulator.what_if', 'options.chain.basic', 'options.signal.summary',
     ];
     const eliteOnly: SubscriptionCapability[] = [

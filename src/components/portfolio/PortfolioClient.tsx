@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle, Briefcase, ChevronDown, ChevronUp, Edit3, Eye, EyeOff,
-  History, Lock, LoaderCircle, Plus, RefreshCw, Trash2,
+  ArrowDownCircle, ArrowUpCircle, History, Lock, LoaderCircle, Plus, RefreshCw, Repeat2, Trash2, WalletCards,
 } from 'lucide-react';
 import {
   createPortfolioTransactionAction,
@@ -16,6 +16,7 @@ import {
 import { Button } from '@/src/components/ui/Button';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { Modal } from '@/src/components/ui/Modal';
+import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
@@ -42,6 +43,8 @@ import {
   basicWritableStockPortfolioId,
   portfolioWriteBlock,
 } from '@/src/lib/subscription/portfolio-write-access';
+import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
+import { cashEffectForTransaction } from '@/src/lib/portfolio/cash-preview';
 
 const OPTION_TYPES = new Set<PortfolioTransactionType>([
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
@@ -99,6 +102,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
 }) {
   const router = useRouter();
   const { addToast } = useToast();
+  const { requestUpgrade } = useEntitlement();
   const [pending, startTransition] = useTransition();
   const { visible: showBalances, toggleVisibility } = usePortfolioPrivacy();
   const isOnline = useOnlineStatus();
@@ -116,6 +120,9 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const [deleting, setDeleting] = useState<PortfolioTransaction | null>(null);
   const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id, timezone));
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [optionActionRequest, setOptionActionRequest] = useState<{ id: number; type: 'buy' | 'sell' } | null>(null);
+  const [transferRequest, setTransferRequest] = useState(0);
   const prices = useMemo(
     () => Object.fromEntries(Object.entries(marketPrices).filter((entry): entry is [string, MarketPriceInput] => entry[1] != null)),
     [marketPrices],
@@ -145,6 +152,11 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       .filter((item) => !historySymbol || item.symbol === historySymbol)
       .reverse(),
     [historySymbol, portfolio.transactions],
+  );
+  const timeline = useMemo(
+    () => [...portfolio.transactions].sort((left, right) =>
+      Date.parse(right.occurredAtTime ?? right.occurredAt) - Date.parse(left.occurredAtTime ?? left.occurredAt)),
+    [portfolio.transactions],
   );
 
   async function loadFx() {
@@ -180,6 +192,20 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     setForm({ ...emptyForm(portfolio.id, timezone), type, symbol, quantity });
     setFormOpen(true);
   }
+
+  function requestPortfolioWrite() {
+    if (portfolio.archivedAt || !isOnline) return false;
+    if (writeBlock) {
+      requestUpgrade({
+        capability: portfolio.type === 'OPTION' ? 'portfolio.options.create' : 'portfolio.multiple.create',
+        source: 'portfolio.add-transaction',
+      });
+      return false;
+    }
+    return true;
+  }
+
+  const handleOptionActionRequest = useCallback(() => setOptionActionRequest(null), []);
 
   function openHistory(symbol: string | null = null) {
     setHistorySymbol(symbol);
@@ -311,23 +337,21 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
               {showBalances ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
-          <p className={`mt-2 font-mono font-semibold ${aggregateSummary.totalGain === null ? 'text-slate-400' : gainColor(aggregateSummary.totalGain)}`}>
-            Total P&amp;L {signed(aggregateSummary.totalGain)} ({percent(aggregateSummary.totalGainPercent)})
-          </p>
-          <p className={`mt-1 font-mono text-sm ${aggregateSummary.todayChange === null ? 'text-slate-400' : gainColor(aggregateSummary.todayChange)}`}>
-            Today P&amp;L {signed(aggregateSummary.todayChange)} ({percent(aggregateSummary.todayChangePercent)})
-          </p>
+          <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+            <Metric label="P/L วันนี้" value={`${signed(aggregateSummary.todayChange)} · ${percent(aggregateSummary.todayChangePercent)}`} tone={aggregateSummary.todayChange === null ? 'text-slate-400' : gainColor(aggregateSummary.todayChange)} />
+            <Metric label="P/L รวม" value={`${signed(aggregateSummary.totalGain)} · ${percent(aggregateSummary.totalGainPercent)}`} tone={aggregateSummary.totalGain === null ? 'text-slate-400' : gainColor(aggregateSummary.totalGain)} />
+            <Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />
+          </div>
           {aggregateSummary.hasMissingPrices && <p className="mt-2 text-xs text-amber-300">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>}
           {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-amber-300">Today P&amp;L ยังไม่พร้อม: ไม่มีราคาปิดวันก่อนสำหรับบางสถานะ</p>}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto">
-          <Button disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate(portfolio.type === 'OPTION' ? 'deposit' : 'acquisition')}><Plus size={17} /> เพิ่มรายการใน {portfolio.name}</Button>
+          <Button disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}><Plus size={17} /> เพิ่มรายการ</Button>
           <Button variant="outline" onClick={() => openHistory()}><History size={17} /> ประวัติพอร์ตที่เลือก</Button>
         </div>
       </div>
       <div className="mt-7 grid grid-cols-2 gap-4 border-t border-slate-800 pt-5 sm:grid-cols-3 lg:grid-cols-5">
         <Metric label="เงินฝากสุทธิ (Net deposits)" value={money(aggregateSummary.netDepositedCapital)} />
-        <Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />
         <Metric label="มูลค่าหุ้น" value={money(aggregateSummary.equityMarketValue)} />
         <Metric label="มูลค่าออปชันสุทธิ" value={money(aggregateSummary.optionsMarketValue)} />
         <Metric label="ต้นทุนคงเหลือ" value={money(aggregateSummary.costBasis + aggregateSummary.optionRemainingCost)} />
@@ -367,6 +391,8 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
         setHistoryOpen(false);
         closeForm();
       }}
+      transferOpenRequest={transferRequest}
+      onTransferRequestHandled={() => setTransferRequest(0)}
     />
 
     <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
@@ -397,6 +423,25 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
           </Link>
         </span>
       </p>}
+    </section>
+
+    <section className="min-w-0 rounded-2xl border border-slate-800 bg-[#151B28] p-4 sm:p-5" data-testid="portfolio-transaction-timeline">
+      <div className="flex items-center justify-between gap-3">
+        <div><h3 className="font-bold text-white">รายการเงินเข้า–ออก</h3><p className="mt-1 text-xs text-slate-400">เรียงจาก Transaction Ledger ล่าสุด</p></div>
+        <Button size="sm" variant="outline" onClick={() => openHistory()}><History size={15} /> ดูทั้งหมด</Button>
+      </div>
+      {timeline.length === 0
+        ? <p className="py-8 text-center text-sm text-slate-500">ยังไม่มีรายการในพอร์ตนี้</p>
+        : <div className="mt-3 divide-y divide-slate-800">{timeline.slice(0, 8).map((transaction) => {
+          const cashEffect = cashEffectForTransaction(transaction);
+          return <article key={transaction.id} className="flex min-w-0 items-center gap-3 py-3">
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${cashEffect > 0 ? 'bg-emerald-500/15 text-emerald-300' : cashEffect < 0 ? 'bg-red-500/15 text-red-300' : 'bg-slate-800 text-slate-400'}`}>
+              {cashEffect > 0 ? <ArrowDownCircle size={18} /> : cashEffect < 0 ? <ArrowUpCircle size={18} /> : <Repeat2 size={18} />}
+            </span>
+            <span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100">{transactionLabels[transaction.type]}{transaction.symbol ? ` · ${transaction.symbol}` : transaction.contractSymbol ? ` · ${transaction.contractSymbol}` : ''}</strong><span className="block text-xs text-slate-500">{transactionDate(transaction.occurredAtTime ?? transaction.occurredAt, timezone)}</span></span>
+            <strong className={`max-w-[42%] break-all text-right font-mono text-sm ${cashEffect > 0 ? 'text-emerald-300' : cashEffect < 0 ? 'text-red-300' : 'text-slate-400'}`}>{cashEffect === 0 ? 'ไม่กระทบเงินสด' : `${cashEffect > 0 ? '+' : '−'}${money(Math.abs(cashEffect))}`}</strong>
+          </article>;
+        })}</div>}
     </section>
 
     {portfolio.type !== 'OPTION' && <>
@@ -475,7 +520,20 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       isOnline={isOnline}
       timezone={timezone}
       readOnly={Boolean(writeBlock)}
+      actionRequest={optionActionRequest}
+      onActionRequestHandled={handleOptionActionRequest}
     />}
+
+    <ResponsiveDialog isOpen={actionSheetOpen} onClose={() => setActionSheetOpen(false)} title="+ เพิ่มรายการ">
+      <p className="mb-4 text-sm text-slate-400">บันทึกใน {portfolio.name} โดยใช้ Ledger เดิม</p>
+      <div className="grid gap-3 sm:grid-cols-2" data-testid="portfolio-add-action-sheet">
+        <ActionChoice icon={<WalletCards size={20} />} title="ซื้อหุ้น / ออปชัน" detail="เพิ่มสินทรัพย์และหักเงินสด" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'buy' }); else openCreate('acquisition'); }} />
+        <ActionChoice icon={<ArrowUpCircle size={20} />} title="ขาย" detail="ลดสถานะและบันทึกเงินเข้า" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'sell' }); else openCreate('disposal'); }} />
+        <ActionChoice icon={<ArrowDownCircle size={20} />} title="เติมเงินจำลอง" detail="เพิ่มเงินสดเข้าพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('deposit'); }} />
+        <ActionChoice icon={<ArrowUpCircle size={20} />} title="ถอนเงินจำลอง" detail="ลดเงินสดออกจากพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('withdrawal'); }} />
+        <ActionChoice icon={<Repeat2 size={20} />} title="โอนพอร์ต" detail="ย้ายเงินด้วยรายการคู่ใน Ledger" disabled={portfolios.filter((item) => item.archivedAt === null).length < 2} onClick={() => { setActionSheetOpen(false); setTransferRequest(Date.now()); }} />
+      </div>
+    </ResponsiveDialog>
 
     <TransactionFormModal
       open={formOpen}
@@ -627,4 +685,17 @@ function MobileMetric({ label, value, tone = 'text-white', extra }: { label: str
 
 function Metric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
   return <div className="min-w-0"><p className="text-xs text-slate-500">{label}</p><p className={`mt-1 break-all font-mono text-sm font-semibold sm:text-base ${tone}`}>{value}</p></div>;
+}
+
+function ActionChoice({ icon, title, detail, onClick, disabled = false }: {
+  icon: React.ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return <button type="button" disabled={disabled} onClick={onClick} className="flex min-h-20 min-w-0 items-start gap-3 rounded-xl border border-slate-700 bg-slate-950/45 p-3 text-left hover:border-[#D4FF00]/60 disabled:cursor-not-allowed disabled:opacity-40">
+    <span className="mt-0.5 shrink-0 text-[#D4FF00]">{icon}</span>
+    <span className="min-w-0"><strong className="block break-words text-sm text-white">{title}</strong><span className="mt-1 block break-words text-xs text-slate-400">{detail}</span></span>
+  </button>;
 }

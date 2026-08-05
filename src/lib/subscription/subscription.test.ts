@@ -104,6 +104,7 @@ describe('subscription capability matrix', () => {
   it('matches the Basic, Pro and Elite product contract', () => {
     expect(subscriptionCapabilities.basic).toEqual({
       'portfolio.stock.create': true,
+      'portfolio.multiple.create': false,
       'portfolio.stock.max_count': 1,
       'portfolio.options.create': false,
       'portfolio.options.max_count': 0,
@@ -123,6 +124,7 @@ describe('subscription capability matrix', () => {
     });
     expect(subscriptionCapabilities.pro).toEqual({
       'portfolio.stock.create': true,
+      'portfolio.multiple.create': true,
       'portfolio.stock.max_count': 10,
       'portfolio.options.create': true,
       'portfolio.options.max_count': 10,

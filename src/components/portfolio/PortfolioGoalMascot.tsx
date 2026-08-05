@@ -46,18 +46,18 @@ export const portfolioGoalAppearance: Record<PortfolioMascotMood, {
 };
 
 const moodAssets: Record<PortfolioMascotMood, string> = {
-  strongGain: '/brand/kheaw-goal-strong-gain.png',
-  gain: '/brand/kheaw-goal-gain.png',
-  neutral: '/brand/kheaw-goal-neutral.png',
-  smallLoss: '/brand/kheaw-goal-small-loss.png',
-  loss: '/brand/kheaw-goal-loss.png',
-  heavyLoss: '/brand/kheaw-goal-heavy-loss.png',
+  strongGain: '/brand/01_gain_strong.jpg',
+  gain: '/brand/02_gain_soft_wink.jpg',
+  neutral: '/brand/03_neutral.jpg',
+  smallLoss: '/brand/04_loss_soft.jpg',
+  loss: '/brand/05_loss_big.jpg',
+  heavyLoss: '/brand/06_loss_heavy_cry.jpg',
 };
 
 const specialEventAssets: Record<PortfolioMascotSpecialEvent, string> = {
-  lossOver50: '/brand/kheaw-goal-event-loss-over-50.png',
-  gainOver50: '/brand/kheaw-goal-event-gain-over-50.png',
-  gainOver100: '/brand/kheaw-goal-event-gain-over-100.png',
+  lossOver50: '/brand/08_event_loss_over_50.jpg',
+  gainOver50: '/brand/09_event_gain_over_50.jpg',
+  gainOver100: '/brand/07_event_gain_over_100.jpg',
 };
 
 export type PortfolioGoalReturnTone = 'positive' | 'negative' | 'neutral';
@@ -93,7 +93,7 @@ export function PortfolioGoalMascot({
     : 'h-20 sm:h-24 lg:h-28';
   return <Image
     alt={`น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`}
-    className={`${styles.mascot} ${sizes} w-auto object-contain`}
+    className={`${styles.mascot} ${sizes} aspect-square w-auto object-contain object-center`}
     data-visual-variant={state.specialEvent ?? state.mood}
     height={1024}
     sizes={compact

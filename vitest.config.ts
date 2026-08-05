@@ -22,6 +22,15 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: [...configDefaults.exclude, '.agents/**'],
+    /*
+     * `.qa/` is the QA scratch area, and a run there sometimes leaves a whole
+     * copy of the tree behind (`.qa/score-verify/`). Those copies carry their own
+     * `*.test.ts` files, which the runner would otherwise collect — and because
+     * the source-reading contract tests resolve their reads against `cwd`, a
+     * stale copy asserts yesterday's expectations against today's source and
+     * fails a gate that has nothing wrong with it. Scratch directories are not
+     * test input; `.agents/**` is excluded for the same reason.
+     */
+    exclude: [...configDefaults.exclude, '.agents/**', '.qa/**'],
   },
 });

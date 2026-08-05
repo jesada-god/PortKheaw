@@ -178,7 +178,7 @@ describe('OptionsChainPanel layout', () => {
   it('gives both row actions a ≥44px touch target that relaxes on pointer viewports', async () => {
     await renderChain();
     const buttons = [...rows()[0].querySelectorAll<HTMLButtonElement>('[data-testid="option-cell-call"] button')];
-    expect(buttons.map((button) => button.textContent)).toEqual(['Strike line', 'Simulator']);
+    expect(buttons.map((button) => button.textContent)).toEqual(['Strike line', 'Simulator', 'เพิ่มเข้าพอร์ต']);
     for (const button of buttons) {
       expect(button.className).toContain('min-h-11');
       expect(button.className).toContain('md:min-h-9');
@@ -203,6 +203,14 @@ describe('OptionsChainPanel layout', () => {
     expect(url.searchParams.get('symbol')).toBe('AAPL');
     expect(url.searchParams.get('underlyingPrice')).toBe(String(SPOT));
     expect(url.searchParams.get('underlyingMode')).toBe('DELAYED');
+  });
+
+  it('preloads both Call and Put add-to-portfolio actions beside Simulator', async () => {
+    await renderChain();
+    const call = rows()[0].querySelector<HTMLElement>('[data-testid="option-cell-call"]')!;
+    const put = rows()[0].querySelector<HTMLElement>('[data-testid="option-cell-put"]')!;
+    expect(call.querySelector('[data-testid="option-add-to-portfolio-call"]')).not.toBeNull();
+    expect(put.querySelector('[data-testid="option-add-to-portfolio-put"]')).not.toBeNull();
   });
 
   it('confines scrolling to the options container so the page never scrolls sideways', async () => {

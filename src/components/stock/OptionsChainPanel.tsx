@@ -6,6 +6,7 @@ import { Activity, RefreshCw } from 'lucide-react';
 import { DataProvenance } from '@/src/components/market-data/DataProvenance';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
+import { LockedFeatureButton } from '@/src/components/subscription/LockedFeatureButton';
 import { Button } from '@/src/components/ui/Button';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { Select } from '@/src/components/ui/Select';
@@ -41,6 +42,8 @@ import {
   optionsExpirationsCoordinator,
 } from '@/src/lib/stock-detail/options-source';
 import { cn } from '@/src/utils/cn';
+import { buildOptionPurchaseQuote, type OptionPurchaseQuoteSnapshot } from '@/src/lib/portfolio/options/purchase';
+import { OptionPortfolioSheet } from './OptionPortfolioSheet';
 
 const optionsTracer = new MarketTracer();
 
@@ -94,7 +97,7 @@ function MetricGrid({ metrics, label }: { metrics: OptionMetric[]; label: string
  * on top of another. The contract symbol truncates with the full value kept in
  * `title` and in the DOM; it is never abbreviated away.
  */
-function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen, onStrike }: {
+function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen, onAdd, onStrike }: {
   contract: OptionContract | null;
   side: 'call' | 'put';
   spot: number;
@@ -102,6 +105,7 @@ function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen
   /** False strips the Greeks row entirely; the server sent no Greeks either. */
   greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
+  onAdd: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
   const sideLabel = side === 'call' ? 'CALL' : 'PUT';
@@ -185,6 +189,16 @@ function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen
         >
           Simulator
         </button>
+        <LockedFeatureButton
+          capability="portfolio.options.create"
+          source={`analysis.options-chain-add-${side}`}
+          onActivate={() => onAdd(contract)}
+          aria-describedby={undefined}
+          className="min-h-11 flex-1 justify-center rounded-md border border-emerald-400/40 px-2 text-[11px] text-emerald-300 hover:bg-emerald-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 md:min-h-9 md:flex-none"
+          data-testid={`option-add-to-portfolio-${side}`}
+        >
+          เพิ่มเข้าพอร์ต
+        </LockedFeatureButton>
       </div>
     </div>
   );
@@ -199,12 +213,13 @@ function ContractBlock({ contract, side, spot, className, greeksEntitled, onOpen
  *  - **≥ md** the same three children become the Call | Strike | Put columns
  *    (`order-*` puts the strike back in the middle) of an auto-height grid row.
  */
-function StrikeRowView({ row, spot, outsideExpectedMove, greeksEntitled, onOpen, onStrike }: {
+function StrikeRowView({ row, spot, outsideExpectedMove, greeksEntitled, onOpen, onAdd, onStrike }: {
   row: StrikeRow;
   spot: number;
   outsideExpectedMove: boolean;
   greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
+  onAdd: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
   const atm = isAtmStrike(row.strike, spot);
@@ -236,8 +251,8 @@ function StrikeRowView({ row, spot, outsideExpectedMove, greeksEntitled, onOpen,
           </span>
         )}
       </div>
-      <ContractBlock contract={row.call} side="call" spot={spot} className="md:order-1" greeksEntitled={greeksEntitled} onOpen={onOpen} onStrike={onStrike} />
-      <ContractBlock contract={row.put} side="put" spot={spot} className="md:order-3" greeksEntitled={greeksEntitled} onOpen={onOpen} onStrike={onStrike} />
+      <ContractBlock contract={row.call} side="call" spot={spot} className="md:order-1" greeksEntitled={greeksEntitled} onOpen={onOpen} onAdd={onAdd} onStrike={onStrike} />
+      <ContractBlock contract={row.put} side="put" spot={spot} className="md:order-3" greeksEntitled={greeksEntitled} onOpen={onOpen} onAdd={onAdd} onStrike={onStrike} />
     </article>
   );
 }
@@ -249,12 +264,13 @@ function StrikeRowView({ row, spot, outsideExpectedMove, greeksEntitled, onOpen,
  * computed from real heights rather than a constant. One scroll container owns
  * both axes: the page itself never scrolls sideways.
  */
-function VirtualOptionsTable({ rows, spot, expectedMove, greeksEntitled, onOpen, onStrike }: {
+function VirtualOptionsTable({ rows, spot, expectedMove, greeksEntitled, onOpen, onAdd, onStrike }: {
   rows: StrikeRow[];
   spot: number;
   expectedMove?: { lower: number | null; upper: number | null };
   greeksEntitled: boolean;
   onOpen: (contract: OptionContract) => void;
+  onAdd: (contract: OptionContract) => void;
   onStrike: (contract: OptionContract) => void;
 }) {
   const desktop = useMediaQuery(DESKTOP_QUERY);
@@ -367,6 +383,7 @@ function VirtualOptionsTable({ rows, spot, expectedMove, greeksEntitled, onOpen,
                     outsideExpectedMove={isOutsideExpectedMove(row.strike, expectedMove)}
                     greeksEntitled={greeksEntitled}
                     onOpen={onOpen}
+                    onAdd={onAdd}
                     onStrike={onStrike}
                   />
                 </div>
@@ -461,6 +478,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
   const [now, setNow] = useState(0);
   const [saveData] = useState(() => typeof navigator !== 'undefined' && Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData));
   const [userStarted, setUserStarted] = useState(false);
+  const [portfolioQuote, setPortfolioQuote] = useState<OptionPurchaseQuoteSnapshot | null>(null);
   const generation = useRef(0);
 
   useEffect(() => {
@@ -609,6 +627,11 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     }
     router.push(`/tools/monte-carlo?${query.toString()}`);
   };
+  const openPortfolioSheet = (contract: OptionContract) => {
+    if (!canonicalChain) return;
+    setPortfolioQuote(buildOptionPurchaseQuote(canonicalChain, contract.contractSymbol));
+  };
+  const closePortfolioSheet = useCallback(() => setPortfolioQuote(null), []);
 
   if (!chainEntitled) {
     return (
@@ -635,7 +658,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
     );
   }
 
-  return (
+  return <>
     <section className="space-y-4 overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] p-4 md:p-6" data-testid="options-chain-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -757,7 +780,7 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
           // Keyed by the selection: a new expiration or strike range is a new
           // list, so it remounts at the top with fresh measurements instead of
           // leaving the reader parked among unrelated strikes.
-          ? <VirtualOptionsTable key={`${chain.expiration}:${strikeRange}`} rows={rows} spot={spot!} expectedMove={expectedMoveEntitled ? analytics.expectedMove : undefined} greeksEntitled={greeksEntitled} onOpen={openSimulator} onStrike={addStrike} />
+          ? <VirtualOptionsTable key={`${chain.expiration}:${strikeRange}`} rows={rows} spot={spot!} expectedMove={expectedMoveEntitled ? analytics.expectedMove : undefined} greeksEntitled={greeksEntitled} onOpen={openSimulator} onAdd={openPortfolioSheet} onStrike={addStrike} />
           : <p className="rounded-lg border border-amber-500/20 p-3 text-sm text-amber-200">ไม่มีสัญญาจริงในช่วง strike ที่เลือก</p>}
         {greeksEntitled && greeksMissing && (
           <p className="text-[11px] leading-relaxed text-slate-500" data-testid="options-greeks-missing">
@@ -822,5 +845,6 @@ export function OptionsChainPanel({ symbol, acceptedPrice, underlyingLabel }: {
         </details>
       </>}
     </section>
-  );
+    <OptionPortfolioSheet key={portfolioQuote?.contractSymbol ?? 'closed'} quote={portfolioQuote} onClose={closePortfolioSheet} />
+  </>;
 }

@@ -20,6 +20,16 @@ export interface UpgradeCopy {
 }
 
 const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
+  'portfolio.multiple.create': {
+    title: 'สร้างหลายพอร์ต',
+    benefit: 'แยกพอร์ตตามเป้าหมายหรือกลยุทธ์ได้สูงสุด 10 พอร์ตหุ้น/ETF และ 10 พอร์ตออปชัน',
+    lockedLabel: 'สร้างหลายพอร์ตได้ใน Pro',
+  },
+  'portfolio.options.create': {
+    title: 'พอร์ตออปชันและเพิ่มสัญญาเข้าพอร์ต',
+    benefit: 'สร้างพอร์ตออปชัน และเพิ่ม Call หรือ Put จาก Options Chain พร้อมคำนวณเงินสด ต้นทุน และ P/L จาก Ledger เดียวกัน',
+    lockedLabel: 'พอร์ตออปชันใช้ได้ใน Pro',
+  },
   'chart.sr.context': {
     title: 'สถิติความแข็งแกร่งของแนวรับ–แนวต้าน',
     benefit: 'ดูจำนวนครั้งที่ราคาชนแนวนี้ กี่ครั้งที่รับหรือต้านอยู่ กี่ครั้งที่หลุด และการยืนยันจาก VPVR',
