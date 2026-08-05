@@ -22,14 +22,13 @@ describe('Home hydration contract', () => {
     }
   });
 
-  it('hydrates persisted settings only after mount and does not mask mismatches', () => {
+  it('hydrates persisted app settings only after mount', () => {
     const store = read('src/store/useStore.ts');
     const runtime = read('src/components/layout/AppRuntime.tsx');
     const layout = read('app/layout.tsx');
 
     expect(store).toContain('skipHydration: true');
     expect(runtime).toContain('useStore.persist.rehydrate()');
-    expect(layout).not.toContain('suppressHydrationWarning');
   });
 
   it('leaves the appearance attribute to the pre-paint script instead of guessing it', () => {
@@ -40,8 +39,9 @@ describe('Home hydration contract', () => {
     const bootstrap = read('src/themes/bootstrap.ts');
     const dark = read('src/themes/portkheaw/dark.css');
 
-    expect(layout).toContain('<html lang="th" data-theme="portkheaw">');
+    expect(layout).toContain('<html lang="th" data-theme="portkheaw" suppressHydrationWarning>');
     expect(layout).not.toContain('data-appearance=');
+    expect(layout.match(/suppressHydrationWarning/g)).toHaveLength(1);
     expect(bootstrap).toContain('dataset.appearance');
     // Dark stays the default before the script runs, so the markup is never token-less.
     expect(dark).toContain('html[data-theme="portkheaw"]:not([data-appearance])');

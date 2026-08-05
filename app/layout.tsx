@@ -83,17 +83,15 @@ const ZOD_JITLESS_BOOTSTRAP = '(globalThis.__zod_globalConfig=globalThis.__zod_g
 /*
   `data-appearance` is deliberately absent here. It is owned by THEME_BOOTSTRAP,
   which resolves the saved or system appearance from <head> before anything paints.
-  The server cannot know that value, so rendering a fixed `dark` guess meant React
-  hydrated a root the script had already rewritten to `light` — a real attribute
-  mismatch that surfaced as React #418 in production for every light-appearance
-  reader. Leaving the attribute to its owner removes the mismatch at the source
-  instead of suppressing the warning; `dark.css` styles the pre-script state so the
-  markup is never token-less.
+  The server cannot know that browser-only value. Hydration suppression is scoped
+  to this root element because its attributes are intentionally bootstrap-owned;
+  mismatches in the application subtree remain visible. `dark.css` styles the
+  pre-script state so the markup is never token-less.
 */
 export default async function RootLayout({children}: {children: React.ReactNode}) {
   const entitlement = await resolvePageEntitlement();
   return (
-    <html lang="th" data-theme="portkheaw">
+    <html lang="th" data-theme="portkheaw" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
