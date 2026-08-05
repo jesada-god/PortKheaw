@@ -16,6 +16,7 @@ import { SubscriptionRepository } from '@/src/lib/subscription/repository';
  */
 import { revalidateEveryEntitlementSurface } from '@/src/lib/subscription/revalidate-entitlements';
 import { createClient } from '@/src/lib/supabase/server';
+import { resolveBetaAccessForRequest } from '@/src/lib/beta/beta-server';
 import {
   ADMIN_TRIAL_BLOCKED_MESSAGE,
   trialFailureCode,
@@ -30,6 +31,7 @@ export type StartTrialResult =
 type AuditEvent =
   | 'trial_started'
   | 'trial_start_failed'
+  | 'trial_start_beta_refused'
   | 'admin_access_preview_started'
   | 'admin_access_preview_changed'
   | 'admin_access_preview_cleared'
@@ -43,7 +45,7 @@ type AuditEvent =
  */
 function record(event: AuditEvent, detail?: string) {
   const payload = JSON.stringify({ event, ...(detail ? { detail } : {}) });
-  if (event.endsWith('_failed')) console.warn(payload);
+  if (event.endsWith('_failed') || event.endsWith('_refused')) console.warn(payload);
   else console.info(payload);
 }
 
@@ -81,6 +83,31 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
   if (access.isAdmin) {
     record('trial_start_failed', 'ADMIN_TRIAL_BLOCKED');
     return { ok: false, code: 'UNAVAILABLE', message: ADMIN_TRIAL_BLOCKED_MESSAGE };
+  }
+
+  /*
+   * The controlled rollout, checked here for the same reason checkout checks it:
+   * the trial is a grant of the top plan, so it is a way *in* to the product and
+   * the stage that decides who may join has to decide this too. Otherwise the
+   * closed door on the plan cards is walked around by taking seven free days of
+   * Elite instead.
+   *
+   * It gates *starting* a trial and nothing else. The database's own rule admits
+   * an operator, an account that predates the program and anybody already
+   * holding a live subscription — and a trial that has already started is one of
+   * those, so a stage change can never cut a running trial short. Reusing
+   * `resolveBetaAccessForRequest` is deliberate: the button and this action must
+   * read one answer, resolved once per request, from the routine the database
+   * decides with.
+   */
+  const beta = await resolveBetaAccessForRequest();
+  if (!beta.admitted) {
+    record('trial_start_beta_refused', beta.reason);
+    return {
+      ok: false,
+      code: 'BETA_NOT_ADMITTED',
+      message: trialFailureMessage('BETA_NOT_ADMITTED'),
+    };
   }
 
   try {

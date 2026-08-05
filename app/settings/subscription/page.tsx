@@ -31,7 +31,11 @@ import { recordBetaFunnelEvent, resolveBetaAccessForRequest } from '@/src/lib/be
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 import { resolveEffectiveTier } from '@/src/lib/subscription/resolve-effective-tier';
-import { ADMIN_TRIAL_BLOCKED_MESSAGE, resolveTrialState } from '@/src/lib/subscription/trial';
+import {
+  ADMIN_TRIAL_BLOCKED_MESSAGE,
+  resolveTrialState,
+  TRIAL_BETA_BLOCKED_MESSAGE,
+} from '@/src/lib/subscription/trial';
 
 /*
  * Entitlement state is per-reader and decided from the database clock, so this
@@ -218,7 +222,18 @@ export default async function SubscriptionPage() {
         <CurrentPlanHero
           state={trialState}
           effectiveTier={effectiveTier}
-          trialBlockedReason={access.isAdmin ? ADMIN_TRIAL_BLOCKED_MESSAGE : undefined}
+          /*
+           * Two reasons the trial may be off the table for somebody who is
+           * otherwise eligible, in the order they outrank each other. An
+           * operator is always admitted by the rollout, so the administrator
+           * sentence is the one that can apply to them; a reader the stage has
+           * not admitted is told that instead. Either way the control stays
+           * visible and inert, and the action refuses the same case again — this
+           * hides a button, it does not authorize anything.
+           */
+          trialBlockedReason={access.isAdmin
+            ? ADMIN_TRIAL_BLOCKED_MESSAGE
+            : beta.admitted ? undefined : TRIAL_BETA_BLOCKED_MESSAGE}
         />
         {pendingView && <PendingInvoiceCard view={pendingView} />}
         {billingSummary && (

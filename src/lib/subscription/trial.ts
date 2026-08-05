@@ -11,7 +11,12 @@ export const trialErrorCodes = [
 ] as const;
 export type TrialErrorCode = typeof trialErrorCodes[number];
 
-export type TrialFailureCode = TrialErrorCode | 'UNAUTHENTICATED' | 'UNAVAILABLE';
+export type TrialFailureCode =
+  | TrialErrorCode
+  | 'UNAUTHENTICATED'
+  /** The controlled rollout has not admitted this account yet. */
+  | 'BETA_NOT_ADMITTED'
+  | 'UNAVAILABLE';
 
 export const TRIAL_DURATION_DAYS = 7;
 
@@ -131,6 +136,22 @@ export function formatBangkokDateTime(isoTimestamp: string): string {
   return `${day} ${month} ${year} เวลา ${hour}:${minute} น.`;
 }
 
+/**
+ * Why the trial is closed to a reader the controlled rollout has not admitted.
+ *
+ * The trial is a grant of the top plan, so it is a way *in* to the product just
+ * as a purchase is, and the same stage decides both. It sits here beside the
+ * rest of the trial copy for the same reason the administrator sentence below
+ * does: a `'use server'` module may only export functions, and this sentence is
+ * shown on the disabled control as well as returned by the refused action.
+ *
+ * Deliberately says nothing about who is admitted or when. Whether an account is
+ * grandfathered, invited or already a subscriber is not something a refusal
+ * should let anybody infer, and the waitlist card below the hero is where the
+ * fuller explanation already lives.
+ */
+export const TRIAL_BETA_BLOCKED_MESSAGE = 'ขณะนี้เปิดให้ทดลองเฉพาะผู้ได้รับสิทธิ์เบต้า';
+
 const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
   TRIAL_ALREADY_USED: 'บัญชีนี้เคยใช้สิทธิ์ทดลอง Elite ไปแล้ว จึงใช้ซ้ำไม่ได้',
   TRIAL_ALREADY_ACTIVE: 'คุณกำลังอยู่ในช่วงทดลอง Elite อยู่แล้ว',
@@ -138,6 +159,7 @@ const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
   EMAIL_NOT_VERIFIED: 'กรุณายืนยันอีเมลของคุณก่อน แล้วจึงเริ่มทดลอง Elite ได้',
   SUBSCRIPTION_NOT_FOUND: 'ไม่พบข้อมูลแพ็กเกจของบัญชีนี้ กรุณาเข้าสู่ระบบใหม่อีกครั้ง',
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบอีกครั้งก่อนเริ่มทดลอง',
+  BETA_NOT_ADMITTED: TRIAL_BETA_BLOCKED_MESSAGE,
   UNAVAILABLE: 'เริ่มทดลองไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
 };
 
