@@ -780,6 +780,64 @@ describe('seeing a stuck deletion', () => {
   });
 });
 
+describe('re-applying the migration', () => {
+  /*
+   * It will be run by hand in a SQL editor, which means it will eventually be run
+   * twice — by somebody who is not sure whether the first attempt committed. A
+   * second pass must be a no-op, and in particular must not re-stamp a deadline or
+   * reset the enforcement flag, because both of those would quietly undo a
+   * decision somebody made.
+   */
+  it('is a no-op the second time, and preserves both the deadlines and the flag', async () => {
+    await clearClaims();
+    const id = await seedClaim({ hash: hashOf('81'), claimedAgoDays: 500 });
+    const before = await query<{ retain_until: Date; claim_origin: string }>(
+      'select retain_until, claim_origin from public.trial_identity_claims where id = $1', [id],
+    );
+
+    // An operator's decision that a re-run must not undo.
+    await query(
+      `update public.trial_retention_config
+          set enforcement_enabled = true, legal_signed_off_at = now(), batch_limit = 250
+        where singleton`,
+    );
+    await query(
+      'select public.set_trial_identity_legal_hold($1, now() + interval \'1 year\', $2)', [id, OWNER],
+    );
+
+    await db.exec(rawSql);
+
+    const after = await query<{ retain_until: Date; claim_origin: string; legal_hold_until: Date | null }>(
+      'select retain_until, claim_origin, legal_hold_until from public.trial_identity_claims where id = $1',
+      [id],
+    );
+    expect(new Date(after[0].retain_until).getTime())
+      .toBe(new Date(before[0].retain_until).getTime());
+    expect(after[0].claim_origin).toBe(before[0].claim_origin);
+    expect(after[0].legal_hold_until).not.toBeNull();
+
+    const config = await query<{ enforcement_enabled: boolean; batch_limit: number; legal_signed_off_at: Date | null }>(
+      'select enforcement_enabled, batch_limit, legal_signed_off_at from public.trial_retention_config where singleton',
+    );
+    expect(config).toHaveLength(1);
+    expect(config[0].enforcement_enabled).toBe(true);
+    expect(config[0].batch_limit).toBe(250);
+    expect(config[0].legal_signed_off_at).not.toBeNull();
+
+    // Restore the fixture for anything that runs after this.
+    await clearClaims();
+    await query('update public.trial_retention_config set batch_limit = 500 where singleton');
+  });
+
+  it('leaves exactly one row in the config table however often it runs', async () => {
+    await db.exec(rawSql);
+    const rows = await query<{ count: number }>(
+      'select count(*)::integer as count from public.trial_retention_config',
+    );
+    expect(rows[0].count).toBe(1);
+  });
+});
+
 describe('the schedule', () => {
   it('is installed on the database scheduler, applying by default so the flag decides', () => {
     expect(statements).toContain("'portkheaw-trial-retention'");
