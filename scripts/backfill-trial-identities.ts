@@ -21,34 +21,43 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { canonicalizeEmail } from '../src/lib/trial-identity/canonical-email';
+import { resolveTrialIdentityKeyring } from '../src/lib/trial-identity/keyring';
 import { createHmac } from 'node:crypto';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const secret = process.env.TRIAL_IDENTITY_HMAC_SECRET;
 
 if (!url || !serviceRoleKey) {
   console.error('NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.');
   process.exit(1);
 }
-if (!secret) {
-  console.error('TRIAL_IDENTITY_HMAC_SECRET is required; without it no claim can be derived.');
+
+/*
+ * The keyring, from the same rules the application uses — so a backfill run
+ * cannot write a version the application would not look up, and cannot silently
+ * fall back to a retired key.
+ */
+const keyring = resolveTrialIdentityKeyring(process.env as Record<string, unknown>);
+if (!keyring.ok) {
+  console.error(`Trial identity keys are unusable (${keyring.reason}): ${keyring.message}`);
   process.exit(1);
 }
 
 const dryRun = process.argv.includes('--dry-run');
-const HASH_VERSION = 1;
+const HASH_VERSION = keyring.activeVersion;
+const secret = keyring.secretFor(HASH_VERSION) as string;
 
 /*
  * The derivation is duplicated here rather than imported, and deliberately so:
  * `identity-hash.ts` is `server-only`, which a plain Node script cannot import
  * without the `react-server` condition. The canonical-email rule — the part with
- * the interesting edge cases — *is* imported, so the two cannot disagree about
- * what one mailbox means. This file only re-states the HMAC envelope, and the
- * migration test would fail loudly if that envelope ever stopped matching.
+ * the interesting edge cases — *is* imported, and so now is the keyring, so the
+ * two cannot disagree about what one mailbox means or which key is active. This
+ * file only re-states the HMAC envelope, and a test asserts that envelope still
+ * matches the one the application derives.
  */
 function digest(type: string, canonicalValue: string): string {
-  return createHmac('sha256', secret as string)
+  return createHmac('sha256', secret)
     .update(`portkheaw:trial-identity:v${HASH_VERSION}:${type}:${canonicalValue}`)
     .digest('hex');
 }
@@ -110,11 +119,19 @@ async function main() {
     }
 
     for (const identity of identities) {
-      const { data: outcome, error: claimError } = await admin.rpc('claim_trial_identity', {
+      /*
+       * Labelled `backfill` rather than `user`, through the origin-aware routine:
+       * these claims were written by this script for accounts whose trial predates
+       * the ledger, and saying so is what keeps the table's own history honest. The
+       * retention window is the same three years either way — only a
+       * `production_qa` claim is kept for less.
+       */
+      const { data: outcome, error: claimError } = await admin.rpc('claim_trial_identity_with_origin', {
         input_user_id: userId,
         input_identity_type: identity.type,
         input_identity_hash: identity.hash,
         input_hash_version: HASH_VERSION,
+        input_origin: 'backfill',
       });
       if (claimError) failed += 1;
       else if (outcome === 'claimed') claimed += 1;

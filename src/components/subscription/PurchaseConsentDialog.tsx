@@ -88,7 +88,7 @@ export function PurchaseConsentDialog({
               key={note}
               className="flex min-w-0 items-start gap-2 text-xs leading-5 break-words text-slate-300"
             >
-              <span aria-hidden="true" className="mt-2 size-1 shrink-0 rounded-full bg-slate-500" />
+              <span aria-hidden="true" className="mt-2 size-1 shrink-0 rounded-full bg-[var(--text-muted)]" />
               <span className="min-w-0">{note}</span>
             </li>
           ))}
@@ -150,7 +150,11 @@ export function PurchaseConsentDialog({
                transition so a second press cannot open a second checkout. */
             disabled={!accepted || pending}
             aria-busy={pending}
-            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#D4FF00] px-4 text-sm font-semibold text-[#0F1420] transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D4FF00] disabled:opacity-40"
+            /* `--accent-fg` rather than a fixed navy: the accent is lime in the
+               dark appearance and a dark olive in the light one, so the only
+               colour that stays legible *on* it is the one the theme pairs with
+               it. A literal hex here read as near-black on olive in light mode. */
+            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#D4FF00] px-4 text-sm font-semibold text-[var(--accent-fg)] transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D4FF00] disabled:opacity-40"
           >
             {pending && <Loader2 aria-hidden="true" size={16} className="shrink-0 motion-safe:animate-spin" />}
             {pending

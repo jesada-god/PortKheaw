@@ -15,6 +15,8 @@
  *   npm run probe:account-deletion
  */
 
+import { resolveTrialIdentityKeyring } from '../src/lib/trial-identity/keyring';
+
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -72,20 +74,33 @@ async function ledgerIsClosedToBrowsers(): Promise<Check> {
   };
 }
 
+/**
+ * The trial keys, as the application resolves them.
+ *
+ * Resolved through the real keyring rather than by reading one variable, so this
+ * reports the same answer the running deployment would — including the failures
+ * that take the feature down, such as an active version whose key is missing. It
+ * prints versions and never a key or its length.
+ */
+function keyringCheck(): Check {
+  const keyring = resolveTrialIdentityKeyring(process.env as Record<string, unknown>);
+  if (!keyring.ok) {
+    return { name: 'trial identity keyring (local)', ok: false, detail: `${keyring.reason} — ${keyring.message}` };
+  }
+  return {
+    name: 'trial identity keyring (local)',
+    ok: true,
+    detail: `active V${keyring.activeVersion}, reads V${keyring.supportedVersions.join(', V')}`,
+  };
+}
+
 async function main() {
   const checks: Check[] = [
     await rpcExists('trial_identity_is_claimed', { input_identities: [] }),
     await tableExists('trial_identity_claims'),
     await tableExists('account_lifecycle'),
     await ledgerIsClosedToBrowsers(),
-    {
-      name: 'TRIAL_IDENTITY_HMAC_SECRET (local)',
-      ok: typeof process.env.TRIAL_IDENTITY_HMAC_SECRET === 'string'
-        && process.env.TRIAL_IDENTITY_HMAC_SECRET.length >= 32,
-      detail: process.env.TRIAL_IDENTITY_HMAC_SECRET
-        ? `set, ${process.env.TRIAL_IDENTITY_HMAC_SECRET.length} chars`
-        : 'not set',
-    },
+    keyringCheck(),
   ];
 
   for (const check of checks) {

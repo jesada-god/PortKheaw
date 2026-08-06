@@ -28,6 +28,9 @@
     "clean": "next clean",
     "probe:account-deletion": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-account-deletion-release.ts",
     "trial:backfill-identities": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-trial-identities.ts",
+    "probe:trial-retention": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-trial-retention.ts",
+    "trial:qa-cleanup": "node --import=tsx --env-file-if-exists=.env.local scripts/trial-qa-cleanup.ts",
+    "account:reconcile": "node --import=tsx --env-file-if-exists=.env.local scripts/reconcile-account-deletions.ts",
     "instruments:backfill-logos": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-instrument-logos.ts"
   },
   "dependencies": {

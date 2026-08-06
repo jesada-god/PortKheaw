@@ -10,7 +10,7 @@ import {
   type TrialFailureCode,
 } from '@/src/lib/subscription/trial';
 import { createClient } from '@/src/lib/supabase/server';
-import type { TrialIdentity } from './identity-hash';
+import { supportedTrialIdentityVersions, type TrialIdentity } from './identity-hash';
 import {
   deriveAccountIdentities,
   lookupTrialIdentityClaim,
@@ -90,15 +90,41 @@ async function resolveUncached(): Promise<TrialEligibility> {
 
   if (!trialIdentityAvailable()) return refuse('TRIAL_IDENTITY_UNAVAILABLE');
 
-  const { binding } = deriveAccountIdentities(user);
+  const { binding, lookup } = deriveAccountIdentities(user);
   // No identity means no way to remember the grant, and a grant nobody can
   // remember is the defect the ledger exists to close.
   if (binding.length === 0) return refuse('TRIAL_IDENTITY_UNAVAILABLE');
 
-  const claim = await lookupTrialIdentityClaim(binding);
+  /*
+   * Asked under every key version this deployment holds, not just the active one.
+   * A reader whose claim was written under the previous key must still be refused
+   * — otherwise rotating the secret would quietly hand a second free week to
+   * everybody who had already taken one.
+   *
+   * `unsupported-version` is a refusal too: the ledger holds a version we cannot
+   * compute, so a miss proves nothing. It is an operator's problem — a key retired
+   * too early — and it is deliberately not distinguishable to the reader, who
+   * simply sees the retryable unavailable wording.
+   */
+  const claim = await lookupTrialIdentityClaim(lookup);
+  if (claim === 'unsupported-version') {
+    /*
+     * Worth a line in the operator's log, because every trial is being refused
+     * right now and nobody will run a probe unprompted. Key *versions* only —
+     * which are the numbers needed to know which key to put back — and never a
+     * digest, an address or an account.
+     */
+    console.warn(JSON.stringify({
+      event: 'trial_identity_unsupported_version_stored',
+      supported: supportedTrialIdentityVersions(),
+      action: 'restore the retired key, then npm run probe:trial-retention',
+    }));
+    return refuse('TRIAL_IDENTITY_UNAVAILABLE');
+  }
   if (claim === 'unavailable') return refuse('TRIAL_IDENTITY_UNAVAILABLE');
   if (claim === 'claimed') return refuse('TRIAL_IDENTITY_ALREADY_USED');
 
+  // The grant is written under the active version alone.
   return { ok: true, userId: user.id, identities: binding };
 }
 

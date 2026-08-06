@@ -2,10 +2,13 @@ import 'server-only';
 
 import { createAdminClient } from '@/src/lib/supabase/admin';
 import {
+  emailTrialIdentities,
   emailTrialIdentity,
   isTrialIdentityConfigured,
+  oauthTrialIdentities,
   oauthTrialIdentity,
   paymentTrialIdentity,
+  supportedTrialIdentityVersions,
   type TrialIdentity,
 } from './identity-hash';
 
@@ -49,13 +52,23 @@ export interface AccountIdentitySource {
  * on one mailbox must produce one digest — that is what makes "delete, then sign
  * up with Google instead" a dead end rather than a second free week.
  *
- * `binding` is what may refuse a trial. `signals` is recorded and never enforced:
- * a payment fingerprint belongs to a card, and a card is shared between family
- * members, reissued to strangers and used by one person to pay for another's
- * account. Refusing on one would refuse people who have never had a trial.
+ * Two of the three lists differ only by key version, and that difference is the
+ * whole of what makes rotation safe:
+ *
+ *   * `binding` is derived under the **active** version. It is what gets written
+ *     — a claim, and the retention record left behind by a deletion — so the
+ *     table never accumulates one identity under every key we have ever held.
+ *   * `lookup` is derived under **every configured** version and is a superset of
+ *     `binding`. It is what a claim check asks about, so a claim written under V1
+ *     keeps refusing a trial after the active version has moved to V2.
+ *   * `signals` is recorded and never enforced: a payment fingerprint belongs to
+ *     a card, and a card is shared between family members, reissued to strangers
+ *     and used by one person to pay for another's account. Refusing on one would
+ *     refuse people who have never had a trial.
  */
 export interface DerivedIdentities {
   binding: TrialIdentity[];
+  lookup: TrialIdentity[];
   signals: TrialIdentity[];
 }
 
@@ -64,8 +77,17 @@ export function deriveAccountIdentities(
   paymentFingerprints: readonly string[] = [],
 ): DerivedIdentities {
   const binding = new Map<string, TrialIdentity>();
+  const lookup = new Map<string, TrialIdentity>();
   const signals = new Map<string, TrialIdentity>();
-  if (!user) return { binding: [], signals: [] };
+  if (!user) return { binding: [], lookup: [], signals: [] };
+
+  const key = (identity: TrialIdentity) => `${identity.type}:${identity.version}:${identity.hash}`;
+  const activeVersion = (identity: TrialIdentity | null) => {
+    if (identity) binding.set(key(identity), identity);
+  };
+  const everyVersion = (identities: readonly TrialIdentity[]) => {
+    for (const identity of identities) lookup.set(key(identity), identity);
+  };
 
   const addresses = new Set<string>();
   if (typeof user.email === 'string') addresses.add(user.email);
@@ -83,33 +105,45 @@ export function deriveAccountIdentities(
      * anything — recording it would be recording noise.
      */
     if (provider && provider !== 'email' && subject) {
-      const derived = oauthTrialIdentity(provider, subject);
-      if (derived) binding.set(`${derived.type}:${derived.version}:${derived.hash}`, derived);
+      activeVersion(oauthTrialIdentity(provider, subject));
+      everyVersion(oauthTrialIdentities(provider, subject));
     }
   }
 
   for (const address of addresses) {
-    const derived = emailTrialIdentity(address);
-    if (derived) binding.set(`${derived.type}:${derived.version}:${derived.hash}`, derived);
+    activeVersion(emailTrialIdentity(address));
+    everyVersion(emailTrialIdentities(address));
   }
 
   for (const fingerprint of paymentFingerprints) {
     const derived = paymentTrialIdentity(fingerprint);
-    if (derived) signals.set(`${derived.type}:${derived.version}:${derived.hash}`, derived);
+    if (derived) signals.set(key(derived), derived);
   }
 
-  return { binding: [...binding.values()], signals: [...signals.values()] };
+  return { binding: [...binding.values()], lookup: [...lookup.values()], signals: [...signals.values()] };
 }
 
-export type TrialIdentityLookup = 'unclaimed' | 'claimed' | 'unavailable';
+export type TrialIdentityLookup = 'unclaimed' | 'claimed' | 'unavailable' | 'unsupported-version';
 
 /**
  * Whether any of these identities has already spent its trial.
  *
- * `unavailable` is a third answer on purpose, and it is never treated as
- * `unclaimed` by the caller: an unreadable ledger must not hand out a week it
- * cannot record, for the same reason an unreadable rollout does not admit
- * anybody. It is retryable.
+ * Two answers are refusals rather than passes, and neither is ever read as
+ * `unclaimed` by the caller:
+ *
+ *   * `unavailable` — the ledger could not be read. An unreadable ledger must not
+ *     hand out a week it cannot record, for the same reason an unreadable rollout
+ *     does not admit anybody. Retryable.
+ *   * `unsupported-version` — the ledger holds a claim stamped with a key version
+ *     this deployment cannot derive. There is then no way to tell whether the
+ *     person in front of us is the person who made it, and the safe answer to "I
+ *     cannot tell" is no. It means a key was retired too early, or a rotation was
+ *     deployed to one environment and not another, and it is fixed by restoring
+ *     the key rather than by waiting.
+ *
+ * The claim check and the version check are one round trip on purpose: asked
+ * separately, a miss and a version list could describe two different snapshots of
+ * the table.
  */
 export async function lookupTrialIdentityClaim(
   identities: readonly TrialIdentity[],
@@ -117,11 +151,27 @@ export async function lookupTrialIdentityClaim(
   if (identities.length === 0) return 'unavailable';
   const admin = createAdminClient();
   if (!admin) return 'unavailable';
-  const { data, error } = await admin.rpc('trial_identity_is_claimed', {
+
+  const versions = supportedTrialIdentityVersions();
+  if (versions.length === 0) return 'unavailable';
+
+  const { data, error } = await admin.rpc('trial_identity_claim_status', {
     input_identities: payload(identities),
+    input_versions: versions,
   });
-  if (error || typeof data !== 'boolean') return 'unavailable';
-  return data ? 'claimed' : 'unclaimed';
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row || typeof row.claimed !== 'boolean') return 'unavailable';
+
+  /*
+   * Reported, not logged here. This module writes nothing to an operator's log —
+   * it is the one place that holds digests, and the way a digest reaches a log is
+   * a line somebody added next to one. The caller records the refusal; the probe
+   * (`npm run probe:trial-retention`) names the versions.
+   */
+  const unsupported = Array.isArray(row.unsupported_versions) ? row.unsupported_versions : [];
+  if (unsupported.length > 0) return 'unsupported-version';
+
+  return row.claimed ? 'claimed' : 'unclaimed';
 }
 
 export interface TrialGrant {

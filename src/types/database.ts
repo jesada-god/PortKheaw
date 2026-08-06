@@ -1420,6 +1420,22 @@ export interface Database {
         Args: { input_identities: Array<{ type: string; hash: string; version: number }> };
         Returns: boolean;
       };
+      /**
+       * The claim check and the key-version check, in one round trip.
+       *
+       * `input_versions` is every version the caller holds a key for, and
+       * `unsupported_versions` is any version the ledger stores that is not in that
+       * list — which the caller treats as a refusal, because a miss under a key it
+       * cannot compute proves nothing. Asked together on purpose: separately, a
+       * miss and a version list could describe two different snapshots.
+       */
+      trial_identity_claim_status: {
+        Args: {
+          input_identities: Array<{ type: string; hash: string; version: number }>;
+          input_versions: number[] | null;
+        };
+        Returns: Array<{ claimed: boolean; unsupported_versions: number[] | null }>;
+      };
       start_elite_trial_with_identity: {
         Args: {
           input_user_id: string;
