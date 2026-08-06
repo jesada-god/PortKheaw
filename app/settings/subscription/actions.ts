@@ -4,25 +4,22 @@ import { revalidatePath } from 'next/cache';
 import {
   isAdminRequiredError,
   requireAdmin,
-  resolveRequestAccountAccess,
   setAdminAccessPreview,
 } from '@/src/lib/subscription/account-access';
 import { adminPreviewModes, type AdminPreviewMode } from '@/src/lib/subscription/admin-access';
-import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 /*
  * Shared with the billing webhook on purpose. An access change and a paid-plan
  * change must invalidate exactly the same surfaces, and keeping one definition
  * is what stops the two from drifting apart.
  */
 import { revalidateEveryEntitlementSurface } from '@/src/lib/subscription/revalidate-entitlements';
-import { createClient } from '@/src/lib/supabase/server';
-import { resolveBetaAccessForRequest } from '@/src/lib/beta/beta-server';
 import {
-  ADMIN_TRIAL_BLOCKED_MESSAGE,
   trialFailureCode,
   trialFailureMessage,
   type TrialFailureCode,
 } from '@/src/lib/subscription/trial';
+import { resolveTrialEligibility } from '@/src/lib/trial-identity/trial-eligibility';
+import { claimAndStartEliteTrial } from '@/src/lib/trial-identity/trial-identity-store';
 
 export type StartTrialResult =
   | { ok: true; trialEndsAt: string; message: string }
@@ -65,74 +62,40 @@ const ENTITLEMENT_PATHS = ['/settings/subscription', '/settings', '/portfolio', 
  * server snapshot after this returns.
  */
 export async function startEliteTrialAction(): Promise<StartTrialResult> {
-  const client = await createClient();
-  if (!client) {
-    record('trial_start_failed', 'UNAVAILABLE');
-    return { ok: false, code: 'UNAVAILABLE', message: trialFailureMessage('UNAVAILABLE') };
-  }
-
-  const { data: { user }, error: authError } = await client.auth.getUser();
-  if (authError || !user) {
-    record('trial_start_failed', 'UNAUTHENTICATED');
-    return { ok: false, code: 'UNAUTHENTICATED', message: trialFailureMessage('UNAUTHENTICATED') };
-  }
-
   /*
-   * An administrator already has the whole product and can simulate a trial
-   * without one, so spending the account's single real grant would only destroy
-   * a state they may later need to test against. Refused here, before the RPC.
+   * One service answers "may this reader start the week?", and it is the same
+   * one the hero asked when it decided whether to render a button. Session,
+   * account status, mailbox proof, the account's own subscription row, the
+   * controlled rollout and the persistent identity ledger are all checked there,
+   * in that order — so the control a reader sees and the answer they get on
+   * pressing it can never disagree, and no rule can be enforced in one place and
+   * forgotten in the other.
    */
-  const access = await resolveRequestAccountAccess();
-  if (access.isAdmin) {
-    record('trial_start_failed', 'ADMIN_TRIAL_BLOCKED');
-    return { ok: false, code: 'UNAVAILABLE', message: ADMIN_TRIAL_BLOCKED_MESSAGE };
-  }
-
-  /*
-   * The controlled rollout, checked here for the same reason checkout checks it:
-   * the trial is a grant of the top plan, so it is a way *in* to the product and
-   * the stage that decides who may join has to decide this too. Otherwise the
-   * closed door on the plan cards is walked around by taking seven free days of
-   * Elite instead.
-   *
-   * It gates *starting* a trial and nothing else. The database's own rule admits
-   * an operator, an account that predates the program and anybody already
-   * holding a live subscription — and a trial that has already started is one of
-   * those, so a stage change can never cut a running trial short. Reusing
-   * `resolveBetaAccessForRequest` is deliberate: the button and this action must
-   * read one answer, resolved once per request, from the routine the database
-   * decides with.
-   */
-  const beta = await resolveBetaAccessForRequest();
-  /*
-   * An unreadable rollout refuses the grant rather than waving it through.
-   *
-   * This is the one place where "we could not ask" must not resolve to "yes": a
-   * trial is a way *in*, it is spent once per account and it cannot be taken
-   * back, so granting one on an answer nobody gave would let an outage of the
-   * flag hand out what a closed stage exists to withhold. Nothing an account
-   * already holds is touched — a running trial, a paid plan, the renewal and the
-   * portal never consult this — and the refusal is retryable by design.
-   */
-  if (beta.resolution === 'unavailable') {
-    record('trial_start_beta_unresolved');
-    return {
-      ok: false,
-      code: 'BETA_ACCESS_UNAVAILABLE',
-      message: trialFailureMessage('BETA_ACCESS_UNAVAILABLE'),
-    };
-  }
-  if (!beta.admitted) {
-    record('trial_start_beta_refused', beta.reason);
-    return {
-      ok: false,
-      code: 'BETA_NOT_ADMITTED',
-      message: trialFailureMessage('BETA_NOT_ADMITTED'),
-    };
+  const eligibility = await resolveTrialEligibility();
+  if (!eligibility.ok) {
+    record(
+      eligibility.code === 'BETA_NOT_ADMITTED'
+        ? 'trial_start_beta_refused'
+        : eligibility.code === 'BETA_ACCESS_UNAVAILABLE'
+          ? 'trial_start_beta_unresolved'
+          : 'trial_start_failed',
+      eligibility.code,
+    );
+    return { ok: false, code: eligibility.code, message: eligibility.message };
   }
 
   try {
-    const grant = await new SubscriptionRepository(client).startEliteTrial();
+    /*
+     * The claim and the grant are one database transaction. Claiming first and
+     * granting after would burn an identity on an attempt that failed — the
+     * account could then never have the week it never got — and granting first
+     * would leave a trial the ledger never saw, which is the defect this whole
+     * path exists to close.
+     *
+     * The identities are digests the server derived from the verified account
+     * record. Nothing the browser sent reaches this call.
+     */
+    const grant = await claimAndStartEliteTrial(eligibility.userId, eligibility.identities);
     for (const path of ENTITLEMENT_PATHS) revalidatePath(path);
     record('trial_started');
     return {

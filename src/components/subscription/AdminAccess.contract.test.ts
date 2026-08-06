@@ -188,17 +188,28 @@ describe('admin access vertical slice', () => {
     expect(migration).not.toContain('admin_access_previews');
   });
 
+  /*
+   * The guarantee is unchanged; only its address is. Every trial refusal now
+   * lives in one eligibility service that the action and the hero both ask, so
+   * that is where the administrator rule is asserted — and the action is checked
+   * for calling the service before it grants anything.
+   */
   it('refuses an administrator the one real trial grant', () => {
-    const actions = readCode('app/settings/subscription/actions.ts');
-    expect(actions).toContain('if (access.isAdmin) {');
-    expect(actions).toContain('ADMIN_TRIAL_BLOCKED_MESSAGE');
-    // The refusal is before the RPC, so `trial_used_at` is never written.
-    const guardIndex = actions.indexOf('if (access.isAdmin) {');
-    const rpcIndex = actions.indexOf('startEliteTrial()');
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(guardIndex).toBeLessThan(rpcIndex);
+    const eligibility = readCode('src/lib/trial-identity/trial-eligibility.ts');
+    expect(eligibility).toContain('if (access.isAdmin)');
+    expect(eligibility).toContain('ADMIN_TRIAL_BLOCKED_MESSAGE');
 
-    expect(read('app/settings/subscription/page.tsx')).toContain('trialBlockedReason={access.isAdmin');
+    const actions = readCode('app/settings/subscription/actions.ts');
+    // The refusal is before the grant, so `trial_used_at` is never written.
+    const guardIndex = actions.indexOf('resolveTrialEligibility()');
+    const grantIndex = actions.indexOf('claimAndStartEliteTrial(');
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(grantIndex);
+    // And there is no second way in: the argument-free grant a browser could
+    // once call is no longer reachable from the action either.
+    expect(actions).not.toContain('startEliteTrial()');
+
+    expect(read('app/settings/subscription/page.tsx')).toContain('resolveTrialEligibility()');
   });
 
   it('records preview events in the existing log shape without adding a dependency', () => {
@@ -211,8 +222,15 @@ describe('admin access vertical slice', () => {
     ]) {
       expect(actions).toContain(event);
     }
-    // Nothing personal, and no analytics import.
-    expect(readCode('app/settings/subscription/actions.ts')).not.toMatch(/userId|user\.id|email|token/);
+    /*
+     * Nothing personal reaches the log, and no analytics import exists. The
+     * check is on the `record(...)` call sites rather than on the whole file:
+     * the action legitimately *holds* an account id now — it passes one to the
+     * trusted grant — and what matters is that it never writes one down.
+     */
+    const logged = [...readCode('app/settings/subscription/actions.ts').matchAll(/record\([^)]*\)/g)]
+      .map(([call]) => call).join('\n');
+    expect(logged).not.toMatch(/userId|user\.id|email|token/);
     expect(actions).not.toMatch(/from '(posthog|mixpanel|@sentry|@vercel\/analytics)/);
   });
 

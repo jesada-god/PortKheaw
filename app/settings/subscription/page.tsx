@@ -31,11 +31,8 @@ import { recordBetaFunnelEvent, resolveBetaAccessForRequest } from '@/src/lib/be
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { SubscriptionRepository } from '@/src/lib/subscription/repository';
 import { resolveEffectiveTier } from '@/src/lib/subscription/resolve-effective-tier';
-import {
-  ADMIN_TRIAL_BLOCKED_MESSAGE,
-  resolveTrialState,
-  TRIAL_BETA_BLOCKED_MESSAGE,
-} from '@/src/lib/subscription/trial';
+import { resolveTrialState } from '@/src/lib/subscription/trial';
+import { resolveTrialEligibility } from '@/src/lib/trial-identity/trial-eligibility';
 
 /*
  * Entitlement state is per-reader and decided from the database clock, so this
@@ -66,6 +63,15 @@ export default async function SubscriptionPage() {
    */
   const emailVerified = Boolean(user.email_confirmed_at);
   const trialState = resolveTrialState(snapshot, emailVerified);
+
+  /*
+   * The one eligibility service, asked once per render and cached for the rest
+   * of it. It is what makes the hero's note and the action's refusal the same
+   * sentence — including the one a reader sees on a fresh account whose mailbox
+   * already spent its free week on an account they deleted.
+   */
+  const trialEligibility = await resolveTrialEligibility();
+  const trialBlockedReason = trialEligibility.ok ? undefined : trialEligibility.message;
 
   /*
    * Everything below the hero may know about the operator role and any running
@@ -223,17 +229,14 @@ export default async function SubscriptionPage() {
           state={trialState}
           effectiveTier={effectiveTier}
           /*
-           * Two reasons the trial may be off the table for somebody who is
-           * otherwise eligible, in the order they outrank each other. An
-           * operator is always admitted by the rollout, so the administrator
-           * sentence is the one that can apply to them; a reader the stage has
-           * not admitted is told that instead. Either way the control stays
-           * visible and inert, and the action refuses the same case again — this
-           * hides a button, it does not authorize anything.
+           * Why the trial is off the table for somebody the snapshot alone would
+           * call eligible — an operator, a reader the rollout has not admitted,
+           * or somebody whose identity is already in the persistent ledger. The
+           * sentence comes from the same service the action calls, so the note
+           * under the inert button is the answer the button would have given.
+           * This hides a button; it does not authorize anything.
            */
-          trialBlockedReason={access.isAdmin
-            ? ADMIN_TRIAL_BLOCKED_MESSAGE
-            : beta.admitted ? undefined : TRIAL_BETA_BLOCKED_MESSAGE}
+          trialBlockedReason={trialBlockedReason}
         />
         {pendingView && <PendingInvoiceCard view={pendingView} />}
         {billingSummary && (

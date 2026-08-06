@@ -27,6 +27,15 @@ export interface RequestAccountAccess extends AccountAccess {
   trialEndsAt: string | null;
   trialUsedAt: string | null;
   currentPeriodEnd: string | null;
+  /**
+   * Whether the account is in service or closing.
+   *
+   * Read on every request rather than trusted from the token, because a deletion
+   * starts while a perfectly valid JWT is still in the reader's browser and will
+   * stay valid for the rest of its hour. The guarded surfaces refuse on this,
+   * not on the session expiring.
+   */
+  accountStatus: 'active' | 'deleting';
   /** The database clock this snapshot was resolved against. */
   databaseNow: string | null;
 }
@@ -49,6 +58,7 @@ export const ANONYMOUS_ACCOUNT_ACCESS: RequestAccountAccess = {
   trialEndsAt: null,
   trialUsedAt: null,
   currentPeriodEnd: null,
+  accountStatus: 'active',
   databaseNow: null,
 };
 
@@ -90,6 +100,22 @@ async function resolveUncached(): Promise<RequestAccountAccess> {
       trialEndsAt: row.trial_ends_at,
       trialUsedAt: row.trial_used_at,
       currentPeriodEnd: row.current_period_end,
+      /*
+       * A status the projection *reported* and we do not recognise is treated as
+       * closing: an unreadable lifecycle must not be the reason an account keeps
+       * writing while it is being deleted.
+       *
+       * A status it did not report at all is a different thing, and means
+       * active. Deploys are not atomic — for a few minutes a build that knows
+       * about this column answers requests against a database that has not been
+       * migrated — and in that window there is no lifecycle table, therefore no
+       * deletion in flight, therefore nothing to close. Reading the absence as
+       * "deleting" would lock every account out of its own trial for the length
+       * of a release.
+       */
+      accountStatus: row.account_status == null || row.account_status === 'active'
+        ? 'active'
+        : 'deleting',
       databaseNow: row.database_now,
     };
   } catch {

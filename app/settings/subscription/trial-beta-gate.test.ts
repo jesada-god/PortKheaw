@@ -9,11 +9,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * product exactly as a purchase is — and a stage that closes checkout while
  * leaving the trial open closes nothing at all. These tests pin one rule: the
  * same admission answer the plan cards are gated on decides whether the trial
- * may start, and it decides it in the action, where a caller who never touched
+ * may start, and it decides it on the server, where a caller who never touched
  * the button still has to pass.
  *
- * Nothing here starts a real trial: the repository is a mock, and the assertion
- * on every refusal is that it was never constructed.
+ * The rule now lives in the single eligibility service, which the action and the
+ * hero both ask — so the real service runs here and only its outermost
+ * dependencies are replaced. Nothing starts a real trial: the grant is a mock,
+ * and the assertion on every refusal is that it was never called.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -21,7 +23,9 @@ const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
   resolveRequestAccountAccess: vi.fn(),
   resolveBetaAccessForRequest: vi.fn(),
-  startEliteTrial: vi.fn(),
+  claimAndStartEliteTrial: vi.fn(),
+  lookupTrialIdentityClaim: vi.fn(),
+  trialIdentityAvailable: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -39,13 +43,21 @@ vi.mock('@/src/lib/subscription/revalidate-entitlements', () => ({
 vi.mock('@/src/lib/beta/beta-server', () => ({
   resolveBetaAccessForRequest: mocks.resolveBetaAccessForRequest,
 }));
-vi.mock('@/src/lib/subscription/repository', () => ({
-  SubscriptionRepository: class {
-    startEliteTrial = mocks.startEliteTrial;
-  },
+/*
+ * Only the store is replaced, so the identity *rule* — which digests are
+ * binding, and that a claimed one refuses — still runs for real above it.
+ */
+vi.mock('@/src/lib/trial-identity/trial-identity-store', () => ({
+  trialIdentityAvailable: mocks.trialIdentityAvailable,
+  lookupTrialIdentityClaim: mocks.lookupTrialIdentityClaim,
+  claimAndStartEliteTrial: mocks.claimAndStartEliteTrial,
+  deriveAccountIdentities: () => ({
+    binding: [{ type: 'email' as const, hash: 'a'.repeat(64), version: 1 }],
+    signals: [],
+  }),
 }));
 
-import { TRIAL_BETA_BLOCKED_MESSAGE } from '@/src/lib/subscription/trial';
+import { TRIAL_BETA_BLOCKED_MESSAGE, TRIAL_IDENTITY_USED_MESSAGE } from '@/src/lib/subscription/trial';
 import type { BetaAccess } from '@/src/lib/beta/beta-stages';
 import { startEliteTrialAction } from './actions';
 
@@ -68,19 +80,43 @@ function betaAccess(overrides: Partial<BetaAccess>): BetaAccess {
   };
 }
 
+/** An account that has never taken a trial and has confirmed its mailbox. */
+function accountAccess(overrides: Record<string, unknown> = {}) {
+  return {
+    authenticated: true,
+    userId: 'user-1',
+    isAdmin: false,
+    role: 'user',
+    accountStatus: 'active',
+    storedTier: 'basic',
+    status: 'basic',
+    trialEndsAt: null,
+    trialUsedAt: null,
+    currentPeriodEnd: null,
+    databaseNow: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 function read(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+  mocks.getUser.mockResolvedValue({
+    data: { user: { id: 'user-1', email: 'reader@example.com', email_confirmed_at: '2026-01-01T00:00:00.000Z' } },
+    error: null,
+  });
   mocks.createClient.mockResolvedValue({ auth: { getUser: mocks.getUser } });
-  mocks.resolveRequestAccountAccess.mockResolvedValue({ isAdmin: false, role: 'user' });
+  mocks.resolveRequestAccountAccess.mockResolvedValue(accountAccess());
   mocks.resolveBetaAccessForRequest.mockResolvedValue(betaAccess({}));
-  mocks.startEliteTrial.mockResolvedValue({
+  mocks.trialIdentityAvailable.mockReturnValue(true);
+  mocks.lookupTrialIdentityClaim.mockResolvedValue('unclaimed');
+  mocks.claimAndStartEliteTrial.mockResolvedValue({
     trialEndsAt: '2026-08-13T00:00:00.000Z',
     trialUsedAt: null,
+    databaseNow: null,
   });
 });
 
@@ -95,7 +131,7 @@ describe('Elite trial under the controlled beta', () => {
       code: 'BETA_NOT_ADMITTED',
       message: BLOCKED_COPY,
     });
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -108,7 +144,7 @@ describe('Elite trial under the controlled beta', () => {
 
     const result = await startEliteTrialAction();
     expect(result).toEqual({ ok: false, code: 'BETA_NOT_ADMITTED', message: BLOCKED_COPY });
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -122,7 +158,7 @@ describe('Elite trial under the controlled beta', () => {
 
     const result = await startEliteTrialAction();
     expect(result.ok).toBe(true);
-    expect(mocks.startEliteTrial).toHaveBeenCalledTimes(1);
+    expect(mocks.claimAndStartEliteTrial).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -143,7 +179,7 @@ describe('Elite trial under the controlled beta', () => {
       code: 'BETA_ACCESS_UNAVAILABLE',
       message: UNRESOLVED_COPY,
     });
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
   it('tells an unreadable rollout apart from a refusal, in both copy and code', async () => {
@@ -159,16 +195,16 @@ describe('Elite trial under the controlled beta', () => {
   });
 
   it('keeps the administrator refusal ahead of the unreadable rollout', async () => {
-    mocks.resolveRequestAccountAccess.mockResolvedValue({ isAdmin: true, role: 'admin' });
+    mocks.resolveRequestAccountAccess.mockResolvedValue(accountAccess({ isAdmin: true, role: 'admin' }));
     mocks.resolveBetaAccessForRequest.mockResolvedValue(betaAccess({ resolution: 'unavailable' }));
 
     const result = await startEliteTrialAction();
     expect(result.ok ? '' : result.message).toContain('บัญชีผู้ดูแลระบบ');
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
   it('keeps the administrator refusal ahead of the rollout refusal', async () => {
-    mocks.resolveRequestAccountAccess.mockResolvedValue({ isAdmin: true, role: 'admin' });
+    mocks.resolveRequestAccountAccess.mockResolvedValue(accountAccess({ isAdmin: true, role: 'admin' }));
     mocks.resolveBetaAccessForRequest.mockResolvedValue(
       betaAccess({ stage: 'closed', admitted: false, reason: 'closed_stage' }),
     );
@@ -176,7 +212,7 @@ describe('Elite trial under the controlled beta', () => {
     const result = await startEliteTrialAction();
     expect(result).toMatchObject({ ok: false });
     expect(result.ok ? '' : result.message).toContain('บัญชีผู้ดูแลระบบ');
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
   it('refuses a signed-out caller before the rollout is even asked', async () => {
@@ -184,22 +220,62 @@ describe('Elite trial under the controlled beta', () => {
 
     await expect(startEliteTrialAction()).resolves.toMatchObject({ code: 'UNAUTHENTICATED' });
     expect(mocks.resolveBetaAccessForRequest).not.toHaveBeenCalled();
-    expect(mocks.startEliteTrial).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
   });
 
-  it('gates in the action, not only on the button', () => {
-    const action = read('app/settings/subscription/actions.ts');
-    const gate = action.indexOf('resolveBetaAccessForRequest()');
-    const grant = action.indexOf('startEliteTrial()');
+  /*
+   * The rollout and the persistent ledger are separate gates and both are real.
+   * A reader the stage admits, whose mailbox already spent its week on an
+   * account they deleted, is still refused — and told the one sentence written
+   * for that situation.
+   */
+  it('refuses an admitted reader whose identity is already in the ledger', async () => {
+    mocks.lookupTrialIdentityClaim.mockResolvedValue('claimed');
+
+    await expect(startEliteTrialAction()).resolves.toEqual({
+      ok: false,
+      code: 'TRIAL_IDENTITY_ALREADY_USED',
+      message: TRIAL_IDENTITY_USED_MESSAGE,
+    });
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
+  });
+
+  it('refuses rather than granting a week it could not record', async () => {
+    mocks.lookupTrialIdentityClaim.mockResolvedValue('unavailable');
+    await expect(startEliteTrialAction()).resolves.toMatchObject({ code: 'TRIAL_IDENTITY_UNAVAILABLE' });
+
+    mocks.lookupTrialIdentityClaim.mockResolvedValue('unclaimed');
+    mocks.trialIdentityAvailable.mockReturnValue(false);
+    await expect(startEliteTrialAction()).resolves.toMatchObject({ code: 'TRIAL_IDENTITY_UNAVAILABLE' });
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account that is being deleted, whatever its token still says', async () => {
+    mocks.resolveRequestAccountAccess.mockResolvedValue(accountAccess({ accountStatus: 'deleting' }));
+    await expect(startEliteTrialAction()).resolves.toMatchObject({ code: 'ACCOUNT_DELETING' });
+    expect(mocks.resolveBetaAccessForRequest).not.toHaveBeenCalled();
+    expect(mocks.claimAndStartEliteTrial).not.toHaveBeenCalled();
+  });
+
+  it('gates on the server, not only on the button', () => {
+    const eligibility = read('src/lib/trial-identity/trial-eligibility.ts');
+    const gate = eligibility.indexOf('resolveBetaAccessForRequest()');
     expect(gate).toBeGreaterThan(-1);
+
+    const action = read('app/settings/subscription/actions.ts');
+    const asked = action.indexOf('resolveTrialEligibility()');
+    const grant = action.indexOf('claimAndStartEliteTrial(');
     // The refusal has to be reached before the routine that spends the grant.
-    expect(gate).toBeLessThan(grant);
+    expect(asked).toBeGreaterThan(-1);
+    expect(asked).toBeLessThan(grant);
   });
 
   it('shows the same sentence on the disabled control', () => {
     expect(TRIAL_BETA_BLOCKED_MESSAGE).toBe(BLOCKED_COPY);
     const page = read('app/settings/subscription/page.tsx');
-    expect(page).toContain('TRIAL_BETA_BLOCKED_MESSAGE');
-    expect(page).toMatch(/trialBlockedReason=\{access\.isAdmin[\s\S]*beta\.admitted/);
+    // The hero's note is the answer the action would have given, taken from the
+    // one service rather than recomputed beside the component.
+    expect(page).toContain('resolveTrialEligibility()');
+    expect(page).toContain('trialBlockedReason={trialBlockedReason}');
   });
 });

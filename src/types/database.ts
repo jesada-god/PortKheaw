@@ -1403,8 +1403,66 @@ export interface Database {
           trial_ends_at: string | null;
           trial_used_at: string | null;
           current_period_end: string | null;
+          /** `'active'` or `'deleting'`; anything else is treated as closing. */
+          account_status: string;
           database_now: string;
         }>;
+      };
+      /**
+       * The persistent trial ledger and the account-deletion pipeline.
+       *
+       * Every one of these is granted to `service_role` and to nothing else, so
+       * they are only reachable through the server-only modules in
+       * `src/lib/trial-identity` and `src/lib/account`. A browser holds no key
+       * that can call them.
+       */
+      trial_identity_is_claimed: {
+        Args: { input_identities: Array<{ type: string; hash: string; version: number }> };
+        Returns: boolean;
+      };
+      start_elite_trial_with_identity: {
+        Args: {
+          input_user_id: string;
+          input_identities: Array<{ type: string; hash: string; version: number }>;
+        };
+        Returns: Array<{
+          user_id: string;
+          tier: SubscriptionTier;
+          status: SubscriptionStatus;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          trial_used_at: string | null;
+          database_now: string;
+        }>;
+      };
+      retain_trial_identity_on_deletion: {
+        Args: {
+          input_user_id: string;
+          input_identities: Array<{ type: string; hash: string; version: number }>;
+          input_trial_used: boolean;
+        };
+        Returns: number;
+      };
+      begin_account_deletion: {
+        Args: { input_user_id: string };
+        Returns: Array<{
+          operation_id: string | null;
+          stage: string | null;
+          trial_used: boolean;
+          resumed: boolean;
+        }>;
+      };
+      advance_account_deletion: {
+        Args: { input_user_id: string; input_stage: string };
+        Returns: string;
+      };
+      cancel_account_deletion: {
+        Args: { input_user_id: string };
+        Returns: string;
+      };
+      purge_account_data: {
+        Args: { input_user_id: string };
+        Returns: undefined;
       };
       /**
        * Takes a mode and nothing else. Identity comes from `auth.uid()`, the

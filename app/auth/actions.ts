@@ -9,6 +9,15 @@ import { describeAuthError } from '@/src/lib/auth/errors';
 import { evaluatePassword } from '@/src/lib/auth/password-policy';
 import { RECOVERY_CONTEXT_MESSAGE, resolveRecoveryContext } from '@/src/lib/auth/recovery-context';
 import type { AuthFormState } from '@/src/lib/auth/form-state';
+import { deleteAccount } from '@/src/lib/account/account-deletion';
+import { reauthMethodFor, signInIsFresh, verifyPassword } from '@/src/lib/account/reauthentication';
+import {
+  DELETE_ACCOUNT_CONFIRMATION,
+  DELETE_ACCOUNT_SUCCESS_MESSAGE,
+  deleteAccountMessage,
+  type DeleteAccountFailure,
+  type DeleteAccountState,
+} from '@/src/lib/account/deletion-copy';
 
 const emailSchema = z.email('กรุณากรอกอีเมลให้ถูกต้อง');
 const fullNameSchema = z.string().trim().min(1, 'กรุณากรอกชื่อที่แสดง').max(100, 'ชื่อต้องไม่เกิน 100 ตัวอักษร');
@@ -186,13 +195,64 @@ export async function signOutAction(): Promise<never> {
   redirect('/auth/sign-in?message=' + encodeURIComponent('ออกจากระบบแล้ว'));
 }
 
-export async function deleteAccountAction(formData: FormData): Promise<never> {
-  if (formData.get('confirmation') !== 'DELETE') {
-    redirect('/profile?error=' + encodeURIComponent('กรุณาพิมพ์ DELETE เพื่อยืนยัน'));
+/**
+ * Delete this account, for real.
+ *
+ * Three things have to be true before anything happens, and all three are
+ * decided here rather than in the dialog:
+ *
+ *   1. the confirmation phrase was typed exactly;
+ *   2. the person proved who they are *now* — a password re-entered, or a Google
+ *      sign-in from the last few minutes — because a session cookie is not that
+ *      proof and this is irreversible;
+ *   3. the account is the caller's own. There is no account argument, so there
+ *      is nothing to tamper with: the subject comes from the verified session
+ *      and from nowhere else.
+ *
+ * The work itself is a staged pipeline that keeps the spent trial, settles the
+ * payment provider, empties the storage bucket and removes the account's data
+ * *before* it removes the auth user. Failures come back as a sentence; nothing
+ * here ever puts a provider error, a stack or an identifier in front of a
+ * reader.
+ */
+export async function deleteAccountAction(
+  _prevState: DeleteAccountState,
+  formData: FormData,
+): Promise<DeleteAccountState | never> {
+  const fail = (failure: DeleteAccountFailure, field?: DeleteAccountState['field']): DeleteAccountState => ({
+    status: 'error',
+    message: deleteAccountMessage(failure),
+    ...(field ? { field } : {}),
+  });
+
+  if (text(formData.get('confirmation')).trim() !== DELETE_ACCOUNT_CONFIRMATION) {
+    return fail('not-confirmed', 'confirmation');
   }
+
   const supabase = await createClient();
   if (!supabase) redirect('/auth/configuration-required');
-  const { error } = await supabase.rpc('delete_own_account');
-  if (error) redirect('/profile?error=' + encodeURIComponent('ไม่สามารถลบบัญชีได้ กรุณาลองอีกครั้ง'));
-  redirect('/auth/sign-in?message=' + encodeURIComponent('ลบบัญชีเรียบร้อยแล้ว'));
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return fail('unauthenticated');
+
+  if (reauthMethodFor(user) === 'password') {
+    const password = text(formData.get('password'));
+    if (!password) return fail('password-required', 'password');
+    if (!user.email) return fail('reauth-unavailable');
+    const outcome = await verifyPassword(user.email, password);
+    if (outcome === 'unavailable') return fail('reauth-unavailable');
+    if (outcome !== 'verified') return fail('password-rejected', 'password');
+  } else if (!signInIsFresh(user.last_sign_in_at)) {
+    return fail('reauth-stale');
+  }
+
+  const result = await deleteAccount(user.id);
+  if (!result.ok) {
+    return fail(result.reason === 'provider-failed' ? 'provider-failed' : 'unavailable');
+  }
+
+  // The account is gone; the cookie that pointed at it must go with it, or the
+  // next request arrives with a token for a user that no longer exists.
+  await supabase.auth.signOut().catch(() => undefined);
+  redirect('/auth/sign-in?message=' + encodeURIComponent(DELETE_ACCOUNT_SUCCESS_MESSAGE));
 }

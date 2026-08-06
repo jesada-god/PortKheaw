@@ -71,6 +71,20 @@ export function parseServerEnv(input: Record<string, unknown>) {
       NEWS_API_KEY: read('NEWS_API_KEY', optionalSecret, undefined),
       SUPABASE_SERVICE_ROLE_KEY: read('SUPABASE_SERVICE_ROLE_KEY', optionalSecret, undefined),
       CRON_SECRET: read('CRON_SECRET', optionalSecret, undefined),
+      /*
+       * The key the persistent trial ledger is written with.
+       *
+       * It is what stops that ledger from being a list of email addresses: the
+       * rows hold a keyed digest, and without this value a copy of the table
+       * cannot be turned back into a mailbox. Optional here like every other
+       * integration — but unlike the others, its absence closes a feature rather
+       * than degrading one: with no key the trial cannot be recorded, and a
+       * trial that cannot be recorded is not granted.
+       *
+       * Rotating it means bumping `TRIAL_IDENTITY_HASH_VERSION`; the old rows
+       * stay valid under their own version and keep blocking.
+       */
+      TRIAL_IDENTITY_HMAC_SECRET: read('TRIAL_IDENTITY_HMAC_SECRET', optionalSecret, undefined),
       NEXT_PUBLIC_VAPID_PUBLIC_KEY: read('NEXT_PUBLIC_VAPID_PUBLIC_KEY', optionalSecret, undefined),
       VAPID_PRIVATE_KEY: read('VAPID_PRIVATE_KEY', optionalSecret, undefined),
       VAPID_SUBJECT: read('VAPID_SUBJECT', optionalSubject, undefined),

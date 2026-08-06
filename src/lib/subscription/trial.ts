@@ -19,6 +19,22 @@ export type TrialFailureCode =
   | 'BETA_NOT_ADMITTED'
   /** The rollout could not be read, so no grant is made. Retryable. */
   | 'BETA_ACCESS_UNAVAILABLE'
+  /**
+   * The persistent ledger already holds one of this account's identities. Told
+   * apart from `TRIAL_ALREADY_USED` on purpose: that one is a fact about *this*
+   * account's own row, and this one is a fact that outlived a deleted account —
+   * the reader is very likely seeing it on an account that is minutes old, and
+   * the sentence has to make sense in that situation.
+   */
+  | 'TRIAL_IDENTITY_ALREADY_USED'
+  /**
+   * The ledger could not be read or written. Refused rather than waved through:
+   * a trial nobody can record is exactly the defect the ledger exists to close.
+   * Retryable.
+   */
+  | 'TRIAL_IDENTITY_UNAVAILABLE'
+  /** The account is being deleted, so it starts nothing new. */
+  | 'ACCOUNT_DELETING'
   | 'UNAVAILABLE';
 
 export const TRIAL_DURATION_DAYS = 7;
@@ -155,6 +171,17 @@ export function formatBangkokDateTime(isoTimestamp: string): string {
  */
 export const TRIAL_BETA_BLOCKED_MESSAGE = 'ขณะนี้เปิดให้ทดลองเฉพาะผู้ได้รับสิทธิ์เบต้า';
 
+/**
+ * What somebody is told when the persistent ledger has already seen them.
+ *
+ * The reader is almost always looking at a brand-new account, so "this account
+ * has used it" would read as a bug. The sentence therefore states the rule and
+ * the way forward together, and it is the same sentence wherever the refusal
+ * surfaces — the hero, the action's answer, and the paywall.
+ */
+export const TRIAL_IDENTITY_USED_MESSAGE =
+  'บัญชีนี้เคยใช้สิทธิทดลองฟรีแล้ว สามารถเลือกแพ็กเกจเพื่อใช้งานต่อได้';
+
 const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
   TRIAL_ALREADY_USED: 'บัญชีนี้เคยใช้สิทธิ์ทดลอง Elite ไปแล้ว จึงใช้ซ้ำไม่ได้',
   TRIAL_ALREADY_ACTIVE: 'คุณกำลังอยู่ในช่วงทดลอง Elite อยู่แล้ว',
@@ -169,6 +196,16 @@ const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
    * two different stories about one outage.
    */
   BETA_ACCESS_UNAVAILABLE: BETA_ACCESS_UNAVAILABLE_MESSAGE,
+  /*
+   * Says what is true and offers the way forward in the same breath. It
+   * deliberately does not say *which* earlier account, when, or on which
+   * address: the reader knows, and anybody else reading over their shoulder
+   * would be learning something about a mailbox from a page that has no
+   * business teaching it.
+   */
+  TRIAL_IDENTITY_ALREADY_USED: TRIAL_IDENTITY_USED_MESSAGE,
+  TRIAL_IDENTITY_UNAVAILABLE: 'ขณะนี้ยังเริ่มทดลองไม่ได้ กรุณาลองใหม่อีกครั้งในอีกสักครู่',
+  ACCOUNT_DELETING: 'บัญชีนี้กำลังอยู่ระหว่างการลบ จึงเริ่มรายการใหม่ไม่ได้',
   UNAVAILABLE: 'เริ่มทดลองไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
 };
 
@@ -192,6 +229,20 @@ export const ADMIN_TRIAL_BLOCKED_MESSAGE =
 export function trialFailureCode(error: unknown): TrialFailureCode {
   const message = (error as { message?: unknown } | null)?.message;
   if (typeof message !== 'string') return 'UNAVAILABLE';
+  /*
+   * The ledger's own refusals come back the same way — as the code in the
+   * exception text — and are matched first. `TRIAL_IDENTITY_ALREADY_USED` does
+   * not contain `TRIAL_ALREADY_USED` as a substring, so the two cannot be
+   * confused for each other whichever order they are tried in; the order here
+   * is for readers, not for correctness.
+   */
+  const identityCodes: TrialFailureCode[] = [
+    'TRIAL_IDENTITY_ALREADY_USED',
+    'TRIAL_IDENTITY_UNAVAILABLE',
+    'ACCOUNT_DELETING',
+  ];
+  const matchedIdentity = identityCodes.find((code) => message.includes(code));
+  if (matchedIdentity) return matchedIdentity;
   const matched = trialErrorCodes.find((code) => message.includes(code));
   return matched ?? 'UNAVAILABLE';
 }

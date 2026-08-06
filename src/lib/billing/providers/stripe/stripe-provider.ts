@@ -441,6 +441,31 @@ export async function abandonStripePromptPaySubscription(
 }
 
 /**
+ * End a subscription because the account behind it is being deleted.
+ *
+ * The one thing it must guarantee is that nobody is billed for a product they no
+ * longer have an account for. It does **not** refund: money already taken is
+ * refunded through the refund-request path a person asks for, on the seven-day
+ * window, with a human decision behind it. Deleting an account is not a request
+ * for money back, the deletion dialog says so before anything happens, and a
+ * pipeline that quietly issued refunds would be moving money nobody asked to
+ * move.
+ *
+ * Safe to repeat: an already-cancelled subscription is a success, not an error,
+ * which is what lets the deletion pipeline be retried from any point.
+ */
+export async function cancelStripeSubscriptionForDeletion(
+  config: BillingConfig,
+  subscriptionId: string,
+): Promise<'canceled' | 'already-canceled'> {
+  const client = stripeClient(config);
+  const subscription = await client.subscriptions.retrieve(subscriptionId);
+  if (subscription.status === 'canceled') return 'already-canceled';
+  await client.subscriptions.cancel(subscriptionId);
+  return 'canceled';
+}
+
+/**
  * Open the provider's own billing portal.
  *
  * Cancellation, payment-method updates and invoice history all live there rather

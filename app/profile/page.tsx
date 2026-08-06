@@ -9,6 +9,7 @@ import { AccountIdentity } from '@/src/components/subscription/AccountBadges';
 import { AccountPlanSummary } from '@/src/components/subscription/AccountPlanSummary';
 import { AdminPreviewSelector } from '@/src/components/subscription/AdminPreviewSelector';
 import { createClient } from '@/src/lib/supabase/server';
+import { reauthMethodFor, signInIsFresh } from '@/src/lib/account/reauthentication';
 import { resolveRequestAccountAccess } from '@/src/lib/subscription/account-access';
 import { resolveAccountBadges } from '@/src/lib/subscription/account-badges';
 import { resolveAccountPlanSummary } from '@/src/lib/subscription/account-plan-summary';
@@ -107,7 +108,15 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
               it is now only this quieter, secondary statement. */}
           <div className="flex min-h-14 items-center gap-3 p-4 text-[var(--text-secondary)]"><Shield size={20} className="text-[var(--text-muted)]" /><span>บัญชีได้รับการป้องกันด้วย Supabase Auth</span></div>
         </div>
-        <AccountActions />
+        {/*
+          * How this account can prove itself is read from its provider
+          * identities on the server, never guessed from the address. The dialog
+          * only renders the right fields; the action checks all of it again.
+          */}
+        <AccountActions
+          reauthMethod={reauthMethodFor(user)}
+          signInFresh={signInIsFresh(user.last_sign_in_at)}
+        />
       </div>
     </div>
   );

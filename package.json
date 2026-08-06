@@ -25,7 +25,10 @@
     "probe:header-price": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/probe-header-price.ts",
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
-    "clean": "next clean"
+    "clean": "next clean",
+    "probe:account-deletion": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-account-deletion-release.ts",
+    "trial:backfill-identities": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-trial-identities.ts",
+    "instruments:backfill-logos": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-instrument-logos.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
