@@ -35,6 +35,17 @@ const MIGRATION_FILE = '202608060003_trial_retention_and_deletion_recovery.sql';
 const rawSql = readFileSync(resolve(process.cwd(), 'supabase/migrations', MIGRATION_FILE), 'utf8');
 const statements = rawSql.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').toLowerCase();
 
+/**
+ * The follow-up that actually installs the cron job.
+ *
+ * A separate file because `202608060003` is already applied to production and
+ * recorded in the migration ledger — editing an applied migration is how a `db
+ * push` ends up re-running released schema.
+ */
+const SCHEDULE_FILE = '202608070001_schedule_trial_retention_sweep.sql';
+const rawScheduleSql = readFileSync(resolve(process.cwd(), 'supabase/migrations', SCHEDULE_FILE), 'utf8');
+const scheduleSql = rawScheduleSql.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').toLowerCase();
+
 const MIGRATION_CHAIN = [
   '202607180001_phase_1_auth.sql',
   '202607180003_phase_3_watchlist.sql',
@@ -840,16 +851,33 @@ describe('re-applying the migration', () => {
 
 describe('the schedule', () => {
   it('is installed on the database scheduler, applying by default so the flag decides', () => {
-    expect(statements).toContain("'portkheaw-trial-retention'");
-    expect(statements).toContain('purge_expired_trial_identity_claims(gen_random_uuid(), true, null)');
-    // Guarded, so a deployment without pg_cron still applies the migration.
-    expect(statements).toContain("to_regproc('cron.schedule') is null");
+    expect(scheduleSql).toContain("'portkheaw-trial-retention'");
+    expect(scheduleSql).toContain('purge_expired_trial_identity_claims(gen_random_uuid(), true, null)');
     // Unscheduled before scheduling, so re-running the migration leaves one job.
-    expect(statements).toContain('cron.unschedule');
+    expect(scheduleSql).toContain('cron.unschedule');
+  });
+
+  /*
+   * The defect this second migration exists to fix, pinned so it cannot come back.
+   *
+   * `202608060003` guarded on `to_regproc('cron.schedule')`, and `cron.schedule` is
+   * overloaded — pg_cron ships a 2-argument and a 3-argument form. A `regproc`
+   * cannot represent an overloaded name, so `to_regproc` returns NULL for an
+   * ambiguous name exactly as it does for a missing one: on a database where
+   * pg_cron was installed and working, the block took its "not installed" path,
+   * raised a NOTICE, and scheduled nothing. The migration reported success.
+   *
+   * A relation name cannot be ambiguous, so that is what the probe uses.
+   */
+  it('probes for pg_cron by relation, never by an overloaded function name', () => {
+    expect(scheduleSql).toContain("to_regclass('cron.job') is null");
+    expect(scheduleSql).not.toContain("to_regproc('cron.schedule')");
   });
 
   it('needs no new HTTP surface and therefore no new secret', () => {
-    expect(statements).not.toContain('cron_secret');
-    expect(statements).not.toContain('net.http');
+    for (const sql of [statements, scheduleSql]) {
+      expect(sql).not.toContain('cron_secret');
+      expect(sql).not.toContain('net.http');
+    }
   });
 });
