@@ -20,7 +20,14 @@ import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
-import type { HoldingSummary, MarketPriceInput, PortfolioGoal, PortfolioRecord, PortfolioTransactionType } from '@/src/lib/portfolio/types';
+import type {
+  DeletedPortfolioSummary,
+  HoldingSummary,
+  MarketPriceInput,
+  PortfolioGoal,
+  PortfolioRecord,
+  PortfolioTransactionType,
+} from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
@@ -85,12 +92,13 @@ function transactionDate(value: string, timezone: string) {
     .format(parsed);
 }
 
-export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, fx, timezone, effectiveTier }: {
+export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, recentlyDeleted, fx, timezone, effectiveTier }: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
   marketPrices: Record<string, MarketPriceInput | null>;
   optionQuotes: Record<string, OptionQuoteInput | null>;
   optionTargets: OptionTarget[];
+  recentlyDeleted: DeletedPortfolioSummary[];
   fx: FxResult;
   timezone: string;
   effectiveTier: SubscriptionTier;
@@ -383,6 +391,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       aggregateGoal={aggregateGoal}
       selectedPortfolioId={portfolio.id}
       optionTargetCounts={Object.fromEntries(portfolios.map((item) => [item.id, optionTargets.filter((target) => target.portfolioId === item.id).length]))}
+      recentlyDeleted={recentlyDeleted}
       timezone={timezone}
       effectiveTier={effectiveTier}
       showBalances={showBalances}

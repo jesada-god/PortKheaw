@@ -51,6 +51,26 @@ export interface PortfolioTransaction {
   multiplier?: string | null;
   transferId?: string | null;
   counterpartyPortfolioId?: string | null;
+  /**
+   * Every leg of one move shares this. A move of three holdings and some cash is
+   * eight rows across two portfolios and one `transferGroupId`.
+   */
+  transferGroupId?: string | null;
+  /**
+   * The cost basis travelling with an asset leg, in canonical USD, and `null` on
+   * a cash leg. Deliberately not `amount`: `amount` is what every cash reader in
+   * the codebase treats as money moving, and an asset transfer moves no cash.
+   */
+  transferCostBasisUsd?: string | null;
+  /** When the transferred position was originally acquired, carried across. */
+  transferAcquiredAt?: string | null;
+  /**
+   * Portfolio names as they read at transfer time. They survive the purge of the
+   * portfolio they name, which is the only reason a destination can still say
+   * where its shares came from once the source is gone.
+   */
+  transferSourceName?: string | null;
+  transferDestinationName?: string | null;
   occurredAt: string;
   note: string | null;
   idempotencyKey?: string;
@@ -64,10 +84,26 @@ export interface PortfolioRecord {
   type: PortfolioType;
   isLegacy: boolean;
   archivedAt: string | null;
+  /**
+   * Set only on a soft-deleted portfolio, which no ordinary read ever returns.
+   * Kept on the record so the one surface that *does* list them — recently
+   * deleted — reads the same shape as everything else.
+   */
+  deletedAt: string | null;
+  purgeAfter: string | null;
   targetValueUsd: number | null;
   targetDate: string | null;
   baseCurrency: 'THB' | 'USD';
   transactions: PortfolioTransaction[];
+}
+
+/** A portfolio inside its recovery window, listed without its ledger. */
+export interface DeletedPortfolioSummary {
+  id: string;
+  name: string;
+  type: PortfolioType;
+  deletedAt: string;
+  purgeAfter: string;
 }
 
 export interface PortfolioGoal {

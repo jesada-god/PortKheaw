@@ -28,6 +28,7 @@ import {
   formatDateTimeLocal,
   validateTransactionDateTime,
 } from '@/src/lib/portfolio/transaction-datetime';
+import { transferProvenance } from '@/src/lib/portfolio/transfer/provenance';
 import type { PortfolioRecord, PortfolioTransaction } from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
@@ -135,6 +136,17 @@ export function TransactionHistoryClient({
     [portfolios, scope, timezone],
   );
   const page = useMemo(() => limitTransactionHistory(days, visibleCount), [days, visibleCount]);
+  /*
+   * A live name is preferred over the snapshot, so renaming a portfolio the
+   * reader still has updates what its past transfers say about it. The snapshot
+   * only takes over once there is no live portfolio left to name.
+   */
+  const selectedProvenance = selected
+    ? transferProvenance(
+      selected.transaction,
+      (portfolioId) => portfolios.find((item) => item.id === portfolioId)?.name ?? null,
+    )
+    : null;
 
   const money = (value: number) => showBalances
     ? formatPortfolioMoney(value, currency, rate, true)
@@ -309,6 +321,16 @@ export function TransactionHistoryClient({
           />
         </dl>
         {selected.transaction.note && <p className="rounded-lg bg-slate-950/50 p-3 text-sm text-slate-300">{selected.transaction.note}</p>}
+        {/*
+          Where the transfer came from or went to. It reads from the name written
+          into the row at transfer time, so it still says something once the
+          other portfolio has been purged — the row itself is never touched by
+          that purge, and a bare missing id would leave this holding looking as
+          though it arrived from nowhere.
+        */}
+        {selectedProvenance && <p className="text-sm text-slate-300" data-testid="transaction-transfer-provenance">
+          {selectedProvenance.label}
+        </p>}
         {selected.transaction.transferId
           ? <p className="text-xs text-slate-500">รายการโอนระหว่างพอร์ตเป็นคู่กัน จึงแก้ไขหรือลบทีละด้านไม่ได้</p>
           : selectedWriteBlock

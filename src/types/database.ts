@@ -172,17 +172,20 @@ export interface Database {
       portfolios: {
         Row: {
           id: string; user_id: string; name: string; base_currency: Currency; portfolio_type: PortfolioType;
-          is_legacy: boolean; archived_at: string | null; target_value_usd: string | null; target_date: string | null;
+          is_legacy: boolean; archived_at: string | null; deleted_at: string | null; purge_after: string | null;
+          target_value_usd: string | null; target_date: string | null;
           created_at: string; updated_at: string;
         };
         Insert: {
           id?: string; user_id: string; name?: string; base_currency?: Currency; portfolio_type?: PortfolioType;
-          is_legacy?: boolean; archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null;
+          is_legacy?: boolean; archived_at?: string | null; deleted_at?: string | null; purge_after?: string | null;
+          target_value_usd?: string | null; target_date?: string | null;
           created_at?: string; updated_at?: string;
         };
         Update: {
           name?: string; base_currency?: Currency; portfolio_type?: PortfolioType; is_legacy?: boolean;
-          archived_at?: string | null; target_value_usd?: string | null; target_date?: string | null; updated_at?: string;
+          archived_at?: string | null; deleted_at?: string | null; purge_after?: string | null;
+          target_value_usd?: string | null; target_date?: string | null; updated_at?: string;
         };
         Relationships: [];
       };
@@ -654,6 +657,9 @@ export interface Database {
           option_kind: 'call' | 'put' | null; option_side: 'long' | 'short' | null; strike_price: string | null;
           expiration_date: string | null; multiplier: string | null;
           transfer_id: string | null; counterparty_portfolio_id: string | null;
+          transfer_group_id: string | null; transfer_cost_basis_usd: string | null;
+          transfer_acquired_at: string | null;
+          transfer_source_name: string | null; transfer_destination_name: string | null;
           note: string | null; idempotency_key: string; created_at: string; updated_at: string;
         };
         Insert: {
@@ -665,6 +671,9 @@ export interface Database {
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
           transfer_id?: string | null; counterparty_portfolio_id?: string | null;
+          transfer_group_id?: string | null; transfer_cost_basis_usd?: string | null;
+          transfer_acquired_at?: string | null;
+          transfer_source_name?: string | null; transfer_destination_name?: string | null;
           note?: string | null; idempotency_key: string; created_at?: string; updated_at?: string;
         };
         Update: {
@@ -676,6 +685,9 @@ export interface Database {
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
           transfer_id?: string | null; counterparty_portfolio_id?: string | null;
+          transfer_group_id?: string | null; transfer_cost_basis_usd?: string | null;
+          transfer_acquired_at?: string | null;
+          transfer_source_name?: string | null; transfer_destination_name?: string | null;
           note?: string | null; updated_at?: string;
         };
         Relationships: [];
@@ -1504,6 +1516,27 @@ export interface Database {
       archive_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
       restore_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
       delete_empty_portfolio: { Args: { target_portfolio_id: string }; Returns: undefined };
+      /** Returns the moment the recovery window closes. */
+      soft_delete_portfolio: { Args: { target_portfolio_id: string; input_expected_name: string }; Returns: string };
+      /** Returns the name it came back under, renamed only on a collision. */
+      restore_deleted_portfolio: { Args: { target_portfolio_id: string }; Returns: string };
+      /**
+       * One atomic asset move. `input_legs` carries amounts the server derived
+       * from the ledger; `input_expected` is the position fingerprint the
+       * database re-derives and compares before it writes anything.
+       */
+      transfer_portfolio_assets: {
+        Args: {
+          input_source_portfolio_id: string;
+          input_destination_portfolio_id: string;
+          input_group_id: string;
+          input_legs: unknown;
+          input_expected: unknown;
+          input_occurred_at: string;
+          input_note: string | null;
+        };
+        Returns: { transfer_group_id: string; legs_written: number; already_applied: boolean }[];
+      };
       create_portfolio_transaction: {
         Args: { input_type: string; input_symbol: string | null; input_quantity: string | null; input_price: string | null; input_amount: string | null; input_occurred_at: string; input_note: string | null; input_idempotency_key: string; input_original_currency: Currency; input_fx_rate_at_transaction: string | null };
         Returns: string;

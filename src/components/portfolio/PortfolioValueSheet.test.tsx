@@ -37,6 +37,8 @@ const portfolios: PortfolioRecord[] = [{
   type: 'STOCK',
   isLegacy: false,
   archivedAt: null,
+  deletedAt: null,
+  purgeAfter: null,
   targetValueUsd: null,
   targetDate: null,
   baseCurrency: 'USD',

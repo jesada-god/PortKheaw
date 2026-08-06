@@ -37,6 +37,8 @@ function portfolio(id: string, transactions: PortfolioTransaction[]): PortfolioR
     type: 'STOCK',
     isLegacy: false,
     archivedAt: null,
+    deletedAt: null,
+    purgeAfter: null,
     targetValueUsd: null,
     targetDate: null,
     baseCurrency: 'USD',

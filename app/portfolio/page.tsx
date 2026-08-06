@@ -28,11 +28,14 @@ export default async function PortfolioPage() {
    * is the same resolver the root layout and every API guard read, and it is
    * request-cached, so agreeing with them costs no extra round trip.
    */
-  const [portfolios, aggregateGoal, timezone, entitlement] = await Promise.all([
+  const [portfolios, aggregateGoal, timezone, entitlement, recentlyDeleted] = await Promise.all([
     portfolioRepository.getAll(),
     portfolioRepository.getAggregateGoal(),
     portfolioRepository.getTimeZone(),
     resolvePageEntitlement(),
+    // The recovery window. The only read on this page that returns a deleted
+    // portfolio, and it deliberately carries no ledger with it.
+    portfolioRepository.getRecentlyDeleted(),
   ]);
   const effectiveTier = entitlement.effectiveAccessTier;
   const targetRepository = new OptionTargetRepository(client);
@@ -101,6 +104,7 @@ export default async function PortfolioPage() {
         marketPrices={Object.fromEntries(quotes)}
         optionQuotes={optionQuotes}
         optionTargets={targets}
+        recentlyDeleted={recentlyDeleted}
         fx={fx}
         timezone={timezone}
         effectiveTier={effectiveTier}

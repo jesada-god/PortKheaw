@@ -51,7 +51,8 @@ function deposit(amount: number): PortfolioTransaction {
 function portfolio(cash: number): PortfolioRecord {
   return {
     id: '11111111-1111-4111-8111-111111111111', name: 'Options', type: 'OPTION', isLegacy: false,
-    archivedAt: null, targetValueUsd: null, targetDate: null, baseCurrency: 'USD', transactions: [deposit(cash)],
+    archivedAt: null, deletedAt: null, purgeAfter: null,
+    targetValueUsd: null, targetDate: null, baseCurrency: 'USD', transactions: [deposit(cash)],
   };
 }
 

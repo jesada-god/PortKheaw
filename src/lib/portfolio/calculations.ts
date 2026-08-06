@@ -68,6 +68,31 @@ function reduceLots(lots: LotState[], removedQuantity: Fixed, availableQuantity:
   });
 }
 
+/**
+ * The equity side of an asset transfer, or `null` for anything else.
+ *
+ * A transfer leg is told apart from a cash leg by having a symbol at all: a cash
+ * leg carries an amount and nothing else. The cost it moves is read from
+ * `transferCostBasisUsd` rather than recomputed from quantity × price, because
+ * the two ends have to agree exactly and a re-derivation at each end can round
+ * apart. This is the whole reason that column exists.
+ */
+function equityTransferLeg(transaction: PortfolioTransaction): {
+  direction: 'out' | 'in';
+  symbol: string;
+  quantity: Fixed;
+  cost: Fixed;
+} | null {
+  if (transaction.type !== 'transfer_in' && transaction.type !== 'transfer_out') return null;
+  if (!transaction.symbol) return null;
+  return {
+    direction: transaction.type === 'transfer_in' ? 'in' : 'out',
+    symbol: transaction.symbol,
+    quantity: decimal(transaction.quantity),
+    cost: decimal(transaction.transferCostBasisUsd),
+  };
+}
+
 function stockEvent(transaction: PortfolioTransaction): {
   kind: 'buy' | 'sell';
   symbol: string;
@@ -138,6 +163,59 @@ export function calculatePortfolio(
     } else if (transaction.type === 'transfer_out') {
       cash -= amount;
       netTransferred -= amount;
+    }
+
+    /*
+     * Transferred capital moves by the cost basis an asset leg carries, exactly
+     * as it moves by the amount a cash leg carries. Without this the destination
+     * would count the whole market value of an arriving position as profit it had
+     * made, and the source would show the mirror-image loss: a portfolio's gain
+     * is measured against what was put into it, and a transfer puts in the basis
+     * it brought. Written once for shares and contracts alike, because the rule
+     * does not depend on what kind of asset moved.
+     */
+    if ((transaction.type === 'transfer_in' || transaction.type === 'transfer_out')
+      && transaction.transferCostBasisUsd != null) {
+      const movedBasis = decimal(transaction.transferCostBasisUsd);
+      netTransferred += transaction.type === 'transfer_in' ? movedBasis : -movedBasis;
+    }
+
+    /*
+     * An asset transfer, which is not a trade.
+     *
+     * Quantity and cost basis move; cash does not, no gain is realized, and the
+     * cash branches above already saw `amount` as null and added nothing. That
+     * is the entire behavioural difference between moving a position and selling
+     * it in one portfolio to buy it back in another — and it is why a transfer
+     * must never be expressed as a disposal plus an acquisition.
+     */
+    const leg = equityTransferLeg(transaction);
+    if (leg) {
+      const state = states.get(leg.symbol) ?? { quantity: 0n, costBasis: 0n, realizedGain: 0n, lots: [], transactions: [] };
+      state.transactions.push(transaction);
+      if (leg.direction === 'in') {
+        state.quantity += leg.quantity;
+        state.costBasis += leg.cost;
+        state.lots.push({
+          transactionId: transaction.id,
+          // The acquisition date travels with the position. A lot that reset its
+          // date on arrival would tell the holder they had just bought something
+          // they have held for two years.
+          occurredAt: transaction.transferAcquiredAt ?? transaction.occurredAtTime ?? transaction.occurredAt,
+          originalQuantity: leg.quantity,
+          remainingQuantity: leg.quantity,
+          remainingCost: leg.cost,
+          fee: 0n,
+          broker: transaction.broker ?? null,
+        });
+      } else {
+        if (leg.quantity > state.quantity) throw new Error(`Insufficient quantity for ${leg.symbol}`);
+        reduceLots(state.lots, leg.quantity, state.quantity, leg.cost);
+        state.quantity -= leg.quantity;
+        state.costBasis -= leg.cost;
+      }
+      states.set(leg.symbol, state);
+      continue;
     }
 
     const event = stockEvent(transaction);

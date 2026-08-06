@@ -22,6 +22,15 @@ function ordered(transactions: PortfolioTransaction[]) {
     || left.id.localeCompare(right.id));
 }
 
+/**
+ * A transfer leg carrying a contract, as opposed to one carrying cash or shares.
+ * The contract identity is what makes it an option event at all.
+ */
+function isOptionTransferLeg(transaction: PortfolioTransaction) {
+  return (transaction.type === 'transfer_in' || transaction.type === 'transfer_out')
+    && Boolean(transaction.contractSymbol);
+}
+
 function isOptionTransaction(transaction: PortfolioTransaction) {
   return transaction.type === 'buy_to_open'
     || transaction.type === 'sell_to_close'
@@ -29,14 +38,18 @@ function isOptionTransaction(transaction: PortfolioTransaction) {
     || transaction.type === 'buy_to_close'
     || transaction.type === 'exercise'
     || transaction.type === 'assignment'
-    || transaction.type === 'expired';
+    || transaction.type === 'expired'
+    || isOptionTransferLeg(transaction);
 }
 
 function transactionSide(transaction: PortfolioTransaction): OptionSide {
   if (transaction.type === 'buy_to_open' || transaction.type === 'sell_to_close' || transaction.type === 'exercise') return 'long';
   if (transaction.type === 'sell_to_open' || transaction.type === 'buy_to_close' || transaction.type === 'assignment') return 'short';
+  // Expired and transfer legs both state their side on the row, because neither
+  // can be inferred from the verb: either side can expire, and either side can
+  // be moved.
   if (transaction.optionSide) return transaction.optionSide;
-  throw new Error('Expired option transaction requires an option side');
+  throw new Error(`${transaction.type} option transaction requires an option side`);
 }
 
 export function optionPositionKey(transaction: Pick<PortfolioTransaction,
@@ -127,6 +140,35 @@ export function calculateOptionLedger(
     if (state.side !== side && state.contracts !== 0n) throw new Error(`Cannot mix long and short option lots for ${key}`);
     state.side = side;
     state.transactions.push(transaction);
+
+    if (isOptionTransferLeg(transaction)) {
+      /*
+       * Moving contracts, not trading them.
+       *
+       * Two quantities travel with the position and both have to, because each
+       * answers a different question the destination will be asked. The remaining
+       * cost is what the position is *worth having paid* — it drives unrealized
+       * gain — and it is carried exactly, from the row, so the two ledgers agree
+       * to the last unit. The opening premium value is what the position was
+       * *entered at* — it drives the average premium and the breakeven — and it
+       * is rebuilt from the unit price the row states. Carrying only the cost
+       * would leave the destination with a correct P&L and a breakeven of zero.
+       */
+      const movedCost = fixed(transaction.transferCostBasisUsd);
+      if (transaction.type === 'transfer_in') {
+        state.contracts += quantity;
+        state.openingPremiumValue += gross;
+        state.remainingCost += movedCost;
+      } else {
+        if (quantity > state.contracts) throw new Error(`Option transfer exceeds available contracts for ${key}`);
+        const removedPremium = proportional(state.openingPremiumValue, quantity, state.contracts);
+        state.contracts -= quantity;
+        state.openingPremiumValue -= removedPremium;
+        state.remainingCost -= movedCost;
+      }
+      states.set(key, state);
+      continue;
+    }
 
     if (transaction.type === 'buy_to_open' || transaction.type === 'sell_to_open') {
       const netOpening = transaction.type === 'buy_to_open' ? gross + fee : gross - fee;

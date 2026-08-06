@@ -2,7 +2,14 @@ import 'server-only';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
-import type { PortfolioGoal, PortfolioRecord, PortfolioTransaction, PortfolioType } from './types';
+import type {
+  DeletedPortfolioSummary,
+  PortfolioGoal,
+  PortfolioRecord,
+  PortfolioTransaction,
+  PortfolioType,
+} from './types';
+import type { TransferExpectation, TransferLeg } from './transfer/plan';
 import type { TransactionInput } from './validation';
 import type { OptionPurchaseQuoteSnapshot, OptionPurchaseRequest } from './options/purchase';
 import {
@@ -29,6 +36,11 @@ function mapTransaction(row: TransactionRow): PortfolioTransaction {
     optionSide: row.option_side, strikePrice: numericString(row.strike_price), expirationDate: row.expiration_date,
     multiplier: numericString(row.multiplier), transferId: row.transfer_id,
     counterpartyPortfolioId: row.counterparty_portfolio_id,
+    transferGroupId: row.transfer_group_id,
+    transferCostBasisUsd: numericString(row.transfer_cost_basis_usd),
+    transferAcquiredAt: row.transfer_acquired_at,
+    transferSourceName: row.transfer_source_name,
+    transferDestinationName: row.transfer_destination_name,
     note: row.note, idempotencyKey: row.idempotency_key, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -73,11 +85,19 @@ export class PortfolioRepository {
     return data;
   }
 
+  /**
+   * Every portfolio the reader still has, which never includes a soft-deleted
+   * one. The filter is here, in the one method the whole application reads
+   * portfolios through, rather than at each of its callers: a page that forgot
+   * it would show a portfolio the reader has already deleted, and one that
+   * linked to it would hand out a `portfolio_id` every write path refuses.
+   */
   async getAll(): Promise<PortfolioRecord[]> {
     await this.ensureDefault();
     const [{ data: portfolios, error: portfolioError }, { data: rows, error: rowsError }] = await Promise.all([
       this.client.from('portfolios')
-        .select('id, name, base_currency, portfolio_type, is_legacy, archived_at, target_value_usd, target_date, created_at')
+        .select('id, name, base_currency, portfolio_type, is_legacy, archived_at, deleted_at, purge_after, target_value_usd, target_date, created_at')
+        .is('deleted_at', null)
         .order('created_at', { ascending: true }).order('id', { ascending: true }),
       this.client.from('portfolio_transactions').select('*')
         .order('occurred_at_time', { ascending: true }).order('created_at', { ascending: true }).order('id', { ascending: true }),
@@ -95,11 +115,37 @@ export class PortfolioRepository {
       type: portfolio.portfolio_type,
       isLegacy: portfolio.is_legacy,
       archivedAt: portfolio.archived_at,
+      deletedAt: portfolio.deleted_at,
+      purgeAfter: portfolio.purge_after,
       targetValueUsd: portfolio.target_value_usd === null ? null : Number(portfolio.target_value_usd),
       targetDate: portfolio.target_date,
       baseCurrency: portfolio.base_currency,
       transactions: transactions.get(portfolio.id) ?? [],
     }));
+  }
+
+  /**
+   * The recovery window, and the only read that returns deleted portfolios.
+   * Names and dates only — a list meant for choosing what to bring back does not
+   * need the ledger, and loading one would put a deleted portfolio's holdings
+   * back into the page it was deleted from.
+   */
+  async getRecentlyDeleted(): Promise<DeletedPortfolioSummary[]> {
+    const { data, error } = await this.client.from('portfolios')
+      .select('id, name, portfolio_type, deleted_at, purge_after')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? [])
+      .filter((portfolio): portfolio is typeof portfolio & { deleted_at: string; purge_after: string } =>
+        Boolean(portfolio.deleted_at) && Boolean(portfolio.purge_after))
+      .map((portfolio) => ({
+        id: portfolio.id,
+        name: portfolio.name,
+        type: portfolio.portfolio_type,
+        deletedAt: portfolio.deleted_at,
+        purgeAfter: portfolio.purge_after,
+      }));
   }
 
   async getDefault(): Promise<PortfolioRecord> {
@@ -229,6 +275,63 @@ export class PortfolioRepository {
     if (error) throw error;
   }
 
+  /**
+   * The name is sent so the database can refuse a deletion aimed at the wrong
+   * portfolio. The interface checks it too, to keep the button disabled, but the
+   * check that counts is the one made against the row being deleted.
+   */
+  async softDeletePortfolio(id: string, expectedName: string): Promise<string> {
+    const { data, error } = await this.client.rpc('soft_delete_portfolio', {
+      target_portfolio_id: id,
+      input_expected_name: expectedName,
+    });
+    if (error || !data) throw error ?? new Error('Portfolio was not deleted');
+    return data;
+  }
+
+  /** Returns the name it came back under, which is not always the one it left. */
+  async restoreDeletedPortfolio(id: string): Promise<string> {
+    const { data, error } = await this.client.rpc('restore_deleted_portfolio', {
+      target_portfolio_id: id,
+    });
+    if (error || !data) throw error ?? new Error('Portfolio was not restored');
+    return data;
+  }
+
+  /**
+   * One atomic move. The legs carry amounts this process derived from the
+   * ledger; the expectations let the database refuse them if the ledger has
+   * moved on since. Nothing here originates in a browser except which positions
+   * and how many of each.
+   */
+  async transferAssets(input: {
+    sourcePortfolioId: string;
+    destinationPortfolioId: string;
+    groupId: string;
+    legs: TransferLeg[];
+    expectations: TransferExpectation[];
+    occurredAt: string;
+    note?: string;
+  }): Promise<{ groupId: string; legsWritten: number; alreadyApplied: boolean }> {
+    const { data, error } = await this.client.rpc('transfer_portfolio_assets', {
+      input_source_portfolio_id: input.sourcePortfolioId,
+      input_destination_portfolio_id: input.destinationPortfolioId,
+      input_group_id: input.groupId,
+      input_legs: input.legs,
+      input_expected: input.expectations,
+      input_occurred_at: input.occurredAt,
+      input_note: input.note?.trim() || null,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error('Transfer did not report a result');
+    return {
+      groupId: row.transfer_group_id,
+      legsWritten: row.legs_written,
+      alreadyApplied: row.already_applied,
+    };
+  }
+
   async transferCash(input: {
     sourcePortfolioId: string;
     destinationPortfolioId: string;
@@ -261,8 +364,10 @@ export async function loadPortfoliosForUser(
   userId: string,
 ): Promise<PortfolioRecord[]> {
   const { data: portfolios, error: portfolioError } = await client.from('portfolios')
-    .select('id, name, base_currency, portfolio_type, is_legacy, archived_at, target_value_usd, target_date, created_at')
+    .select('id, name, base_currency, portfolio_type, is_legacy, archived_at, deleted_at, purge_after, target_value_usd, target_date, created_at')
     .eq('user_id', userId)
+    // A scheduled summary must not report a portfolio its owner has deleted.
+    .is('deleted_at', null)
     .order('created_at', { ascending: true })
     .order('id', { ascending: true });
   if (portfolioError) throw portfolioError;
@@ -288,6 +393,8 @@ export async function loadPortfoliosForUser(
     type: portfolio.portfolio_type,
     isLegacy: portfolio.is_legacy,
     archivedAt: portfolio.archived_at,
+    deletedAt: portfolio.deleted_at,
+    purgeAfter: portfolio.purge_after,
     targetValueUsd: portfolio.target_value_usd === null ? null : Number(portfolio.target_value_usd),
     targetDate: portfolio.target_date,
     baseCurrency: portfolio.base_currency,

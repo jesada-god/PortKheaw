@@ -38,6 +38,8 @@ function portfolio(id: string, name: string, transactions: PortfolioTransaction[
     type: 'STOCK',
     isLegacy: false,
     archivedAt: null,
+    deletedAt: null,
+    purgeAfter: null,
     targetValueUsd: null,
     targetDate: null,
     baseCurrency: 'USD',

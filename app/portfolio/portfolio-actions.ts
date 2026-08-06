@@ -136,6 +136,78 @@ export async function deletePortfolioAction(id: string): Promise<PortfolioAction
   }
 }
 
+/**
+ * The database's own refusals, told apart from one another so the reader is told
+ * what to do rather than that something went wrong. Matched on the token the
+ * routine raises, because the message it carries is not a stable interface.
+ */
+function deletionResultFor(error: unknown): PortfolioActionResult {
+  const value = error as { code?: string; message?: string } | null;
+  const message = value?.message ?? '';
+  if (message.includes('PORTFOLIO_NAME_MISMATCH')) {
+    return { ok: false, code: 'name-mismatch', message: 'ชื่อพอร์ตที่พิมพ์ไม่ตรงกับพอร์ตนี้' };
+  }
+  if (message.includes('PORTFOLIO_LAST_ACTIVE')) {
+    return {
+      ok: false,
+      code: 'last-portfolio',
+      message: 'นี่คือพอร์ตที่ใช้งานอยู่พอร์ตสุดท้าย กรุณาสร้างพอร์ตใหม่ก่อนแล้วจึงลบพอร์ตนี้',
+    };
+  }
+  if (message.includes('PORTFOLIO_ALREADY_DELETED')) {
+    return { ok: false, code: 'already-deleted', message: 'พอร์ตนี้ถูกลบไปแล้ว' };
+  }
+  if (message.includes('PORTFOLIO_RESTORE_WINDOW_CLOSED')) {
+    return { ok: false, code: 'window-closed', message: 'เลยกำหนด 7 วันแล้ว จึงกู้คืนพอร์ตนี้ไม่ได้' };
+  }
+  if (message.includes('PORTFOLIO_RESTORE_NAME_UNAVAILABLE')) {
+    return { ok: false, code: 'name-unavailable', message: 'กู้คืนไม่สำเร็จเพราะชื่อพอร์ตซ้ำเกินไป กรุณาเปลี่ยนชื่อพอร์ตที่มีอยู่ก่อน' };
+  }
+  if (message.includes('Legacy portfolio cannot be deleted')) {
+    return { ok: false, code: 'legacy', message: 'พอร์ต Default / Legacy ลบไม่ได้ แต่ Archive ได้' };
+  }
+  return resultFor(error);
+}
+
+/**
+ * Soft delete. The portfolio leaves every surface immediately and stays
+ * recoverable for seven days; nothing in its ledger is destroyed here, and the
+ * purge that eventually does destroy it reads the deadline from the row itself.
+ */
+export async function softDeletePortfolioAction(raw: unknown): Promise<PortfolioActionResult & { purgeAfter?: string }> {
+  const input = z.object({ id: uuid, confirmName: z.string().min(1).max(80) }).safeParse(raw);
+  if (!input.success) return { ok: false, code: 'invalid', message: 'ไม่พบพอร์ตที่ต้องการลบ' };
+  const repo = await repository();
+  if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
+  try {
+    const purgeAfter = await repo.softDeletePortfolio(input.data.id, input.data.confirmName);
+    refreshPortfolio();
+    revalidatePath('/portfolio/transactions');
+    return { ok: true, purgeAfter };
+  } catch (error) {
+    return deletionResultFor(error);
+  }
+}
+
+/**
+ * Restore, which may hand the portfolio back under a different name: seven days
+ * is long enough for somebody to have recreated the one it left under, and the
+ * data matters more than the label.
+ */
+export async function restoreDeletedPortfolioAction(id: string): Promise<PortfolioActionResult & { name?: string }> {
+  if (!uuid.safeParse(id).success) return { ok: false, code: 'invalid', message: 'ไม่พบพอร์ตที่ต้องการกู้คืน' };
+  const repo = await repository();
+  if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
+  try {
+    const name = await repo.restoreDeletedPortfolio(id);
+    refreshPortfolio();
+    revalidatePath('/portfolio/transactions');
+    return { ok: true, name };
+  } catch (error) {
+    return deletionResultFor(error);
+  }
+}
+
 const transferSchema = z.object({
   sourcePortfolioId: uuid,
   destinationPortfolioId: uuid,

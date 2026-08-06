@@ -2,16 +2,27 @@
 
 import { useEffect, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Edit3, FolderOpen, Lock, Plus, RotateCcw, Target, Trash2 } from 'lucide-react';
+import { Archive, Edit3, FolderOpen, History, Lock, Plus, RotateCcw, Target, Trash2, Undo2 } from 'lucide-react';
 import {
   archivePortfolioAction,
   createPortfolioAction,
-  deletePortfolioAction,
+  restoreDeletedPortfolioAction,
   restorePortfolioAction,
   setPortfolioGoalAction,
+  softDeletePortfolioAction,
   transferPortfolioCashAction,
   updatePortfolioAction,
 } from '@/app/portfolio/portfolio-actions';
+import {
+  confirmAssetTransferAction,
+  loadPortfolioDeletionSummaryAction,
+  loadTransferableAssetsAction,
+  previewAssetTransferAction,
+} from '@/app/portfolio/transfer-actions';
+import { DeletePortfolioDialog } from './DeletePortfolioDialog';
+import { TransferAssetsDialog, type TransferSelectionState, type TransferStep } from './TransferAssetsDialog';
+import type { PortfolioDeletionSummary, TransferPreview } from '@/src/lib/portfolio/transfer/service';
+import type { TransferableAssets } from '@/src/lib/portfolio/transfer/plan';
 import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
@@ -22,7 +33,13 @@ import {
   latestPortfolioPriceTime,
   type PortfolioGoalScope,
 } from '@/src/lib/portfolio/goal-card';
-import type { PortfolioGoal, PortfolioRecord, PortfolioSummary, PortfolioType } from '@/src/lib/portfolio/types';
+import type {
+  DeletedPortfolioSummary,
+  PortfolioGoal,
+  PortfolioRecord,
+  PortfolioSummary,
+  PortfolioType,
+} from '@/src/lib/portfolio/types';
 import {
   currentDateTimeLocal,
   maximumTransactionDateTimeLocal,
@@ -62,6 +79,7 @@ export function PortfolioManager({
   aggregateGoal,
   selectedPortfolioId,
   optionTargetCounts,
+  recentlyDeleted,
   timezone,
   effectiveTier,
   showBalances,
@@ -79,6 +97,7 @@ export function PortfolioManager({
   aggregateGoal: PortfolioGoal;
   selectedPortfolioId: string;
   optionTargetCounts: Record<string, number>;
+  recentlyDeleted: DeletedPortfolioSummary[];
   timezone: string;
   effectiveTier: SubscriptionTier;
   showBalances: boolean;
@@ -106,6 +125,40 @@ export function PortfolioManager({
   const [goalValue, setGoalValue] = useState('');
   const [goalDate, setGoalDate] = useState('');
   const [confirming, setConfirming] = useState<PortfolioRecord | null>(null);
+  /*
+   * Deletion and asset transfer share one target, because they are two answers
+   * to the same question. Opening the delete dialog is what offers the move, and
+   * finishing the move offers the deletion again — the reader never has to hold
+   * a portfolio in their head between two unrelated screens.
+   */
+  const [deleteTarget, setDeleteTarget] = useState<PortfolioRecord | null>(null);
+  const [deleteSummary, setDeleteSummary] = useState<PortfolioDeletionSummary | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [undoTarget, setUndoTarget] = useState<{ id: string; name: string } | null>(null);
+  const [assetTransferSource, setAssetTransferSource] = useState<PortfolioRecord | null>(null);
+  const [assetStep, setAssetStep] = useState<TransferStep>('destination');
+  const [assetLoading, setAssetLoading] = useState(false);
+  const [assetError, setAssetError] = useState('');
+  const [assetInventory, setAssetInventory] = useState<TransferableAssets | null>(null);
+  const [assetDestinations, setAssetDestinations] = useState<{ id: string; name: string; type: PortfolioType }[]>([]);
+  const [assetDestinationId, setAssetDestinationId] = useState('');
+  const [assetPreview, setAssetPreview] = useState<TransferPreview | null>(null);
+  /*
+   * Minted with the preview and replayed on confirm. Two clicks on the confirm
+   * button therefore carry the same id, and the second one lands on the first
+   * one's rows instead of writing a duplicate set.
+   */
+  const [assetGroupId, setAssetGroupId] = useState('');
+  const [assetSelection, setAssetSelection] = useState<TransferSelectionState | null>(null);
+  const [assetCompleted, setAssetCompleted] = useState('');
+  /*
+   * Minted on every opening and used as the dialogs' `key`, so each one starts
+   * from a clean form. This is how state is reset here rather than in an effect:
+   * a half-typed portfolio name or a stale checkbox surviving into a dialog
+   * about a different portfolio is the failure that pattern prevents.
+   */
+  const [dialogSessionKey, setDialogSessionKey] = useState('');
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferSource, setTransferSource] = useState(selectedPortfolioId);
   const [transferDestination, setTransferDestination] = useState('');
@@ -275,6 +328,171 @@ export function PortfolioManager({
     setError('');
   }
 
+  /*
+   * The dialog's numbers come from the server, every time it opens. The page
+   * already has a summary and it is deliberately not reused: this is the screen
+   * somebody reads before agreeing to lose a portfolio, and it has to describe
+   * the portfolio as it is now.
+   */
+  function openDelete(portfolio: PortfolioRecord) {
+    setDialogSessionKey(crypto.randomUUID());
+    setDeleteTarget(portfolio);
+    setDeleteSummary(null);
+    setDeleteError('');
+    setDeleteLoading(true);
+    startTransition(async () => {
+      const result = await loadPortfolioDeletionSummaryAction({ portfolioId: portfolio.id });
+      setDeleteLoading(false);
+      if (!result.ok) {
+        setDeleteError(result.message);
+        return;
+      }
+      setDeleteSummary(result.summary);
+    });
+  }
+
+  function closeDelete() {
+    setDeleteTarget(null);
+    setDeleteSummary(null);
+    setDeleteError('');
+  }
+
+  function confirmDelete(confirmName: string) {
+    if (!deleteTarget || pending || !isOnline) return;
+    setDeleteError('');
+    startTransition(async () => {
+      const result = await softDeletePortfolioAction({ id: deleteTarget.id, confirmName });
+      if (!result.ok) {
+        setDeleteError(result.message);
+        return;
+      }
+      const removed = { id: deleteTarget.id, name: deleteTarget.name };
+      closeDelete();
+      // The undo lives on the page rather than inside the toast: a three-second
+      // toast is not long enough to notice that the wrong portfolio has gone.
+      setUndoTarget(removed);
+      addToast({ title: 'ลบพอร์ตแล้ว กู้คืนได้ภายใน 7 วัน', type: 'success' });
+      router.refresh();
+    });
+  }
+
+  function restoreDeleted(id: string) {
+    if (pending || !isOnline) return;
+    startTransition(async () => {
+      const result = await restoreDeletedPortfolioAction(id);
+      if (!result.ok) {
+        addToast({ title: 'กู้คืนไม่สำเร็จ', message: result.message, type: 'error' });
+        return;
+      }
+      setUndoTarget(null);
+      addToast({ title: `กู้คืนพอร์ต “${result.name}” แล้ว`, type: 'success' });
+      router.refresh();
+    });
+  }
+
+  function openAssetTransfer(portfolio: PortfolioRecord) {
+    setDialogSessionKey(crypto.randomUUID());
+    setAssetTransferSource(portfolio);
+    setAssetStep('destination');
+    setAssetError('');
+    setAssetInventory(null);
+    setAssetDestinations([]);
+    setAssetDestinationId('');
+    setAssetPreview(null);
+    setAssetGroupId('');
+    setAssetSelection(null);
+    setAssetCompleted('');
+    setAssetLoading(true);
+    startTransition(async () => {
+      const result = await loadTransferableAssetsAction({ portfolioId: portfolio.id });
+      setAssetLoading(false);
+      if (!result.ok) {
+        setAssetError(result.message);
+        return;
+      }
+      setAssetInventory(result.assets);
+      setAssetDestinations(result.destinations);
+      setAssetDestinationId(result.destinations[0]?.id ?? '');
+    });
+  }
+
+  function closeAssetTransfer() {
+    setAssetTransferSource(null);
+    setAssetInventory(null);
+    setAssetPreview(null);
+    setAssetSelection(null);
+    setAssetError('');
+  }
+
+  /** Quantities only. Every amount on the preview is derived by the server. */
+  function selectionPayload(selection: TransferSelectionState) {
+    return {
+      equities: Object.entries(selection.equities)
+        .map(([symbol, quantity]) => ({ symbol, quantity: Number(quantity) }))
+        .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0),
+      options: Object.entries(selection.options)
+        .map(([key, contracts]) => ({ key, contracts: Number(contracts) }))
+        .filter((item) => Number.isFinite(item.contracts) && item.contracts > 0),
+      cashUsd: Number.isFinite(Number(selection.cash)) && Number(selection.cash) > 0 ? Number(selection.cash) : 0,
+    };
+  }
+
+  function previewAssetTransfer(selection: TransferSelectionState) {
+    if (!assetTransferSource || pending || !isOnline) return;
+    setAssetError('');
+    setAssetSelection(selection);
+    startTransition(async () => {
+      const result = await previewAssetTransferAction({
+        sourcePortfolioId: assetTransferSource.id,
+        destinationPortfolioId: assetDestinationId,
+        ...selectionPayload(selection),
+      });
+      if (!result.ok) {
+        setAssetError(result.message);
+        return;
+      }
+      setAssetPreview(result.preview);
+      setAssetGroupId(result.groupId);
+      setAssetStep('preview');
+    });
+  }
+
+  function confirmAssetTransfer() {
+    if (!assetTransferSource || !assetSelection || !assetGroupId || pending || !isOnline) return;
+    setAssetError('');
+    startTransition(async () => {
+      const result = await confirmAssetTransferAction({
+        sourcePortfolioId: assetTransferSource.id,
+        destinationPortfolioId: assetDestinationId,
+        groupId: assetGroupId,
+        ...selectionPayload(assetSelection),
+      });
+      if (!result.ok) {
+        setAssetError(result.message);
+        /*
+         * A stale plan is the one failure the reader cannot fix by reading the
+         * message: the positions moved underneath them. Nothing was written, so
+         * the honest response is to go back and show what is actually there.
+         */
+        if (result.code === 'stale') {
+          setAssetStep('items');
+          setAssetPreview(null);
+          setAssetGroupId('');
+          const reload = await loadTransferableAssetsAction({ portfolioId: assetTransferSource.id });
+          if (reload.ok) {
+            setAssetInventory(reload.assets);
+            setAssetDestinations(reload.destinations);
+          }
+          router.refresh();
+        }
+        return;
+      }
+      setAssetCompleted(result.destinationName);
+      setAssetStep('done');
+      router.refresh();
+    });
+  }
+
   function submitGoal(event: FormEvent) {
     event.preventDefault();
     if (!goalPortfolio) return;
@@ -346,12 +564,6 @@ export function PortfolioManager({
           ...summary.optionPositions.filter((position) => position.status === 'open').map((position) => position.contractSymbol),
         ].slice(0, 3);
         const updated = latestPortfolioPriceTime(summary);
-        const canDelete = !portfolio.isLegacy
-          && portfolio.transactions.length === 0
-          && portfolio.targetValueUsd === null
-          && (optionTargetCounts[portfolio.id] ?? 0) === 0
-          && summary.cashBalance === 0
-          && positions === 0;
         const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
         return <article key={portfolio.id} className={`min-w-0 rounded-2xl border p-4 ${portfolio.id === selectedPortfolioId ? 'border-[#D4FF00]/50 bg-[#D4FF00]/5' : 'border-slate-800 bg-slate-950/35'} ${portfolio.archivedAt ? 'opacity-75' : ''}`}>
           <button type="button" onClick={() => onSelect(portfolio.id)} className="min-h-11 w-full text-left focus-visible:rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
@@ -390,13 +602,68 @@ export function PortfolioManager({
             <Button size="sm" variant="outline" onClick={() => onSelect(portfolio.id)}>เปิดดู</Button>
             <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
             <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
-            {portfolio.archivedAt
-              ? <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> คืนค่า</Button>
-              : <Button size="sm" variant="outline" disabled={!isOnline || (canDelete && Boolean(writeBlock))} onClick={() => { setError(''); setConfirming(portfolio); }}>{canDelete ? <Trash2 size={14} /> : <Archive size={14} />}{canDelete ? 'ลบ' : 'Archive'}</Button>}
+            {portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> เลิก Archive</Button>}
+            {/*
+              Deleting is now a real, reversible action rather than a euphemism.
+              The Default / Legacy portfolio still cannot go — the account is
+              anchored to it — so it keeps Archive, which is what it always
+              actually offered.
+            */}
+            {portfolio.isLegacy
+              ? !portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => { setError(''); setConfirming(portfolio); }}><Archive size={14} /> Archive</Button>
+              : <Button
+                size="sm"
+                variant="outline"
+                className="border-[var(--negative)]/50 text-[var(--negative)] hover:bg-[var(--negative)]/10"
+                disabled={!isOnline || Boolean(writeBlock)}
+                onClick={() => openDelete(portfolio)}
+                data-testid={`delete-portfolio-${portfolio.id}`}
+              ><Trash2 size={14} /> ลบพอร์ต</Button>}
           </div>
         </article>;
       })}
     </div>
+
+    {/*
+      The undo, on the page rather than in a toast. A toast that disappears after
+      three seconds is not an offer to reverse a deletion — it is a notice that
+      one happened.
+    */}
+    {undoTarget && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm" data-testid="portfolio-undo-delete">
+      <p className="min-w-0 text-[var(--text)]">
+        ลบพอร์ต “<strong className="break-words">{undoTarget.name}</strong>” แล้ว กู้คืนได้ภายใน 7 วัน
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!isOnline || pending} onClick={() => restoreDeleted(undoTarget.id)}>
+          <Undo2 aria-hidden="true" size={14} /> กู้คืน
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setUndoTarget(null)}>ปิด</Button>
+      </div>
+    </div>}
+
+    {recentlyDeleted.length > 0 && <section className="mt-4 rounded-2xl border border-[var(--border)] bg-slate-950/35 p-4" data-testid="recently-deleted-portfolios">
+      <div className="flex items-center gap-2">
+        <History aria-hidden="true" className="shrink-0 text-slate-400" size={16} />
+        <h4 className="text-sm font-bold text-white">พอร์ตที่ลบล่าสุด</h4>
+      </div>
+      <p className="mt-1 text-xs text-slate-400">กู้คืนได้ภายใน 7 วันนับจากวันที่ลบ หลังจากนั้นข้อมูลจะถูกลบถาวร</p>
+      <ul className="mt-3 grid gap-2">
+        {recentlyDeleted.map((portfolio) => <li
+          key={portfolio.id}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 p-3"
+        >
+          <div className="min-w-0">
+            <strong className="block break-words text-sm text-white">{portfolio.name}</strong>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              ลบเมื่อ {displayTime(portfolio.deletedAt)} · กู้คืนได้ถึง {displayTime(portfolio.purgeAfter)}
+            </span>
+          </div>
+          <Button size="sm" variant="outline" disabled={!isOnline || pending} onClick={() => restoreDeleted(portfolio.id)}>
+            <RotateCcw aria-hidden="true" size={14} /> กู้คืน
+          </Button>
+        </li>)}
+      </ul>
+    </section>}
 
     <Modal isOpen={createOpen} onClose={() => !pending && closeCreate()} title="สร้างพอร์ตใหม่">
       <form className="space-y-4" onSubmit={(event) => {
@@ -464,25 +731,72 @@ export function PortfolioManager({
       </form>
     </Modal>
 
-    <Modal isOpen={Boolean(confirming)} onClose={() => !pending && setConfirming(null)} title={confirming?.transactions.length ? 'Archive พอร์ตนี้หรือไม่' : 'ลบหรือ Archive พอร์ตนี้'}>
-      <p className="text-sm text-slate-300">{confirming?.transactions.length ? 'พอร์ตมีประวัติใน Ledger จึงจะ Archive โดยไม่ลบ transaction, position หรือ P&L history' : confirming?.isLegacy ? 'Default / Legacy ลบถาวรไม่ได้ แต่ Archive ได้' : 'ลบถาวรได้เฉพาะพอร์ตว่างที่ไม่มี transaction, position, target และ cash balance'}</p>
+    {/*
+      Archive, which is now only reachable for the Default / Legacy portfolio.
+      It is not deletion and never was: the portfolio stays, keeps its ledger and
+      keeps counting towards the aggregate — it just stops accepting new rows.
+    */}
+    <Modal isOpen={Boolean(confirming)} onClose={() => !pending && setConfirming(null)} title="Archive พอร์ตนี้หรือไม่">
+      <p className="text-sm text-slate-300">
+        พอร์ต Default / Legacy ลบไม่ได้เพราะเป็นพอร์ตตั้งต้นของบัญชี แต่ Archive ได้ — ระบบจะเก็บ transaction, position และ P&amp;L history ไว้ครบ และหยุดรับรายการใหม่เท่านั้น
+      </p>
       <ActionError value={error} />
       <div className="mt-5 flex gap-2">
         <Button variant="outline" className="flex-1" disabled={pending} onClick={() => setConfirming(null)}>ยกเลิก</Button>
         <Button className="flex-1" disabled={pending || !confirming} onClick={() => {
           if (!confirming) return;
-          const summary = summaries[confirming.id];
-          const canDelete = !confirming.isLegacy && confirming.transactions.length === 0 && confirming.targetValueUsd === null
-            && (optionTargetCounts[confirming.id] ?? 0) === 0 && summary.cashBalance === 0
-            && summary.holdings.length === 0 && summary.optionPositions.length === 0;
-          run(
-            () => canDelete ? deletePortfolioAction(confirming.id) : archivePortfolioAction(confirming.id),
-            canDelete ? 'ลบพอร์ตว่างแล้ว' : 'Archive พอร์ตแล้ว',
-            () => setConfirming(null),
-          );
-        }}>{confirming && !confirming.isLegacy && confirming.transactions.length === 0 ? 'ดำเนินการอย่างปลอดภัย' : 'Archive'}</Button>
+          run(() => archivePortfolioAction(confirming.id), 'Archive พอร์ตแล้ว', () => setConfirming(null));
+        }}>Archive</Button>
       </div>
     </Modal>
+
+    <DeletePortfolioDialog
+      key={`delete-${dialogSessionKey}`}
+      open={Boolean(deleteTarget)}
+      loading={deleteLoading}
+      summary={deleteSummary}
+      error={deleteError}
+      pending={pending}
+      money={money}
+      onClose={closeDelete}
+      onTransferFirst={() => {
+        const target = deleteTarget;
+        closeDelete();
+        if (target) openAssetTransfer(target);
+      }}
+      onConfirm={confirmDelete}
+    />
+
+    <TransferAssetsDialog
+      key={`transfer-${dialogSessionKey}`}
+      open={Boolean(assetTransferSource)}
+      step={assetStep}
+      loading={assetLoading}
+      pending={pending}
+      error={assetError}
+      sourceName={assetTransferSource?.name ?? ''}
+      assets={assetInventory}
+      destinations={assetDestinations}
+      destinationId={assetDestinationId}
+      preview={assetPreview}
+      completedDestinationName={assetCompleted}
+      money={money}
+      onClose={closeAssetTransfer}
+      onDestinationChange={setAssetDestinationId}
+      onStepChange={setAssetStep}
+      onPreview={previewAssetTransfer}
+      onConfirm={confirmAssetTransfer}
+      onOpenDestination={() => {
+        const destination = assetDestinationId;
+        closeAssetTransfer();
+        if (destination) onSelect(destination);
+      }}
+      onDeleteSource={() => {
+        const source = assetTransferSource;
+        closeAssetTransfer();
+        if (source) openDelete(source);
+      }}
+    />
 
     <Modal isOpen={transferOpen} onClose={() => !pending && closeTransfer()} title="ย้ายเงินระหว่างพอร์ต">
       <form className="space-y-4" onSubmit={(event) => {
