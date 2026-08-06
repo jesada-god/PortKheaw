@@ -51,10 +51,22 @@ vi.mock('@/src/lib/billing/billing-repository', async (importOriginal) => {
 });
 
 import { BETA_ACCESS_UNAVAILABLE_MESSAGE, type BetaAccess } from '@/src/lib/beta/beta-stages';
+import { currentPurchasePolicyVersions } from '@/src/lib/billing/purchase-consent';
 import { startCheckoutAction } from './billing-actions';
 
 /** The exact sentence, asserted literally so a copy change cannot pass silently. */
 const UNRESOLVED_COPY = 'ไม่สามารถตรวจสอบสิทธิ์การเข้าร่วมได้ชั่วคราว กรุณาลองใหม่อีกครั้ง';
+
+/**
+ * A valid acceptance, so these tests exercise the rollout gate and not the
+ * consent one. The rollout is checked first either way, which is why the
+ * unresolved cases below still refuse before anything about the account is read.
+ */
+const CONSENT = {
+  accepted: true as const,
+  subscriptionPolicyVersion: currentPurchasePolicyVersions().subscriptionPolicy,
+  refundPolicyVersion: currentPurchasePolicyVersions().refundPolicy,
+};
 
 function betaAccess(overrides: Partial<BetaAccess>): BetaAccess {
   return {
@@ -99,7 +111,7 @@ describe('new checkout when beta access cannot be resolved', () => {
       betaAccess({ admitted: true, reason: 'unconfigured', resolution: 'unavailable' }),
     );
 
-    await expect(startCheckoutAction('pro_monthly', 'card')).resolves.toEqual({
+    await expect(startCheckoutAction('pro_monthly', 'card', CONSENT)).resolves.toEqual({
       ok: false,
       code: 'BETA_ACCESS_UNAVAILABLE',
       message: UNRESOLVED_COPY,
@@ -117,12 +129,12 @@ describe('new checkout when beta access cannot be resolved', () => {
       betaAccess({ stage: 'closed', admitted: false, reason: 'closed_stage', resolution: 'unavailable' }),
     );
 
-    const result = await startCheckoutAction('pro_monthly', 'card');
+    const result = await startCheckoutAction('pro_monthly', 'card', CONSENT);
     expect(result).toEqual({ ok: false, code: 'BETA_ACCESS_UNAVAILABLE', message: UNRESOLVED_COPY });
   });
 
   it('still lets a resolved admission through to the eligibility gate', async () => {
-    const result = await startCheckoutAction('pro_monthly', 'card');
+    const result = await startCheckoutAction('pro_monthly', 'card', CONSENT);
 
     // Whatever the deployment's own billing answer is, it is not the rollout's:
     // a resolved admission must reach the code that reads the account.

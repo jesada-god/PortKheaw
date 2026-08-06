@@ -21,13 +21,25 @@ import {
 } from '@/src/lib/billing/billing-repository';
 import { holdsLiveSubscription, holdsReusablePromptPaySubscription } from '@/src/lib/billing/billing-summary';
 import type { BillingPaymentMethod } from '@/src/lib/billing/billing-payment-method';
-import { billingPlan, isBillingPlanKey } from '@/src/lib/billing/billing-plans';
+import {
+  billingPlan,
+  isBillingPlanKey,
+  type BillingInterval,
+  type BillingPlanKey,
+} from '@/src/lib/billing/billing-plans';
 import { pendingPromptPayIsOpen, type PendingPromptPayRecord } from '@/src/lib/billing/promptpay-pending';
 import {
   checkoutRefusalMessage,
   resolveCheckoutEligibility,
   type CheckoutRefusalReason,
 } from '@/src/lib/billing/checkout-eligibility';
+import {
+  currentPurchasePolicyVersions,
+  verifyPurchaseConsent,
+  PURCHASE_CONSENT_REQUIRED_MESSAGE,
+  PURCHASE_CONSENT_STALE_MESSAGE,
+  type PurchaseConsentClaim,
+} from '@/src/lib/billing/purchase-consent';
 import { createClient } from '@/src/lib/supabase/server';
 
 /**
@@ -77,6 +89,10 @@ export type CheckoutFailureCode =
   | 'BETA_NOT_ADMITTED'
   /** The rollout could not be read, so no purchase is started. Retryable. */
   | 'BETA_ACCESS_UNAVAILABLE'
+  /** The purchase terms were not accepted. */
+  | 'CONSENT_REQUIRED'
+  /** Accepted, but against wording this build no longer publishes. */
+  | 'CONSENT_STALE'
   /** Too many attempts in a short window. */
   | 'RATE_LIMITED'
   | 'UNAVAILABLE';
@@ -156,6 +172,9 @@ type AuditEvent =
   | 'billing_checkout_rate_limited'
   | 'billing_checkout_beta_refused'
   | 'billing_checkout_beta_unresolved'
+  | 'billing_checkout_consent_refused'
+  | 'billing_purchase_consent_recorded'
+  | 'billing_purchase_consent_failed'
   | 'billing_checkout_refused'
   | 'billing_checkout_failed'
   | 'billing_portal_opened'
@@ -226,16 +245,22 @@ function pendingStampOf(pending: PendingPromptPayRecord | null): string {
 /**
  * Begin a purchase.
  *
- * `planKey` is the only argument and is treated as untrusted until the
- * allowlist in `resolveCheckoutEligibility` has accepted it. The stored
- * administrator role may admit an account during an internal rollout, but a
- * running access preview is never consulted. Preview changes what an operator
- * can *see*; it must never change what anybody is charged or which plan is
- * bought.
+ * Three arguments, all untrusted until checked, and none of them able to change
+ * what anybody is charged. `planKey` and `paymentMethod` are matched against
+ * closed allowlists in `resolveCheckoutEligibility`. `consent` carries a boolean
+ * and two policy version strings that the server compares against the versions
+ * *it* publishes — a client cannot invent a version, only echo the one it was
+ * rendered with, and echoing the wrong one is refused rather than accepted.
+ *
+ * The stored administrator role may admit an account during an internal rollout,
+ * but a running access preview is never consulted. Preview changes what an
+ * operator can *see*; it must never change what anybody is charged or which plan
+ * is bought.
  */
 export async function startCheckoutAction(
   planKey: string,
   paymentMethod: string,
+  consent: PurchaseConsentClaim,
 ): Promise<StartCheckoutResult> {
   const client = await createClient();
   if (!client) {
@@ -287,6 +312,27 @@ export async function startCheckoutAction(
         message: betaWaitlistCopy(beta.reason, beta.stage).body,
       };
     }
+  }
+
+  /*
+   * The purchase terms, checked here — before any account state is read, before
+   * a provider customer is looked up, and long before the provider SDK could be
+   * imported. A refusal costs a reader one tick of a checkbox and creates
+   * nothing anywhere.
+   *
+   * The versions are compared against this deployment's own copy of the
+   * documents, so an acceptance given against superseded wording is refused with
+   * an instruction to re-read rather than quietly treated as agreement to text
+   * nobody is showing any more. Only new purchases pass through here: renewal,
+   * the portal, refunds and existing entitlements are on other paths.
+   */
+  const policyVersions = currentPurchasePolicyVersions();
+  const verdict = verifyPurchaseConsent(consent, policyVersions);
+  if (verdict !== 'accepted') {
+    record('billing_checkout_consent_refused', verdict);
+    return verdict === 'stale-policy'
+      ? { ok: false, code: 'CONSENT_STALE', message: PURCHASE_CONSENT_STALE_MESSAGE }
+      : { ok: false, code: 'CONSENT_REQUIRED', message: PURCHASE_CONSENT_REQUIRED_MESSAGE };
   }
 
   /*
@@ -393,6 +439,27 @@ export async function startCheckoutAction(
     };
   }
 
+  /*
+   * The agreement is written down before anything payable exists, and a failure
+   * to write it stops the purchase.
+   *
+   * Failing closed is the whole point: a checkout that proceeds without a
+   * recorded consent is a charge nobody can later show the buyer agreed to, and
+   * the cost of refusing is one retry. Recorded *after* eligibility so a refused
+   * attempt does not file an agreement for a purchase that never started, and
+   * *before* the provider so no invoice can exist without one.
+   */
+  const consentRecorded = await recordPurchaseConsent(client, {
+    planKey: eligibility.plan.key,
+    interval: eligibility.plan.interval,
+    paymentMethod: eligibility.paymentMethod,
+    versions: policyVersions,
+  });
+  if (!consentRecorded) {
+    record('billing_purchase_consent_failed', eligibility.plan.key);
+    return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  }
+
   try {
     const request = {
       config,
@@ -487,6 +554,45 @@ export async function startCheckoutAction(
       },
     });
     return { ok: false, code: 'UNAVAILABLE', message: GENERIC_FAILURE };
+  }
+}
+
+/**
+ * Write the acceptance down.
+ *
+ * The routine takes the account from the session, so nothing identifying is sent
+ * — only the shape of the purchase and the two versions. It is idempotent: a
+ * second press, or a retry of a request that already succeeded, reaffirms the
+ * one row rather than filing a duplicate agreement.
+ *
+ * Returns `false` for every failure, including an unreachable database and a
+ * deployment whose migration has not run yet. The caller treats that as a
+ * refusal, which is the fail-closed direction — see the note at the call site.
+ */
+async function recordPurchaseConsent(
+  client: NonNullable<Awaited<ReturnType<typeof createClient>>>,
+  input: {
+    planKey: BillingPlanKey;
+    interval: BillingInterval;
+    paymentMethod: BillingPaymentMethod;
+    versions: { subscriptionPolicy: string; refundPolicy: string };
+  },
+): Promise<boolean> {
+  try {
+    const { data, error } = await client.rpc('record_purchase_consent', {
+      input_plan_key: input.planKey,
+      input_billing_interval: input.interval,
+      input_payment_rail: input.paymentMethod,
+      input_subscription_policy_version: input.versions.subscriptionPolicy,
+      input_refund_policy_version: input.versions.refundPolicy,
+    });
+    if (error) throw error;
+    const outcome = data?.[0]?.outcome;
+    if (outcome !== 'recorded' && outcome !== 'reaffirmed') return false;
+    record('billing_purchase_consent_recorded', `${input.planKey}:${outcome}`);
+    return true;
+  } catch {
+    return false;
   }
 }
 

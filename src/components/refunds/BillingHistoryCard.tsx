@@ -7,6 +7,11 @@ import {
   displayBaht,
   refundStatusTone,
 } from '@/src/lib/support/presentation';
+import {
+  refundableInvoiceStatus,
+  refundWindowSummary,
+  resolveRefundWindow,
+} from '@/src/lib/billing/refund-window';
 import type { BillingInvoiceView } from '@/src/lib/support/refund-repository';
 
 /**
@@ -42,6 +47,21 @@ const INVOICE_STATUS_LABEL: Readonly<Record<string, string>> = {
   partially_refunded: 'คืนเงินบางส่วน',
   disputed: 'อยู่ระหว่างโต้แย้ง',
 };
+
+/**
+ * The window for one purchase, judged against the clock that came with it.
+ *
+ * `databaseNow` and never `Date.now()`: this card renders on the server and in
+ * the browser, and a deadline that moved with whichever machine drew it would be
+ * a different promise on each.
+ */
+function refundWindow(invoice: BillingInvoiceView) {
+  return resolveRefundWindow({
+    paidAt: invoice.paidAt,
+    deadlineAt: invoice.refundDeadlineAt,
+    now: invoice.databaseNow,
+  });
+}
 
 export function BillingHistoryCard({ invoices }: { invoices: readonly BillingInvoiceView[] }) {
   if (invoices.length === 0) return null;
@@ -94,6 +114,21 @@ export function BillingHistoryCard({ invoices }: { invoices: readonly BillingInv
                   label={`คำขอคืนเงิน: ${REFUND_STATUS_LABEL[invoice.refundRequestStatus]}`}
                   tone={refundStatusTone(invoice.refundRequestStatus)}
                 />
+              )}
+              {/*
+                The deadline, read-only, on every charge that could be asked
+                back. Shown after it has passed as well as before: a reader whose
+                window has closed is owed the date it closed on, not a row that
+                quietly stops mentioning it.
+              */}
+              {refundableInvoiceStatus(invoice.status) && (
+                <span
+                  data-testid="refund-window-note"
+                  data-state={refundWindow(invoice).state}
+                  className="w-full min-w-0 text-xs break-words text-[var(--text-muted)]"
+                >
+                  {refundWindowSummary(refundWindow(invoice))}
+                </span>
               )}
             </li>
           );

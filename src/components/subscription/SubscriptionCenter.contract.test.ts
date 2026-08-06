@@ -89,21 +89,82 @@ describe('subscription centre vertical slice', () => {
    * discount arriving from a browser is the defect this asserts against.
    */
   /*
-   * Two values, both from closed allowlists: which plan, and which rail. Neither
-   * can change what anybody is charged — both rails bill the same Price object,
-   * and the server resolves the price, the discount and the customer itself.
+   * Three values now, and none of them can change what anybody is charged: the
+   * plan and the rail come from closed allowlists, and both rails bill the same
+   * Price object. The third is the purchase consent — a boolean and two policy
+   * version strings the browser can only echo, never choose, because the server
+   * compares them against the versions it publishes and refuses anything else.
    */
-  it('lets the client name a plan and a rail, and nothing else', () => {
+  it('lets the client name a plan, a rail and an acceptance, and nothing else', () => {
     const button = readCode('src/components/subscription/CheckoutButton.tsx');
-    expect(button).toContain('startCheckoutAction(planKey, paymentMethod)');
+    expect(button).toMatch(
+      /startCheckoutAction\(planKey, paymentMethod, \{\s*accepted: true,\s*subscriptionPolicyVersion:[^}]*refundPolicyVersion:[^}]*\}\)/,
+    );
     expect(button).not.toMatch(/amount|price|baht|discount|coupon|tier|customer/i);
 
     const actions = readCode('app/settings/subscription/billing-actions.ts');
-    expect(actions).toMatch(/startCheckoutAction\(\s*planKey: string,\s*paymentMethod: string,\s*\)/);
-    // No third parameter, of any name, and nothing at all on the other two.
-    expect(actions).not.toMatch(/startCheckoutAction\([^)]*,[^)]*,[^)]*,/);
+    expect(actions).toMatch(
+      /startCheckoutAction\(\s*planKey: string,\s*paymentMethod: string,\s*consent: PurchaseConsentClaim,\s*\)/,
+    );
+    // No fourth parameter, of any name, and nothing at all on the other three.
+    expect(actions).not.toMatch(/startCheckoutAction\([^)]*,[^)]*,[^)]*,[^)]*,/);
     expect(actions).not.toMatch(/openBillingPortalAction\([^)]+\)/);
     expect(actions).not.toMatch(/abandonPromptPayInvoiceAction\([^)]+\)/);
+  });
+
+  /*
+   * The consent gate, as a property rather than a screenshot: no checkout is
+   * started without an acceptance, the acceptance is verified against the
+   * server's own policy versions, and the record is written before the provider
+   * is contacted at all.
+   */
+  it('refuses a checkout without a verified acceptance, and records it before paying', () => {
+    const actions = readCode('app/settings/subscription/billing-actions.ts');
+    const start = actions.slice(
+      actions.indexOf('export async function startCheckoutAction'),
+      actions.indexOf('async function recordPurchaseConsent'),
+    );
+    expect(start).toContain('verifyPurchaseConsent(consent, policyVersions)');
+    expect(start).toContain('currentPurchasePolicyVersions()');
+    expect(start).toContain("code: 'CONSENT_REQUIRED'");
+    expect(start).toContain("code: 'CONSENT_STALE'");
+
+    // Recorded after the eligibility gate and before the provider SDK is loaded.
+    const recordAt = start.indexOf('await recordPurchaseConsent(client');
+    const providerAt = start.indexOf("await import('@/src/lib/billing/providers/stripe/stripe-provider')");
+    const eligibilityAt = start.indexOf('resolveCheckoutEligibility({');
+    expect(recordAt).toBeGreaterThan(eligibilityAt);
+    expect(recordAt).toBeLessThan(providerAt);
+    // A consent that cannot be written stops the purchase.
+    expect(start).toContain('if (!consentRecorded)');
+
+    // Renewal and the portal are on other paths and must never consult it.
+    const renewal = actions.slice(
+      actions.indexOf('export async function openPromptPayRenewalAction'),
+    );
+    expect(renewal).not.toContain('verifyPurchaseConsent');
+    expect(renewal).not.toContain('recordPurchaseConsent');
+  });
+
+  /*
+   * The box is a control, not a stored preference. The dialog is mounted only
+   * while it is open, so its state is new on every press — there is no path by
+   * which a previous purchase leaves it pre-accepted.
+   */
+  it('opens the consent step unticked on every press', () => {
+    const button = readCode('src/components/subscription/CheckoutButton.tsx');
+    expect(button).toContain('{open && (');
+    expect(button).toContain('<PurchaseConsentDialog');
+
+    const dialog = readCode('src/components/subscription/PurchaseConsentDialog.tsx');
+    expect(dialog).toContain('useState(false)');
+    expect(dialog).toContain('disabled={!accepted || pending}');
+    // The wording, the disclosure and the links are read from the shared lib,
+    // never typed into the markup.
+    expect(dialog).toContain('PURCHASE_CONSENT_LABEL');
+    expect(dialog).toContain('purchaseDisclosureRows');
+    expect(dialog).toContain('purchaseCommitmentNotes');
+    expect(dialog).toContain('purchaseConsentLinks');
   });
 
   it('keeps the wide comparison inside its own scroller so the page never scrolls sideways', () => {

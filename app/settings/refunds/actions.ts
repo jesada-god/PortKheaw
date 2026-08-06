@@ -14,6 +14,7 @@ import {
   supportTicketReplyNotification,
 } from '@/src/lib/notifications/account-events';
 import { notifyAccount, notifyAdmins } from '@/src/lib/notifications/dispatch';
+import { REFUND_WINDOW_CLOSED_MESSAGE } from '@/src/lib/billing/refund-window';
 import { displayBaht } from '@/src/lib/support/presentation';
 import type { RefundRequestReason, RefundRequestStatus } from '@/src/types/database';
 
@@ -38,6 +39,8 @@ export type RefundFailureCode =
   | 'INVALID_CONTENT'
   | 'NOT_FOUND'
   | 'NOT_REFUNDABLE'
+  /** Past `paid_at + 7 days`, judged by the database's clock. */
+  | 'WINDOW_CLOSED'
   | 'ALREADY_OPEN'
   | 'ALREADY_REFUNDED'
   | 'RATE_LIMITED'
@@ -61,6 +64,7 @@ const MESSAGE: Readonly<Record<RefundFailureCode, string>> = {
   INVALID_CONTENT: 'กรุณากรอกรายละเอียดอย่างน้อย 10 ตัวอักษร',
   NOT_FOUND: 'ไม่พบรายการชำระเงินนี้ในบัญชีของคุณ',
   NOT_REFUNDABLE: 'รายการนี้ยังไม่อยู่ในสถานะที่ขอคืนเงินได้',
+  WINDOW_CLOSED: REFUND_WINDOW_CLOSED_MESSAGE,
   ALREADY_OPEN: 'รายการนี้มีคำขอคืนเงินที่ยังไม่ได้ข้อยุติอยู่แล้ว',
   ALREADY_REFUNDED: 'รายการนี้คืนเงินไปแล้ว',
   RATE_LIMITED: 'ส่งคำขอคืนเงินครบจำนวนสูงสุดของวันนี้แล้ว กรุณาลองใหม่ในวันถัดไป',
@@ -75,6 +79,7 @@ const OUTCOME_CODE: Readonly<Record<string, RefundFailureCode>> = {
   invalid_content: 'INVALID_CONTENT',
   not_found: 'NOT_FOUND',
   not_refundable: 'NOT_REFUNDABLE',
+  window_closed: 'WINDOW_CLOSED',
   already_open: 'ALREADY_OPEN',
   already_refunded: 'ALREADY_REFUNDED',
   rate_limited: 'RATE_LIMITED',

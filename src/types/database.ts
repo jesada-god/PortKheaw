@@ -562,6 +562,34 @@ export interface Database {
         Relationships: [];
       };
       /**
+       * Phase 7. What a buyer accepted, immediately before a paid checkout.
+       *
+       * Readable by its own account and by nobody else. `Insert` and `Update`
+       * are `never` on purpose: the only writer is `record_purchase_consent`,
+       * and an immutability trigger refuses to let any existing row's account,
+       * purchase shape, policy versions or original acceptance date be rewritten
+       * — including by a trusted role.
+       */
+      purchase_consents: {
+        Row: {
+          id: string;
+          user_id: string;
+          plan_key: string;
+          billing_interval: BillingInterval;
+          payment_rail: BillingPaymentMethod;
+          subscription_policy_version: string;
+          refund_policy_version: string;
+          /** The first time this exact agreement was given. Never moves. */
+          accepted_at: string;
+          last_accepted_at: string;
+          acceptance_count: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /**
        * Phase 5. Tickets and refund requests share one thread. `is_internal`
        * marks the operator's private margin, and the reading policy hides those
        * rows from everybody who is not an administrator.
@@ -1157,7 +1185,37 @@ export interface Database {
           issued_at: string | null;
           paid_at: string | null;
           refund_request_status: RefundRequestStatus | null;
+          /**
+           * Phase 7. `paid_at + 7 days`, derived inside the database. `null`
+           * for an invoice with no confirmed payment. Judge it against
+           * `database_now` and never against a client clock.
+           */
+          refund_deadline_at: string | null;
           database_now: string;
+        }>;
+      };
+      /** Phase 7. The refund window for one payment timestamp. */
+      refund_request_deadline: {
+        Args: { input_paid_at: string | null };
+        Returns: string | null;
+      };
+      /**
+       * Phase 7. Write down what a buyer accepted, before a paid checkout.
+       *
+       * The account comes from the session. Idempotent: the same agreement
+       * given twice reaffirms one row rather than filing a second.
+       */
+      record_purchase_consent: {
+        Args: {
+          input_plan_key: string;
+          input_billing_interval: BillingInterval;
+          input_payment_rail: BillingPaymentMethod;
+          input_subscription_policy_version: string;
+          input_refund_policy_version: string;
+        };
+        Returns: Array<{
+          consent_id: string | null;
+          outcome: 'recorded' | 'reaffirmed' | 'invalid';
         }>;
       };
       create_refund_request: {
@@ -1171,7 +1229,9 @@ export interface Database {
           reference: string | null;
           outcome:
             | 'created' | 'invalid_reason' | 'invalid_content' | 'not_found'
-            | 'not_refundable' | 'already_open' | 'already_refunded' | 'rate_limited';
+            | 'not_refundable' | 'already_open' | 'already_refunded' | 'rate_limited'
+            /** Phase 7. Past `paid_at + 7 days`, judged by the database clock. */
+            | 'window_closed';
         }>;
       };
       cancel_my_refund_request: {

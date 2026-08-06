@@ -8,6 +8,7 @@ import type {
   RefundRequestReason,
   RefundRequestStatus,
 } from '@/src/types/database';
+import { refundDeadlineFrom } from '@/src/lib/billing/refund-window';
 import type { SupportAttachmentRef, SupportThreadMessage, ThreadAuditEntry } from './ticket-repository';
 
 /**
@@ -37,6 +38,20 @@ export interface BillingInvoiceView {
   paidAt: string | null;
   /** The most recent request against this purchase, if there is one. */
   refundRequestStatus: RefundRequestStatus | null;
+  /**
+   * `paidAt + 7 days`, derived inside the database. `null` for an invoice with
+   * no confirmed payment — there is nothing to refund and so no deadline.
+   */
+  refundDeadlineAt: string | null;
+  /**
+   * The database's clock at the moment this row was read.
+   *
+   * It travels with the deadline because the deadline is meaningless without
+   * it: a browser comparing `refundDeadlineAt` to its own clock is comparing it
+   * to a number the reader can change. Every surface that renders a remaining
+   * time passes this as `now`.
+   */
+  databaseNow: string;
 }
 
 export interface RefundRequestSummary {
@@ -116,6 +131,15 @@ export async function listMyBillingInvoices(
     issuedAt: row.issued_at,
     paidAt: row.paid_at,
     refundRequestStatus: row.refund_request_status,
+    /*
+     * Falls back to deriving the deadline here when the projection predates the
+     * column, which is the state of a deployment between the code deploy and the
+     * migration. The rule is the same one the database applies, and the source
+     * timestamp is still the provider-confirmed `paid_at` either way — so the
+     * fallback narrows nobody's window and invents nobody's.
+     */
+    refundDeadlineAt: row.refund_deadline_at ?? refundDeadlineFrom(row.paid_at),
+    databaseNow: row.database_now,
   }));
 }
 

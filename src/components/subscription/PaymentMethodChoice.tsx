@@ -10,6 +10,7 @@ import {
   promptPayDueWindowNote,
   type BillingPaymentMethod,
 } from '@/src/lib/billing/billing-payment-method';
+import type { PurchasePolicyVersions } from '@/src/lib/billing/purchase-consent';
 import type { BillingInterval, BillingPlanKey } from '@/src/lib/billing/billing-plans';
 
 /**
@@ -42,9 +43,11 @@ function sharedInterval(plans: readonly PurchasablePlan[]): BillingInterval | nu
   return first && plans.every((plan) => plan.interval === first) ? first : null;
 }
 
-export function PaymentMethodChoice({ plans, methods }: {
+export function PaymentMethodChoice({ plans, methods, policyVersions }: {
   plans: readonly PurchasablePlan[];
   methods: readonly BillingPaymentMethod[];
+  /** Published by the server; the consent step echoes them back on confirm. */
+  policyVersions: PurchasePolicyVersions;
 }) {
   const groupId = useId();
   const [selected, setSelected] = useState<BillingPaymentMethod>(methods[0] ?? 'card');
@@ -113,6 +116,7 @@ export function PaymentMethodChoice({ plans, methods }: {
             paymentMethod={method}
             emphasis={plan.emphasis}
             label={plan.label}
+            policyVersions={policyVersions}
           />
         ))}
       </div>

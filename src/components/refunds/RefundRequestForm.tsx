@@ -8,6 +8,12 @@ import { Input } from '@/src/components/ui/Input';
 import { Select } from '@/src/components/ui/Select';
 import { createRefundRequestAction } from '@/app/settings/refunds/actions';
 import { billingPlans } from '@/src/lib/billing/billing-plans';
+import {
+  REFUND_WINDOW_DAYS,
+  refundableInvoiceStatus,
+  refundWindowSummary,
+  resolveRefundWindow,
+} from '@/src/lib/billing/refund-window';
 import { displayBaht, refundReasonOptions } from '@/src/lib/support/presentation';
 import type { BillingInvoiceView } from '@/src/lib/support/refund-repository';
 
@@ -41,23 +47,63 @@ export function RefundRequestForm({ invoices }: { invoices: readonly BillingInvo
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const eligible = invoices.filter(
+  /*
+   * A purchase that is refundable in principle: collected, and with no request
+   * against it that is still undecided or already settled.
+   */
+  const owned = invoices.filter(
     (invoice) =>
-      (invoice.status === 'paid' || invoice.status === 'partially_refunded')
+      refundableInvoiceStatus(invoice.status)
       && invoice.refundRequestStatus !== 'pending'
       && invoice.refundRequestStatus !== 'reviewing'
       && invoice.refundRequestStatus !== 'approved'
       && invoice.refundRequestStatus !== 'refunded',
   );
 
+  /*
+   * …and still inside its seven days, judged against the clock the server sent
+   * with the row. The server checks this again — it is the authority, and this
+   * filter only decides what is worth offering. A charge whose window has closed
+   * is dropped from the list rather than offered and then refused.
+   */
+  const windows = new Map(owned.map((invoice) => [
+    invoice.invoiceRef,
+    resolveRefundWindow({
+      paidAt: invoice.paidAt,
+      deadlineAt: invoice.refundDeadlineAt,
+      now: invoice.databaseNow,
+    }),
+  ]));
+  const eligible = owned.filter((invoice) => windows.get(invoice.invoiceRef)?.state === 'open');
+  const [selected, setSelected] = useState<string | null>(eligible[0]?.invoiceRef ?? null);
+  const expired = owned.filter((invoice) => windows.get(invoice.invoiceRef)?.state === 'closed');
+
   if (eligible.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-[var(--border-strong)] px-4 py-3 text-sm text-[var(--text-muted)]">
-        ตอนนี้ยังไม่มีรายการชำระเงินที่ขอคืนเงินได้
-        หากคิดว่ามีรายการที่ควรขอคืนได้ ติดต่อทีมงานผ่านหน้าช่วยเหลือได้เลย
-      </p>
+      <div className="min-w-0 space-y-3">
+        <p className="rounded-xl border border-dashed border-[var(--border-strong)] px-4 py-3 text-sm leading-6 text-[var(--text-muted)]">
+          ตอนนี้ยังไม่มีรายการชำระเงินที่ขอคืนเงินได้
+          {expired.length > 0 && ` มี ${expired.length} รายการที่พ้นกำหนด ${REFUND_WINDOW_DAYS} วันไปแล้ว`}
+          {' '}หากคิดว่ามีรายการที่ควรขอคืนได้ ติดต่อทีมงานผ่านหน้าช่วยเหลือได้เลย
+        </p>
+        {/* The dates they closed on, so "why not?" is answerable here rather
+            than only in a support thread. */}
+        {expired.length > 0 && (
+          <ul data-testid="refund-expired-list" className="min-w-0 space-y-1">
+            {expired.map((invoice) => (
+              <li key={invoice.invoiceRef} className="min-w-0 text-xs break-words text-[var(--text-muted)]">
+                {invoice.planKey ? billingPlans[invoice.planKey]?.name : 'แพ็กเกจ'}
+                {' · '}
+                {refundWindowSummary(windows.get(invoice.invoiceRef)!)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     );
   }
+
+  const selectedWindow = selected ? windows.get(selected) : undefined;
 
   return (
     <form
@@ -85,7 +131,13 @@ export function RefundRequestForm({ invoices }: { invoices: readonly BillingInvo
         <label htmlFor="refund-invoice" className="text-sm font-medium text-[var(--text)]">
           รายการชำระเงิน
         </label>
-        <Select id="refund-invoice" name="invoiceRef" required defaultValue={eligible[0]?.invoiceRef}>
+        <Select
+          id="refund-invoice"
+          name="invoiceRef"
+          required
+          value={selected ?? undefined}
+          onChange={(event) => setSelected(event.target.value)}
+        >
           {eligible.map((invoice) => {
             const amount = displayBaht(invoice.amountPaidMinor, invoice.currency);
             const planName = invoice.planKey ? billingPlans[invoice.planKey]?.name : 'แพ็กเกจ';
@@ -97,6 +149,14 @@ export function RefundRequestForm({ invoices }: { invoices: readonly BillingInvo
             );
           })}
         </Select>
+        {/* The exact deadline for the purchase currently selected, and how long
+            is left of it. Both come from the server's clock; nothing here reads
+            the device's. */}
+        {selectedWindow && (
+          <p data-testid="refund-window-deadline" className="text-xs leading-5 break-words text-[var(--text-muted)]">
+            {refundWindowSummary(selectedWindow)}
+          </p>
+        )}
       </div>
 
       <div className="min-w-0 space-y-1.5">
@@ -142,6 +202,7 @@ export function RefundRequestForm({ invoices }: { invoices: readonly BillingInvo
       <p className="rounded-xl border border-[var(--border)] bg-[var(--accent-soft)] px-4 py-3 text-sm leading-6 text-[var(--text)]">
         การส่งคำขอยังไม่ใช่การคืนเงิน และไม่ตัดสิทธิ์การใช้งานของคุณ
         แพ็กเกจจะยังใช้งานได้ตามปกติจนกว่าจะมีการคืนเงินจริงจากผู้ให้บริการชำระเงิน
+        ทีมงานจะตรวจสอบเป็นรายกรณีก่อนตัดสิน
       </p>
 
       {error && (

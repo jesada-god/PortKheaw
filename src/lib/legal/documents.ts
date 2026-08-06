@@ -23,6 +23,7 @@
  */
 
 import { billingPlanKeys, billingPlans, formatBillingBaht } from '@/src/lib/billing/billing-plans';
+import { REFUND_WINDOW_DAYS } from '@/src/lib/billing/refund-window';
 
 /** The two channels a reader who cannot sign in can still reach us on. */
 export const SUPPORT_CONTACTS = {
@@ -52,6 +53,16 @@ export interface LegalDocument {
   subtitle: string;
   /** Shown under the title. A date, not a version number readers cannot use. */
   effectiveDate: string;
+  /**
+   * The machine-readable vintage of this wording.
+   *
+   * Never shown to a reader — `effectiveDate` is what a person can use. This
+   * exists so an acceptance can be *pinned*: a purchase consent records the
+   * version it was given against, and the server refuses a consent claiming any
+   * other. Bump it in the same edit that changes the words, and historical
+   * consents keep pointing at the wording they were actually given.
+   */
+  version: string;
   intro: string;
   sections: readonly LegalSection[];
 }
@@ -69,7 +80,18 @@ export type LegalDocumentSlug = typeof legalDocumentSlugs[number];
  * The day this wording took effect. One constant, so the six pages cannot drift
  * apart and claim different vintages of the same policy.
  */
-const EFFECTIVE_DATE = '5 สิงหาคม 2569';
+const EFFECTIVE_DATE = '6 สิงหาคม 2569';
+
+/**
+ * The same day, as the identifier a consent record stores.
+ *
+ * One constant for the set because the set is published together — the refund
+ * window added on this date is described in the subscription policy and the
+ * refund policy at once, and a purchase consent pins both. Each document carries
+ * its own field rather than reading this directly, so a later edit can move one
+ * of them without republishing the rest.
+ */
+const POLICY_VERSION = '2026-08-06';
 
 const PRODUCT = 'PortKheaw';
 
@@ -116,6 +138,43 @@ const RENEWAL_RULES: readonly { term: string; description: string }[] = [
   },
 ];
 
+/**
+ * The refund window, stated identically wherever it appears.
+ *
+ * Three sentences that have to travel together: how long the window is, what it
+ * is measured from, and that each charge gets its own. Splitting them is how a
+ * reader ends up believing one subscription has one seven-day window that
+ * started the day they first subscribed.
+ */
+const REFUND_WINDOW_RULES: readonly { term: string; description: string }[] = [
+  {
+    term: `ระยะเวลา ${REFUND_WINDOW_DAYS} วัน`,
+    description:
+      `คุณขอคืนเงินเต็มจำนวนของรอบบิลหนึ่งได้ภายใน ${REFUND_WINDOW_DAYS} วันนับจากเวลาที่การชำระเงินของรอบนั้นสำเร็จ `
+      + 'ระบบนับจากเวลาที่ผู้ให้บริการชำระเงินยืนยันว่าได้รับเงินแล้วเท่านั้น '
+      + 'ไม่ได้นับจากเวลาที่คุณกดเริ่มชำระเงิน และไม่ได้นับจากเวลาบนเครื่องของคุณ',
+  },
+  {
+    term: 'แต่ละรอบนับใหม่ของตัวเอง',
+    description:
+      'การชำระเงินที่สำเร็จแต่ละครั้งมีระยะเวลาขอคืนเงินเป็นของรอบนั้นเอง '
+      + 'ทั้งการชำระครั้งแรก การต่ออายุอัตโนมัติด้วยบัตรหรือ Apple Pay การชำระด้วย PromptPay ในแต่ละรอบ '
+      + 'และการกลับมาสมัครใหม่หลังจากยกเลิกหรือหมดอายุไปแล้ว',
+  },
+  {
+    term: 'เมื่อพ้นกำหนด',
+    description:
+      `เมื่อพ้น ${REFUND_WINDOW_DAYS} วันของรอบนั้นแล้ว ระบบจะไม่รับคำขอคืนเงินตามปกติสำหรับรอบนั้น `
+      + 'เว้นแต่กรณีที่กฎหมายที่ใช้บังคับกำหนดไว้เป็นอย่างอื่น เช่น การเรียกเก็บเงินผิดพลาดหรือซ้ำซ้อน '
+      + 'ซึ่งคุณติดต่อทีมงานผ่านหน้าช่วยเหลือได้เสมอ',
+  },
+];
+
+/** The sentence that stops "I asked" being read as "I was refunded". */
+const REFUND_IS_REVIEWED =
+  'การส่งคำขอคืนเงินภายในกำหนดยังไม่ใช่การคืนเงิน และไม่ใช่การอนุมัติโดยอัตโนมัติ '
+  + 'ทีมงานจะตรวจสอบคำขอเป็นรายกรณีก่อนตัดสิน และการส่งคำขอไม่ตัดสิทธิ์การใช้งานของคุณในระหว่างนั้น';
+
 /** Downgrade keeps data. Stated in every document where a downgrade is possible. */
 const DATA_ON_DOWNGRADE =
   'เมื่อสิทธิ์แบบชำระเงินสิ้นสุดลง ไม่ว่าจะจากการยกเลิก การหมดรอบ หรือการคืนเงิน บัญชีจะกลับไปใช้สิทธิ์ Basic '
@@ -133,6 +192,7 @@ const TERMS: LegalDocument = {
   title: 'ข้อกำหนดการใช้งาน',
   subtitle: `เงื่อนไขการใช้บริการ ${PRODUCT}`,
   effectiveDate: EFFECTIVE_DATE,
+  version: POLICY_VERSION,
   intro:
     `เอกสารนี้อธิบายเงื่อนไขการใช้งาน ${PRODUCT} เมื่อคุณสมัครใช้งานหรือใช้บริการต่อ `
     + 'ถือว่าคุณได้อ่านและยอมรับเงื่อนไขในหน้านี้แล้ว',
@@ -212,7 +272,8 @@ const TERMS: LegalDocument = {
         {
           kind: 'paragraph',
           text:
-            'คุณยกเลิกแพ็กเกจได้ทุกเมื่อ และขอคืนเงินได้ผ่านหน้าคำขอคืนเงินในบัญชีของคุณ '
+            'คุณยกเลิกแพ็กเกจได้ทุกเมื่อ และขอคืนเงินเต็มจำนวนของรอบบิลหนึ่งได้ผ่านหน้าคำขอคืนเงินในบัญชีของคุณ '
+            + `ภายใน ${REFUND_WINDOW_DAYS} วันนับจากเวลาที่การชำระเงินของรอบนั้นสำเร็จ โดยการต่ออายุแต่ละรอบจะเริ่มนับใหม่ของรอบนั้นเอง `
             + 'การส่งคำขอคืนเงินยังไม่ใช่การคืนเงิน และไม่ตัดสิทธิ์การใช้งานของคุณทันที',
         },
         { kind: 'paragraph', text: DATA_ON_DOWNGRADE },
@@ -259,6 +320,7 @@ const PRIVACY: LegalDocument = {
   title: 'นโยบายความเป็นส่วนตัว',
   subtitle: 'เราเก็บข้อมูลอะไร ใช้ทำอะไร และคุณควบคุมอะไรได้บ้าง',
   effectiveDate: EFFECTIVE_DATE,
+  version: POLICY_VERSION,
   intro:
     'หน้านี้อธิบายข้อมูลที่เราเก็บเมื่อคุณใช้งาน วิธีที่เราใช้ข้อมูลนั้น และสิทธิ์ที่คุณมีเหนือข้อมูลของคุณเอง',
   sections: [
@@ -361,18 +423,32 @@ const REFUND_POLICY: LegalDocument = {
   title: 'นโยบายการคืนเงิน',
   subtitle: 'ขอคืนเงินอย่างไร ใช้เวลาเท่าไร และมีผลกับสิทธิ์ใช้งานอย่างไร',
   effectiveDate: EFFECTIVE_DATE,
+  version: POLICY_VERSION,
   intro:
-    'หน้านี้อธิบายขั้นตอนการขอคืนเงิน สิ่งที่เกิดขึ้นกับสิทธิ์การใช้งานของคุณในแต่ละขั้น '
-    + 'และสิ่งที่เราต้องใช้ในการพิจารณา',
+    `หน้านี้อธิบายระยะเวลา ${REFUND_WINDOW_DAYS} วันสำหรับการขอคืนเงิน ขั้นตอนการขอคืนเงิน `
+    + 'สิ่งที่เกิดขึ้นกับสิทธิ์การใช้งานของคุณในแต่ละขั้น และสิ่งที่เราต้องใช้ในการพิจารณา',
   sections: [
     {
-      heading: '1. ขั้นตอนการขอคืนเงิน',
+      heading: `1. ระยะเวลาขอคืนเงิน ${REFUND_WINDOW_DAYS} วัน`,
+      blocks: [
+        { kind: 'definitions', items: REFUND_WINDOW_RULES },
+        {
+          kind: 'paragraph',
+          text:
+            'ระบบจะแสดงวันและเวลาครบกำหนดของแต่ละรายการชำระเงินไว้ในหน้าประวัติการชำระเงินและหน้าคำขอคืนเงิน '
+            + 'พร้อมเวลาที่เหลือ เพื่อให้คุณตรวจสอบได้เองก่อนส่งคำขอ',
+        },
+        { kind: 'callout', tone: 'info', text: REFUND_IS_REVIEWED },
+      ],
+    },
+    {
+      heading: '2. ขั้นตอนการขอคืนเงิน',
       blocks: [
         {
           kind: 'list',
           items: [
             'เข้าหน้า “แพ็กเกจของคุณ” แล้วเลือก “คำขอคืนเงิน”',
-            'เลือกรายการชำระเงินที่ต้องการขอคืน ระบุเหตุผลและรายละเอียด และแนบภาพประกอบได้หากมี',
+            'เลือกรายการชำระเงินที่ยังอยู่ในกำหนด ระบุเหตุผลและรายละเอียด และแนบภาพประกอบได้หากมี',
             'ทีมงานจะตรวจสอบและอัปเดตสถานะให้คุณทราบผ่านการแจ้งเตือนในระบบ',
           ],
         },
@@ -387,7 +463,7 @@ const REFUND_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: '2. สถานะของคำขอ',
+      heading: '3. สถานะของคำขอ',
       blocks: [
         {
           kind: 'definitions',
@@ -407,11 +483,12 @@ const REFUND_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: '3. สิ่งที่เราพิจารณา',
+      heading: '4. สิ่งที่เราพิจารณา',
       blocks: [
         {
           kind: 'list',
           items: [
+            `คำขออยู่ภายในกำหนด ${REFUND_WINDOW_DAYS} วันของรายการชำระเงินนั้นหรือไม่`,
             'ระยะเวลาตั้งแต่ชำระเงิน และปริมาณการใช้งานฟีเจอร์แบบชำระเงินในรอบนั้น',
             'กรณีชำระซ้ำหรือถูกเรียกเก็บผิดพลาด ซึ่งเราจะแก้ไขให้เสมอเมื่อตรวจสอบพบ',
             'ปัญหาทางเทคนิคที่ทำให้ใช้งานฟีเจอร์ที่ชำระเงินไม่ได้จริง',
@@ -426,7 +503,7 @@ const REFUND_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: '4. ผลของการคืนเงินต่อสิทธิ์ใช้งาน',
+      heading: '5. ผลของการคืนเงินต่อสิทธิ์ใช้งาน',
       blocks: [
         {
           kind: 'definitions',
@@ -452,13 +529,31 @@ const REFUND_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: '5. ระยะเวลา',
+      heading: '6. ระยะเวลาที่เงินกลับเข้าบัญชี',
       blocks: [
         {
           kind: 'paragraph',
           text:
             'หลังจากคืนเงินสำเร็จ ระยะเวลาที่เงินจะกลับเข้าบัญชีหรือวงเงินบัตรของคุณ ขึ้นอยู่กับธนาคารและผู้ให้บริการชำระเงิน '
             + 'ซึ่งอยู่นอกเหนือการควบคุมของเรา',
+        },
+      ],
+    },
+    {
+      heading: '7. การเปลี่ยนแปลงนโยบายนี้',
+      blocks: [
+        {
+          kind: 'paragraph',
+          text:
+            'หากมีการแก้ไขนโยบายนี้ เราจะปรับปรุงหน้านี้พร้อมระบุวันที่มีผล '
+            + 'การแก้ไขจะมีผลกับการชำระเงินที่เกิดขึ้นหลังวันที่มีผลเท่านั้น '
+            + 'รายการที่ชำระไปแล้วยังคงใช้เงื่อนไขและกำหนดเวลาตามฉบับที่คุณยอมรับไว้ตอนซื้อ',
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'นโยบายนี้ไม่ตัดสิทธิ์ที่คุณมีตามกฎหมายคุ้มครองผู้บริโภคหรือกฎหมายอื่นที่ใช้บังคับ '
+            + 'หากกฎหมายกำหนดสิทธิ์ที่มากกว่าที่ระบุไว้ในหน้านี้ ให้เป็นไปตามกฎหมายนั้น',
         },
       ],
     },
@@ -471,7 +566,10 @@ const SUBSCRIPTION_POLICY: LegalDocument = {
   title: 'นโยบายแพ็กเกจและการต่ออายุ',
   subtitle: 'ราคา รอบบิล การต่ออายุของแต่ละช่องทาง และการยกเลิก',
   effectiveDate: EFFECTIVE_DATE,
-  intro: 'หน้านี้รวมเรื่องราคา รอบบิล การต่ออายุ และการยกเลิกไว้ในที่เดียว',
+  version: POLICY_VERSION,
+  intro:
+    'หน้านี้รวมเรื่องราคา รอบบิล การต่ออายุ การยกเลิก '
+    + `และระยะเวลาขอคืนเงิน ${REFUND_WINDOW_DAYS} วันของแต่ละรอบบิลไว้ในที่เดียว`,
   sections: [
     {
       heading: '1. ราคาและรอบบิล',
@@ -500,10 +598,30 @@ const SUBSCRIPTION_POLICY: LegalDocument = {
             'สำหรับ PromptPay เราจะแจ้งเตือนล่วงหน้า 7 วัน 3 วัน และ 1 วันก่อนครบรอบ '
             + 'และจะหยุดแจ้งเตือนเมื่อชำระรอบถัดไปเรียบร้อยแล้ว',
         },
+        {
+          kind: 'callout',
+          tone: 'info',
+          text:
+            'ก่อนเริ่มชำระเงินทุกครั้ง ระบบจะแสดงแพ็กเกจที่เลือก ราคา รอบบิล วิธีชำระเงิน '
+            + 'ลักษณะการต่ออายุของช่องทางนั้น และเงื่อนไขการคืนเงิน แล้วให้คุณกดยอมรับก่อนหนึ่งครั้ง '
+            + 'การยอมรับนี้จำเป็นเฉพาะตอนเริ่มซื้อใหม่เท่านั้น ไม่กระทบการต่ออายุของแพ็กเกจที่ใช้อยู่ '
+            + 'และไม่กระทบการเข้าหน้าจัดการการชำระเงิน',
+        },
       ],
     },
     {
-      heading: '3. การเปลี่ยนหรือยกเลิกแพ็กเกจ',
+      heading: `3. การขอคืนเงินภายใน ${REFUND_WINDOW_DAYS} วัน`,
+      blocks: [
+        { kind: 'definitions', items: REFUND_WINDOW_RULES },
+        { kind: 'callout', tone: 'warning', text: REFUND_IS_REVIEWED },
+        {
+          kind: 'paragraph',
+          text: 'ขั้นตอน สถานะของคำขอ และผลต่อสิทธิ์การใช้งาน อยู่ในหน้านโยบายการคืนเงิน',
+        },
+      ],
+    },
+    {
+      heading: '4. การเปลี่ยนหรือยกเลิกแพ็กเกจ',
       blocks: [
         {
           kind: 'list',
@@ -517,23 +635,32 @@ const SUBSCRIPTION_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: '4. เมื่อสิทธิ์สิ้นสุด',
+      heading: '5. เมื่อสิทธิ์สิ้นสุด',
       blocks: [
         { kind: 'paragraph', text: DATA_ON_DOWNGRADE },
         {
           kind: 'paragraph',
-          text: 'หากต้องการกลับมาใช้แพ็กเกจอีกครั้ง ข้อมูลเดิมของคุณจะยังอยู่และกลับมาใช้งานได้ทันทีเมื่อชำระเงินสำเร็จ',
+          text:
+            'หากต้องการกลับมาใช้แพ็กเกจอีกครั้ง ข้อมูลเดิมของคุณจะยังอยู่และกลับมาใช้งานได้ทันทีเมื่อชำระเงินสำเร็จ '
+            + `และการชำระเงินครั้งใหม่นั้นจะเริ่มนับระยะเวลาขอคืนเงิน ${REFUND_WINDOW_DAYS} วันของตัวเองใหม่`,
         },
       ],
     },
     {
-      heading: '5. การเปลี่ยนแปลงราคา',
+      heading: '6. การเปลี่ยนแปลงราคาและเงื่อนไข',
       blocks: [
         {
           kind: 'paragraph',
           text:
             'หากมีการปรับราคา เราจะแจ้งล่วงหน้าและปรับปรุงหน้านี้พร้อมวันที่มีผล '
             + 'ราคาใหม่จะมีผลกับรอบบิลถัดไป ไม่ย้อนหลังกับรอบที่ชำระไปแล้ว',
+        },
+        {
+          kind: 'paragraph',
+          text:
+            'การแก้ไขเงื่อนไขในหน้านี้มีผลกับการซื้อและการต่ออายุที่เกิดขึ้นหลังวันที่มีผลเท่านั้น '
+            + 'การยอมรับเงื่อนไขที่คุณเคยให้ไว้ และกำหนดเวลาขอคืนเงินของรายการที่ชำระไปแล้ว ยังคงเป็นไปตามฉบับเดิม '
+            + 'ทั้งนี้ไม่ตัดสิทธิ์ที่คุณมีตามกฎหมายที่ใช้บังคับ',
         },
       ],
     },
@@ -546,6 +673,7 @@ const INVESTMENT_DISCLAIMER: LegalDocument = {
   title: 'คำเตือนเรื่องการลงทุน',
   subtitle: 'ขอบเขตของเครื่องมือนี้ และสิ่งที่เครื่องมือนี้ไม่ใช่',
   effectiveDate: EFFECTIVE_DATE,
+  version: POLICY_VERSION,
   intro: 'โปรดอ่านหน้านี้ก่อนใช้ข้อมูลและผลการวิเคราะห์บนแพลตฟอร์มประกอบการตัดสินใจลงทุน',
   sections: [
     {
@@ -619,6 +747,17 @@ export const legalLinkOrder: readonly LegalDocumentSlug[] = [
   'refund-policy',
   'investment-disclaimer',
 ];
+
+/**
+ * The vintage of one document's wording.
+ *
+ * The purchase-consent path reads this on the server and refuses any acceptance
+ * pinned to a different value, which is what makes a stale browser tab unable to
+ * buy against wording that has since been replaced.
+ */
+export function legalDocumentVersion(slug: LegalDocumentSlug): string {
+  return legalDocuments[slug].version;
+}
 
 export interface LegalLink {
   href: string;

@@ -112,7 +112,7 @@ describe('billing security contract', () => {
    * The checkout's whole input surface is one plan key. Identity comes from the
    * session, and the customer identifier from the account's own row.
    */
-  it('takes nothing from the client but a plan key and a payment method', () => {
+  it('takes nothing from the client but a plan key, a payment method and an acceptance', () => {
     const actions = readCode('app/settings/subscription/billing-actions.ts');
     expect(actions).toContain('planKey: string');
     expect(actions).toContain('paymentMethod: string');
@@ -128,12 +128,25 @@ describe('billing security contract', () => {
     for (const parameters of exported) {
       expect(parameters).not.toMatch(/\b(userId|customerId|amount|tier|coupon|discount|price|email|invoice|subscriptionId)\b/);
     }
-    // Starting a purchase names a plan and a rail. The portal, the abandon
-    // action and the PromptPay renewal take nothing at all and find the account
-    // from the session — which is the property this count is guarding, so a new
-    // action arriving must either be argument-free or be justified here.
-    expect(exported).toContain('planKey: string, paymentMethod: string,');
+    /*
+     * Starting a purchase names a plan, a rail and an acceptance. The third
+     * argument carries a boolean and two policy version strings and nothing
+     * else — no identity, no amount — and the server compares those versions
+     * against the ones it publishes, so it can be echoed but never chosen.
+     *
+     * The portal, the abandon action and the PromptPay renewal take nothing at
+     * all and find the account from the session — which is the property this
+     * count is guarding, so a new action arriving must either be argument-free
+     * or be justified here.
+     */
+    expect(exported).toContain('planKey: string, paymentMethod: string, consent: PurchaseConsentClaim,');
     expect(exported.filter((parameters) => parameters === '')).toHaveLength(3);
+
+    // The claim's own shape, asserted where it is declared rather than trusted.
+    const claim = readCode('src/lib/billing/purchase-consent.ts');
+    expect(claim).toMatch(
+      /export interface PurchaseConsentClaim \{\s*accepted: boolean;\s*subscriptionPolicyVersion: string;\s*refundPolicyVersion: string;\s*\}/,
+    );
   });
 
   /*

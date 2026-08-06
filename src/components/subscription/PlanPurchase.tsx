@@ -8,6 +8,7 @@ import {
   type PaidTier,
 } from '@/src/lib/billing/billing-plans';
 import { founderRenewalNote } from '@/src/lib/billing/billing-summary';
+import { currentPurchasePolicyVersions } from '@/src/lib/billing/purchase-consent';
 
 /**
  * The purchase area of a plan card.
@@ -111,7 +112,17 @@ export function PlanPurchase({
 
   return (
     <div className="min-w-0 space-y-2">
-      <PaymentMethodChoice plans={shown} methods={availability.paymentMethods} />
+      {/*
+        Resolved here, on the server, and handed down. The consent step echoes
+        these back and the checkout action compares them against the versions it
+        publishes — so a tab left open across a policy edit is refused rather
+        than allowed to buy against wording that has been replaced.
+      */}
+      <PaymentMethodChoice
+        plans={shown}
+        methods={availability.paymentMethods}
+        policyVersions={currentPurchasePolicyVersions()}
+      />
       {founder && (
         // The renewal price is stated before anyone reaches the provider, so the
         // second year cannot be a surprise.
