@@ -7,7 +7,7 @@ import { StockDetailClient } from '@/src/components/stock/StockDetailClient';
 import { loadEntitledMarketSignal } from '@/src/lib/analytics/market-signal/entitled-service';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
-import { getInstrumentMetadata } from '@/src/lib/instruments/master';
+import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 import {
   advancedChartTypesEnabled,
@@ -51,7 +51,7 @@ export default async function StockDetailPage({
     getFxRate('USD', 'THB'),
     isWatched(symbol),
     loadEntitledMarketSignal(symbol, entitlement.effectiveAccessTier),
-    getInstrumentMetadata([symbol]),
+    getInstrumentPresentationMetadata([symbol]),
   ]);
 
   if (marketResult.status === 'rejected') {

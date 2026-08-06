@@ -26,6 +26,7 @@ import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { OverviewPortfolioGoalCard } from '@/src/components/dashboard/OverviewPortfolioGoalCard';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
+import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { OVERVIEW_STATUS_COPY } from '@/src/lib/overview/presentation';
 import { rankIndustries, type IndustryRankingOrder } from '@/src/lib/overview/industry-ranking';
 import type {
@@ -362,7 +363,28 @@ function PortfolioCard({ data, usdThbRate }: {
 
 function MarketCard({ item }: { item: MarketIndexCard }) {
   return (
-    <article className="min-w-[238px] snap-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:min-w-0">
+    /*
+     * The whole card is the link — a reader who taps a price expects the market
+     * it belongs to, not a dead rectangle with one small link in it. There is
+     * nothing else interactive inside, so a single anchor stays a single tab
+     * stop; the section's refresh button sits in the header, outside every card,
+     * and cannot be reached by activating one.
+     */
+    <Link
+      href={stockDetailHref(item.symbol)}
+      aria-label={`เปิดรายละเอียด ${item.name} (${item.symbol})`}
+      /*
+       * Enter is native to a link; Space is not — it scrolls the page. Readers
+       * who arrive by keyboard try both, so Space is claimed here and turned
+       * into the same navigation.
+       */
+      onKeyDown={(event) => {
+        if (event.key !== ' ' && event.key !== 'Spacebar') return;
+        event.preventDefault();
+        event.currentTarget.click();
+      }}
+      className="group block min-w-[238px] snap-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:bg-[var(--surface-selected)] sm:min-w-0"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <InstrumentLogo
@@ -377,8 +399,17 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
             <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{item.symbol} · {item.proxyLabel}</p>
           </div>
         </div>
-        <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)]">
-          {item.sessionLabel}
+        <span className="flex shrink-0 items-center gap-1">
+          <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)]">
+            {item.sessionLabel}
+          </span>
+          {/* The one affordance: enough to read as "this opens", small enough
+              not to compete with the price. */}
+          <ChevronRight
+            size={16}
+            aria-hidden="true"
+            className="text-[var(--text-muted)] transition-transform group-hover:translate-x-0.5"
+          />
         </span>
       </div>
       <p className="mt-4 text-xl font-bold tabular-nums text-[var(--text)]">
@@ -403,7 +434,7 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
           แหล่งข้อมูล {item.source}
         </p>
       )}
-    </article>
+    </Link>
   );
 }
 
@@ -412,12 +443,19 @@ function IndustryRanking({
   industryData,
   limitations,
   retrying,
+  loading,
   onRetry,
 }: {
   industries: IndustryGroup[];
   industryData: OverviewDashboardData['industryData'];
   limitations: string[];
   retrying: boolean;
+  /**
+   * A request is genuinely in flight. Deliberately not `state === 'refreshing'`:
+   * that flag is set by the server and is never cleared by a request that fails,
+   * so reading it directly is how a loader ends up spinning forever.
+   */
+  loading: boolean;
   onRetry: (section: RetriableOverviewSection) => void;
 }) {
   const [order, setOrder] = useState<IndustryRankingOrder>('gainers');
@@ -468,56 +506,64 @@ function IndustryRanking({
           </button>
         ))}
       </div>
-      {ranked.length === 0 && industryData.state === 'refreshing' ? (
-        <div className="space-y-2" aria-label="กำลังรวบรวมข้อมูลอุตสาหกรรม" aria-busy="true">
-          {[1, 2, 3, 4].map((item) => (
-            <div key={item} className="h-[76px] animate-pulse rounded-xl bg-[var(--surface-elevated)] motion-reduce:animate-none" />
-          ))}
-          <p className="pt-2 text-center text-xs text-[var(--text-secondary)]">
-            กำลังรวบรวมราคาช่วงตลาดปกติ คุณยังใช้ข้อมูลพอร์ตและตลาดส่วนอื่นได้ตามปกติ
-          </p>
-        </div>
-      ) : ranked.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-[var(--border-strong)] p-5 text-center">
-          <Gauge className="mx-auto text-[var(--text-muted)]" aria-hidden="true" />
-          <p className="mt-2 font-medium text-[var(--text)]">ข้อมูลยังไม่เพียงพอสำหรับจัดอันดับ</p>
-          <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
-            ระบบจะแสดงเฉพาะกลุ่มที่มีหุ้นผ่านเกณฑ์อย่างน้อย 5 ตัว และจะไม่แทนข้อมูลที่ขาดด้วย 0%
-          </p>
-          {limitations.map((item) => <p key={item} className="mt-2 text-xs text-[var(--warning)]">{item}</p>)}
-        </div>
-      ) : (
-        <ol className="grid gap-2 lg:grid-cols-2">
-          {ranked.map((industry, index) => (
-            <li key={industry.slug}>
-              <Link
-                href={`/industry/${encodeURIComponent(industry.slug)}`}
-                className="grid min-h-[76px] grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-[var(--border)] p-3 hover:bg-[var(--surface-hover)]"
-              >
-                <span className="text-center text-sm font-bold text-[var(--accent)]">{index + 1}</span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold text-[var(--text)]">
-                    {industry.nameTh ?? industry.name}
-                  </span>
-                  {industry.nameTh && <span className="block truncate text-[10px] text-[var(--text-muted)]">{industry.name}</span>}
-                  <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-selected)]">
-                    <span
-                      className={`block h-full rounded-full ${industry.returnPercent >= 0 ? 'bg-[var(--positive)]' : 'bg-[var(--negative)]'}`}
-                      style={{ width: `${Math.max(4, Math.abs(industry.returnPercent) / scale * 100)}%` }}
-                    />
-                  </span>
-                  <span className="mt-1 block text-[10px] text-[var(--text-muted)]">
-                    {industry.advancing} จาก {industry.validCount} หุ้นปรับขึ้น
-                  </span>
-                </span>
-                <span className={`flex items-center gap-1 text-sm font-bold tabular-nums ${tone(industry.returnPercent)}`}>
-                  {signed(industry.returnPercent, '%')} <ChevronRight size={16} aria-hidden="true" />
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ol>
-      )}
+      {/*
+        * One loading presentation, not two: the four pulsing boxes that used to
+        * stand here are gone, and Kheaw is the only thing shown while the
+        * ranking is being gathered. `min-h` holds roughly the height the list
+        * will occupy so the page does not jump when it arrives, and the
+        * boundary's own grace keeps a fast refresh from flashing the mascot at
+        * all. Success, empty and error all render `children`, so there is no
+        * path on which the loader stays up.
+        */}
+      <div className="min-h-[176px]">
+        <KheawLoadingBoundary
+          loading={loading}
+          ready={ranked.length > 0}
+          message="กำลังรวบรวมราคาช่วงตลาดปกติ"
+        >
+          {ranked.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--border-strong)] p-5 text-center">
+              <Gauge className="mx-auto text-[var(--text-muted)]" aria-hidden="true" />
+              <p className="mt-2 font-medium text-[var(--text)]">ข้อมูลยังไม่เพียงพอสำหรับจัดอันดับ</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
+                ระบบจะแสดงเฉพาะกลุ่มที่มีหุ้นผ่านเกณฑ์อย่างน้อย 5 ตัว และจะไม่แทนข้อมูลที่ขาดด้วย 0%
+              </p>
+              {limitations.map((item) => <p key={item} className="mt-2 text-xs text-[var(--warning)]">{item}</p>)}
+            </div>
+          ) : (
+            <ol className="grid gap-2 lg:grid-cols-2">
+              {ranked.map((industry, index) => (
+                <li key={industry.slug}>
+                  <Link
+                    href={`/industry/${encodeURIComponent(industry.slug)}`}
+                    className="grid min-h-[76px] grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-[var(--border)] p-3 hover:bg-[var(--surface-hover)]"
+                  >
+                    <span className="text-center text-sm font-bold text-[var(--accent)]">{index + 1}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-[var(--text)]">
+                        {industry.nameTh ?? industry.name}
+                      </span>
+                      {industry.nameTh && <span className="block truncate text-[10px] text-[var(--text-muted)]">{industry.name}</span>}
+                      <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-selected)]">
+                        <span
+                          className={`block h-full rounded-full ${industry.returnPercent >= 0 ? 'bg-[var(--positive)]' : 'bg-[var(--negative)]'}`}
+                          style={{ width: `${Math.max(4, Math.abs(industry.returnPercent) / scale * 100)}%` }}
+                        />
+                      </span>
+                      <span className="mt-1 block text-[10px] text-[var(--text-muted)]">
+                        {industry.advancing} จาก {industry.validCount} หุ้นปรับขึ้น
+                      </span>
+                    </span>
+                    <span className={`flex items-center gap-1 text-sm font-bold tabular-nums ${tone(industry.returnPercent)}`}>
+                      {signed(industry.returnPercent, '%')} <ChevronRight size={16} aria-hidden="true" />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          )}
+        </KheawLoadingBoundary>
+      </div>
     </section>
   );
 }
@@ -577,7 +623,7 @@ function WatchlistSection({
           {visible.map((item) => (
             <Link
               key={item.symbol}
-              href={`/stock/${encodeURIComponent(item.symbol)}`}
+              href={stockDetailHref(item.symbol)}
               className="grid min-h-[82px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 py-3"
             >
               <InstrumentLogo
@@ -731,6 +777,13 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
   const view = viewState.source === data ? viewState.value : data;
   const [retrying, setRetrying] = useState<Partial<Record<RetriableOverviewSection, boolean>>>({});
   const [retryNotice, setRetryNotice] = useState('');
+  /*
+   * Whether the industry ranking has been attempted at all in this tab. Together
+   * with `retrying` it is the whole loading condition: before the first attempt
+   * the section is waiting, during an attempt it is loading, and after one — won
+   * or lost — it shows what it has.
+   */
+  const [industriesAttempted, setIndustriesAttempted] = useState(false);
   const autoIndustryRefreshStarted = useRef(false);
   const autoBreadthRefreshStarted = useRef(false);
 
@@ -768,6 +821,7 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
       setRetryNotice('ยังอัปเดตข้อมูลส่วนนี้ไม่ได้ ข้อมูลล่าสุดยังคงแสดงอยู่');
     } finally {
       setRetrying((current) => ({ ...current, [section]: false }));
+      if (section === 'industries') setIndustriesAttempted(true);
     }
   }, [data]);
 
@@ -811,6 +865,8 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
           industryData={view.industryData}
           limitations={view.limitations}
           retrying={Boolean(retrying.industries)}
+          loading={Boolean(retrying.industries)
+            || (view.industryData.state === 'refreshing' && !industriesAttempted)}
           onRetry={retry}
         />
 

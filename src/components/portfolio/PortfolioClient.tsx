@@ -14,6 +14,7 @@ import {
 import { reconcilePortfolioValueAction } from '@/app/portfolio/reconcile-actions';
 import { Button } from '@/src/components/ui/Button';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { rememberInstrumentLogo } from '@/src/components/instruments/InstrumentLogoProvider';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
@@ -229,6 +230,12 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
         return;
       }
       closeForm();
+      /*
+       * The logo the action resolved for a newly opened position, applied before
+       * the refresh so the holding draws it on the very first frame it appears
+       * in rather than after the server round trip.
+       */
+      rememberInstrumentLogo(result.symbol ?? '', result.logoUrl);
       addToast({ title: 'เพิ่มรายการแล้ว', message: 'พอร์ตจะคำนวณใหม่จาก Ledger ทั้งหมด', type: 'success' });
       router.refresh();
     });
@@ -597,7 +604,7 @@ function HoldingDesktopRows({ holding, expanded, showBalances, timezone, portfol
       <td className="p-0">
         <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-14 w-full items-center gap-2 px-3 text-left font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={32} />
+          <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} size={32} />
           {holding.symbol}
         </button>
       </td>
@@ -617,7 +624,7 @@ function HoldingMobileCard(props: HoldingViewProps) {
   const { holding, expanded, showBalances, timezone, money, signed, hidden, onToggle } = props;
   return <article className="p-4">
     <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-center justify-between gap-3 text-left">
-      <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} logoUrl={null} size={40} />
+      <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} size={40} />
       <span><strong className="text-lg text-white">{holding.symbol}</strong><span className="mt-1 block text-xs text-slate-400">{hidden(number(holding.quantity))} หน่วย · น้ำหนัก {showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</span></span>
       {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
     </button>

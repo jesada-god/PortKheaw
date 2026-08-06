@@ -19,7 +19,10 @@ export const resolvedInstrumentSchema = z.object({
   canonicalSymbol: z.string().min(1),
   providerSymbol: z.string().min(1),
   name: z.string().nullable(),
-  assetType: z.enum(['stock', 'etf', 'adr', 'reit', 'fund', 'otc', 'index', 'unknown']),
+  // `crypto` is never produced by the instrument-master resolver — nothing in
+  // `market_instruments` is one. It names the continuous assets the product
+  // ships proxies for, so a 24/7 market is not described as an equity.
+  assetType: z.enum(['stock', 'etf', 'adr', 'reit', 'fund', 'otc', 'index', 'crypto', 'unknown']),
   exchange: z.string().nullable(),
   mic: z.string().nullable(),
   currency: z.string().nullable(),

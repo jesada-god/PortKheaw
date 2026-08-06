@@ -7,6 +7,15 @@ import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import { extendedQuoteMatchesRegularSession, type ExtendedHoursQuoteData } from '@/src/lib/market-data/extended-hours';
 import type { NormalizedBarsResult, NormalizedMarketSession, NormalizedQuote, ResolvedInstrument } from '@/src/lib/market-data/gateway/contracts';
 import type { CompanyProfile, DataFreshness, MarketDataApiError, MarketOverview, ProviderResult, Quote } from '@/src/lib/market-data/types';
+import { continuousMarketAsset, type MarketAsset } from '@/src/lib/overview/market-assets';
+import {
+  continuousInstrument,
+  continuousMarketStatus,
+  continuousProfile,
+  continuousQuoteResource,
+  continuousQuoteUnavailable,
+  loadContinuousQuote,
+} from './continuous-snapshot';
 import type { InitialHistoryResponse, StockDetailQuoteResource, StockDetailResource } from './types';
 
 const unavailableFreshness: DataFreshness = { status: 'unavailable', asOf: null, maxAgeSeconds: null };
@@ -140,7 +149,27 @@ export interface StockDetailGatewaySnapshot {
   extendedQuote: ExtendedHoursQuoteData | null;
 }
 
+async function continuousSnapshot(asset: MarketAsset): Promise<StockDetailGatewaySnapshot> {
+  const quote = await loadContinuousQuote(asset.symbol)
+    .then(continuousQuoteResource)
+    .catch(() => continuousQuoteUnavailable());
+  return {
+    instrument: continuousInstrument(asset),
+    quote,
+    profile: continuousProfile(asset),
+    overview: continuousMarketStatus(quote.freshness.asOf ?? new Date().toISOString()),
+    // A market with no close has no pre-market and no after-hours print.
+    extendedQuote: null,
+    history: {
+      data: null,
+      meta: { provider: null, timestamp: new Date().toISOString(), freshness: unavailableFreshness },
+    },
+  };
+}
+
 export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<StockDetailGatewaySnapshot> {
+  const continuous = continuousMarketAsset(symbol);
+  if (continuous) return continuousSnapshot(continuous);
   const gateway = getMarketDataGateway();
   const instrument = await gateway.resolveInstrument(symbol);
   const quotePromise = (async () => {

@@ -18,5 +18,10 @@ export interface WatchlistQuote {
 }
 
 export type WatchlistActionResult =
-  | { ok: true; item?: WatchlistItemRecord }
+  /**
+   * `logoUrl` carries the logo resolved for a newly added symbol in the very
+   * response that created it, so the new row draws its picture immediately
+   * instead of waiting for a later render to discover it.
+   */
+  | { ok: true; item?: WatchlistItemRecord; logoUrl?: string | null; companyName?: string | null }
   | { ok: false; code: 'invalid' | 'duplicate' | 'unauthorized' | 'not-found' | 'database' | 'delisted'; message: string };

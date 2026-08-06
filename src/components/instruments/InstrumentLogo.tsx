@@ -1,34 +1,44 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { cn } from '@/src/utils/cn';
+import {
+  ExpiringFailureMemory,
+  LOGO_FAILURE_TTL_MS,
+  normalizeLogoUrl,
+} from '@/src/lib/instruments/logo-policy';
+import { useInstrumentLogoUrl } from './InstrumentLogoProvider';
 
-const failedLogos = new Set<string>();
-const normalizedLogos = new Map<string, string | null>();
+/**
+ * URLs that did not paint in this tab. The memory expires (see
+ * `LOGO_FAILURE_TTL_MS`) so a dropped request is not mistaken for a missing
+ * file for the rest of the session, and a symbol shown in ten places does not
+ * make ten more attempts at a URL that just failed.
+ */
+const failedLogos = new ExpiringFailureMemory(LOGO_FAILURE_TTL_MS);
+const reportedLogos = new Set<string>();
 
-export function normalizeInstrumentLogoUrl(value: string | null): string | null {
-  if (!value) return null;
-  const cached = normalizedLogos.get(value);
-  if (cached !== undefined) return cached;
-  let normalized: string | null = null;
-  const trimmed = value.trim();
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-    normalized = trimmed.split('#', 1)[0] || null;
-    normalizedLogos.set(value, normalized);
-    return normalized;
-  }
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol === 'https:' && !url.username && !url.password) {
-      url.hash = '';
-      normalized = url.href;
-    }
-  } catch {
-    normalized = null;
-  }
-  normalizedLogos.set(value, normalized);
-  return normalized;
+/** The shared rule, re-exported under the name this component is known by. */
+export const normalizeInstrumentLogoUrl = normalizeLogoUrl;
+
+/**
+ * Tells the server that a persisted logo no longer loads, once per URL per tab.
+ *
+ * Without this the instrument master would keep handing out a URL that 404s for
+ * every reader forever. It is sent, never awaited, and never surfaced: a logo
+ * that fails should degrade to a monogram quietly, not turn into an error the
+ * reader has to read.
+ */
+function reportBrokenLogo(symbol: string, url: string): void {
+  if (!url.startsWith('https://') || reportedLogos.has(url)) return;
+  reportedLogos.add(url);
+  void fetch('/api/instruments/logo-invalidate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ symbol, url }),
+    keepalive: true,
+  }).catch(() => {});
 }
 
 function initials(symbol: string): string {
@@ -47,39 +57,44 @@ export function InstrumentLogo({
 }: {
   symbol: string;
   companyName: string;
-  logoUrl: string | null;
+  /**
+   * Optional. When absent — or `null`, which is what a caller without the value
+   * in scope passes — the logo the page resolved for this symbol is used.
+   */
+  logoUrl?: string | null;
   size?: number;
   mobileSize?: number;
   appearance?: 'framed' | 'plain';
   className?: string;
   priority?: boolean;
 }) {
-  const normalizedLogoUrl = normalizeInstrumentLogoUrl(logoUrl);
+  const normalizedLogoUrl = useInstrumentLogoUrl(symbol, logoUrl);
   const localLogo = normalizedLogoUrl?.startsWith('/') === true;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const timeoutRef = useRef<number | null>(null);
   const failed = Boolean(normalizedLogoUrl && (
     failedUrl === normalizedLogoUrl || failedLogos.has(normalizedLogoUrl)
   ));
-  useEffect(() => {
-    if (!normalizedLogoUrl || failedLogos.has(normalizedLogoUrl)) return;
-    timeoutRef.current = window.setTimeout(() => {
-      failedLogos.add(normalizedLogoUrl);
-      setFailedUrl(normalizedLogoUrl);
-    }, 8_000);
-    return () => {
-      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    };
-  }, [normalizedLogoUrl]);
 
   const fail = () => {
-    if (normalizedLogoUrl) failedLogos.add(normalizedLogoUrl);
+    if (normalizedLogoUrl) {
+      failedLogos.remember(normalizedLogoUrl);
+      reportBrokenLogo(symbol, normalizedLogoUrl);
+    }
     setFailedUrl(normalizedLogoUrl);
   };
-  const loaded = () => {
-    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
-    timeoutRef.current = null;
+
+  /*
+   * The image may already have finished before React attached its handlers —
+   * a server-rendered logo, or one served from cache, completes during
+   * hydration and its `load` event is gone by the time this component is
+   * listening. Reading `complete`/`naturalWidth` once on attach is the only way
+   * to tell those two outcomes apart; nothing here polls or times out, because
+   * a lazy image that has not started yet is not a failure and must never be
+   * replaced by a monogram for being off screen.
+   */
+  const settleOnAttach = (node: HTMLImageElement | null) => {
+    if (!node || !normalizedLogoUrl || !node.complete) return;
+    if (node.naturalWidth === 0) fail();
   };
   const style = {
     position: 'relative',
@@ -134,7 +149,7 @@ export function InstrumentLogo({
           loading={priority ? 'eager' : 'lazy'}
           referrerPolicy="no-referrer"
           className={plain ? 'object-contain' : 'object-contain p-1'}
-          onLoad={loaded}
+          ref={settleOnAttach}
           onError={fail}
         />
       ) : (
@@ -149,7 +164,7 @@ export function InstrumentLogo({
           decoding="async"
           referrerPolicy="no-referrer"
           className={`absolute inset-0 h-full w-full ${plain ? 'object-contain' : 'object-contain p-1'}`}
-          onLoad={loaded}
+          ref={settleOnAttach}
           onError={fail}
         />
       )}

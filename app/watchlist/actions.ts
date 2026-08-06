@@ -7,6 +7,7 @@ import { symbolSchema } from '@/src/lib/market-data/validation';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import type { WatchlistActionResult } from '@/src/lib/watchlist/types';
 import { getInstrumentStatus } from '@/src/lib/instruments/status';
+import { ensureInstrumentLogo } from '@/src/lib/instruments/presentation';
 
 const nameSchema = z.string().trim().min(1).max(80);
 
@@ -35,8 +36,16 @@ export async function addWatchlistItemAction(rawSymbol: string): Promise<Watchli
       return { ok: false, code: 'delisted', message: 'Symbol นี้ถูก delisted แล้ว จึงไม่สามารถเพิ่มเป็นรายการใหม่ได้' };
     }
     const item = await repo.add(parsed.data);
+    /*
+     * First sighting of this symbol on this account: resolve and persist its
+     * logo now, in the mutation that created the row, and hand the URL back with
+     * it. Without this the new row renders a monogram until some later request
+     * happens to resolve it — which is exactly what a reader reports as "the
+     * logo does not show up".
+     */
+    const logo = await ensureInstrumentLogo(parsed.data);
     revalidatePath('/watchlist');
-    return { ok: true, item };
+    return { ok: true, item, logoUrl: logo.logoUrl, companyName: logo.companyName };
   } catch (error) {
     return failure(error);
   }

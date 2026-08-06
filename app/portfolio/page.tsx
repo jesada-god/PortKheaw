@@ -1,5 +1,6 @@
 import Header from '@/src/components/layout/Header';
 import { PortfolioClient } from '@/src/components/portfolio/PortfolioClient';
+import { InstrumentLogoProvider } from '@/src/components/instruments/InstrumentLogoProvider';
 import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
@@ -52,6 +53,15 @@ export default async function PortfolioPage() {
     .map((item) => item.symbol)
     .filter((value): value is string => Boolean(value)))];
   const canonicalPrices = await loadPortfolioPrices(stockSymbols);
+  /*
+   * The same resolver every other surface reads, so a holding shows the logo the
+   * watchlist and Stock Detail show — and shows it from the instrument master,
+   * without a provider round trip per row.
+   */
+  const instrumentLogos = Object.fromEntries(stockSymbols.map((symbol) => [
+    symbol,
+    canonicalPrices.get(symbol)?.display.instrument.logoUrl ?? null,
+  ]));
   const quotes = stockSymbols.map((symbol) => {
     const item = canonicalPrices.get(symbol)?.display;
     if (!item || item.price === null) return [symbol, null] as const;
@@ -84,15 +94,17 @@ export default async function PortfolioPage() {
 
   return <div className="min-w-0">
     <Header title="พอร์ตโฟลิโอจำลอง" subtitle="คำนวณใหม่จาก Transaction Ledger ทุกครั้ง โดยไม่ส่งคำสั่งซื้อขายจริง" />
-    <PortfolioClient
-      portfolios={portfolios}
-      aggregateGoal={aggregateGoal}
-      marketPrices={Object.fromEntries(quotes)}
-      optionQuotes={optionQuotes}
-      optionTargets={targets}
-      fx={fx}
-      timezone={timezone}
-      effectiveTier={effectiveTier}
-    />
+    <InstrumentLogoProvider logos={instrumentLogos}>
+      <PortfolioClient
+        portfolios={portfolios}
+        aggregateGoal={aggregateGoal}
+        marketPrices={Object.fromEntries(quotes)}
+        optionQuotes={optionQuotes}
+        optionTargets={targets}
+        fx={fx}
+        timezone={timezone}
+        effectiveTier={effectiveTier}
+      />
+    </InstrumentLogoProvider>
   </div>;
 }

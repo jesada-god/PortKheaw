@@ -472,7 +472,7 @@ export async function loadPortfolioPrices(
   now = new Date(),
 ): Promise<Map<string, LoadedPrice>> {
   const unique = [...new Set(symbols)];
-  const metadata = await getInstrumentMetadata(unique);
+  const metadata = await getInstrumentPresentationMetadata(unique);
   const resolved = await getMarketDataGateway().resolveInstruments(unique);
   const loaded = await mapWithConcurrency(
     unique,

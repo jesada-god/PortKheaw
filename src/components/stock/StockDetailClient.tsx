@@ -491,7 +491,7 @@ export function StockDetailClient({
           <InstrumentLogo
             symbol={symbol}
             companyName={identity.name}
-            logoUrl={profileResource.data?.logoUrl ?? instrumentLogoUrl}
+            logoUrl={instrumentLogoUrl ?? profileResource.data?.logoUrl ?? null}
             size={44}
             mobileSize={40}
             appearance="plain"

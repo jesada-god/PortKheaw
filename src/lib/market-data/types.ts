@@ -25,6 +25,12 @@ export const symbolSearchResultSchema = z.object({
   marketClose: z.string().nullable(),
   timezone: z.string().nullable(),
   matchScore: z.number().min(0).max(1).nullable(),
+  /**
+   * The logo already persisted on the instrument master. Optional because a
+   * provider fallback result has none — search never asks a profile provider
+   * for one, since twenty rows a keystroke is not a request budget anyone has.
+   */
+  logoUrl: z.string().nullable().optional(),
 });
 
 export const quoteSchema = z.object({

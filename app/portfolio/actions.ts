@@ -5,13 +5,21 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { portfolioTransactionSchema } from '@/src/lib/portfolio/validation';
 import { getInstrumentStatus } from '@/src/lib/instruments/status';
+import { ensureInstrumentLogo } from '@/src/lib/instruments/presentation';
 import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
 import {
   preparePortfolioTransactionForCreate,
   preparePortfolioTransactionForUpdate,
 } from '@/src/lib/portfolio/transaction-preparation';
 
-export type PortfolioActionResult = { ok: true } | { ok: false; code: string; message: string; fields?: Record<string, string> };
+export type PortfolioActionResult =
+  /**
+   * `symbol`/`logoUrl` are set when a transaction opens a position in an
+   * instrument, so the holding that appears draws its logo from this response
+   * rather than waiting for a later render to resolve it.
+   */
+  | { ok: true; symbol?: string; logoUrl?: string | null }
+  | { ok: false; code: string; message: string; fields?: Record<string, string> };
 
 async function repository() {
   const client = await createClient();
@@ -61,9 +69,14 @@ export async function createPortfolioTransactionAction(raw: unknown): Promise<Po
       }
     }
     await repo.create(await preparePortfolioTransactionForCreate(input));
+    // Same first-sighting rule as the watchlist: the symbol this ledger row
+    // opens is resolved and persisted here, once, and returned with it.
+    const logo = openingSymbol ? await ensureInstrumentLogo(openingSymbol) : null;
     revalidatePath('/portfolio');
     revalidatePath('/');
-    return { ok: true };
+    return logo
+      ? { ok: true, symbol: logo.symbol, logoUrl: logo.logoUrl }
+      : { ok: true };
   } catch (error) {
     return failure(error);
   }

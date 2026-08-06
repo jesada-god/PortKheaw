@@ -15,7 +15,7 @@ import {
   isStaleAt,
 } from '@/src/lib/presentation/datetime';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
-import { requestCompanyProfile } from '@/src/components/stock/profile-retry';
+import { rememberInstrumentLogo } from '@/src/components/instruments/InstrumentLogoProvider';
 
 type SortKey = 'newest' | 'symbol' | 'price' | 'change';
 type WatchlistInstrument = {
@@ -146,30 +146,29 @@ export function WatchlistClient({
         return;
       }
       setItems((current) => [result.item as WatchlistItemRecord, ...current]);
+      /*
+       * The logo the action resolved and persisted while creating this row. It
+       * is written straight in — the row must never be seeded with `null` and
+       * then corrected, because that null is what a reader sees as "the logo
+       * does not show up".
+       */
+      rememberInstrumentLogo(symbol, result.logoUrl);
       setInstruments((current) => ({
         ...current,
         [symbol]: {
-          companyName: searchResult?.name ?? symbol,
-          logoUrl: null,
+          companyName: result.companyName ?? searchResult?.name ?? current[symbol]?.companyName ?? symbol,
+          logoUrl: result.logoUrl ?? current[symbol]?.logoUrl ?? null,
         },
       }));
       setQuery(''); setResults([]);
       addToast({ title: `เพิ่ม ${symbol} แล้ว`, type: 'success' });
-      void requestCompanyProfile(symbol)
-        .then((resource) => {
-          const profile = resource.data;
-          if (!profile) return;
-          setInstruments((current) => ({
-            ...current,
-            [symbol]: {
-              companyName: profile.name ?? current[symbol]?.companyName ?? symbol,
-              logoUrl: profile.logoUrl ?? current[symbol]?.logoUrl ?? null,
-            },
-          }));
-        })
-        .catch(() => {
-          // The new row keeps its symbol fallback if the independent logo request fails.
-        });
+      /*
+       * No follow-up profile request. The action that created this row already
+       * resolved the identity server-side and returned it, so asking the browser
+       * to fetch the same thing again only spends a request — and, whenever the
+       * profile providers are unavailable, prints an error for a row that is in
+       * fact complete.
+       */
       // Quote is independent from the persisted item. Failure only changes its display state.
       try {
         const response = await fetch(`/api/market/quote/${encodeURIComponent(symbol)}`);

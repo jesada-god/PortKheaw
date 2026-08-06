@@ -72,7 +72,7 @@ export default function SearchPage() {
       {!loading && error && <p className="p-6 text-sm text-amber-300">{error}</p>}
       {!loading && !error && results.length === 0 && <p className="p-8 text-center text-slate-500">ไม่พบข้อมูลสำหรับ &quot;{query}&quot;</p>}
       {!loading && results.map((result) => <button key={`${result.symbol}-${result.exchange ?? ''}`} onClick={() => openSymbol(result.symbol)} className="flex min-h-16 w-full items-center gap-3 border-b border-slate-800/50 p-4 text-left last:border-0 hover:bg-slate-800/50">
-        <InstrumentLogo symbol={result.symbol} companyName={result.name} logoUrl={null} size={40} />
+        <InstrumentLogo symbol={result.symbol} companyName={result.name} logoUrl={result.logoUrl ?? null} size={40} />
         <span className="w-20 shrink-0 font-bold text-white">{result.symbol}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm text-slate-200">{result.name}</span><span className="block truncate text-xs text-slate-500">{result.exchange ?? 'ไม่ระบุตลาด'} · {result.assetType} · {result.currency ?? 'USD'}</span></span>
         {result.status === 'delisted' && <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-300">DELISTED</span>}
         <span role="button" aria-label={`เพิ่ม ${result.symbol} เข้ารายการติดตาม`} aria-disabled={!isOnline || result.status === 'delisted'} onClick={(event) => void addToWatchlist(event, result)} className={`flex min-h-11 min-w-11 items-center justify-center rounded-full ${!isOnline || result.status === 'delisted' ? 'cursor-not-allowed text-slate-700' : 'text-slate-500 hover:bg-[#D4FF00]/10 hover:text-[#D4FF00]'}`}><Plus size={20} /></span>

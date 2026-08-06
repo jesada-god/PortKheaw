@@ -4,6 +4,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstrumentLogo, normalizeInstrumentLogoUrl } from './InstrumentLogo';
+import {
+  InstrumentLogoProvider,
+  rememberInstrumentLogo,
+  resetRememberedInstrumentLogos,
+} from './InstrumentLogoProvider';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -120,6 +125,103 @@ describe('InstrumentLogo', () => {
     act(() => image!.dispatchEvent(new Event('error')));
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('[role="img"]')?.textContent).toBe('AAP');
+  });
+
+  it('draws the logo the page resolved when the caller has none in scope', () => {
+    act(() => {
+      root.render(
+        <InstrumentLogoProvider logos={{ ONDS: 'https://images.example.test/onds.png' }}>
+          {/* Exactly what a holding row passes: it knows the symbol, not the URL. */}
+          <InstrumentLogo symbol="ONDS" companyName="Ondas" logoUrl={null} />
+        </InstrumentLogoProvider>,
+      );
+    });
+    const image = container.querySelector('img') as HTMLImageElement;
+    expect(image.getAttribute('src')).toBe('https://images.example.test/onds.png');
+  });
+
+  it('lets an explicit logo win over the page-level one', () => {
+    act(() => {
+      root.render(
+        <InstrumentLogoProvider logos={{ SPY: 'https://images.example.test/spy.png' }}>
+          <InstrumentLogo symbol="SPY" companyName="S&P 500" logoUrl="/market-logos/spy.svg" />
+        </InstrumentLogoProvider>,
+      );
+    });
+    // `next/image` serves the same-origin asset, so the bundled mark wins.
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('/market-logos/spy.svg');
+  });
+
+  it('paints a logo a mutation just resolved, without a reload', () => {
+    resetRememberedInstrumentLogos();
+    // Exactly what a newly added holding renders as: symbol known, logo not yet.
+    act(() => {
+      root.render(<InstrumentLogo symbol="AEVA" companyName="Aeva" logoUrl={null} />);
+    });
+    expect(container.querySelector('[role="img"]')?.textContent).toBe('AEV');
+
+    // The add mutation comes back with the URL it resolved and persisted.
+    act(() => rememberInstrumentLogo('aeva', 'https://images.example.test/aeva.png'));
+
+    expect(container.querySelector('img')?.getAttribute('src'))
+      .toBe('https://images.example.test/aeva.png');
+    resetRememberedInstrumentLogos();
+  });
+
+  it('ignores an empty mutation response rather than blanking a logo', () => {
+    resetRememberedInstrumentLogos();
+    rememberInstrumentLogo('NVTS', 'https://images.example.test/nvts-ok.png');
+    act(() => {
+      root.render(<InstrumentLogo symbol="NVTS" companyName="Navitas" logoUrl={null} />);
+    });
+    act(() => {
+      rememberInstrumentLogo('NVTS', null);
+      rememberInstrumentLogo('NVTS', '');
+    });
+
+    expect(container.querySelector('img')?.getAttribute('src'))
+      .toBe('https://images.example.test/nvts-ok.png');
+    resetRememberedInstrumentLogos();
+  });
+
+  it('reports a broken provider logo once, then falls back silently', () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: { body?: string }) => {
+      calls.push(`${url}:${init?.body ?? ''}`);
+      return Promise.resolve(new Response('{}'));
+    }));
+    const broken = 'https://images.example.test/broken-once.png';
+
+    act(() => {
+      root.render(<InstrumentLogo symbol="NVTS" companyName="Navitas" logoUrl={broken} />);
+    });
+    act(() => container.querySelector('img')!.dispatchEvent(new Event('error')));
+    expect(container.querySelector('[role="img"]')?.textContent).toBe('NVT');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('/api/instruments/logo-invalidate');
+    expect(calls[0]).toContain('NVTS');
+
+    // A second component showing the same URL must not report it again.
+    act(() => {
+      root.render(<InstrumentLogo symbol="NVTS" companyName="Navitas" logoUrl={broken} />);
+    });
+    expect(container.querySelector('img')).toBeNull();
+    expect(calls).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not report a same-origin asset that fails to load', () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      calls.push(url);
+      return Promise.resolve(new Response('{}'));
+    }));
+    act(() => {
+      root.render(<InstrumentLogo symbol="GLD" companyName="ทองคำ" logoUrl="/market-logos/gld.svg" />);
+    });
+    act(() => container.querySelector('img')!.dispatchEvent(new Event('error')));
+    expect(calls).toHaveLength(0);
+    vi.unstubAllGlobals();
   });
 
   it('keeps a successfully loaded provider image after the timeout window', async () => {
