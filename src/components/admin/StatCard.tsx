@@ -62,7 +62,13 @@ export function StatCard({
           : `${TONE_CLASS[tone]} bg-[var(--surface)]`
       }`}
     >
-      <p className={`truncate text-xs ${hero ? 'font-medium text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
+      {/*
+        The label stays the same muted colour as every other card's, including on
+        the hero: `--accent` on `--accent-soft` measures 4.34:1 in the light
+        theme, which is under AA for 12px text. The card is already the emphasis
+        — it does not need the label tinted as well.
+      */}
+      <p className={`truncate text-xs text-[var(--text-muted)] ${hero ? 'font-medium' : ''}`}>
         {label}
       </p>
       {/*
