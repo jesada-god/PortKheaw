@@ -386,7 +386,7 @@ html[data-reduce-motion] *::after {
  *
  * One visual for every wait in the product: the mascot bounces, a static
  * speech bubble sits above it, and a contact shadow tracks the bounce. The
- * mascot is `public/brand/kheaw-loading.png`, cut from the source artwork with
+ * mascot is `public/brand/kheaw-loading.webp`, cut from the source artwork with
  * its alpha intact — no plate, no baked text, no baked shadow, so it drops onto
  * the dark and the light surface unchanged.
  *

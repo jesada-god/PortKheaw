@@ -16,7 +16,7 @@ export default function Loading() {
   return (
     <div>
       <Header title={`กำลังโหลด ${appConfig.name}`} />
-      <KheawLoader variant="page" deferred />
+      <KheawLoader variant="page" deferred priority />
     </div>
   );
 }

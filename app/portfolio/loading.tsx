@@ -14,7 +14,7 @@ export default function PortfolioLoading() {
         title="พอร์ตโฟลิโอจำลอง"
         subtitle="คำนวณใหม่จาก Transaction Ledger ทุกครั้ง โดยไม่ส่งคำสั่งซื้อขายจริง"
       />
-      <KheawLoader variant="page" deferred />
+      <KheawLoader variant="page" deferred priority />
     </div>
   );
 }

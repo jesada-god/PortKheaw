@@ -161,7 +161,9 @@ export function NewsFeed({
 
   let content: React.ReactNode;
   if (state === 'loading') {
-    content = <div className="space-y-3" aria-label="กำลังโหลดข่าว" aria-busy="true">{[1, 2, 3].map((index) => <NewsCardSkeleton key={index} />)}</div>;
+    // role="status": a bare <div> is role="generic", which prohibits both
+    // aria-label and aria-busy, so axe rejected them and AT read nothing.
+    content = <div className="space-y-3" role="status" aria-label="กำลังโหลดข่าว" aria-busy="true">{[1, 2, 3].map((index) => <NewsCardSkeleton key={index} />)}</div>;
   } else if (state !== 'ready' && state !== 'empty') {
     content = (
       <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-6 text-center">

@@ -52,7 +52,7 @@ describe('KheawLoader', () => {
   it('accepts a different message without changing anything else', () => {
     render(<KheawLoader message="กำลังโหลดข้อมูลออปชัน" />);
     expect(bubble()?.textContent).toBe('กำลังโหลดข้อมูลออปชัน');
-    expect(mascot()?.getAttribute('src')).toBe('/brand/kheaw-loading.png');
+    expect(mascot()?.getAttribute('src')).toBe('/brand/kheaw-loading.webp');
   });
 
   it('treats the mascot as decorative, since the status text already speaks', () => {
@@ -69,6 +69,36 @@ describe('KheawLoader', () => {
     // aspect ratio from these and holds the space during load.
     expect(image.getAttribute('width')).toBe('360');
     expect(image.getAttribute('height')).toBe('352');
+  });
+
+  it('leaves the mascot lazy by default, and fetches it first when prioritised', () => {
+    // The default belongs to section loaders, which sit below the fold.
+    render(<KheawLoader />);
+    expect(mascot()?.getAttribute('loading')).toBe('lazy');
+
+    /*
+     * On a route fallback the mascot IS the LCP element, and `lazy` hid it from
+     * the preload scanner: Lighthouse measured 1.07s of load delay because the
+     * request could not start until after first layout, behind every app chunk.
+     */
+    render(<KheawLoader variant="page" deferred priority />);
+    const image = mascot()!;
+    // next/image drops the attribute entirely rather than writing `eager`.
+    expect(image.getAttribute('loading')).toBeNull();
+    expect(image.getAttribute('fetchpriority')).toBe('high');
+  });
+
+  it('offers the browser exactly one candidate, cut to the drawn size', () => {
+    render(<KheawLoader variant="page" />);
+    /*
+     * No `srcSet`, so there is no larger variant to pick by mistake, and no
+     * `_next/image` transform on the critical path. Over-download is prevented
+     * upstream instead: `--kheaw-mascot-size` tops out at 180px and the one
+     * committed file is 360px — that width at a 2x device pixel ratio.
+     */
+    expect(mascot()?.getAttribute('src')).toBe('/brand/kheaw-loading.webp');
+    expect(mascot()?.getAttribute('srcset')).toBeNull();
+    expect(mascot()?.getAttribute('width')).toBe('360');
   });
 
   it('carries nothing but the mascot and the message', () => {

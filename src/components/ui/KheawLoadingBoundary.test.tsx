@@ -64,7 +64,7 @@ const CONTENT = 'ผลลัพธ์จริง';
 /** Everything that makes the loader visible to a person or a screen reader. */
 const loaderShown = () => Boolean(
   container.querySelector('[role="status"]')
-  && container.querySelector('img[src="/brand/kheaw-loading.png"]'),
+  && container.querySelector('img[src="/brand/kheaw-loading.webp"]'),
 );
 const loaderElement = () => container.querySelector<HTMLElement>('[role="status"]');
 const message = () => container.querySelector('.kheaw-loader__bubble')?.textContent ?? null;

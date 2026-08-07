@@ -9,7 +9,7 @@ export default function WatchlistLoading() {
   return (
     <div>
       <Header title="รายการติดตาม" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
-      <KheawLoader variant="page" deferred />
+      <KheawLoader variant="page" deferred priority />
     </div>
   );
 }

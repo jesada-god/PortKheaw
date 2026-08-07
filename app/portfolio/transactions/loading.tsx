@@ -8,7 +8,7 @@ export default function PortfolioTransactionsLoading() {
         title="ประวัติเงินเข้า–ออก"
         subtitle="ทุกรายการอ่านจาก Transaction Ledger เดิม ไม่มีตารางประวัติแยกต่างหาก"
       />
-      <KheawLoader variant="page" deferred />
+      <KheawLoader variant="page" deferred priority />
     </div>
   );
 }

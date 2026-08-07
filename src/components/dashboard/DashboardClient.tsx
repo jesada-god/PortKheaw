@@ -50,8 +50,10 @@ const NewsFeed = dynamic(
   () => import('@/src/components/news/NewsFeed').then((module) => module.NewsFeed),
   {
     ssr: false,
+    // role="status" for the same reason as the breadth bar below: a bare <div>
+    // is role="generic", which may not carry a name.
     loading: () => (
-      <div className="space-y-3" aria-label="กำลังโหลดข่าว">
+      <div className="space-y-3" role="status" aria-label="กำลังโหลดข่าว">
         {[1, 2, 3].map((item) => (
           <div key={item} className="h-24 animate-pulse rounded-xl bg-[var(--surface-elevated)]" />
         ))}
@@ -736,7 +738,18 @@ function BreadthSection({
               </div>
             ))}
           </div>
-          <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-[var(--surface-selected)]" aria-label="สัดส่วนหุ้นขึ้น ลง และไม่เปลี่ยนแปลง">
+          {/*
+           * role="img" is what makes the aria-label legal here. A bare <div> is
+           * role="generic", which prohibits a name, so axe flagged the label as
+           * an ARIA attribute the element may not use — and screen readers threw
+           * it away, leaving the bar silent. As an image it also gets to state
+           * the counts it is drawing instead of only naming the categories.
+           */}
+          <div
+            className="mt-4 flex h-3 overflow-hidden rounded-full bg-[var(--surface-selected)]"
+            role="img"
+            aria-label={`สัดส่วนหุ้น: ปรับขึ้น ${data.advancing.toLocaleString()} ตัว ปรับลง ${data.declining.toLocaleString()} ตัว ไม่เปลี่ยนแปลง ${data.unchanged.toLocaleString()} ตัว`}
+          >
             <span className="bg-[var(--positive)]" style={{ width: width(data.advancing) }} />
             <span className="bg-[var(--negative)]" style={{ width: width(data.declining) }} />
           </div>

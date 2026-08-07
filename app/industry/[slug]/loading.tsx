@@ -10,7 +10,7 @@ export default function IndustryDetailLoading() {
   return (
     <div>
       <Header title="รายละเอียดอุตสาหกรรม" />
-      <KheawLoader variant="page" deferred />
+      <KheawLoader variant="page" deferred priority />
     </div>
   );
 }

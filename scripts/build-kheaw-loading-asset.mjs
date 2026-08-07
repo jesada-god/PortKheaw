@@ -2,7 +2,7 @@
  * Extracts the loading-pose Kheaw from the supplied artwork.
  *
  * Same deal as `build-kheaw-assets.mjs`: a one-off asset generator, not part of
- * `npm run build`. Its output (public/brand/kheaw-loading.png) is committed, so
+ * `npm run build`. Its output (public/brand/kheaw-loading.webp) is committed, so
  * nobody needs to run it to build or deploy. `sharp` is deliberately NOT a
  * project dependency — install it on demand when the artwork changes:
  *
@@ -31,7 +31,7 @@ const sharp = await import('sharp').then((module) => module.default).catch(() =>
 });
 
 const sourcePath = fileURLToPath(new URL('../docs/brand/kheaw-loading-source.png', import.meta.url));
-const outputPath = fileURLToPath(new URL('../public/brand/kheaw-loading.png', import.meta.url));
+const outputPath = fileURLToPath(new URL('../public/brand/kheaw-loading.webp', import.meta.url));
 
 /*
  * The bubble occupies rows 99–315 of the source and the mascot rows 326–730,
@@ -153,7 +153,7 @@ for (let y = 0; y < height; y += 1) {
   }
 }
 
-const output = await sharp(pixels, { raw: { width, height, channels } })
+const quantised = await sharp(pixels, { raw: { width, height, channels } })
   .extract({ left, top, width: right - left + 1, height: bottom - top + 1 })
   .resize({ width: OUTPUT_WIDTH, kernel: 'lanczos3' })
   // Quantised rather than truecolour: the artwork is flat cel shading with a
@@ -162,9 +162,22 @@ const output = await sharp(pixels, { raw: { width, height, channels } })
   .png({ palette: true, quality: 90, effort: 10 })
   .toBuffer();
 
+/*
+ * Shipped as lossless WebP, encoded from the quantised PNG above rather than
+ * from the raw pixels: the 256-colour reduction is what WebP's lossless mode
+ * compresses so well, so the two steps compound. 45,484 bytes to 38,034.
+ *
+ * Lossless, not q80 — and not AVIF. This is the LCP element of every slow route
+ * in the product, and both lossy paths were measured against the PNG before
+ * being rejected: WebP q80 shifted colour channels by up to 72/255 across flat
+ * cel-shaded fills, and AVIF q80 moved the alpha channel by up to 18, which
+ * frays the cut-out edge the loader depends on. Lossless is pixel-identical
+ * (max RGB delta 0, max alpha delta 0) and still 16% smaller, and WebP decodes
+ * faster than AVIF on the low-end phones this asset exists for.
+ */
+const output = await sharp(quantised).webp({ lossless: true, effort: 6 }).toBuffer();
+
 await mkdir(fileURLToPath(new URL('../public/brand/', import.meta.url)), { recursive: true });
-// Written as bytes, not re-encoded through sharp: piping the buffer back into
-// `toFile` would drop the palette and inflate the file by a third.
 await writeFile(outputPath, output);
 
 const meta = await sharp(output).metadata();

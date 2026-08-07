@@ -10,5 +10,5 @@ import { KheawLoader } from '@/src/components/ui/KheawLoader';
  * "still working" beats a mock-up of the answer.
  */
 export default function StockDetailLoading() {
-  return <KheawLoader variant="page" deferred />;
+  return <KheawLoader variant="page" deferred priority />;
 }

@@ -21,7 +21,16 @@ export const KHEAW_LOADING_MESSAGE = 'กำลังโหลดอยู่น
 /** Names the live region for assistive technology. */
 export const KHEAW_LOADING_STATUS_LABEL = 'กำลังโหลดข้อมูล';
 
-/** Intrinsic size of public/brand/kheaw-loading.png. */
+/**
+ * Intrinsic size of public/brand/kheaw-loading.webp.
+ *
+ * This is also the whole of the answer to "don't download more than you draw".
+ * `--kheaw-mascot-size` is `clamp(110px, 34vw, 180px)`, so 180px is the widest
+ * the mascot is drawn on any viewport, and the asset is cut to exactly twice
+ * that for a 2x device pixel ratio (`OUTPUT_WIDTH` in the generator). A `sizes`
+ * prop would add nothing: `unoptimized` means next/image emits no `srcSet`, and
+ * it drops `sizes` with it, because there is only ever this one file to fetch.
+ */
 const MASCOT_WIDTH = 360;
 const MASCOT_HEIGHT = 352;
 
@@ -31,6 +40,14 @@ export interface KheawLoaderProps {
   message?: string;
   /** Apply the CSS-timed 300ms grace. For server-rendered route fallbacks. */
   deferred?: boolean;
+  /**
+   * Fetch the mascot eagerly, at high priority, with a `<link rel=preload>`.
+   *
+   * For route fallbacks only, where the mascot is the first and largest thing
+   * on screen and is therefore the page's LCP element. Left off elsewhere: a
+   * section loader sits below the fold and has no claim on the preload slot.
+   */
+  priority?: boolean;
   /** Fade out over the content that has just arrived. */
   leaving?: boolean;
   className?: string;
@@ -40,6 +57,7 @@ export function KheawLoader({
   variant = 'section',
   message = KHEAW_LOADING_MESSAGE,
   deferred = false,
+  priority = false,
   leaving = false,
   className,
 }: KheawLoaderProps) {
@@ -66,18 +84,41 @@ export function KheawLoader({
       <p className="kheaw-loader__bubble">{message}</p>
       <span className="kheaw-loader__stage">
         <Image
-          src="/brand/kheaw-loading.png"
+          src="/brand/kheaw-loading.webp"
           /*
            * Decorative: the status text above says everything the mascot says.
            *
            * `unoptimized` keeps this a plain <img> pointing straight at the
-           * committed 45KB asset. Routing a loading indicator through the image
+           * committed 38KB asset. Routing a loading indicator through the image
            * optimizer would put a transform on the critical path of exactly the
-           * slow pages this component exists to cover.
+           * slow pages this component exists to cover — and the asset is already
+           * lossless WebP, cut to the one size it is ever drawn at, so there is
+           * nothing left for the optimizer to win.
            */
           alt=""
           aria-hidden="true"
           unoptimized
+          /*
+           * `priority` is what keeps this off the LCP critical path. next/image
+           * defaults to `loading="lazy"`, which hides the mascot from the
+           * preload scanner: the browser could not even request it until after
+           * the first layout, by which point every low-priority app chunk was
+           * already queued ahead of it. Lighthouse measured 1.07s of that pure
+           * load delay — 41% of a 2.6s LCP — on a route fallback whose whole
+           * job is to be the thing a slow page shows first.
+           *
+           * This costs no extra bytes: the image is in the fallback markup and
+           * was being fetched on every one of these routes already. It only
+           * moves the request from "after layout" to "with the stylesheet".
+           */
+          priority={priority}
+          /*
+           * `priority` alone only drops `loading="lazy"` and emits the head
+           * preload; the element's own hint stays unset. Sending `high` too
+           * keeps the mascot ahead of the app chunks that the browser would
+           * otherwise let overtake it once the preload has been honoured.
+           */
+          fetchPriority={priority ? 'high' : undefined}
           width={MASCOT_WIDTH}
           height={MASCOT_HEIGHT}
           draggable={false}
