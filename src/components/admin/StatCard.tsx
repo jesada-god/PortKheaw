@@ -63,12 +63,15 @@ export function StatCard({
       }`}
     >
       {/*
-        The label stays the same muted colour as every other card's, including on
-        the hero: `--accent` on `--accent-soft` measures 4.34:1 in the light
-        theme, which is under AA for 12px text. The card is already the emphasis
-        — it does not need the label tinted as well.
+        The hero's label is the full text colour rather than the muted one every
+        other card uses. Measured on the deployed page: against the accent
+        surface in the light theme, both `--accent` and `--text-muted` come out
+        at 4.34:1 — under AA for 12px — because that surface is darker than the
+        `--surface` those colours were chosen against. `--text` measures 15.5:1
+        on it. The emphasis is the surface and the figure; the label just has to
+        be readable.
       */}
-      <p className={`truncate text-xs text-[var(--text-muted)] ${hero ? 'font-medium' : ''}`}>
+      <p className={`truncate text-xs ${hero ? 'font-medium text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
         {label}
       </p>
       {/*
@@ -83,7 +86,11 @@ export function StatCard({
       >
         {value}
       </p>
-      {hint && <p className="mt-auto pt-1 text-xs text-[var(--text-muted)]">{hint}</p>}
+      {hint && (
+        <p className={`mt-auto pt-1 text-xs ${hero ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
