@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle, ChevronRight, ExternalLink, FlaskConical, LifeBuoy, ReceiptText, Search, Wallet,
@@ -275,42 +276,50 @@ export default async function AdminDashboardPage({
           )}
 
           {stats && (
-            <>
-              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="flex min-w-0 flex-col gap-5">
+              {/*
+                Three groups, in the order an operator asks the questions: who is
+                here, what did they pay, is anything broken. Every figure is the
+                same figure as before from the same single aggregate — the only
+                thing that changed is which heading it sits under, so a number
+                nobody could place ("PromptPay รอชำระ" beside the tier counts) is
+                now next to the money it belongs to.
+
+                Each group's column count is chosen so its last row is full.
+                Ragged tails are what made the old three-grid stack read as empty
+                space rather than as structure.
+              */}
+              <StatGroup title="ผู้ใช้" featureFirst>
                 {/*
-                  First, and deliberately outside the period: every other figure
-                  in this grid answers "in the selected window", this one answers
-                  "right now". The hint says so on the card, because it sits
-                  directly under a date-range control that does not move it.
+                  The one card in the group that is not a slice of the others, and
+                  deliberately outside the period: every other figure here answers
+                  "in the selected window", this one answers "right now". The hint
+                  says so, because it sits under a date control that cannot move
+                  it.
                 */}
                 <StatCard
                   label="ผู้ใช้งานทั้งหมด"
                   value={formatCount(stats.total_users)}
                   hint="บัญชีที่มีอยู่ตอนนี้ ไม่ขึ้นกับช่วงเวลาที่เลือก"
+                  emphasis="hero"
                 />
                 <StatCard label="Basic" value={formatCount(stats.basic_members)} />
                 <StatCard label="Pro" value={formatCount(stats.pro_members)} />
                 <StatCard label="Elite" value={formatCount(stats.elite_members)} />
                 <StatCard label="กำลังทดลองใช้ (Trial)" value={formatCount(stats.trial_members)} />
-                <StatCard
-                  label="PromptPay รอชำระ"
-                  value={formatCount(stats.promptpay_pending)}
-                  tone={stats.promptpay_pending > 0 ? 'attention' : 'neutral'}
-                />
-                <StatCard
-                  label="ค้างชำระ (Past due)"
-                  value={formatCount(stats.past_due_members)}
-                  tone={stats.past_due_members > 0 ? 'attention' : 'neutral'}
-                />
                 <StatCard label="สมาชิกใหม่วันนี้" value={formatCount(stats.new_members_today)} />
                 <StatCard
                   label="สมาชิกใหม่ 7 วัน"
                   value={formatCount(stats.new_members_7d)}
                   hint={`30 วัน: ${formatCount(stats.new_members_30d)}`}
                 />
-              </div>
+              </StatGroup>
 
-              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              <StatGroup
+                title="รายได้"
+                columns="sm:grid-cols-3 lg:grid-cols-3"
+                note="รายได้คำนวณจากใบแจ้งหนี้ที่ชำระแล้วเท่านั้น หักด้วยยอดที่คืนเงินแล้ว ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ"
+              >
                 <StatCard label="รายได้วันนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_today_minor)} />
                 <StatCard label="รายได้เดือนนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_month_minor)} />
                 <StatCard
@@ -322,9 +331,19 @@ export default async function AdminDashboardPage({
                   label="คืนเงินช่วงที่เลือก (บาท)"
                   value={formatMinorAsBaht(stats.refunds_period_minor)}
                 />
-              </div>
+                <StatCard
+                  label="ค้างชำระ (Past due)"
+                  value={formatCount(stats.past_due_members)}
+                  tone={stats.past_due_members > 0 ? 'attention' : 'neutral'}
+                />
+                <StatCard
+                  label="PromptPay รอชำระ"
+                  value={formatCount(stats.promptpay_pending)}
+                  tone={stats.promptpay_pending > 0 ? 'attention' : 'neutral'}
+                />
+              </StatGroup>
 
-              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatGroup title="ระบบ" columns="sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                   label="Webhook ที่ยังลองใหม่อยู่"
                   value={formatCount(stats.failed_webhooks)}
@@ -345,12 +364,8 @@ export default async function AdminDashboardPage({
                   value={formatCount(stats.critical_reconciliation_issues)}
                   tone={stats.critical_reconciliation_issues > 0 ? 'critical' : 'neutral'}
                 />
-              </div>
-              <p className="text-xs text-[var(--text-muted)]">
-                รายได้คำนวณจากใบแจ้งหนี้ที่ชำระแล้วเท่านั้น หักด้วยยอดที่คืนเงินแล้ว
-                ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ
-              </p>
-            </>
+              </StatGroup>
+            </div>
           )}
         </section>
 
@@ -545,6 +560,48 @@ export default async function AdminDashboardPage({
         </section>
       </main>
     </div>
+  );
+}
+
+/**
+ * One labelled band of figures.
+ *
+ * The heading is what turns nineteen cards into three answers, and it is a real
+ * `h3` under the section's `h2` so the outline a screen reader announces matches
+ * the one an eye follows.
+ *
+ * Two columns is the floor at every size, so a handset never shows a column of
+ * full-width cards; `columns` sets the wider breakpoints per group so each one
+ * lands on a full last row, which is what the old flat stack of three grids did
+ * not. `featureFirst` widens the first card to two columns — the group's own
+ * headline figure, sized to say so at every breakpoint, and on a 320px handset
+ * that simply means the full width.
+ */
+function StatGroup({
+  title,
+  children,
+  columns = 'sm:grid-cols-3 lg:grid-cols-4',
+  featureFirst = false,
+  note,
+}: {
+  title: string;
+  children: ReactNode;
+  columns?: string;
+  featureFirst?: boolean;
+  note?: string;
+}) {
+  return (
+    <section className="min-w-0 space-y-2">
+      <h3 className="text-sm font-semibold text-[var(--text-muted)]">{title}</h3>
+      <div
+        className={`grid min-w-0 grid-cols-2 gap-3 ${columns} ${
+          featureFirst ? '[&>*:first-child]:col-span-2' : ''
+        }`}
+      >
+        {children}
+      </div>
+      {note && <p className="text-xs text-[var(--text-muted)]">{note}</p>}
+    </section>
   );
 }
 
