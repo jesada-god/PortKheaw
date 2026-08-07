@@ -1,6 +1,23 @@
-import { addCalendarDays, calendarDateParts, calendarDaysBetween } from '@/src/lib/options-simulator/calendar-date';
+import { formatThaiDateOnly } from '@/src/lib/presentation/datetime';
+import {
+  acceptTargetDate,
+  addCalendarDays,
+  calendarDaysBetween,
+  clampTargetDate,
+  targetDateBounds,
+  targetDateViolation,
+  todayCalendarDate,
+} from '@/src/lib/options-simulator/calendar-date';
 
-export { addCalendarDays, calendarDaysBetween };
+export {
+  acceptTargetDate,
+  addCalendarDays,
+  calendarDaysBetween,
+  clampTargetDate,
+  targetDateBounds,
+  targetDateViolation,
+  todayCalendarDate,
+};
 
 export const BASIC_PATH_OPTIONS = [1_000, 5_000, 10_000, 25_000, 50_000] as const;
 
@@ -81,19 +98,21 @@ export function aggregatePortfolioSensitivity(legs: ResolvedLegSensitivity[]): {
   }, { delta: 0, theta: 0 });
 }
 
-export function clampTargetDate(value: string, valuationDate: string, expiration: string): string {
-  const minimum = addCalendarDays(valuationDate, 1);
-  const maximum = addCalendarDays(expiration, -1);
-  if (!calendarDateParts(value)) return minimum <= maximum ? minimum : maximum;
-  if (value < minimum) return minimum <= maximum ? minimum : maximum;
-  if (value > maximum) return maximum;
-  return value;
-}
-
-export function targetDateError(value: string, valuationDate: string, expiration: string): string | null {
-  if (!calendarDateParts(value) || value <= valuationDate) return 'วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ';
-  if (value >= expiration) return 'วันที่ต้องการดูผลต้องอยู่ก่อนวันหมดอายุ';
-  return null;
+/*
+  The reader-facing half of the Target Date rule. The rule itself — where the
+  window starts and ends — lives in `calendar-date`, so the field, the restore
+  path and the server schema cannot drift apart; only the sentence is here.
+*/
+export function targetDateError(value: string, valuationDate: string, expiration: string, today = ''): string | null {
+  switch (targetDateViolation(value, valuationDate, expiration, today)) {
+    case 'after-expiration':
+      return `วันที่ดูผลต้องไม่เกินวันหมดอายุ ${formatThaiDateOnly(expiration)}`;
+    case 'before-minimum':
+    case 'malformed':
+      return `วันที่ดูผลต้องไม่ก่อน ${formatThaiDateOnly(targetDateBounds(valuationDate, expiration, today).minimum)}`;
+    default:
+      return null;
+  }
 }
 
 /*

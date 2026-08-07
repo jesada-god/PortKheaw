@@ -620,6 +620,14 @@ html[data-reduce-motion] .kheaw-loader.kheaw-loader--leaving {
      home indicator on a notched handset. */
   --dock-inset: max(12px, env(safe-area-inset-bottom));
   --dock-clearance: calc(var(--dock-height) + var(--dock-inset) + 20px);
+  /* The simulator's sticky Calculate bar: button, its 12px padding either side,
+     and room for the one-line disabled reason that can appear under it. */
+  --simulator-cta-height: 68px;
+  /* What a page showing that bar must reserve *in addition to* the dock
+     footprint the shell already pads for. The safe-area term is inherited
+     through --dock-clearance, which is what the bar is offset by, so it is
+     deliberately not added a second time here. */
+  --simulator-cta-clearance: calc(var(--simulator-cta-height) + 28px);
 }
 
 @media (min-width: 1024px) {

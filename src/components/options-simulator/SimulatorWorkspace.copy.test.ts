@@ -152,7 +152,10 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('title="ความผันผวนที่ตลาดคาด (IV %)"');
     expect(source).toContain('min={minimumTargetDate}');
     expect(source).toContain('max={maximumTargetDate}');
-    expect(source).toContain('clampTargetDate(event.target.value');
+    // The field refuses an out-of-range pick outright; only restore paths clamp.
+    expect(source).toContain('onChange={(event) => changeTargetDate(event.target.value)}');
+    expect(source).toContain('acceptTargetDate(next,');
+    expect(source).toContain('targetDateBounds(workspace.valuationDate, earliestExpiration, today)');
     expect(source).toContain('ข้อมูลสัญญามีการเปลี่ยนแปลง กรุณาคำนวณใหม่');
   });
 
@@ -314,7 +317,7 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('dataKey="date"');
     expect(source).toContain("value: 'วันที่'");
     expect(source).toContain('min-w-0 overflow-hidden');
-    expect(source).toContain('grid-cols-1 gap-4 xl:grid-cols-2');
+    expect(source).toContain('grid-cols-1 gap-4 [&>*]:min-w-0 xl:grid-cols-2');
     expect(source).not.toContain('Math.random');
     expect(source).not.toContain('function MiniDistribution');
   });
@@ -380,7 +383,7 @@ describe('Options Portfolio Simulator copy', () => {
     expect(source).toContain('role="status" aria-label=');
     expect(source).toContain('profitLossToneClass(state)');
     expect(source).toContain('formatSignedPercent(percentage)');
-    expect(source).toContain('grid grid-cols-1 gap-3 sm:grid-cols-2');
+    expect(source).toContain('grid min-w-0 grid-cols-1 gap-3 [&>*]:min-w-0 sm:grid-cols-2');
     expect(source).toContain('min-w-0 rounded-xl');
     expect(source).toContain('formatSignedPercent(percentage)');
   });
@@ -484,7 +487,12 @@ describe('Options Portfolio Simulator copy', () => {
     expect(shellStylesSource).toContain('z-index: 50;');
     expect(source).toContain('bottom-[var(--dock-clearance)]');
     expect(source).toContain('z-40');
-    expect(source).toContain('pb-[calc(var(--dock-clearance)+5rem)]');
+    // The shell already pads the dock footprint; this page adds only the bar's
+    // own height, and only on the tabs that actually show one.
+    expect(shellStylesSource).toContain('--simulator-cta-clearance:');
+    expect(source).toContain('pb-[var(--simulator-cta-clearance)]');
+    expect(source).not.toContain('pb-[calc(var(--dock-clearance)');
+    expect(source).toContain('stickyCalculateVisible');
     expect(source).toContain('mobile-calculate-disabled-reason');
     expect(source).toContain('aria-describedby={calculateDisabledReason');
   });

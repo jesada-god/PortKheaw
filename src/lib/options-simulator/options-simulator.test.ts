@@ -269,12 +269,24 @@ describe('validation and Monte Carlo', () => {
     expect(prepared.data).not.toHaveProperty('comparisonWorkspace');
   });
 
-  it('rejects a target date equal to expiration for both calculation modes', () => {
+  /*
+    A contract may be valued on the day it expires — the engine returns intrinsic
+    value at T=0 — so the boundary the API enforces is the day *after* expiration.
+  */
+  it('accepts a target date equal to expiration for both calculation modes', () => {
     const equalDate = workspace({
       scenarios: [{ ...workspace().scenarios[0], valuationDate: '2027-01-01' }],
     });
-    const whatIf = prepareWhatIfCalculationInput(equalDate);
-    const monteCarlo = prepareMonteCarloCalculationInput(equalDate, equalDate, equalDate.monteCarlo);
+    expect(prepareWhatIfCalculationInput(equalDate).success).toBe(true);
+    expect(prepareMonteCarloCalculationInput(equalDate, equalDate, equalDate.monteCarlo).success).toBe(true);
+  });
+
+  it('rejects a target date after expiration for both calculation modes', () => {
+    const pastExpiry = workspace({
+      scenarios: [{ ...workspace().scenarios[0], valuationDate: '2027-01-02' }],
+    });
+    const whatIf = prepareWhatIfCalculationInput(pastExpiry);
+    const monteCarlo = prepareMonteCarloCalculationInput(pastExpiry, pastExpiry, pastExpiry.monteCarlo);
     expect(whatIf.success).toBe(false);
     expect(monteCarlo.success).toBe(false);
     if (!whatIf.success) expect(whatIf.issues[0]).toMatch(/^scenarios\.0\.valuationDate:/);

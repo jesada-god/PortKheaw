@@ -107,7 +107,8 @@ describe('Tools copy', () => {
     const messages = [...validationSource.matchAll(/return '([^']+)';/g)].map((match) => match[1]);
     expect(messages.length).toBeGreaterThan(10);
     expect(messages.filter((text) => BANNED.test(text) || /Valuation Date|engine decimal|Target Date/.test(text))).toEqual([]);
-    expect(validationSource).toContain('วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ');
+    // "ไม่เกิน", not "ก่อน": the expiration day itself is a valid day to value on.
+    expect(validationSource).toContain('วันที่ดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องไม่เกินวันหมดอายุ');
   });
 
   it('renders the tools shell without a single raw English or engine term', () => {

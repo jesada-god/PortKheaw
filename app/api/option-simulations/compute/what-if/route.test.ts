@@ -145,13 +145,29 @@ describe('POST /api/option-simulations/compute/what-if', () => {
 
     expect(response.status).toBe(400);
     expect(payload.error.code).toBe('invalid-calculation-input');
-    expect(payload.error.issues).toContain('scenarios.0.valuationDate: วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ');
+    expect(payload.error.issues).toContain('scenarios.0.valuationDate: วันที่ดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องไม่เกินวันหมดอายุ');
     expect(mocks.computeWhatIf).not.toHaveBeenCalled();
   });
 
-  it.each(['2027-01-01', '2027-01-02'])('rejects Target Date %s at or after expiration on the target-date field', async (targetDate) => {
+  it('accepts a Target Date on the expiration day itself', async () => {
     mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
-    const invalid = { ...calculationInput(), scenario: { ...calculationInput().scenario, targetDate } };
+    mocks.computeWhatIf.mockReturnValue({
+      valuation: { theoreticalValue: 10, currentValue: 10, simulatedValue: 10, changeFromCurrent: 0, costBasis: 1_000, projectedPnL: 0 },
+      decomposition: { priceImpact: 0, timeImpact: 0, ivImpact: 0 },
+    });
+    const atExpiry = { ...calculationInput(), scenario: { ...calculationInput().scenario, targetDate: '2027-01-01' } };
+
+    const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+      method: 'POST', body: JSON.stringify({ input: atExpiry }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.computeWhatIf).toHaveBeenCalled();
+  });
+
+  it('rejects Target Date 2027-01-02, the day after expiration, on the target-date field', async () => {
+    mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+    const invalid = { ...calculationInput(), scenario: { ...calculationInput().scenario, targetDate: '2027-01-02' } };
 
     const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
       method: 'POST', body: JSON.stringify({ input: invalid }),
@@ -161,6 +177,50 @@ describe('POST /api/option-simulations/compute/what-if', () => {
     expect(response.status).toBe(400);
     expect(payload.error.issues[0]).toMatch(/^scenarios\.0\.valuationDate:/);
     expect(mocks.computeWhatIf).not.toHaveBeenCalled();
+  });
+
+  /*
+    The reported case, at the API boundary: a 21 Aug 2026 expiry accepts 20 and
+    21 and refuses 22, so a hand-rolled POST cannot get past what the field does.
+  */
+  describe('21 Aug 2026 expiration boundary', () => {
+    const augustWorkspace: SimulationWorkspace = {
+      ...workspace,
+      valuationDate: '2026-08-04',
+      entryDate: '2026-08-04',
+      legs: [{ ...workspace.legs[0], expiration: '2026-08-21' }],
+      scenarios: [{ ...workspace.scenarios[0], valuationDate: '2026-08-13' }],
+    };
+
+    it.each(['2026-08-20', '2026-08-21'])('accepts %s', async (targetDate) => {
+      mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+      mocks.computeWhatIf.mockReturnValue({
+        valuation: { theoreticalValue: 10, currentValue: 10, simulatedValue: 10, changeFromCurrent: 0, costBasis: 1_000, projectedPnL: 0 },
+        decomposition: { priceImpact: 0, timeImpact: 0, ivImpact: 0 },
+      });
+      const input = { ...calculationInput(augustWorkspace), scenario: { ...calculationInput(augustWorkspace).scenario, targetDate } };
+
+      const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+        method: 'POST', body: JSON.stringify({ input }),
+      }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.computeWhatIf).toHaveBeenCalled();
+    });
+
+    it('rejects 2026-08-22', async () => {
+      mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'pro' } });
+      const input = { ...calculationInput(augustWorkspace), scenario: { ...calculationInput(augustWorkspace).scenario, targetDate: '2026-08-22' } };
+
+      const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/what-if', {
+        method: 'POST', body: JSON.stringify({ input }),
+      }));
+      const payload = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(payload.error.issues[0]).toMatch(/^scenarios\.0\.valuationDate:/);
+      expect(mocks.computeWhatIf).not.toHaveBeenCalled();
+    });
   });
 
   it.each([null, Number.NaN, Number.POSITIVE_INFINITY])('rejects a non-finite spot before pricing (%s)', async (spot) => {

@@ -99,8 +99,8 @@ export const calculationWorkspaceSchema = z.object({
   workspace.scenarios.forEach((scenario, index) => {
     if (scenario.valuationDate <= workspace.valuationDate) {
       context.addIssue({ code: 'custom', path: ['scenarios', index, 'valuationDate'], message: 'Target date must be after valuation date' });
-    } else if (earliestExpiration && scenario.valuationDate >= earliestExpiration) {
-      context.addIssue({ code: 'custom', path: ['scenarios', index, 'valuationDate'], message: 'Target date must be before expiration' });
+    } else if (earliestExpiration && scenario.valuationDate > earliestExpiration) {
+      context.addIssue({ code: 'custom', path: ['scenarios', index, 'valuationDate'], message: 'Target date must not be after expiration' });
     }
   });
 });
@@ -144,10 +144,17 @@ export const calculationPortfolioInputSchema = z.object({
     }
   });
   const earliestExpiration = input.legs.map((leg) => leg.expiration).sort()[0];
+  /*
+    Inclusive at the top: the expiration day itself is a legitimate day to value
+    on — the engine returns intrinsic value at T=0 — and only the day *after* it
+    is a contract that no longer exists. This is the API's own copy of the rule
+    in `calendar-date`, so a hand-rolled POST cannot get past what the field
+    refuses.
+  */
   if (input.scenario.targetDate <= input.valuationDate) {
     context.addIssue({ code: 'custom', path: ['scenario', 'targetDate'], message: 'Target date must be after valuation date' });
-  } else if (earliestExpiration && input.scenario.targetDate >= earliestExpiration) {
-    context.addIssue({ code: 'custom', path: ['scenario', 'targetDate'], message: 'Target date must be before expiration' });
+  } else if (earliestExpiration && input.scenario.targetDate > earliestExpiration) {
+    context.addIssue({ code: 'custom', path: ['scenario', 'targetDate'], message: 'Target date must not be after expiration' });
   }
 });
 
@@ -236,8 +243,8 @@ function calculationIssueMessage(path: string): string {
   if (/^legs\.\d+\.expiration$/.test(path)) return 'วันหมดอายุต้องอยู่หลังวันที่ใช้คำนวณ';
   if (/^legs\.\d+\.quantity$/.test(path)) return 'จำนวนสัญญาต้องเป็นจำนวนเต็มที่มากกว่า 0';
   if (/^scenarios\.\d+\.targetPrice$/.test(path)) return 'ราคาหุ้นที่อยากลองต้องมากกว่า 0';
-  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ';
-  if (path === 'scenario.targetDate') return 'วันที่ต้องการดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องก่อนวันหมดอายุ';
+  if (/^scenarios\.\d+\.valuationDate$/.test(path)) return 'วันที่ดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องไม่เกินวันหมดอายุ';
+  if (path === 'scenario.targetDate') return 'วันที่ดูผลต้องอยู่หลังวันที่ใช้คำนวณ และต้องไม่เกินวันหมดอายุ';
   if (path === 'scenario.volatilityShift') return 'ค่า IV ที่ใช้คำนวณต้องเป็นตัวเลขที่ถูกต้อง';
   if (path === 'scenario.rate') return 'อัตราดอกเบี้ยที่ใช้คำนวณต้องเป็นตัวเลขที่ถูกต้อง';
   if (path === 'scenario.dividendYield') return 'อัตราเงินปันผลที่ใช้คำนวณต้องเป็นตัวเลขที่ถูกต้อง';

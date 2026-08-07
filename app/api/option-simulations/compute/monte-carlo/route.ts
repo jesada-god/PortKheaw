@@ -21,7 +21,7 @@ function calculationFailure(cause: unknown): { code: string; message: string } {
     return { code: 'invalid-monte-carlo-settings', message: 'จำนวนรอบ ค่าเริ่มสุ่ม หรือสมมติฐานของชุดจำลองไม่ตรงกัน กรุณาตรวจสอบแล้วลองใหม่' };
   }
   if (/Target date exceeds|expiration/i.test(detail)) {
-    return { code: 'invalid-target-date', message: 'วันที่ต้องการดูผลต้องอยู่ก่อนวันหมดอายุของทุกสัญญา' };
+    return { code: 'invalid-target-date', message: 'วันที่ดูผลต้องไม่เกินวันหมดอายุของทุกสัญญา' };
   }
   return { code: 'monte-carlo-failed', message: 'ระบบจำลองความเป็นไปได้ไม่สำเร็จ กรุณาตรวจสอบข้อมูลที่กรอกแล้วลองใหม่' };
 }

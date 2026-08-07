@@ -6,7 +6,10 @@ import {
   BASIC_PATH_OPTIONS,
   buildProfitLossSummary,
   calendarDaysBetween,
+  acceptTargetDate,
   clampTargetDate,
+  targetDateBounds,
+  todayCalendarDate,
   convertUsdForDisplay,
   displayValidationMessage,
   engineVolatilityToPercent,
@@ -37,14 +40,47 @@ describe('Options Simulator UX helpers', () => {
     expect(calendarDaysBetween('2026-12-31', '2027-01-02')).toBe(2);
   });
 
-  it('clamps Target Date after valuation and no later than expiration', () => {
+  it('clamps Target Date after valuation and up to the expiration day itself', () => {
     expect(clampTargetDate('2026-07-19', '2026-07-19', '2026-08-19')).toBe('2026-07-20');
-    expect(clampTargetDate('2026-09-01', '2026-07-19', '2026-08-19')).toBe('2026-08-18');
-    expect(targetDateError('2026-07-19', '2026-07-19', '2026-08-19')).toContain('หลังวันที่ใช้คำนวณ');
-    expect(targetDateError('2026-08-19', '2026-07-19', '2026-08-19')).toContain('ก่อนวันหมดอายุ');
-    expect(targetDateError('2026-08-20', '2026-07-19', '2026-08-19')).toContain('ก่อนวันหมดอายุ');
+    // Out of range clamps to the expiration day, not to the day before it.
+    expect(clampTargetDate('2026-09-01', '2026-07-19', '2026-08-19')).toBe('2026-08-19');
+    expect(clampTargetDate('2026-08-19', '2026-07-19', '2026-08-19')).toBe('2026-08-19');
     expect(clampTargetDate('2026-08-13', '2026-08-04', '2026-08-21')).toBe('2026-08-13');
     expect(calendarDaysBetween('2026-08-13', '2026-08-21')).toBe(8);
+  });
+
+  /*
+    The reported bug in one test: for a 21 Aug 2026 expiry, 20 and 21 are both
+    valid days to value on and 22 is the first that is not.
+  */
+  it('accepts the expiration day and refuses only the day after it', () => {
+    expect(targetDateError('2026-08-20', '2026-08-04', '2026-08-21')).toBeNull();
+    expect(targetDateError('2026-08-21', '2026-08-04', '2026-08-21')).toBeNull();
+    expect(targetDateError('2026-08-22', '2026-08-04', '2026-08-21')).toContain('ต้องไม่เกินวันหมดอายุ');
+    expect(targetDateError('2026-07-19', '2026-07-19', '2026-08-19')).toContain('ต้องไม่ก่อน');
+  });
+
+  /* iOS fires change for values its own wheel would not allow; those are refused outright. */
+  it('refuses an out-of-range pick and keeps the last valid date', () => {
+    expect(acceptTargetDate('2026-08-22', '2026-08-13', '2026-08-04', '2026-08-21')).toBe('2026-08-13');
+    expect(acceptTargetDate('2026-08-21', '2026-08-13', '2026-08-04', '2026-08-21')).toBe('2026-08-21');
+    expect(acceptTargetDate('', '2026-08-13', '2026-08-04', '2026-08-21')).toBe('2026-08-13');
+  });
+
+  /* A saved simulation carries its own valuation date; today is a floor, never the past. */
+  it('never offers a Target Date in the past for a stale saved simulation', () => {
+    const bounds = targetDateBounds('2026-06-01', '2026-08-21', '2026-08-07');
+    expect(bounds.minimum).toBe('2026-08-07');
+    expect(bounds.maximum).toBe('2026-08-21');
+    expect(targetDateBounds('2026-08-04', '2026-08-21', '2026-08-01').minimum).toBe('2026-08-05');
+    // No calendar day yet (prerender): the floor is simply not applied.
+    expect(targetDateBounds('2026-08-04', '2026-08-21').minimum).toBe('2026-08-05');
+  });
+
+  /* Component-wise, so a browser east of UTC is not handed yesterday. */
+  it('reads today from the local calendar rather than UTC', () => {
+    expect(todayCalendarDate(new Date(2026, 7, 7, 6, 30))).toBe('2026-08-07');
+    expect(todayCalendarDate(new Date(2026, 0, 1, 0, 5))).toBe('2026-01-01');
   });
 
   it('allows an empty numeric draft and never returns NaN or Infinity', () => {
