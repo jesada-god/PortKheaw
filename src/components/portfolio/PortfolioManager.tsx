@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Edit3, FolderOpen, History, Lock, Plus, RotateCcw, Target, Trash2, Undo2 } from 'lucide-react';
+import { Archive, Edit3, Eraser, FolderOpen, History, Lock, Plus, RotateCcw, Target, Trash2, Undo2 } from 'lucide-react';
 import {
   archivePortfolioAction,
   createPortfolioAction,
+  resetPortfolioAction,
   restoreDeletedPortfolioAction,
   restorePortfolioAction,
   setPortfolioGoalAction,
@@ -136,6 +137,15 @@ export function PortfolioManager({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [undoTarget, setUndoTarget] = useState<{ id: string; name: string } | null>(null);
+  const [resetTarget, setResetTarget] = useState<PortfolioRecord | null>(null);
+  const [resetError, setResetError] = useState('');
+  /*
+   * A reset is irreversible, so the guard against sending it twice cannot be
+   * `pending` alone: two clicks inside one React batch both read the transition
+   * as idle. This flag is written before the request leaves and cleared only
+   * when it has answered, which is a boundary a batch cannot straddle.
+   */
+  const resetInFlight = useRef(false);
   const [assetTransferSource, setAssetTransferSource] = useState<PortfolioRecord | null>(null);
   const [assetStep, setAssetStep] = useState<TransferStep>('destination');
   const [assetLoading, setAssetLoading] = useState(false);
@@ -376,6 +386,44 @@ export function PortfolioManager({
     });
   }
 
+  function openReset(portfolio: PortfolioRecord) {
+    setResetError('');
+    setResetTarget(portfolio);
+  }
+
+  function closeReset() {
+    if (resetInFlight.current) return;
+    setResetTarget(null);
+    setResetError('');
+  }
+
+  /*
+   * The whole reset happens in one server call, so there is nothing to undo
+   * halfway and nothing partial to report: it either emptied the portfolio or it
+   * changed nothing. `router.refresh()` is what makes the card read zero
+   * immediately; the action revalidates the same paths, so a hard reload reads
+   * zero too rather than a cached page from before.
+   */
+  function confirmReset() {
+    if (!resetTarget || resetInFlight.current || pending || !isOnline) return;
+    resetInFlight.current = true;
+    setResetError('');
+    startTransition(async () => {
+      try {
+        const result = await resetPortfolioAction({ id: resetTarget.id });
+        if (!result.ok) {
+          setResetError(result.message);
+          return;
+        }
+        setResetTarget(null);
+        addToast({ title: `รีเซ็ตพอร์ต “${resetTarget.name}” แล้ว`, type: 'success' });
+        router.refresh();
+      } finally {
+        resetInFlight.current = false;
+      }
+    });
+  }
+
   function restoreDeleted(id: string) {
     if (pending || !isOnline) return;
     startTransition(async () => {
@@ -598,11 +646,28 @@ export function PortfolioManager({
             <Lock aria-hidden="true" size={12} className="mt-0.5 shrink-0" />
             <span>{READ_ONLY_PORTFOLIO_MESSAGE}</span>
           </p>}
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             <Button size="sm" variant="outline" onClick={() => onSelect(portfolio.id)}>เปิดดู</Button>
             <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
             <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
             {portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> เลิก Archive</Button>}
+            {/*
+              Reset sits next to deletion because it answers the neighbouring
+              question — "start this one over" rather than "get rid of it" — and
+              it is styled to read as the lesser of the two: destructive lettering
+              on the ordinary outline, against the delete button's red border. The
+              Default / Legacy portfolio gets it too, and there it matters most:
+              that portfolio cannot be deleted, so this is the only way to empty
+              it.
+            */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-[var(--negative)]/85 hover:bg-[var(--negative)]/10 hover:text-[var(--negative)]"
+              disabled={!isOnline || Boolean(writeBlock)}
+              onClick={() => openReset(portfolio)}
+              data-testid={`reset-portfolio-${portfolio.id}`}
+            ><Eraser size={14} /> รีเซ็ต</Button>
             {/*
               Deleting is now a real, reversible action rather than a euphemism.
               The Default / Legacy portfolio still cannot go — the account is
@@ -747,6 +812,32 @@ export function PortfolioManager({
           if (!confirming) return;
           run(() => archivePortfolioAction(confirming.id), 'Archive พอร์ตแล้ว', () => setConfirming(null));
         }}>Archive</Button>
+      </div>
+    </Modal>
+
+    {/*
+      Reset, confirmed in one step. There is no name to type here, unlike
+      deletion: this dialog names the portfolio itself, and what it destroys is
+      recreatable by re-entering transactions, where a deleted portfolio is not.
+    */}
+    <Modal isOpen={Boolean(resetTarget)} onClose={closeReset} title="รีเซ็ตพอร์ตนี้?">
+      <p className="text-sm text-[var(--text-muted)]">
+        พอร์ต “<strong className="break-words text-[var(--text)]">{resetTarget?.name}</strong>”
+      </p>
+      <p className="mt-3 text-sm text-[var(--text)]">
+        รายการลงทุน เงินสด ประวัติธุรกรรม และข้อมูลผลตอบแทนทั้งหมดของพอร์ตนี้จะถูกล้าง และไม่สามารถย้อนกลับได้ แต่ตัวพอร์ตจะยังอยู่
+      </p>
+      {resetError && <p role="alert" className="mt-3 text-sm text-[var(--negative)]" data-testid="reset-portfolio-error">{resetError}</p>}
+      <div className="mt-5 flex gap-2">
+        <Button variant="outline" className="flex-1" disabled={pending} onClick={closeReset}>ยกเลิก</Button>
+        <Button
+          variant="danger"
+          className="flex-1"
+          disabled={pending || !resetTarget}
+          isLoading={pending}
+          onClick={confirmReset}
+          data-testid="confirm-reset-portfolio"
+        >{pending ? 'กำลังรีเซ็ต…' : 'ยืนยันรีเซ็ต'}</Button>
       </div>
     </Modal>
 

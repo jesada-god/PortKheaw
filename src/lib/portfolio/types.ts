@@ -106,6 +106,18 @@ export interface DeletedPortfolioSummary {
   purgeAfter: string;
 }
 
+/**
+ * What a reset actually cleared. Counted by the database as it deleted, so a
+ * second reset of the same portfolio honestly reports zeros rather than
+ * repeating the first one's numbers.
+ */
+export interface PortfolioResetOutcome {
+  transactionsRemoved: number;
+  optionPositionsRemoved: number;
+  optionTargetsRemoved: number;
+  goalCleared: boolean;
+}
+
 export interface PortfolioGoal {
   targetValueUsd: number | null;
   targetDate: string | null;

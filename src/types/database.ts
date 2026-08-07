@@ -1523,6 +1523,21 @@ export interface Database {
       /** Returns the name it came back under, renamed only on a collision. */
       restore_deleted_portfolio: { Args: { target_portfolio_id: string }; Returns: string };
       /**
+       * Empties one portfolio without removing it: every ledger row, legacy
+       * option position, option target and the goal go, and the row itself —
+       * name, type, currency, legacy and archived state — stays. Returns what
+       * was actually cleared, as one row.
+       */
+      reset_portfolio: {
+        Args: { target_portfolio_id: string };
+        Returns: {
+          transactions_removed: number;
+          option_positions_removed: number;
+          option_targets_removed: number;
+          goal_cleared: boolean;
+        }[];
+      };
+      /**
        * One atomic asset move. `input_legs` carries amounts the server derived
        * from the ledger; `input_expected` is the position fingerprint the
        * database re-derives and compares before it writes anything.

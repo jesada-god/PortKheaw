@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
+import type { PortfolioResetOutcome } from '@/src/lib/portfolio/types';
 import { createClient } from '@/src/lib/supabase/server';
 import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
 import type { PortfolioActionResult } from './actions';
@@ -203,6 +204,36 @@ export async function restoreDeletedPortfolioAction(id: string): Promise<Portfol
     refreshPortfolio();
     revalidatePath('/portfolio/transactions');
     return { ok: true, name };
+  } catch (error) {
+    return deletionResultFor(error);
+  }
+}
+
+/**
+ * Reset. The portfolio survives; everything it owned does not.
+ *
+ * There is no client-supplied notion of "what to clear" and no second call to
+ * finish the job: one RPC empties the ledger, the legacy option positions, the
+ * option targets and the goal inside a single transaction, so a failure anywhere
+ * leaves the portfolio exactly as it was. The id here is a filter — ownership is
+ * decided from the session inside the database.
+ *
+ * Every figure the portfolio surfaces is derived from the ledger on read, so
+ * revalidating the pages that render it is the whole of "and it is still zero
+ * after a reload".
+ */
+export async function resetPortfolioAction(raw: unknown): Promise<PortfolioActionResult & {
+  cleared?: PortfolioResetOutcome;
+}> {
+  const input = z.object({ id: uuid }).safeParse(raw);
+  if (!input.success) return { ok: false, code: 'invalid', message: 'ไม่พบพอร์ตที่ต้องการรีเซ็ต' };
+  const repo = await repository();
+  if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
+  try {
+    const cleared = await repo.resetPortfolio(input.data.id);
+    refreshPortfolio();
+    revalidatePath('/portfolio/transactions');
+    return { ok: true, cleared };
   } catch (error) {
     return deletionResultFor(error);
   }

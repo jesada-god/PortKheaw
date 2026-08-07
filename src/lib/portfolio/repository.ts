@@ -6,6 +6,7 @@ import type {
   DeletedPortfolioSummary,
   PortfolioGoal,
   PortfolioRecord,
+  PortfolioResetOutcome,
   PortfolioTransaction,
   PortfolioType,
 } from './types';
@@ -287,6 +288,24 @@ export class PortfolioRepository {
     });
     if (error || !data) throw error ?? new Error('Portfolio was not deleted');
     return data;
+  }
+
+  /**
+   * Empties one portfolio and keeps it. The database decides ownership from the
+   * session, so the id sent here is a filter and never a permission; what comes
+   * back is what was actually cleared, which is what the interface reports.
+   */
+  async resetPortfolio(id: string): Promise<PortfolioResetOutcome> {
+    const { data, error } = await this.client.rpc('reset_portfolio', { target_portfolio_id: id });
+    if (error) throw error;
+    const row = data?.[0];
+    if (!row) throw new Error('Portfolio was not reset');
+    return {
+      transactionsRemoved: Number(row.transactions_removed),
+      optionPositionsRemoved: Number(row.option_positions_removed),
+      optionTargetsRemoved: Number(row.option_targets_removed),
+      goalCleared: row.goal_cleared,
+    };
   }
 
   /** Returns the name it came back under, which is not always the one it left. */
