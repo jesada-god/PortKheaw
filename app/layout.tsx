@@ -8,6 +8,7 @@ import { THEME_BOOTSTRAP } from '@/src/themes/bootstrap';
 import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import { AdminPreviewBanner } from '@/src/components/subscription/AdminPreviewBanner';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
+import { ReleaseAnnouncementGate } from '@/src/components/release-notes/ReleaseAnnouncementGate';
 
 export const metadata: Metadata = {
   applicationName: appConfig.name,
@@ -103,7 +104,10 @@ export default async function RootLayout({children}: {children: React.ReactNode}
             authenticated={entitlement.authenticated}
             trialOffer={entitlement.trialOffer}
           >
-            <MainLayout banner={<AdminPreviewBanner entitlement={entitlement} />}>
+            <MainLayout
+              banner={<AdminPreviewBanner entitlement={entitlement} />}
+              announcement={entitlement.authenticated ? <ReleaseAnnouncementGate /> : null}
+            >
               {children}
             </MainLayout>
             <Toaster />

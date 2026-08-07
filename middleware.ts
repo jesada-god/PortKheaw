@@ -2,6 +2,10 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { isSupabaseConfigured, clientEnv } from '@/src/config/env/client';
 import { getSafeReturnPath, isAuthFormPath, isProtectedPath } from '@/src/lib/auth/paths';
+import { readMaintenanceForEdge } from '@/src/lib/maintenance/maintenance-edge';
+import {
+  decideMaintenance, isMaintenanceExemptPath, MAINTENANCE_DENIAL_BODY,
+} from '@/src/lib/maintenance/maintenance-gate';
 import type { Database } from '@/src/types/database';
 
 function supabaseConnectSources(): string[] {
@@ -102,6 +106,48 @@ export async function middleware(request: NextRequest) {
     // and the next request starts the same round trip again.
     response.cookies.getAll().forEach(({ name, value }) => redirectResponse.cookies.set(name, value));
     return withSecurityHeaders(redirectResponse);
+  }
+
+  /*
+   * The maintenance gate.
+   *
+   * It runs here — after the session is resolved, before every other rule —
+   * because it is the only rule that can decide a request should not reach the
+   * product at all, and because the two facts it needs (is the switch on, is
+   * this caller an operator) are only knowable once the session is.
+   *
+   * Exempt paths skip the read entirely rather than reading it and ignoring the
+   * answer. That is not an optimisation: it is what guarantees a Stripe webhook
+   * delivery cannot be delayed, redirected or failed by a database that is
+   * having a bad minute during a maintenance window.
+   *
+   * Note what is *not* gated on the reader's side: a mutation is refused with a
+   * 503, never a redirect. A tab left open before the switch was thrown posts a
+   * server action to its own page URL, and a 302 would let the browser follow it
+   * into a page render instead of failing the write — which is exactly the
+   * bypass a page-only guard leaves behind.
+   */
+  if (!isMaintenanceExemptPath(pathname)) {
+    const maintenance = await readMaintenanceForEdge(supabase);
+    const decision = decideMaintenance({
+      pathname,
+      method: request.method,
+      maintenanceEnabled: maintenance.maintenanceEnabled,
+      isAdmin: maintenance.isAdmin,
+    });
+
+    if (decision.action === 'block') {
+      return withSecurityHeaders(NextResponse.json(MAINTENANCE_DENIAL_BODY, {
+        status: decision.status,
+        headers: { 'Cache-Control': 'private, no-store', 'Retry-After': '120' },
+      }));
+    }
+    if (decision.action === 'redirect') {
+      const url = request.nextUrl.clone();
+      url.pathname = decision.location;
+      url.search = '';
+      return redirectCarryingSession(url);
+    }
   }
 
   if (protectedRoute && !user) {

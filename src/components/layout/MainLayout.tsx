@@ -6,13 +6,24 @@ import FloatingDock from './FloatingDock';
 import { OfflineNotice } from '@/src/components/ui/OfflineNotice';
 import { AppRuntime } from './AppRuntime';
 import { isAuthShellPath } from '@/src/lib/auth/paths';
+import { MAINTENANCE_PATH } from '@/src/lib/maintenance/maintenance-gate';
 
 /**
  * `banner` is a server-rendered global notice — today, the admin access-preview
  * strip. It is a prop rather than an import because only the root layout can
  * resolve it, and it must not turn this client component into a server one.
  */
-export default function MainLayout({ children, banner }: { children: ReactNode; banner?: ReactNode }) {
+export default function MainLayout({ children, banner, announcement }: {
+  children: ReactNode;
+  banner?: ReactNode;
+  /**
+   * The server-resolved "what's new" popup, passed for the same reason `banner`
+   * is: only the root layout can resolve it, and it must not turn this client
+   * component into a server one. Rendered only inside the app shell — the auth
+   * and maintenance shells deliberately show nothing but themselves.
+   */
+  announcement?: ReactNode;
+}) {
   const pathname = usePathname();
 
   /*
@@ -23,7 +34,14 @@ export default function MainLayout({ children, banner }: { children: ReactNode; 
    * are skipped for the same reason: both need a session that, on these pages,
    * does not exist yet.
    */
-  if (isAuthShellPath(pathname)) {
+  /*
+   * The maintenance notice joins them, for the same reason and one more: every
+   * destination in the dock is a page the reader looking at this notice has just
+   * been redirected away from, so offering them would be five taps that land
+   * back here. `AppRuntime` is skipped too — the alert and push runtimes would
+   * spend a maintenance window retrying calls the gate is refusing.
+   */
+  if (isAuthShellPath(pathname) || pathname === MAINTENANCE_PATH) {
     return (
       <div className="min-h-dvh w-full max-w-full overflow-x-hidden bg-[var(--bg)] font-sans text-[var(--text)]">
         {children}
@@ -54,5 +72,6 @@ export default function MainLayout({ children, banner }: { children: ReactNode; 
       <div className="mx-auto w-full max-w-[1600px] flex-1">{children}</div>
     </main>
     <FloatingDock />
+    {announcement}
   </div>;
 }

@@ -140,6 +140,45 @@ export function loadAuditFeed(
   });
 }
 
+export type MaintenanceStateRow = Database['public']['Functions']['admin_maintenance_state']['Returns'][number];
+export type MaintenanceAuditRow = Database['public']['Functions']['admin_maintenance_audit']['Returns'][number];
+export type ReleaseNoteRow = Database['public']['Functions']['admin_release_notes']['Returns'][number];
+
+export function loadMaintenanceState(
+  client: AdminClient,
+): Promise<AdminReadResult<MaintenanceStateRow | null>> {
+  return read('maintenance-state', null, async () => {
+    const { data, error } = await client.rpc('admin_maintenance_state');
+    if (error) throw error;
+    return data?.[0] ?? null;
+  });
+}
+
+export function loadMaintenanceAudit(
+  client: AdminClient,
+  limit: number,
+): Promise<AdminReadResult<MaintenanceAuditRow[]>> {
+  return read('maintenance-audit', [], async () => {
+    const { data, error } = await client.rpc('admin_maintenance_audit', { input_limit: limit });
+    if (error) throw error;
+    return data ?? [];
+  });
+}
+
+export function loadReleaseNotes(
+  client: AdminClient,
+  input: { limit: number; offset: number },
+): Promise<AdminReadResult<ReleaseNoteRow[]>> {
+  return read('release-notes', [], async () => {
+    const { data, error } = await client.rpc('admin_release_notes', {
+      input_limit: input.limit,
+      input_offset: input.offset,
+    });
+    if (error) throw error;
+    return data ?? [];
+  });
+}
+
 /** The total a paged routine reported, or zero when the page is empty. */
 export function totalFrom(rows: readonly { total_count: number }[]): number {
   return rows.length > 0 ? Number(rows[0].total_count) : 0;

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import {
   AlertTriangle, ChevronRight, ExternalLink, FlaskConical, LifeBuoy, ReceiptText, Search, Wallet,
+  Wrench,
 } from 'lucide-react';
 import Header from '@/src/components/layout/Header';
 import { StatCard } from '@/src/components/admin/StatCard';
@@ -13,7 +14,8 @@ import { billingPlans, isBillingPlanKey } from '@/src/lib/billing/billing-plans'
 import { getBillingConfig } from '@/src/lib/billing/billing-server';
 import { clientEnv } from '@/src/config/env/client';
 import {
-  loadAuditFeed, loadDashboardOverview, loadRecentActivity, totalFrom, withinAdminSearchLimit,
+  loadAuditFeed, loadDashboardOverview, loadMaintenanceState, loadRecentActivity, totalFrom,
+  withinAdminSearchLimit,
 } from '@/src/lib/admin/admin-repository';
 import {
   ACTIVITY_KIND_LABEL, DASHBOARD_RANGE_LABEL, activityKinds, dashboardRanges,
@@ -79,6 +81,13 @@ const DESTINATIONS = [
     description: 'สถานะรอบทดลอง โควตา รายชื่อผู้ได้รับเชิญ และรายงาน Funnel',
     countKey: 'none',
   },
+  {
+    href: '/admin/system',
+    icon: Wrench,
+    title: 'สถานะระบบและประกาศ',
+    description: 'เปิด/ปิดแอปเพื่ออัปเดต และเขียนประกาศ “มีอะไรใหม่” ให้ผู้ใช้',
+    countKey: 'none',
+  },
 ] as const;
 
 const DATE_FORMAT = new Intl.DateTimeFormat('th-TH', {
@@ -131,12 +140,13 @@ export default async function AdminDashboardPage({
     ? await withinAdminSearchLimit(supabase, user?.id ?? null)
     : true;
 
-  const [overview, activity, audit] = await Promise.all([
+  const [overview, activity, audit, maintenance] = await Promise.all([
     loadDashboardOverview(supabase, period),
     searchAllowed
       ? loadRecentActivity(supabase, { kind, query: query || null, limit: PAGE_SIZE, offset })
       : Promise.resolve({ data: [], unavailable: false }),
     loadAuditFeed(supabase, { limit: 8, offset: 0 }),
+    loadMaintenanceState(supabase),
   ]);
 
   const stats = overview.data;
@@ -173,6 +183,37 @@ export default async function AdminDashboardPage({
           ตัวเลขทั้งหมดอ่านจากฐานข้อมูลจริงตามเวลาไทย ไม่มีข้อมูลจำลอง
           หน้านี้ไม่แสดงเลขบัตร รหัสลับ หรือข้อมูลการชำระเงินของผู้ให้บริการ
         </p>
+
+        {/*
+          The switch, summarised. The controls live on `/admin/system` rather
+          than here so that the thing which takes the product away from every
+          reader is never one stray tap away from a dashboard somebody refreshes
+          all day — but its *state* belongs on the landing page, because "is the
+          product up?" is the first question an operator opens this console with.
+        */}
+        <section className="min-w-0">
+          <Link
+            href="/admin/system"
+            className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+          >
+            <span aria-hidden="true" className="text-lg">
+              {maintenance.data?.maintenance_enabled ? '🟠' : '🟢'}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-[var(--text)]">
+                สถานะระบบ · {maintenance.data?.maintenance_enabled ? 'กำลังปรับปรุงระบบ' : 'เปิดใช้งาน'}
+              </span>
+              <span className="block text-xs text-[var(--text-muted)]">
+                {maintenance.unavailable
+                  ? 'อ่านสถานะไม่สำเร็จ กดเพื่อเปิดหน้าจัดการ'
+                  : maintenance.data?.maintenance_enabled
+                    ? 'ผู้ใช้ทั่วไปถูกพาไปหน้าแจ้งปรับปรุง บัญชี Admin ยังใช้งานได้'
+                    : 'ผู้ใช้ทุกคนเข้าใช้งานได้ตามปกติ'}
+              </span>
+            </span>
+            <ChevronRight aria-hidden="true" size={18} className="shrink-0 text-[var(--text-muted)]" />
+          </Link>
+        </section>
 
         <nav aria-label="ส่วนงานผู้ดูแลระบบ">
           <ul className="grid min-w-0 gap-2 sm:grid-cols-2">

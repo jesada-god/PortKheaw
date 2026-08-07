@@ -7,6 +7,8 @@ export type SubscriptionTier = 'basic' | 'pro' | 'elite';
 export type SubscriptionStatus = 'basic' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
 export type UserRole = 'user' | 'admin';
 export type AdminPreviewMode = 'actual' | 'basic' | 'pro' | 'elite' | 'elite_trial' | 'expired_trial';
+/** How loudly a release note is presented. Never a reason to block a reader. */
+export type ReleaseImportance = 'normal' | 'important';
 export type BillingProvider = 'stripe';
 export type BillingProviderMode = 'test' | 'live' | 'legacy_unknown';
 export type BillingPlanKey =
@@ -1818,6 +1820,109 @@ export interface Database {
       platform_readiness: {
         Args: Record<PropertyKey, never>;
         Returns: Array<{ database_ready: boolean; scheduler_status: SchedulerStatus }>;
+      };
+
+      /* ---------------------------------------------------------------------
+       * Maintenance and release notes.
+       * ------------------------------------------------------------------ */
+
+      /**
+       * The switch, plus whether *this* caller is an operator, in one round trip
+       * because middleware runs this on every request during a maintenance
+       * window. Granted to `anon`: a signed-out visitor must be able to read the
+       * public notice, and `is_admin` is false for them by construction.
+       */
+      resolve_maintenance_state: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          maintenance_enabled: boolean;
+          maintenance_message: string | null;
+          expected_resume_at: string | null;
+          maintenance_started_at: string | null;
+          is_admin: boolean;
+          database_now: string;
+        }>;
+      };
+      admin_maintenance_state: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          maintenance_enabled: boolean;
+          maintenance_message: string | null;
+          expected_resume_at: string | null;
+          maintenance_started_at: string | null;
+          maintenance_started_by: string | null;
+          updated_at: string;
+          updated_by: string | null;
+          database_now: string;
+        }>;
+      };
+      admin_set_maintenance: {
+        Args: {
+          input_enabled: boolean;
+          input_message: string | null;
+          input_expected_resume_at: string | null;
+          input_request_id: string | null;
+        };
+        Returns: 'enabled' | 'disabled' | 'unchanged' | 'invalid_state' | 'not_found';
+      };
+      admin_maintenance_audit: {
+        Args: { input_limit: number };
+        Returns: Array<{
+          id: number;
+          action: 'maintenance.enabled' | 'maintenance.disabled';
+          actor_user_id: string | null;
+          after_summary: Json;
+          created_at: string;
+        }>;
+      };
+      admin_save_release_note: {
+        Args: {
+          input_id: string | null;
+          input_version: string | null;
+          input_title: string;
+          input_content: string;
+          input_importance: ReleaseImportance;
+          /** `null` leaves the publication state alone — the "save an edit" case. */
+          input_publish: boolean | null;
+          input_request_id: string | null;
+        };
+        Returns: Array<{
+          release_id: string | null;
+          outcome:
+            | 'created' | 'created_published' | 'updated' | 'published' | 'unpublished'
+            | 'not_found' | 'invalid_title' | 'invalid_content';
+        }>;
+      };
+      admin_release_notes: {
+        Args: { input_limit: number; input_offset: number };
+        Returns: Array<{
+          id: string;
+          version: string | null;
+          title: string;
+          content: string;
+          importance: ReleaseImportance;
+          is_published: boolean;
+          published_at: string | null;
+          created_at: string;
+          updated_at: string;
+          total_count: number;
+        }>;
+      };
+      /** At most one row: the newest published release this reader has not seen. */
+      resolve_my_release_announcement: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          id: string;
+          version: string | null;
+          title: string;
+          content: string;
+          importance: ReleaseImportance;
+          published_at: string;
+        }>;
+      };
+      acknowledge_release_note: {
+        Args: { input_release_id: string };
+        Returns: 'acknowledged' | 'not_found' | 'invalid_release';
       };
     };
     Enums: Record<string, never>;
