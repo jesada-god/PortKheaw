@@ -268,3 +268,44 @@ describe('อุตสาหกรรมเด่น loading', () => {
     expect(industryCalls).toHaveLength(1);
   });
 });
+
+/**
+ * The signed-out introduction: it exists for a visitor who has never seen the
+ * product, and it must not become a landing page that a signed-in reader has to
+ * scroll past to reach their own portfolio.
+ */
+describe('public value proposition', () => {
+  function intro(): HTMLElement | null {
+    return container.querySelector('section[aria-labelledby="portkheaw-intro"]');
+  }
+
+  it('introduces the product to a signed-out visitor and links to sign-up', () => {
+    render(dashboardData('ready'));
+    const section = intro();
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain('ลงทุนให้เห็นภาพมากขึ้น ไม่ต้องเปิดหลายแอป');
+    expect(section!.textContent).toContain('รู้ว่าพอร์ตเป็นยังไง');
+    expect(section!.textContent).toContain('เข้าใจหุ้นก่อนตัดสินใจ');
+    expect(section!.textContent).toContain('ลองก่อนลงเงินจริง');
+    expect(section!.textContent).toContain('ไม่ต้องผูกบัตร');
+
+    const cta = section!.querySelector('a') as HTMLAnchorElement | null;
+    expect(cta?.textContent).toContain('เริ่มใช้ฟรี');
+    expect(cta?.getAttribute('href')).toBe('/auth/sign-up');
+  });
+
+  it('stays out of the way once the reader is signed in', () => {
+    const data = dashboardData('ready');
+    render({ ...data, portfolio: { ...data.portfolio, authenticated: true } });
+    expect(intro()).toBeNull();
+  });
+
+  it('keeps the market overview on the same page, above the fold of the scroll', () => {
+    render(dashboardData('ready'));
+    // The dashboard is not replaced by the introduction — the live sections are
+    // still rendered, and the introduction is only the first of them.
+    expect(container.querySelector('#market-overview')).not.toBeNull();
+    const sections = [...container.querySelectorAll('main > section, main > div > section')];
+    expect(sections[0]?.getAttribute('aria-labelledby')).toBe('portkheaw-intro');
+  });
+});

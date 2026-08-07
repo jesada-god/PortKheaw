@@ -71,6 +71,10 @@ export default async function StockDetailPage({
       instrumentLogoUrl={instrumentMetadataResult.status === 'fulfilled'
         ? instrumentMetadataResult.value.get(symbol)?.logoUrl ?? null
         : null}
+      // Same already-resolved metadata as the logo above — no extra request.
+      instrumentAssetType={instrumentMetadataResult.status === 'fulfilled'
+        ? instrumentMetadataResult.value.get(symbol)?.assetType ?? null
+        : null}
       initialHistory={snapshot.history}
       fxQuote={fxResult.status === 'fulfilled' ? fxResult.value.quote : null}
       evaluatedAt={new Date().toISOString()}

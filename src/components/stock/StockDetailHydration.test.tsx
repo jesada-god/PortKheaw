@@ -98,6 +98,7 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
   instrumentCurrency: 'USD',
   instrumentExchange: 'NASDAQ',
   instrumentLogoUrl: null,
+  instrumentAssetType: 'Stock',
   initialHistory: {
     data: null,
     meta: {

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  awaitsThaiDescription,
+  companyProfileKind,
   displayCountry,
   displayFiscalYearEnd,
   formatMarketCapitalization,
   isCompanyProfileTranslationLoading,
+  resolveCompanyProfileLabels,
   resolvedDescription,
   shouldRequestCompanyProfileTranslation,
 } from './profile-presentation';
@@ -65,5 +68,63 @@ describe('Company Profile presentation', () => {
       text: 'Rocket Lab provides launch services.',
       fellBackToEnglish: true,
     });
+  });
+});
+
+describe('instrument kind wording', () => {
+  it('names an ETF card a fund and everything else a company', () => {
+    expect(resolveCompanyProfileLabels('th', companyProfileKind('ETF')).title).toBe('ข้อมูลกองทุน');
+    expect(resolveCompanyProfileLabels('th', companyProfileKind('etf')).title).toBe('ข้อมูลกองทุน');
+    expect(resolveCompanyProfileLabels('th', companyProfileKind('Stock')).title).toBe('ข้อมูลบริษัท');
+  });
+
+  it('never guesses: an unknown asset type keeps the existing company wording', () => {
+    for (const assetType of [null, undefined, '', '   ', 'Mutual Fund']) {
+      expect(companyProfileKind(assetType)).toBe('company');
+      expect(resolveCompanyProfileLabels('th', companyProfileKind(assetType)).title)
+        .toBe('ข้อมูลบริษัท');
+    }
+  });
+
+  it('renames only the labels that carry the wrong noun', () => {
+    const fund = resolveCompanyProfileLabels('th', 'fund');
+    const company = resolveCompanyProfileLabels('th', 'company');
+    expect(fund.retryProfile).toBe('ลองโหลดข้อมูลกองทุนอีกครั้ง');
+    expect(fund.country).toBe(company.country);
+    expect(fund.currency).toBe(company.currency);
+    expect(fund.fiscalYearEnd).toBe(company.fiscalYearEnd);
+    expect(resolveCompanyProfileLabels('en', 'fund').title).toBe('Fund Profile');
+  });
+});
+
+describe('Thai description handover', () => {
+  const sourceText = 'Rocket Lab provides launch services.';
+
+  it('waits rather than showing the English source a Thai reader will not keep', () => {
+    expect(awaitsThaiDescription({
+      language: 'th', sourceText, translationSettled: false,
+    })).toBe(true);
+  });
+
+  it('stops waiting as soon as an attempt settles, however it settled', () => {
+    expect(awaitsThaiDescription({
+      language: 'th', sourceText, translationSettled: true,
+    })).toBe(false);
+    // The settled-but-failed case is what keeps the original text reachable.
+    expect(resolvedDescription({
+      language: 'th', sourceText, translatedText: null, translationFailed: true,
+    }).text).toBe(sourceText);
+  });
+
+  it('never withholds text from an English reader or an empty description', () => {
+    expect(awaitsThaiDescription({
+      language: 'en', sourceText, translationSettled: false,
+    })).toBe(false);
+    expect(awaitsThaiDescription({
+      language: 'th', sourceText: null, translationSettled: false,
+    })).toBe(false);
+    expect(awaitsThaiDescription({
+      language: 'th', sourceText: '   ', translationSettled: false,
+    })).toBe(false);
   });
 });

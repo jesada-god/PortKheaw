@@ -5,7 +5,7 @@ import { Lock, Mail, User } from 'lucide-react';
 import { signUpAction } from '@/app/auth/actions';
 import { IDLE_AUTH_STATE } from '@/src/lib/auth/form-state';
 import { AuthField, PasswordField } from './AuthField';
-import { AuthLink, AuthMailSentPanel, AuthBanner, AuthSubmitButton } from './AuthControls';
+import { AuthConsentNotice, AuthLink, AuthMailSentPanel, AuthBanner, AuthSubmitButton } from './AuthControls';
 
 export function SignUpForm({ next }: { next: string }) {
   const [state, formAction] = useActionState(signUpAction, IDLE_AUTH_STATE);
@@ -74,6 +74,7 @@ export function SignUpForm({ next }: { next: string }) {
         />
         <AuthSubmitButton pendingLabel="กำลังสร้างบัญชี…">สร้างบัญชี</AuthSubmitButton>
       </form>
+      <AuthConsentNotice />
     </>
   );
 }

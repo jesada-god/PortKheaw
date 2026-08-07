@@ -9,10 +9,12 @@ import type {
 import { companyProfileErrorPresentation } from '@/src/lib/stock-detail/error-presentation';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import {
-  companyProfileLabels,
+  awaitsThaiDescription,
+  companyProfileKind,
   displayCountry,
   displayFiscalYearEnd,
   isCompanyProfileTranslationLoading,
+  resolveCompanyProfileLabels,
   resolvedDescription,
   shouldRequestCompanyProfileTranslation,
   type CompanyProfileLanguage,
@@ -76,6 +78,7 @@ export function CompanyProfileCard({
   onRetry,
   language: controlledLanguage,
   onLanguageChange,
+  assetType = null,
 }: {
   symbol: string;
   profile: CompanyProfile | null;
@@ -88,6 +91,11 @@ export function CompanyProfileCard({
   onRetry: () => void;
   language?: CompanyProfileLanguage;
   onLanguageChange?: (language: CompanyProfileLanguage) => void;
+  /**
+   * The instrument master's own asset type, already resolved for this page.
+   * Decides company-vs-fund wording only — never a request, never a field.
+   */
+  assetType?: string | null;
 }) {
   const sourceText = profile?.description?.trim() || null;
   const [localLanguage, setLocalLanguage] = useState<CompanyProfileLanguage>(
@@ -144,7 +152,18 @@ export function CompanyProfileCard({
     translatedText: activeTranslation?.text ?? null,
     translationFailed: Boolean(activeTranslation?.error),
   });
-  const labels = companyProfileLabels[activeLanguage];
+  /*
+   * A Thai reader who has never had an answer for this text yet sees the
+   * placeholder, not the English source — that swap was the visible flicker.
+   * Once an attempt has settled (success or failure) the normal resolution
+   * applies, so a failed translation still shows the original paragraph.
+   */
+  const awaitingTranslation = awaitsThaiDescription({
+    language: activeLanguage,
+    sourceText,
+    translationSettled: Boolean(activeTranslation),
+  });
+  const labels = resolveCompanyProfileLabels(activeLanguage, companyProfileKind(assetType));
   const errorPresentation = companyProfileErrorPresentation(error, activeLanguage);
   const status = PROFILE_STATUS_LABELS[activeLanguage][freshness.status];
   const website = profile?.website ?? null;
@@ -234,9 +253,25 @@ export function CompanyProfileCard({
       )}
 
       <div className="mt-4 min-h-24">
-        <p className="whitespace-pre-line text-sm leading-7 text-slate-300">
-          {description.text ?? labels.missingDescription}
-        </p>
+        {awaitingTranslation ? (
+          <div
+            role="status"
+            aria-label={labels.loadingTranslation}
+            className="space-y-2.5 py-1"
+          >
+            {['w-full', 'w-11/12', 'w-4/5'].map((width) => (
+              <span
+                key={width}
+                aria-hidden="true"
+                className={`block h-3.5 rounded bg-slate-800/70 motion-safe:animate-pulse ${width}`}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="whitespace-pre-line text-sm leading-7 text-slate-300">
+            {description.text ?? labels.missingDescription}
+          </p>
+        )}
         {loadingTranslation && <p className="mt-2 text-xs text-slate-500">{labels.loadingTranslation}</p>}
         {description.fellBackToEnglish && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-300">

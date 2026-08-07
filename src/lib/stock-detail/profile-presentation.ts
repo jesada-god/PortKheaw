@@ -1,5 +1,14 @@
 export type CompanyProfileLanguage = 'th' | 'en';
 
+/**
+ * What the profile card is describing.
+ *
+ * An ETF has no employees to hire and no company to profile — it is a fund, and
+ * calling its card "ข้อมูลบริษัท" is simply the wrong noun. Only the *labels*
+ * split on this; every field, provider and request stays identical.
+ */
+export type CompanyProfileKind = 'company' | 'fund';
+
 const THAI_MONTHS: Record<string, string> = {
   January: 'มกราคม',
   February: 'กุมภาพันธ์',
@@ -72,6 +81,67 @@ export const companyProfileLabels = {
     retryTranslation: 'Retry translation',
   },
 } as const;
+
+/**
+ * Fund wording, as an overlay on the labels above rather than a second table —
+ * so a label added to `companyProfileLabels` can never be missing here.
+ */
+const FUND_LABELS = {
+  th: {
+    title: 'ข้อมูลกองทุน',
+    missingDescription: 'ยังไม่มีรายละเอียดกองทุนสำหรับแปล',
+    retryProfile: 'ลองโหลดข้อมูลกองทุนอีกครั้ง',
+  },
+  en: {
+    title: 'Fund Profile',
+    missingDescription: 'ยังไม่มีรายละเอียดกองทุนสำหรับแปล',
+    retryProfile: 'Retry fund profile',
+  },
+} as const;
+
+/**
+ * The instrument's own asset type decides the noun. Anything that is not
+ * explicitly an ETF — including a symbol nothing is known about — keeps the
+ * existing company wording, because guessing is how a stock ends up labelled a
+ * fund.
+ */
+export function companyProfileKind(assetType: string | null | undefined): CompanyProfileKind {
+  return assetType?.trim().toLowerCase() === 'etf' ? 'fund' : 'company';
+}
+
+export type CompanyProfileLabels = Record<
+  keyof typeof companyProfileLabels['th'],
+  string
+>;
+
+export function resolveCompanyProfileLabels(
+  language: CompanyProfileLanguage,
+  kind: CompanyProfileKind,
+): CompanyProfileLabels {
+  return kind === 'fund'
+    ? { ...companyProfileLabels[language], ...FUND_LABELS[language] }
+    : companyProfileLabels[language];
+}
+
+/**
+ * Whether the Thai reader is still waiting for the Thai description.
+ *
+ * The card used to render `sourceText` in this window, which meant the English
+ * paragraph was painted first and replaced by Thai a moment later — a flicker
+ * that reads as a half-loaded page. A placeholder is shown instead, and the
+ * English text is only ever reached once an attempt has actually settled (so a
+ * failed translation still falls back to the original rather than vanishing).
+ */
+export function awaitsThaiDescription(input: {
+  language: CompanyProfileLanguage;
+  sourceText: string | null;
+  /** Whether a translation attempt for THIS source text has already settled. */
+  translationSettled: boolean;
+}): boolean {
+  return input.language === 'th'
+    && Boolean(input.sourceText?.trim())
+    && !input.translationSettled;
+}
 
 export function shouldRequestCompanyProfileTranslation(
   language: CompanyProfileLanguage,

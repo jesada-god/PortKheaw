@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { AlertCircle, CheckCircle2, Loader2, MailCheck } from 'lucide-react';
+import { legalDocuments } from '@/src/lib/legal/documents';
 
 /**
  * Submit button for a server-action form.
@@ -127,6 +128,48 @@ export function ResendCooldown({ seconds = 60, children }: { seconds?: number; c
     );
   }
   return <div className="mt-4">{children}</div>;
+}
+
+/**
+ * Informational consent line, shown under the create-account action.
+ *
+ * Deliberately NOT a checkbox and not part of the form: nothing here is
+ * submitted, validated or recorded — creating the account is the acceptance,
+ * exactly as the Terms themselves already say. The two document links come from
+ * `legalDocuments`, the same catalogue the footer and Settings read, so a
+ * renamed or moved policy cannot leave this sentence pointing somewhere else.
+ */
+export function AuthConsentNotice() {
+  const terms = legalDocuments.terms;
+  const privacy = legalDocuments.privacy;
+  return (
+    <p
+      className="mt-4 text-center text-xs leading-5"
+      style={{ color: 'var(--auth-text-secondary)' }}
+    >
+      เมื่อสร้างบัญชี ถือว่าคุณยอมรับ
+      <ConsentLink href={terms.href}>{terms.title}</ConsentLink>
+      และรับทราบ
+      <ConsentLink href={privacy.href}>{privacy.title}</ConsentLink>
+    </p>
+  );
+}
+
+/**
+ * Inline link inside a running sentence — so no `min-h-11` block here, which
+ * would break the line box. The underline is always on rather than on hover, so
+ * the two policies read as links without relying on colour alone.
+ */
+function ConsentLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="rounded font-semibold underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--auth-focus)]"
+      style={{ color: 'var(--auth-primary)' }}
+    >
+      {children}
+    </Link>
+  );
 }
 
 /** Text link styled for the ivory card. */

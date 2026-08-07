@@ -95,6 +95,8 @@ interface StockDetailClientProps {
   instrumentCurrency: string | null;
   instrumentExchange: string | null;
   instrumentLogoUrl: string | null;
+  /** Instrument-master asset type, used only to name the profile card. */
+  instrumentAssetType: string | null;
   initialHistory: InitialHistoryResponse;
   fxQuote: FxQuote | null;
   evaluatedAt: string;
@@ -158,6 +160,7 @@ export function StockDetailClient({
   instrumentCurrency,
   instrumentExchange,
   instrumentLogoUrl,
+  instrumentAssetType,
   initialHistory,
   fxQuote,
   evaluatedAt,
@@ -569,6 +572,7 @@ export function StockDetailClient({
               onRetryProfile={() => void retryProfile()}
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
+              instrumentAssetType={instrumentAssetType}
             />
           )}
           {tab === 'Chart' && (
@@ -636,6 +640,7 @@ function Overview({
   onRetryProfile,
   profileLanguage,
   onProfileLanguageChange,
+  instrumentAssetType,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -646,6 +651,7 @@ function Overview({
   onRetryProfile: () => void;
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
+  instrumentAssetType: string | null;
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
@@ -692,6 +698,7 @@ function Overview({
         onRetry={onRetryProfile}
         language={profileLanguage}
         onLanguageChange={onProfileLanguageChange}
+        assetType={instrumentAssetType}
       />
     </div>
   );

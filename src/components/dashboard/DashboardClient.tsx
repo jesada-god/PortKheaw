@@ -113,6 +113,72 @@ function MiniLine({ values, positive }: { values: number[]; positive: boolean })
   );
 }
 
+const PUBLIC_VALUE_POINTS = [
+  {
+    icon: PieChart,
+    title: 'รู้ว่าพอร์ตเป็นยังไง',
+    detail: 'ติดตามมูลค่า กำไรขาดทุน และภาพรวมพอร์ต',
+  },
+  {
+    icon: TrendingUp,
+    title: 'เข้าใจหุ้นก่อนตัดสินใจ',
+    detail: 'ดูข้อมูลตลาด สถิติ ข่าว การวิเคราะห์ และ Fair Value',
+  },
+  {
+    icon: Gauge,
+    title: 'ลองก่อนลงเงินจริง',
+    detail: 'จำลอง Options และสถานการณ์ด้วย What-If และ Monte Carlo',
+  },
+] as const;
+
+/**
+ * What PortKheaw is, for somebody who has never seen it — shown only while
+ * signed out.
+ *
+ * Kept to one compact card on purpose: the overview below it is the product,
+ * and a visitor should reach the live market data by scrolling once, not by
+ * reading a landing page. A signed-in reader never sees this at all, so their
+ * portfolio stays the first thing on the screen.
+ */
+function PublicValueProposition() {
+  return (
+    <section
+      aria-labelledby="portkheaw-intro"
+      className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)] sm:p-5"
+    >
+      <h2 id="portkheaw-intro" className="text-lg font-bold leading-snug text-[var(--text)] sm:text-xl">
+        ลงทุนให้เห็นภาพมากขึ้น ไม่ต้องเปิดหลายแอป
+      </h2>
+      <p className="mt-1.5 text-sm leading-6 text-[var(--text-secondary)]">
+        ติดตามพอร์ต ดูข้อมูลหุ้น วิเคราะห์ Options และลองจำลองสถานการณ์ก่อนตัดสินใจ — ทั้งหมดใน PortKheaw
+      </p>
+      <ul className="mt-3 grid gap-1.5 sm:grid-cols-3 sm:gap-2">
+        {PUBLIC_VALUE_POINTS.map(({ icon: Icon, title, detail }) => (
+          <li key={title} className="flex items-start gap-2.5 rounded-xl bg-[var(--surface-elevated)] p-2.5 sm:p-3">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] sm:h-8 sm:w-8">
+              <Icon size={16} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-[var(--text)]">{title}</p>
+              <p className="mt-0.5 text-xs leading-5 text-[var(--text-secondary)]">{detail}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Link
+          href="/auth/sign-up"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-fg)]"
+        >
+          เริ่มใช้ฟรี
+          <ChevronRight size={16} aria-hidden="true" />
+        </Link>
+        <p className="text-xs text-[var(--text-muted)]">ไม่ต้องผูกบัตร • ทดลอง Elite ฟรี 7 วัน</p>
+      </div>
+    </section>
+  );
+}
+
 function SectionTitle({
   icon: Icon,
   title,
@@ -859,6 +925,7 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
       <Header title="ภาพรวม" subtitle="พอร์ต ตลาด อุตสาหกรรม และข่าวสำคัญ" />
       <main className="mx-auto w-full max-w-[1440px] space-y-5 p-3 sm:p-5 lg:p-6">
         <p className="sr-only" role="status" aria-live="polite">{retryNotice}</p>
+        {!view.portfolio.authenticated && <PublicValueProposition />}
         <ServiceStatus data={view.serviceStatus} />
         <PortfolioCard data={view.portfolio} usdThbRate={view.usdThbRate} />
 
