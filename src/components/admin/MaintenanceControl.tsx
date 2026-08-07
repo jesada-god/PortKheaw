@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Megaphone } from 'lucide-react';
@@ -64,24 +64,64 @@ export function MaintenanceControl({
   const router = useRouter();
   const [draftMessage, setDraftMessage] = useState(message ?? '');
   const [draftResume, setDraftResume] = useState(toBangkokLocalInput(expectedResumeAt));
-  const [confirming, setConfirming] = useState<'enable' | 'disable' | null>(null);
+  /*
+   * `'on'`/`'off'` name the state of MAINTENANCE, never the state of the app.
+   *
+   * The previous names were `'enable'`/`'disable'`, which read naturally as
+   * either — and the value sent to the server was wired to the wrong one, so
+   * "ปิดใช้งานเพื่ออัปเดต" asked the routine to switch maintenance *off*. It was
+   * already off, the routine correctly answered `unchanged`, and the console
+   * reported "สถานะไม่มีการเปลี่ยนแปลง" over a still-green chip. Naming the two
+   * values after the thing they actually set is what stops that returning.
+   */
+  const [confirming, setConfirming] = useState<'on' | 'off' | null>(null);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [offerAnnouncement, setOfferAnnouncement] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  function submit(target: 'enable' | 'disable') {
+  /*
+   * What the chip shows: the state the last successful mutation left behind,
+   * falling back to the server's value. `router.refresh()` is still issued, but
+   * the operator must not have to wait on a round trip to see that the switch
+   * they just threw actually moved.
+   */
+  const [confirmedEnabled, setConfirmedEnabled] = useState<boolean | null>(null);
+  const [serverEnabled, setServerEnabled] = useState(enabled);
+  if (serverEnabled !== enabled) {
+    // The revalidated page caught up (or another operator moved the switch);
+    // stop overriding it. Adjusting state during render is React's supported
+    // way to follow a prop — an effect here would cascade a second render.
+    setServerEnabled(enabled);
+    setConfirmedEnabled(null);
+  }
+  const shownEnabled = confirmedEnabled ?? enabled;
+
+  /** Guards against a slow first response overwriting a newer one. */
+  const requestSeq = useRef(0);
+
+  function submit(target: 'on' | 'off') {
+    if (pending) return;
     setResult(null);
+    const seq = requestSeq.current + 1;
+    requestSeq.current = seq;
+
     const formData = new FormData();
-    formData.set('enabled', target === 'disable' ? 'true' : 'false');
+    formData.set('enabled', target === 'on' ? 'true' : 'false');
     formData.set('message', draftMessage);
     formData.set('expectedResumeAt', draftResume);
     formData.set('confirm', 'yes');
+
     startTransition(async () => {
       const outcome = await setMaintenanceAction(formData);
+      // A superseded request must not repaint the console with its stale answer.
+      if (requestSeq.current !== seq) return;
       setResult(outcome);
       setConfirming(null);
       if (outcome.ok) {
-        if (target === 'enable') setOfferAnnouncement(true);
+        setConfirmedEnabled(outcome.enabled);
+        // The announcement is offered when the app comes BACK, which is the
+        // moment there is something to announce.
+        if (!outcome.enabled) setOfferAnnouncement(true);
         router.refresh();
       }
     });
@@ -95,12 +135,12 @@ export function MaintenanceControl({
           className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3 py-1 text-sm font-medium text-[var(--text)]"
           data-testid="maintenance-status"
         >
-          <span aria-hidden="true">{enabled ? '🟠' : '🟢'}</span>
-          {enabled ? 'กำลังปรับปรุงระบบ' : 'เปิดใช้งาน'}
+          <span aria-hidden="true">{shownEnabled ? '🟠' : '🟢'}</span>
+          {shownEnabled ? 'กำลังปรับปรุงระบบ' : 'เปิดใช้งาน'}
         </p>
       </div>
 
-      {enabled && (
+      {shownEnabled && (
         <dl className="grid min-w-0 grid-cols-1 gap-1 text-xs text-[var(--text-muted)] sm:grid-cols-2">
           <div className="flex min-w-0 gap-1">
             <dt className="shrink-0">เริ่มปรับปรุง:</dt>
@@ -148,8 +188,13 @@ export function MaintenanceControl({
 
       {!confirming && (
         <div className="flex min-w-0 flex-wrap gap-2">
-          {enabled ? (
-            <Button type="button" disabled={pending} onClick={() => { setConfirming('disable'); setResult(null); }}>
+          {shownEnabled ? (
+            <Button
+              type="button"
+              disabled={pending}
+              data-testid="maintenance-resume"
+              onClick={() => { setConfirming('off'); setResult(null); }}
+            >
               เปิดใช้งานแอป
             </Button>
           ) : (
@@ -157,17 +202,22 @@ export function MaintenanceControl({
               type="button"
               variant="danger"
               disabled={pending}
-              onClick={() => { setConfirming('enable'); setResult(null); }}
+              data-testid="maintenance-suspend"
+              onClick={() => { setConfirming('on'); setResult(null); }}
             >
               ปิดใช้งานเพื่ออัปเดต
             </Button>
           )}
-          {enabled && (
+          {shownEnabled && (
             <Button
               type="button"
               variant="outline"
               disabled={pending}
-              onClick={() => submit('enable')}
+              data-testid="maintenance-save-message"
+              // Saving the notice keeps maintenance ON. Sending `off` here was
+              // the same inversion as above, and would have ended the outage
+              // because somebody fixed a typo.
+              onClick={() => submit('on')}
             >
               บันทึกข้อความ
             </Button>
@@ -184,7 +234,7 @@ export function MaintenanceControl({
           <p id="maintenance-confirm-heading" className="flex items-start gap-2 text-sm text-[var(--text)]">
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-[var(--negative)]" />
             <span className="min-w-0">
-              {confirming === 'enable'
+              {confirming === 'on'
                 ? 'ยืนยันปิดการใช้งานสำหรับผู้ใช้ทั่วไปหรือไม่? บัญชี Admin จะยังเข้าใช้งานได้เพื่อตรวจสอบระบบ และการเปลี่ยนนี้จะถูกบันทึกไว้'
                 : 'ยืนยันเปิดใช้งานแอปสำหรับผู้ใช้ทุกคนหรือไม่? ผู้ใช้จะกลับเข้าใช้งานได้ทันที และการเปลี่ยนนี้จะถูกบันทึกไว้'}
             </span>
@@ -192,7 +242,7 @@ export function MaintenanceControl({
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              variant={confirming === 'enable' ? 'danger' : 'default'}
+              variant={confirming === 'on' ? 'danger' : 'default'}
               isLoading={pending}
               onClick={() => submit(confirming)}
             >

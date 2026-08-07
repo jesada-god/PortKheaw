@@ -31,16 +31,37 @@ export type SystemActionResult =
   | { ok: true; message: string; releaseId?: string }
   | { ok: false; message: string };
 
+/**
+ * A maintenance mutation reports the state it *left the switch in*, not just
+ * that it worked. The console renders from this rather than waiting for the
+ * revalidated page to come back, so the status chip can never sit on a stale
+ * value after a successful toggle.
+ */
+export type MaintenanceActionResult =
+  | { ok: true; message: string; enabled: boolean }
+  | { ok: false; message: string };
+
 const UNAVAILABLE = 'ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
 const FORBIDDEN = 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้';
 const CONFIRMATION_REQUIRED = 'กรุณายืนยันก่อนเปลี่ยนสถานะการให้บริการ';
 
-const MAINTENANCE_MESSAGE: Readonly<Record<string, string>> = {
+/*
+ * `unchanged` deliberately has no entry here.
+ *
+ * It used to read "สถานะไม่มีการเปลี่ยนแปลง", which is the least useful thing
+ * this control can say: it is the same sentence whether the operator asked for
+ * something that was already true or the request never carried what they
+ * pressed. The message is built from the *resulting state* instead, so it always
+ * names where the switch actually ended up.
+ */
+const MAINTENANCE_MESSAGE: Readonly<Record<'enabled' | 'disabled', string>> = {
   enabled: 'ปิดใช้งานสำหรับผู้ใช้ทั่วไปแล้ว บัญชี Admin ยังเข้าใช้งานได้',
   disabled: 'เปิดใช้งานแอปเรียบร้อยแล้ว ผู้ใช้เข้าใช้งานได้ทันที',
-  unchanged: 'สถานะไม่มีการเปลี่ยนแปลง',
-  invalid_state: UNAVAILABLE,
-  not_found: UNAVAILABLE,
+};
+
+const ALREADY_MESSAGE: Readonly<Record<'on' | 'off', string>> = {
+  on: 'ระบบอยู่ในสถานะปิดปรับปรุงอยู่แล้ว (ข้อความและเวลาไม่มีการเปลี่ยนแปลง)',
+  off: 'แอปเปิดใช้งานอยู่แล้ว ผู้ใช้เข้าใช้งานได้ตามปกติ',
 };
 
 async function authorizeAndBound(): Promise<
@@ -82,7 +103,7 @@ function parseBangkokLocal(value: string): string | null {
 }
 
 /** Switch the product off for ordinary readers, or back on. */
-export async function setMaintenanceAction(formData: FormData): Promise<SystemActionResult> {
+export async function setMaintenanceAction(formData: FormData): Promise<MaintenanceActionResult> {
   const gate = await authorizeAndBound();
   if (!gate.ok) return gate;
 
@@ -113,9 +134,19 @@ export async function setMaintenanceAction(formData: FormData): Promise<SystemAc
     revalidatePath('/admin');
     revalidatePath('/admin/system');
     revalidatePath('/maintenance');
-    return outcome === 'enabled' || outcome === 'disabled' || outcome === 'unchanged'
-      ? { ok: true, message: MAINTENANCE_MESSAGE[outcome] }
-      : { ok: false, message: MAINTENANCE_MESSAGE[outcome] ?? UNAVAILABLE };
+
+    /*
+     * The routine returns `unchanged` only when the stored row already matched
+     * every field of the request — so for that outcome the resulting state *is*
+     * the requested one. Anything outside these three words is a refusal, and is
+     * never reported as success.
+     */
+    if (outcome === 'enabled') return { ok: true, enabled: true, message: MAINTENANCE_MESSAGE.enabled };
+    if (outcome === 'disabled') return { ok: true, enabled: false, message: MAINTENANCE_MESSAGE.disabled };
+    if (outcome === 'unchanged') {
+      return { ok: true, enabled, message: ALREADY_MESSAGE[enabled ? 'on' : 'off'] };
+    }
+    return { ok: false, message: UNAVAILABLE };
   } catch (cause) {
     captureServerError({
       scope: 'admin.maintenance',
