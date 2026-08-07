@@ -89,7 +89,7 @@ export default function ToolsPage() {
                   </div>
                   <h3 className="mb-2 break-words text-lg font-bold text-white transition-colors group-hover:text-[#D4FF00]">{tool.title}</h3>
                   <p className="break-words text-sm leading-relaxed text-slate-400">{tool.description}</p>
-                  {!unlocked && <p className="mt-2 break-words text-xs text-purple-300">{copy.lockedLabel}</p>}
+                  {!unlocked && <p className="mt-2 break-words text-xs text-purple-400">{copy.lockedLabel}</p>}
                 </div>
 
                 <div className="relative z-10 mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-4">
