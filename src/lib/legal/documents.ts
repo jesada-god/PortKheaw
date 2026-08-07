@@ -26,10 +26,28 @@ import { billingPlanKeys, billingPlans, formatBillingBaht } from '@/src/lib/bill
 import { REFUND_WINDOW_DAYS } from '@/src/lib/billing/refund-window';
 import { TRIAL_IDENTITY_RETENTION_YEARS } from '@/src/lib/trial-identity/retention';
 
-/** The two channels a reader who cannot sign in can still reach us on. */
+/**
+ * The two channels a reader who cannot sign in can still reach us on.
+ *
+ * The community OpenChat is first because it is the one that scales: a question
+ * asked there is answered once and read by everyone who has it next. Facebook
+ * stays for the things nobody should post in a room full of strangers — an
+ * account or a payment. No personal phone number appears here any more; a
+ * number handed to every reader is a support channel that stops working the
+ * moment there is more than one of them.
+ */
 export const SUPPORT_CONTACTS = {
-  facebook: { label: 'Facebook', value: 'Jesada Tawinteung' },
-  line: { label: 'LINE', value: '0620843259' },
+  lineOpenChat: {
+    label: 'LINE OpenChat',
+    value: 'PORTKHEAW COMMUNITY',
+    detail: 'พูดคุย • สอบถาม • รายงานปัญหา',
+    href: 'https://line.me/ti/g2/4TUhjKzNp8vev-RVUGWApqg2CBCDRmAHBUOY1g?utm_source=invitation&utm_medium=link_copy&utm_campaign=default',
+  },
+  facebook: {
+    label: 'Facebook',
+    value: 'Jesada Tawinteung',
+    detail: 'สำหรับเรื่องบัญชีและการชำระเงิน',
+  },
 } as const;
 
 export type LegalBlock =

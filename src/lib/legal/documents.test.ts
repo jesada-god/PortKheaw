@@ -185,19 +185,38 @@ describe('what the copy must not do', () => {
 });
 
 describe('support contacts', () => {
+  const supportCard = () =>
+    readFileSync(resolve(process.cwd(), 'src/components/support/SupportContactCard.tsx'), 'utf8');
+
   it('names the two fallback channels exactly once, from one source', () => {
     expect(SUPPORT_CONTACTS.facebook.value).toBe('Jesada Tawinteung');
-    expect(SUPPORT_CONTACTS.line.value).toBe('0620843259');
+    expect(SUPPORT_CONTACTS.lineOpenChat.value).toBe('PORTKHEAW COMMUNITY');
+    expect(SUPPORT_CONTACTS.lineOpenChat.href).toBe(
+      'https://line.me/ti/g2/4TUhjKzNp8vev-RVUGWApqg2CBCDRmAHBUOY1g?utm_source=invitation&utm_medium=link_copy&utm_campaign=default',
+    );
   });
 
   it('is what the support card renders', () => {
-    const card = readFileSync(
-      resolve(process.cwd(), 'src/components/support/SupportContactCard.tsx'),
-      'utf8',
-    );
+    const card = supportCard();
     expect(card).toContain('SUPPORT_CONTACTS.facebook.value');
-    expect(card).toContain('SUPPORT_CONTACTS.line.value');
+    expect(card).toContain('SUPPORT_CONTACTS.lineOpenChat.value');
+    expect(card).toContain('SUPPORT_CONTACTS.lineOpenChat.href');
     // Never typed into the markup, so the two can never disagree.
-    expect(card).not.toContain('0620843259');
+    expect(card).not.toContain('line.me/ti/g2');
+  });
+
+  it('opens the OpenChat invite safely and never prints the URL', () => {
+    const card = supportCard();
+    expect(card).toContain("target=\"_blank\"");
+    expect(card).toContain('rel="noopener noreferrer"');
+    expect(card).toContain('aria-label');
+  });
+
+  it('carries no personal phone number in the contact surface', () => {
+    const sources = [supportCard(), readFileSync(resolve(process.cwd(), 'src/lib/legal/documents.ts'), 'utf8')];
+    for (const source of sources) {
+      expect(source).not.toContain('0620843259');
+      expect(source).not.toMatch(/["'(](tel|sms):/);
+    }
   });
 });
