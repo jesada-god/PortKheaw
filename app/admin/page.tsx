@@ -277,6 +277,17 @@ export default async function AdminDashboardPage({
           {stats && (
             <>
               <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {/*
+                  First, and deliberately outside the period: every other figure
+                  in this grid answers "in the selected window", this one answers
+                  "right now". The hint says so on the card, because it sits
+                  directly under a date-range control that does not move it.
+                */}
+                <StatCard
+                  label="ผู้ใช้งานทั้งหมด"
+                  value={formatCount(stats.total_users)}
+                  hint="บัญชีที่มีอยู่ตอนนี้ ไม่ขึ้นกับช่วงเวลาที่เลือก"
+                />
                 <StatCard label="Basic" value={formatCount(stats.basic_members)} />
                 <StatCard label="Pro" value={formatCount(stats.pro_members)} />
                 <StatCard label="Elite" value={formatCount(stats.elite_members)} />

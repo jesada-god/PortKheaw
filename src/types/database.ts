@@ -1784,6 +1784,8 @@ export interface Database {
           period_from: string;
           period_to: string;
           database_now: string;
+          /** Accounts that exist right now. Never bounded by the selected period. */
+          total_users: number;
         }>;
       };
       admin_recent_billing_activity: {
