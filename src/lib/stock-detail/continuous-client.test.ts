@@ -4,6 +4,7 @@ import {
   resolveContinuousMarketSession,
   resolveContinuousMarketSnapshot,
 } from './continuous-client';
+import { buildStockPriceHeaderModel } from '@/src/components/stock/price-header';
 
 describe('continuous Stock Detail semantics', () => {
   it('classifies crypto explicitly without changing stock or ETF types', () => {
@@ -42,6 +43,13 @@ describe('continuous Stock Detail semantics', () => {
       mainPriceTimestamp: '2026-08-09T03:00:00.000Z',
       comparisonBase: 117_500,
       flags: [],
+    });
+    expect(buildStockPriceHeaderModel({
+      snapshot,
+      evaluatedAt: '2026-08-09T03:01:00.000Z',
+    }).presentation).toMatchObject({
+      label: 'ซื้อขาย 24/7',
+      fullName: 'Continuous 24/7 Market',
     });
   });
 });

@@ -306,6 +306,15 @@ export function buildStockPriceHeaderModel(input: {
   const { snapshot } = input;
   const evaluatedAtMs = Date.parse(input.evaluatedAt);
   const price = tradeablePrice(snapshot.mainPrice) ? snapshot.mainPrice : null;
+  const presentation: SessionPresentation = snapshot.sessionSource === 'continuous-market-24/7'
+    ? {
+        icon: 'sunny',
+        tone: 'regular',
+        label: 'ซื้อขาย 24/7',
+        description: 'ซื้อขายต่อเนื่องตลอด 24 ชั่วโมงทุกวัน',
+        fullName: 'Continuous 24/7 Market',
+      }
+    : sessionPresentation(snapshot.session, snapshot.closeReason, snapshot.sessionLabel);
 
   const main: PriceHeaderMainRow = {
     price,
@@ -333,7 +342,7 @@ export function buildStockPriceHeaderModel(input: {
     snapshot,
     session: snapshot.session,
     closeReason: snapshot.closeReason,
-    presentation: sessionPresentation(snapshot.session, snapshot.closeReason, snapshot.sessionLabel),
+    presentation,
     sessionLabel: snapshot.sessionLabel,
     currentSessionEvaluatedAt: snapshot.evaluatedAt,
     currentSessionSource: snapshot.sessionSource,
