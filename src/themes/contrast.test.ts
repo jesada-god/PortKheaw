@@ -1,15 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { themeIds, type ThemeId } from './types';
 
 /**
- * Locks the PortKheaw palette to WCAG AA. The light appearance is where this
- * bites: the first light accent (#6F8700) read 4.08:1 both as label text on
- * white and as the fill under white button text, and --text-muted read 4.25:1
- * on --surface-elevated. Both were only visible by measuring, not by looking.
+ * Locks EVERY palette the product ships to WCAG AA. The light appearance is
+ * where this bites: PortKheaw's first light accent (#6F8700) read 4.08:1 both as
+ * label text on white and as the fill under white button text, and --text-muted
+ * read 4.25:1 on --surface-elevated. Both were only visible by measuring, not by
+ * looking — and a second and third palette multiply the chances of it happening
+ * again, which is why the cases below run over the whole registry rather than
+ * over one theme.
  */
-function tokens(appearance: 'dark' | 'light'): Record<string, string> {
-  const css = readFileSync(resolve(`src/themes/portkheaw/${appearance}.css`), 'utf8');
+function tokens(theme: ThemeId, appearance: 'dark' | 'light'): Record<string, string> {
+  const css = readFileSync(resolve(`src/themes/${theme}/${appearance}.css`), 'utf8');
   return Object.fromEntries(
     [...css.matchAll(/^\s{2}(--[a-z-]+):\s*(#[0-9A-Fa-f]{6});/gm)].map(([, name, hex]) => [name, hex]),
   );
@@ -70,8 +74,12 @@ const IDENTITY_TONES = [
   '--role-admin',
 ] as const;
 
-describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) => {
-  const palette = tokens(appearance);
+const CASES = themeIds.flatMap(
+  (theme) => (['dark', 'light'] as const).map((appearance) => [theme, appearance] as const),
+);
+
+describe.each(CASES)('%s · %s contrast', (theme, appearance) => {
+  const palette = tokens(theme, appearance);
 
   it('has every token the checks below need', () => {
     expect(Object.keys(palette).length).toBeGreaterThan(15);
@@ -206,7 +214,7 @@ describe.each(['dark', 'light'] as const)('PortKheaw %s contrast', (appearance) 
    * one tone above, so border, fill and text cannot drift into three reds.
    */
   it('defines the admin badge surfaces from the single admin tone', () => {
-    const css = readFileSync(resolve(`src/themes/portkheaw/${appearance}.css`), 'utf8');
+    const css = readFileSync(resolve(`src/themes/${theme}/${appearance}.css`), 'utf8');
     for (const token of ['--role-admin-bg', '--role-admin-border', '--role-admin-text']) {
       expect(css, `${appearance} ${token}`).toMatch(
         new RegExp(`${token}:\\s*(var\\(--role-admin\\)|color-mix\\([^;]*var\\(--role-admin\\)[^;]*\\));`),

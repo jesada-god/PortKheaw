@@ -24,6 +24,13 @@ function decode(raw: string | null): unknown {
   }
 }
 
+/**
+ * The stored preference exactly as written, entitlement not yet applied.
+ *
+ * `theme` here is only ever a *request*. Nothing paints from this value without
+ * passing it through `resolveTheme`, because localStorage is the reader's own
+ * file and a forged `"bitswap"` in it must not become a premium theme.
+ */
 export function parseThemePreference(value: unknown): ThemePreference {
   if (value === 'light' || value === 'dark' || value === 'system') {
     return { theme: DEFAULT_THEME, appearance: value };

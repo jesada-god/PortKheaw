@@ -90,6 +90,11 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
     benefit: 'เห็นสถานะแนวโน้ม คะแนนทิศทาง ความมั่นใจ และตัวชี้วัดจริงที่ระบบใช้สรุป',
     lockedLabel: 'Technical Outlook ใช้ได้ใน Elite',
   },
+  'theme.premium': {
+    title: 'ธีมสีพิเศษ',
+    benefit: 'เปลี่ยนโทนสีทั้งแอปเป็น Bitswap Cyan หรือ Dokturek Violet ใช้ได้ทั้งโหมดสว่างและมืด',
+    lockedLabel: 'ธีมสีนี้ใช้ได้ใน Pro',
+  },
 };
 
 const FALLBACK: UpgradeCopy = {

@@ -13,6 +13,7 @@ import {
   DEFAULT_APPEARANCE,
   DEFAULT_THEME,
   resolveAppearance,
+  resolveTheme,
   type Appearance,
   type ResolvedAppearance,
   type ThemeId,
@@ -25,6 +26,9 @@ interface ThemeContextValue {
   theme: ThemeId;
   appearance: Appearance;
   resolvedAppearance: ResolvedAppearance;
+  /** Server-resolved: whether this reader's effective tier opens the paid themes. */
+  premiumThemesAllowed: boolean;
+  setTheme: (theme: ThemeId) => void;
   setAppearance: (appearance: Appearance) => void;
 }
 
@@ -44,8 +48,19 @@ function applyToDocument(theme: ThemeId, resolved: ResolvedAppearance): void {
   }));
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const theme = DEFAULT_THEME;
+export interface ThemeProviderProps {
+  /**
+   * Whether the reader's *effective access* tier carries `theme.premium`,
+   * resolved on the server. It is a prop rather than something read here so the
+   * provider has no second opinion about entitlement — the head script, this
+   * component and the settings control all follow the one server answer.
+   */
+  premiumThemesAllowed?: boolean;
+  children: ReactNode;
+}
+
+export function ThemeProvider({ premiumThemesAllowed = false, children }: ThemeProviderProps) {
+  const [theme, setThemeState] = useState<ThemeId>(DEFAULT_THEME);
   const [appearance, setAppearanceState] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [resolvedAppearance, setResolvedAppearance] = useState<ResolvedAppearance>('dark');
 
@@ -55,17 +70,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyToDocument(nextTheme, nextResolved);
   }, []);
 
+  /*
+   * Reconciliation, run on mount and again whenever the server's answer changes.
+   *
+   * The stored theme is only a request: it goes through `resolveTheme` with the
+   * entitlement before anything is applied, so a lapsed subscription drops the
+   * reader back to PortKheaw. The corrected value is written straight back to
+   * storage — otherwise the next reload would ask for the premium theme again —
+   * and the appearance is written back untouched, because losing a plan must
+   * never also change whether the app is light or dark.
+   */
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
       const preference = readThemePreference(window.localStorage);
+      const allowed = resolveTheme(preference.theme, premiumThemesAllowed);
+      setThemeState(allowed);
       setAppearanceState(preference.appearance);
-      writeThemePreference(window.localStorage, preference);
-      sync(preference.theme, preference.appearance);
+      writeThemePreference(window.localStorage, {
+        theme: allowed,
+        appearance: preference.appearance,
+      });
+      sync(allowed, preference.appearance);
     });
     return () => { active = false; };
-  }, [sync]);
+  }, [premiumThemesAllowed, sync]);
 
   useEffect(() => {
     if (appearance !== 'system') return;
@@ -81,12 +111,26 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     sync(theme, nextAppearance);
   }, [sync, theme]);
 
+  /**
+   * Refuses rather than trusts. A caller asking for a premium theme without the
+   * entitlement gets PortKheaw persisted, so a tampered UI cannot leave the
+   * stored preference pointing at a theme the reader may not have.
+   */
+  const setTheme = useCallback((nextTheme: ThemeId) => {
+    const allowed = resolveTheme(nextTheme, premiumThemesAllowed);
+    setThemeState(allowed);
+    writeThemePreference(window.localStorage, { theme: allowed, appearance });
+    sync(allowed, appearance);
+  }, [appearance, premiumThemesAllowed, sync]);
+
   const value = useMemo(() => ({
     theme,
     appearance,
     resolvedAppearance,
+    premiumThemesAllowed,
+    setTheme,
     setAppearance,
-  }), [appearance, resolvedAppearance, setAppearance, theme]);
+  }), [appearance, premiumThemesAllowed, resolvedAppearance, setAppearance, setTheme, theme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

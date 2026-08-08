@@ -1,0 +1,64 @@
+/*
+  Dokturek Violet — light appearance.
+
+  The reference's light side is a violet-tinted field (#F2E7FE) under an ivory
+  card, with #6D28D9 as the primary. That is exactly the arrangement here: a
+  soft violet page, white cards, and the reference primary as --accent — it
+  clears AA on white both as label text and as the fill under white button text,
+  so no substitution is needed.
+*/
+html[data-theme="dokturek"][data-appearance="light"] {
+  --bg: #F7F3FD;
+  --surface: #FFFFFF;
+  --surface-elevated: #F0E9FA;
+  --surface-hover: #E9E0F7;
+  --surface-selected: #E0D4F3;
+  --text: #14101C;
+  --text-secondary: #453B57;
+  --text-muted: #635776;
+  --border: #DED4EE;
+  --border-strong: #C3B3DD;
+  --accent: #6D28D9;
+  --accent-hover: #5B21B6;
+  --accent-active: #4C1D95;
+  --accent-soft: rgba(109, 40, 217, 0.10);
+  --accent-fg: #FFFFFF;
+  --positive: #087A55;
+  --negative: #C93636;
+  --warning: #9A5A00;
+  --info: #2563B8;
+  /* Market-session icon tones — the same five meanings as dark, at the light
+     appearance's depth, unchanged from PortKheaw. */
+  --session-pre: #4B4FC4;
+  --session-regular: #8A5A00;
+  --session-post: #2F5AAE;
+  --session-closed: #5A6A75;
+  --session-event: #9C5A1A;
+  --plan-basic: #0F6B45;
+  --plan-pro: #0F6E7A;
+  --plan-elite: #7E5A10;
+  --plan-elite-trial: #6B5526;
+  --role-admin: #A30F4F;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 12%, transparent);
+  --focus-ring: #5B21B6;
+  --input-bg: #FFFFFF;
+  --chart-bg: #FFFFFF;
+  --chart-grid: #DED4EE;
+  --chart-axis: #635776;
+  --brand-mark-bg: #000000;
+  --brand-green: #38771B;
+  --brand-green-deep: #2B6212;
+  --dock-bg: #FFFFFF;
+  --dock-border: #DED4EE;
+  --dock-shadow: 0 20px 44px rgba(32, 18, 56, 0.16), 0 2px 8px rgba(32, 18, 56, 0.08);
+  --overlay: rgba(20, 16, 28, 0.48);
+  --shadow: 0 18px 45px rgba(32, 18, 56, 0.12);
+}
+
+html[data-appearance="light"] [data-theme-swatch="dokturek"] {
+  --swatch-bg: #F7F3FD;
+  --swatch-surface: #FFFFFF;
+  --swatch-accent: #6D28D9;
+}

@@ -25,6 +25,12 @@ export interface SubscriptionCapabilities {
   'options.signal.breakdown': boolean;
   /** Technical Outlook · Market Signal on the Financials tab. */
   'technical.outlook': boolean;
+  /**
+   * The paid colour themes in Settings. A presentation preference rather than a
+   * data feature, but it is gated on the same ladder as everything else so a
+   * trial, an expiry and an administrator preview all move it together.
+   */
+  'theme.premium': boolean;
 }
 
 export type SubscriptionCapability = keyof SubscriptionCapabilities;
@@ -60,6 +66,7 @@ const LOCKED: Readonly<SubscriptionCapabilities> = {
   'options.signal.summary': false,
   'options.signal.breakdown': false,
   'technical.outlook': false,
+  'theme.premium': false,
 };
 
 /**
@@ -97,6 +104,7 @@ const TIER_GRANTS: Readonly<Record<SubscriptionTier, TierGrant>> = {
       'simulator.what_if',
       'options.chain.basic',
       'options.signal.summary',
+      'theme.premium',
     ],
     raises: { 'portfolio.stock.max_count': 10, 'portfolio.options.max_count': 10 },
   },

@@ -1,0 +1,74 @@
+/*
+  Dokturek Violet — dark appearance.
+
+  The reference is built on one violet ramp — #6D28D9 through #A661FB to
+  #C292FC, over near-black #171717 — expressed there as gradients. Gradients are
+  a component decision, so what is taken here is the ramp itself: the surfaces
+  carry the violet cast, and the accent's rest/hover/active steps are three
+  stops of the reference's primary gradient rather than three invented tints.
+
+  Only surfaces, accent and status move. The identity tones below (brand, plan,
+  role, session) are product identity and are the same in every theme.
+*/
+html[data-theme="dokturek"][data-appearance="dark"],
+html[data-theme="dokturek"]:not([data-appearance]) {
+  --bg: #0B0713;
+  --surface: #140E20;
+  --surface-elevated: #1B1329;
+  --surface-hover: #221933;
+  --surface-selected: #2A1F3E;
+  --text: #F5F2FA;
+  --text-secondary: #C1B7D2;
+  --text-muted: #9C90B0;
+  --border: #2E2440;
+  --border-strong: #40325A;
+  /* #6D28D9 — the reference's primary — reads 2.2:1 on this surface, so the
+     accent is the gradient's upper stop and the darker stops become the pressed
+     states, keeping the ramp's direction intact. */
+  --accent: #A97BFB;
+  --accent-hover: #C292FC;
+  --accent-active: #8B54F0;
+  --accent-soft: rgba(169, 123, 251, 0.12);
+  --accent-fg: #14061F;
+  --positive: #34D9A0;
+  --negative: #FF6B6B;
+  --warning: #F5B94C;
+  --info: #6FB4FF;
+  /* Market-session icon tones — unchanged from PortKheaw. */
+  --session-pre: #93A5FF;
+  --session-regular: #F5C451;
+  --session-post: #9BB6F5;
+  --session-closed: #93A3AE;
+  --session-event: #F5A85C;
+  /* Plan and role identity, unchanged. The admin crimson stays at 334°, which is
+     still more than 25° off this theme's error red and 60°+ off every plan. */
+  --plan-basic: #6FD39A;
+  --plan-pro: #4CC9D6;
+  --plan-elite: #E5C069;
+  --plan-elite-trial: #EBD9A6;
+  --role-admin: #EB7FAE;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 18%, transparent);
+  --focus-ring: #A97BFB;
+  --input-bg: #0E0918;
+  --chart-bg: #140E20;
+  --chart-grid: #2E2440;
+  --chart-axis: #9C90B0;
+  /* The mascot plate and the wordmark never recolour with the theme. */
+  --brand-mark-bg: #000000;
+  --brand-green: #96DD5C;
+  --brand-green-deep: #7ECB3C;
+  --dock-bg: #1B1329;
+  --dock-border: #3A2C52;
+  --dock-shadow: 0 20px 48px rgba(8, 3, 18, 0.62), 0 2px 10px rgba(8, 3, 18, 0.45);
+  --overlay: rgba(7, 4, 13, 0.78);
+  --shadow: 0 18px 50px rgba(8, 3, 18, 0.38);
+}
+
+html[data-appearance="dark"] [data-theme-swatch="dokturek"],
+html:not([data-appearance]) [data-theme-swatch="dokturek"] {
+  --swatch-bg: #0B0713;
+  --swatch-surface: #221933;
+  --swatch-accent: #A97BFB;
+}

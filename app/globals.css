@@ -1,6 +1,18 @@
 @import "tailwindcss";
+/*
+ * One palette file per theme per appearance, each scoped to its own
+ * `[data-theme]`, so the three themes cannot leak tokens into one another and
+ * everything downstream — compat layer, dock, charts, loader — keeps reading the
+ * same semantic names. `auth.css` is deliberately theme-independent: the sign-in
+ * shell is brand artwork, and it is also the one surface a reader can reach
+ * before any entitlement is known.
+ */
 @import "../src/themes/portkheaw/dark.css";
 @import "../src/themes/portkheaw/light.css";
+@import "../src/themes/bitswap/dark.css";
+@import "../src/themes/bitswap/light.css";
+@import "../src/themes/dokturek/dark.css";
+@import "../src/themes/dokturek/light.css";
 @import "../src/themes/portkheaw/auth.css";
 
 @theme inline {

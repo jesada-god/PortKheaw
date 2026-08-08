@@ -121,6 +121,7 @@ describe('subscription capability matrix', () => {
       'options.signal.summary': false,
       'options.signal.breakdown': false,
       'technical.outlook': false,
+      'theme.premium': false,
     });
     expect(subscriptionCapabilities.pro).toEqual({
       'portfolio.stock.create': true,
@@ -141,6 +142,7 @@ describe('subscription capability matrix', () => {
       'options.signal.summary': true,
       'options.signal.breakdown': false,
       'technical.outlook': false,
+      'theme.premium': true,
     });
     expect(subscriptionCapabilities.elite).toEqual({
       ...subscriptionCapabilities.pro,

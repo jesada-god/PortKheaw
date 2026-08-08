@@ -4,7 +4,8 @@ import MainLayout from '@/src/components/layout/MainLayout';
 import { Toaster } from '@/src/components/ui/Toast';
 import { appConfig } from '@/src/config/app';
 import { ThemeProvider } from '@/src/themes/ThemeProvider';
-import { THEME_BOOTSTRAP } from '@/src/themes/bootstrap';
+import { themeBootstrap } from '@/src/themes/bootstrap';
+import { hasCapability } from '@/src/lib/subscription/capabilities';
 import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import { AdminPreviewBanner } from '@/src/components/subscription/AdminPreviewBanner';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
@@ -91,14 +92,23 @@ const ZOD_JITLESS_BOOTSTRAP = '(globalThis.__zod_globalConfig=globalThis.__zod_g
 */
 export default async function RootLayout({children}: {children: React.ReactNode}) {
   const entitlement = await resolvePageEntitlement();
+  /*
+   * The paid-theme gate, resolved once per request from the same effective
+   * access tier every other gate reads — so a trial, an expiry and an
+   * administrator preview all move it together. `data-theme` is still rendered
+   * as PortKheaw: the server cannot know which theme the reader saved, and this
+   * flag is what lets the head script promote it to a paid one without ever
+   * being able to flash one the reader is not entitled to.
+   */
+  const premiumThemesAllowed = hasCapability(entitlement.effectiveAccessTier, 'theme.premium');
   return (
     <html lang="th" data-theme="portkheaw" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap(premiumThemesAllowed) }} />
       </head>
       <body className="bg-[var(--bg)] text-[var(--text)] antialiased selection:bg-[var(--accent-soft)]">
         <script dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
-        <ThemeProvider>
+        <ThemeProvider premiumThemesAllowed={premiumThemesAllowed}>
           <EntitlementProvider
             tier={entitlement.effectiveAccessTier}
             authenticated={entitlement.authenticated}

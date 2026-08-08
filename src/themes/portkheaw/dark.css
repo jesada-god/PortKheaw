@@ -85,3 +85,19 @@ html[data-theme="portkheaw"]:not([data-appearance]) {
   --overlay: rgba(3, 7, 5, 0.76);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.30);
 }
+
+/*
+  Swatches for the theme picker.
+
+  Every theme's file also publishes the three colours that describe it — page,
+  card, accent — so the picker can preview a theme it is not currently wearing
+  without a component holding a copy of anyone's palette. Keyed on appearance
+  alone, so the row of swatches shows all three themes as they would look in the
+  light or dark the reader is actually in.
+*/
+html[data-appearance="dark"] [data-theme-swatch="portkheaw"],
+html:not([data-appearance]) [data-theme-swatch="portkheaw"] {
+  --swatch-bg: #070A08;
+  --swatch-surface: #172019;
+  --swatch-accent: #D7FF00;
+}

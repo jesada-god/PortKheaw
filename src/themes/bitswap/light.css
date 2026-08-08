@@ -1,0 +1,67 @@
+/*
+  Bitswap Cyan — light appearance.
+
+  The reference is dark-only, so this is a real counterpart rather than an
+  inversion: the same cool neutral field and the same cyan identity, taken down
+  to values that clear AA on a light surface. Electric cyan is nearly white by
+  luminance, so the accent here is the same hue held at a readable depth.
+*/
+html[data-theme="bitswap"][data-appearance="light"] {
+  --bg: #F1F4F5;
+  --surface: #FFFFFF;
+  --surface-elevated: #E8EDEE;
+  --surface-hover: #E0E6E8;
+  --surface-selected: #D6DDE0;
+  --text: #0A0E0F;
+  --text-secondary: #3E484A;
+  --text-muted: #5C6669;
+  --border: #D2D9DB;
+  --border-strong: #B5BFC2;
+  /* #00F5F5 reads 1.3:1 on white. This is the same cyan hue at the depth where
+     it clears AA both as label text and as the fill under white button text. */
+  --accent: #046A6A;
+  --accent-hover: #035B5B;
+  --accent-active: #024D4D;
+  --accent-soft: rgba(4, 106, 106, 0.10);
+  --accent-fg: #FFFFFF;
+  --positive: #0B7A38;
+  --negative: #C4123C;
+  --warning: #8A5A00;
+  --info: #1F5FB8;
+  /* Market-session icon tones — the same five meanings as dark, at the light
+     appearance's depth, unchanged from PortKheaw. */
+  --session-pre: #4B4FC4;
+  --session-regular: #8A5A00;
+  --session-post: #2F5AAE;
+  --session-closed: #5A6A75;
+  --session-event: #9C5A1A;
+  --plan-basic: #0F6B45;
+  --plan-pro: #0F6E7A;
+  --plan-elite: #7E5A10;
+  --plan-elite-trial: #6B5526;
+  /* Magenta rather than the usual 334° crimson, for the reason given in this
+     theme's dark file: the error red sits at 346° here. */
+  --role-admin: #A81093;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 12%, transparent);
+  --focus-ring: #035B5B;
+  --input-bg: #FFFFFF;
+  --chart-bg: #FFFFFF;
+  --chart-grid: #D2D9DB;
+  --chart-axis: #5C6669;
+  --brand-mark-bg: #000000;
+  --brand-green: #38771B;
+  --brand-green-deep: #2B6212;
+  --dock-bg: #FFFFFF;
+  --dock-border: #D2D9DB;
+  --dock-shadow: 0 20px 44px rgba(16, 28, 32, 0.16), 0 2px 8px rgba(16, 28, 32, 0.08);
+  --overlay: rgba(10, 14, 15, 0.48);
+  --shadow: 0 18px 45px rgba(16, 28, 32, 0.12);
+}
+
+html[data-appearance="light"] [data-theme-swatch="bitswap"] {
+  --swatch-bg: #F1F4F5;
+  --swatch-surface: #FFFFFF;
+  --swatch-accent: #046A6A;
+}
