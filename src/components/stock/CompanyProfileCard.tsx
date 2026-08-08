@@ -163,30 +163,33 @@ export function CompanyProfileCard({
     sourceText,
     translationSettled: Boolean(activeTranslation),
   });
-  const labels = resolveCompanyProfileLabels(activeLanguage, companyProfileKind(assetType));
+  const profileKind = companyProfileKind(assetType);
+  const labels = resolveCompanyProfileLabels(activeLanguage, profileKind);
   const errorPresentation = companyProfileErrorPresentation(error, activeLanguage);
   const status = PROFILE_STATUS_LABELS[activeLanguage][freshness.status];
   const website = profile?.website ?? null;
   const profileCoolingDown = retryAt > 0;
   const profileTimestamp = freshness.cachedAt ?? freshness.asOf;
-  const fields = useMemo(() => [
-    {
-      label: labels.country,
-      value: displayCountry(profile?.country ?? null, activeLanguage),
-    },
-    {
-      label: labels.employees,
-      value: profile?.employees == null ? null : profile.employees.toLocaleString('en-US'),
-    },
-    {
-      label: labels.currency,
-      value: profile?.currency ?? null,
-    },
-    {
-      label: labels.fiscalYearEnd,
-      value: displayFiscalYearEnd(profile?.fiscalYearEnd ?? null, activeLanguage),
-    },
-  ], [activeLanguage, labels, profile]);
+  const fields = useMemo(() => profileKind === 'crypto'
+    ? [{ label: labels.currency, value: profile?.currency ?? null }]
+    : [
+        {
+          label: labels.country,
+          value: displayCountry(profile?.country ?? null, activeLanguage),
+        },
+        {
+          label: labels.employees,
+          value: profile?.employees == null ? null : profile.employees.toLocaleString('en-US'),
+        },
+        {
+          label: labels.currency,
+          value: profile?.currency ?? null,
+        },
+        {
+          label: labels.fiscalYearEnd,
+          value: displayFiscalYearEnd(profile?.fiscalYearEnd ?? null, activeLanguage),
+        },
+      ], [activeLanguage, labels, profile, profileKind]);
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">

@@ -58,10 +58,11 @@ export default async function StockDetailPage({
     throw marketResult.reason;
   }
   const snapshot = marketResult.value;
+  const canonicalSymbol = snapshot.instrument.canonicalSymbol;
 
   return (
     <StockDetailClient
-      symbol={symbol}
+      symbol={canonicalSymbol}
       quoteResource={snapshot.quote}
       profileResource={snapshot.profile}
       overviewResource={snapshot.overview}
@@ -69,17 +70,17 @@ export default async function StockDetailPage({
       instrumentCurrency={snapshot.instrument.currency}
       instrumentExchange={snapshot.instrument.exchange}
       instrumentLogoUrl={instrumentMetadataResult.status === 'fulfilled'
-        ? instrumentMetadataResult.value.get(symbol)?.logoUrl ?? null
+        ? instrumentMetadataResult.value.get(canonicalSymbol)?.logoUrl
+          ?? snapshot.profile.data?.logoUrl
+          ?? null
         : null}
       // Same already-resolved metadata as the logo above — no extra request.
-      instrumentAssetType={instrumentMetadataResult.status === 'fulfilled'
-        ? instrumentMetadataResult.value.get(symbol)?.assetType ?? null
-        : null}
+      instrumentAssetType={snapshot.instrument.assetType}
       initialHistory={snapshot.history}
       fxQuote={fxResult.status === 'fulfilled' ? fxResult.value.quote : null}
       evaluatedAt={new Date().toISOString()}
       extendedQuote={snapshot.extendedQuote}
-      providerConfigured={marketDataGatewayConfigured()}
+      providerConfigured={snapshot.instrument.assetType === 'crypto' || marketDataGatewayConfigured()}
       initialWatched={watchResult.status === 'fulfilled' ? watchResult.value : false}
       technicalIndicatorsEnabled={technicalIndicatorsEnabled()}
       advancedChartTypesEnabled={advancedChartTypesEnabled()}

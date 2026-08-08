@@ -7,7 +7,7 @@ export type CompanyProfileLanguage = 'th' | 'en';
  * calling its card "ข้อมูลบริษัท" is simply the wrong noun. Only the *labels*
  * split on this; every field, provider and request stays identical.
  */
-export type CompanyProfileKind = 'company' | 'fund';
+export type CompanyProfileKind = 'company' | 'fund' | 'crypto';
 
 const THAI_MONTHS: Record<string, string> = {
   January: 'มกราคม',
@@ -99,6 +99,19 @@ const FUND_LABELS = {
   },
 } as const;
 
+const CRYPTO_LABELS = {
+  th: {
+    title: 'ข้อมูลสินทรัพย์ดิจิทัล',
+    missingDescription: 'ยังไม่มีรายละเอียดสินทรัพย์ดิจิทัลสำหรับแปล',
+    retryProfile: 'ลองโหลดข้อมูลสินทรัพย์อีกครั้ง',
+  },
+  en: {
+    title: 'Crypto Asset Profile',
+    missingDescription: 'No crypto asset description is available to translate.',
+    retryProfile: 'Retry asset profile',
+  },
+} as const;
+
 /**
  * The instrument's own asset type decides the noun. Anything that is not
  * explicitly an ETF — including a symbol nothing is known about — keeps the
@@ -106,7 +119,10 @@ const FUND_LABELS = {
  * fund.
  */
 export function companyProfileKind(assetType: string | null | undefined): CompanyProfileKind {
-  return assetType?.trim().toLowerCase() === 'etf' ? 'fund' : 'company';
+  const normalized = assetType?.trim().toLowerCase();
+  if (normalized === 'etf') return 'fund';
+  if (normalized === 'crypto') return 'crypto';
+  return 'company';
 }
 
 export type CompanyProfileLabels = Record<
@@ -118,9 +134,9 @@ export function resolveCompanyProfileLabels(
   language: CompanyProfileLanguage,
   kind: CompanyProfileKind,
 ): CompanyProfileLabels {
-  return kind === 'fund'
-    ? { ...companyProfileLabels[language], ...FUND_LABELS[language] }
-    : companyProfileLabels[language];
+  if (kind === 'fund') return { ...companyProfileLabels[language], ...FUND_LABELS[language] };
+  if (kind === 'crypto') return { ...companyProfileLabels[language], ...CRYPTO_LABELS[language] };
+  return companyProfileLabels[language];
 }
 
 /**

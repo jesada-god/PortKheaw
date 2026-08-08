@@ -53,6 +53,11 @@ import {
 import { requestCompanyProfile } from './profile-retry';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import {
+  isContinuousAssetType,
+  resolveContinuousMarketSession,
+  resolveContinuousMarketSnapshot,
+} from '@/src/lib/stock-detail/continuous-client';
 
 const ChartPanel = dynamic(
   () => import('./ChartPanel').then((module) => module.ChartPanel),
@@ -234,6 +239,7 @@ export function StockDetailClient({
 
   const profile = profileResource.data;
   const overview = overviewResource.data;
+  const continuousMarket = isContinuousAssetType(instrumentAssetType);
   const market = overview?.markets.find((item) => (
     item.primaryExchanges.some((exchange) => (
       profile?.exchange?.toLowerCase().includes(exchange.toLowerCase())
@@ -246,22 +252,24 @@ export function StockDetailClient({
   // trading date is discarded inside the resolver, which then falls back to the
   // exchange calendar in America/New_York.
   const exchangeNow = useExchangeClock(evaluatedAt);
-  const resolvedSession = resolveCurrentMarketSession({
-    now: exchangeNow,
-    marketStatus: market
-      ? {
-          status: market.currentStatus,
-          asOf: overviewResource.freshness.asOf,
-          source: overviewResource.provider,
-          stale: overviewResource.freshness.status === 'stale',
-          maxAgeSeconds: overviewResource.freshness.maxAgeSeconds,
-        }
-      : null,
-  });
+  const resolvedSession = continuousMarket
+    ? resolveContinuousMarketSession(exchangeNow)
+    : resolveCurrentMarketSession({
+        now: exchangeNow,
+        marketStatus: market
+          ? {
+              status: market.currentStatus,
+              asOf: overviewResource.freshness.asOf,
+              source: overviewResource.provider,
+              stale: overviewResource.freshness.status === 'stale',
+              maxAgeSeconds: overviewResource.freshness.maxAgeSeconds,
+            }
+          : null,
+      });
   // The transport-agnostic market source refreshes the header/price in place via
   // entitlement-aware REST polling (12s in a live session, slower when closed),
   // pausing when hidden/offline. It never claims real-time data.
-  const marketSession: MarketSessionKind = ['PREMARKET', 'REGULAR', 'AFTER_HOURS', 'EARLY_CLOSE']
+  const marketSession: MarketSessionKind = continuousMarket || ['PREMARKET', 'REGULAR', 'AFTER_HOURS', 'EARLY_CLOSE']
     .includes(resolvedSession.session)
     ? 'regular'
     : 'closed';
@@ -290,7 +298,8 @@ export function StockDetailClient({
     // the Railway Gateway owns canonical candle construction.
     // When the Gateway URL is absent, the coordinator safely falls back to REST.
     enabled: true,
-    allowWebSocket: true,
+    allowWebSocket: !continuousMarket,
+    marketKind: continuousMarket ? 'continuous' : 'us-equity',
     transientPriceSinkRef,
     liveUpdateSinkRef,
   });
@@ -346,23 +355,25 @@ export function StockDetailClient({
    * renders from. A symbol halt is applied first so the phase it resolves against
    * is the one the header actually shows.
    */
-  const marketSnapshot = resolveCanonicalMarketSnapshot({
-    symbol,
-    session: {
-      ...resolvedSession,
-      session: currentSession,
-      phase: sessionPhaseOf(currentSession),
-    },
-    sessionSourceLabel: resolvedSession.provider.accepted
-      ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
-      : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
-    quote: quoteResource,
-    // The server-rendered quote's `regularClose` was verified against the canonical
-    // trading date server-side, so it backs the live pipeline's own close.
-    initialQuote: initialQuoteResource,
-    extended: persistedExtendedQuote,
-    now: exchangeNow,
-  });
+  const marketSnapshot = continuousMarket
+    ? resolveContinuousMarketSnapshot({ symbol, quote: quoteResource, evaluatedAt: exchangeNow })
+    : resolveCanonicalMarketSnapshot({
+        symbol,
+        session: {
+          ...resolvedSession,
+          session: currentSession,
+          phase: sessionPhaseOf(currentSession),
+        },
+        sessionSourceLabel: resolvedSession.provider.accepted
+          ? `${resolvedSession.source} (${resolvedSession.provider.source ?? 'ไม่ทราบผู้ให้บริการ'})`
+          : `${resolvedSession.source} · provider ${resolvedSession.provider.rejection ?? 'missing'}`,
+        quote: quoteResource,
+        // The server-rendered quote's `regularClose` was verified against the canonical
+        // trading date server-side, so it backs the live pipeline's own close.
+        initialQuote: initialQuoteResource,
+        extended: persistedExtendedQuote,
+        now: exchangeNow,
+      });
   // Canonical/regular snapshots often omit extended fields. Capture each real
   // pre/post print independently so omission, reconnect and rerender cannot be
   // mistaken for an instruction to clear the last-known valid quote. The pure
@@ -573,6 +584,7 @@ export function StockDetailClient({
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
               instrumentAssetType={instrumentAssetType}
+              continuousMarket={continuousMarket}
             />
           )}
           {tab === 'Chart' && (
@@ -592,6 +604,7 @@ export function StockDetailClient({
               liveRefreshDisabled={quoteLoading}
               onSelectionChange={handleSelectionChange}
               onHistoryFallbackChange={setChartHistoryFallback}
+              continuousMarket={continuousMarket}
               technicalIndicatorsEnabled={technicalIndicatorsEnabled}
               advancedChartTypesEnabled={advancedChartTypesEnabled}
               extendedIndicatorsEnabled={extendedIndicatorsEnabled}
@@ -641,6 +654,7 @@ function Overview({
   profileLanguage,
   onProfileLanguageChange,
   instrumentAssetType,
+  continuousMarket,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -652,6 +666,7 @@ function Overview({
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
   instrumentAssetType: string | null;
+  continuousMarket: boolean;
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
@@ -674,8 +689,10 @@ function Overview({
         marketCapitalizationCurrency,
       ),
     },
-    { label: 'Sector', value: profile?.sector ?? null },
-    { label: 'Industry', value: profile?.industry ?? null },
+    ...(continuousMarket ? [] : [
+      { label: 'Sector', value: profile?.sector ?? null },
+      { label: 'Industry', value: profile?.industry ?? null },
+    ]),
   ];
 
   return (
@@ -683,7 +700,7 @@ function Overview({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${continuousMarket ? 'md:grid-cols-2' : 'md:grid-cols-4'}`}>
         {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
       <CompanyProfileCard

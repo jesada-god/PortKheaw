@@ -52,6 +52,7 @@ interface Props {
   liveRefreshDisabled?: boolean;
   /** Report the newest completed displayed bar up as a history-fallback price candidate. */
   onHistoryFallbackChange?: (fallback: AcceptedPriceCandidate | null) => void;
+  continuousMarket?: boolean;
   preferences: ChartPreferences;
   onSelectInterval: (interval: CandleInterval) => void;
   onSelectRange: (range: HistoricalRange) => void;
@@ -75,6 +76,7 @@ export function MarketCandleChartPanel(props: Props) {
   const {
     symbol, active, interval, range, session, adjusted, currentPrice, marketLabel, liveCandle,
     liveUpdateSinkRef, liveActive, onLiveRefresh, liveRefreshDisabled, onHistoryFallbackChange,
+    continuousMarket = false,
     preferences, onSelectInterval, onSelectRange, onToggleFavoriteInterval, onToggleFavoriteRange,
     onChartType, onToggle,
   } = props;
@@ -237,7 +239,10 @@ export function MarketCandleChartPanel(props: Props) {
     // The bar's own semantic domain. A bucket from the `extended` session selection
     // must not reach the header as a regular price, so an unclassifiable bar is
     // reported as no candidate at all rather than as a regular one.
-    const priceRole = historyBarPriceRole(newestCompleted.date);
+    const priceRole = historyBarPriceRole(
+      newestCompleted.date,
+      continuousMarket ? 'continuous' : 'us-equity',
+    );
     if (!priceRole) return null;
     return {
       price: newestCompleted.close,
@@ -247,7 +252,7 @@ export function MarketCandleChartPanel(props: Props) {
       provider: result.provider,
       priceRole,
     };
-  }, [result, displayPrices]);
+  }, [continuousMarket, result, displayPrices]);
   useEffect(() => { onHistoryFallbackChange?.(historyFallback); }, [historyFallback, onHistoryFallbackChange]);
 
   // Truthful raw/adjusted provenance: `adjusted` is what we asked the provider

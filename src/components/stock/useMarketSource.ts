@@ -17,6 +17,7 @@ import {
   type MarketDataLabel,
   type MarketSelection,
   type MarketSessionKind,
+  type PriceMarketKind,
 } from '@/src/lib/stock-detail/market-source';
 import { resolvePublicMarketWsUrl } from '@/src/lib/market-data/realtime';
 import { exchangeSessionDate, US_EQUITY_TIMEZONE } from '@/src/lib/market-data/session';
@@ -28,6 +29,12 @@ import { realtimeUpdatePolicy } from './realtime-performance';
 
 /** Regular-session cadence is 12s (inside the mandated 10–15s window); closed is slower. */
 const CADENCE = { regularMs: 12_000, closedMs: 60_000 };
+
+function previousUtcCalendarDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
+}
 
 export type CanonicalLiveUpdateSink = (update: MarketUpdate) => void;
 
@@ -57,6 +64,8 @@ export interface UseMarketSourceOptions {
   initialReceivedAt?: string;
   /** Disable the live stream for a view that explicitly requires REST-only data. */
   allowWebSocket?: boolean;
+  /** Price/session semantics for US-listed securities versus a 24/7 asset. */
+  marketKind?: PriceMarketKind;
   /**
    * Imperative price sink owned by the header. Finnhub trade ticks call this ref
    * directly instead of scheduling a React render for every trade.
@@ -180,6 +189,7 @@ const PUBLIC_APP_ENV = process.env.NEXT_PUBLIC_APP_ENV?.trim() || undefined;
 
 export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourceResult {
   const { symbol, initialQuote, session, active, online, enabled } = options;
+  const marketKind = options.marketKind ?? 'us-equity';
   const initialReceivedAt = options.initialReceivedAt
     ?? initialQuote.freshness.asOf
     ?? '1970-01-01T00:00:00.000Z';
@@ -212,14 +222,14 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
   // client config above and validated (wss + non-loopback in production) here.
   // `process.env.NODE_ENV` is likewise a direct static access so Next inlines it.
   const wsUrl = useMemo(
-    () => options.allowWebSocket === false
+    () => options.allowWebSocket === false || marketKind === 'continuous'
       ? null
       : resolvePublicMarketWsUrl({
         NEXT_PUBLIC_MARKET_WS_URL: PUBLIC_MARKET_WS_URL ?? undefined,
         NEXT_PUBLIC_APP_ENV: PUBLIC_APP_ENV,
         NODE_ENV: process.env.NODE_ENV,
       }),
-    [options.allowWebSocket],
+    [marketKind, options.allowWebSocket],
   );
   // Kept current so the subscribe callback (registered once) tags every emission
   // with the source's live selection at emit time.
@@ -269,7 +279,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       // instrument can never surface for the current one.
       const updateSymbol = update.symbol.toUpperCase();
       setLastError(update.error);
-      const candidate = candidateFromUpdate(update);
+      const candidate = candidateFromUpdate(update, marketKind);
       const policy = realtimeUpdatePolicy(update, hasCommittedLivePriceRef.current);
       if (update.candle && update.label.realtime) options.liveUpdateSinkRef?.current?.(update);
       if (policy.transientPrice && update.price !== null) {
@@ -354,7 +364,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     // so those changes never re-acquire the connection (which would drop the live
     // socket + active candle). They are read once here only for the initial config.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transport, enabled, wsUrl]);
+  }, [transport, enabled, marketKind, wsUrl]);
 
   useEffect(() => { sourceRef.current?.setSession(session); }, [session]);
   useEffect(() => { sourceRef.current?.setVisible(active && online); }, [active, online]);
@@ -397,6 +407,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
         snapshotResource,
         baseQuote,
         symbol,
+        marketKind,
       });
     }
     // Nothing accepted yet: surface the last verified snapshot (or the initial
@@ -404,13 +415,15 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
     const base = snapshotResource ?? initialQuote;
     if (lastError) return { ...base, reason: `${lastError.code}: ${lastError.message}`, error: lastError };
     return base;
-  }, [regularAccepted, snapshotResource, baseQuote, symbol, lastError, initialQuote]);
+  }, [regularAccepted, snapshotResource, baseQuote, symbol, marketKind, lastError, initialQuote]);
 
   const priceState = useMemo<CanonicalPriceState>(() => {
     const quote = quoteResource.data;
     const regularTimestamp = quoteResource.freshness.asOf ?? quote?.quoteTimestamp ?? null;
     const regularTradingDate = regularTimestamp
-      ? exchangeSessionDate(regularTimestamp, US_EQUITY_TIMEZONE)
+      ? marketKind === 'continuous'
+        ? new Date(regularTimestamp).toISOString().slice(0, 10)
+        : exchangeSessionDate(regularTimestamp, US_EQUITY_TIMEZONE)
       : quote?.latestTradingDay ?? null;
     const previousRegularClose = quote?.previousRegularClose ?? quote?.previousClose ?? null;
     const extendedTimestamp = extendedAccepted?.exchangeTimestamp ?? null;
@@ -418,7 +431,11 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       regularPrice: quote?.price ?? null,
       regularTradingDate,
       previousRegularClose,
-      previousTradingDate: regularTradingDate ? previousUsTradingDate(regularTradingDate) : null,
+      previousTradingDate: regularTradingDate
+        ? marketKind === 'continuous'
+          ? previousUtcCalendarDate(regularTradingDate)
+          : previousUsTradingDate(regularTradingDate)
+        : null,
       regularTimestamp,
       regularProvider: quoteResource.provider,
       extendedPrice: extendedAccepted?.price ?? null,
@@ -434,7 +451,7 @@ export function useMarketSource(options: UseMarketSourceOptions): UseMarketSourc
       extendedProvider: extendedAccepted?.provider ?? null,
       extendedMode: extendedAccepted?.mode ?? null,
     };
-  }, [extendedAccepted, quoteResource]);
+  }, [extendedAccepted, marketKind, quoteResource]);
 
   const dataLabel = useMemo(
     () => labelFromAccepted(extendedAccepted ?? regularAccepted, initialReceivedAt),

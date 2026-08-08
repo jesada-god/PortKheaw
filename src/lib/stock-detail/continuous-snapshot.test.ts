@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getQuote: vi.fn(),
+  getCandles: vi.fn(),
   getMarketDataGateway: vi.fn(),
   getCompanyProfile: vi.fn(),
   getExtendedQuote: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock('@/src/lib/market-data/candles', () => ({
     getQuote: mocks.getQuote,
     getExtendedQuote: mocks.getExtendedQuote,
   }),
+  getCandleMarketDataService: () => ({ getCandles: mocks.getCandles }),
 }));
 vi.mock('@/src/lib/market-data/gateway/service', () => ({
   getMarketDataGateway: mocks.getMarketDataGateway,
@@ -52,8 +54,41 @@ function yahooQuote() {
   };
 }
 
+function yahooCandles() {
+  return {
+    data: {
+      symbol: 'BTC-USD',
+      provider: 'yahoo-finance-chart',
+      attemptedProviders: ['yahoo-finance-chart'],
+      requestedInterval: '5m',
+      actualInterval: '5m',
+      sourceInterval: '5m',
+      requestedRange: '1d',
+      actualStart: Date.parse('2026-08-05T20:50:00.000Z') / 1_000,
+      actualEnd: Date.parse('2026-08-05T20:55:00.000Z') / 1_000,
+      exchangeTimezone: 'UTC',
+      currency: 'USD',
+      dataStatus: 'delayed' as const,
+      delayedByMinutes: 0,
+      adjusted: false,
+      aggregated: false,
+      cacheStatus: 'miss' as const,
+      candles: [
+        { timestamp: Date.parse('2026-08-05T20:50:00.000Z') / 1_000, open: 64_000, high: 64_200, low: 63_900, close: 64_100, volume: 1 },
+        { timestamp: Date.parse('2026-08-05T20:55:00.000Z') / 1_000, open: 64_100, high: 64_500, low: 64_000, close: 64_400, volume: 1 },
+      ],
+      warnings: [],
+      fallbackReason: null,
+    },
+    provider: 'yahoo-finance-chart',
+    freshness: { status: 'delayed' as const, asOf: '2026-08-05T20:55:00.000Z', maxAgeSeconds: 60 },
+  };
+}
+
 beforeEach(() => {
   mocks.getQuote.mockReset();
+  mocks.getCandles.mockReset();
+  mocks.getCandles.mockResolvedValue(yahooCandles());
   mocks.getMarketDataGateway.mockReset();
   mocks.getMarketDataGateway.mockImplementation(() => {
     throw new Error('the US-equity gateway must not be reached for a continuous asset');
@@ -98,8 +133,20 @@ describe('loadStockDetailGatewaySnapshot for a continuous asset', () => {
     expect(snapshot.extendedQuote).toBeNull();
   });
 
-  it('degrades to a retryable failure rather than an invalid-symbol error', async () => {
+  it('falls back to canonical Yahoo candles when the current quote fails', async () => {
     mocks.getQuote.mockRejectedValue(new Error('yahoo unavailable'));
+
+    const snapshot = await loadStockDetailGatewaySnapshot('BTC-USD');
+
+    expect(snapshot.quote.data?.symbol).toBe('BTC-USD');
+    expect(snapshot.quote.data?.price).toBe(64_400);
+    expect(snapshot.quote.fallbackLabel).toBe('Intraday close fallback');
+    expect(snapshot.quote.error).toBeNull();
+  });
+
+  it('degrades to a retryable failure only when quote and candles both fail', async () => {
+    mocks.getQuote.mockRejectedValue(new Error('yahoo quote unavailable'));
+    mocks.getCandles.mockRejectedValue(new Error('yahoo candles unavailable'));
 
     const snapshot = await loadStockDetailGatewaySnapshot('BTC-USD');
 

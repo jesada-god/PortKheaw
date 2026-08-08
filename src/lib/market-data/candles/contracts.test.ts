@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CANDLE_INTERVALS, CANDLE_RANGES, YAHOO_CANDLE_CAPABILITIES, sourceIntervalFor, supportedRangesFor } from './capabilities';
 import { normalizeCandles, providerNumber, validatedCandle } from './normalize';
+import { candleQuerySchema } from './contracts';
 
 describe('candle contracts and compatibility', () => {
+  it('keeps the canonical BTC-USD provider/cache symbol', () => {
+    expect(candleQuerySchema.parse({ symbol: ' btc-usd ' }).symbol).toBe('BTC-USD');
+  });
   it('covers every required timeframe/range and restricts 5Y to daily or higher', () => {
     expect(CANDLE_INTERVALS).toEqual([
       '1m', '2m', '3m', '5m', '10m', '15m', '30m', '45m',
@@ -47,4 +51,3 @@ describe('candle contracts and compatibility', () => {
     expect(result.candles).toEqual([replacement, second]);
   });
 });
-

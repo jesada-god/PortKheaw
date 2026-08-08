@@ -8,11 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 const mocks = vi.hoisted(() => ({
   loadResilientQuote: vi.fn(),
+  loadContinuousQuote: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/src/lib/market-data/quote-service', () => ({
   loadResilientQuote: mocks.loadResilientQuote,
+}));
+vi.mock('@/src/lib/stock-detail/continuous-snapshot', () => ({
+  loadContinuousQuote: mocks.loadContinuousQuote,
 }));
 
 import { GET } from './route';
@@ -99,6 +103,30 @@ describe('GET /api/market/quote/[symbol]', () => {
     expect(response.headers.get('X-Market-Quote-Provider')).toBe('yahoo-finance-chart');
     expect(response.headers.get('X-Market-Provider-Status')).toBe('403');
     expect(response.headers.get('X-Market-Failure-Kind')).toBe('upstream-entitlement');
+  });
+
+  it('canonicalizes BTC-USD and routes it directly to the Yahoo crypto source', async () => {
+    mocks.loadContinuousQuote.mockResolvedValue({
+      data: {
+        symbol: 'BTC-USD', currency: 'USD', price: 118_250, open: 117_000,
+        high: 119_000, low: 116_500, previousClose: 117_500,
+        previousRegularClose: 117_500, regularClose: 118_250,
+        change: 750, changePercent: 0.6383, volume: 10,
+        latestTradingDay: '2026-08-09', quoteTimestamp: '2026-08-09T03:00:00.000Z',
+        session: 'regular', priceSource: 'yahoo-chart-meta.regularMarketPrice',
+      },
+      provider: 'yahoo-finance-chart',
+      freshness: { status: 'delayed', asOf: '2026-08-09T03:00:00.000Z', maxAgeSeconds: 60 },
+    });
+
+    const response = await request('btc-usd');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ symbol: 'BTC-USD', price: 118_250 });
+    expect(mocks.loadContinuousQuote).toHaveBeenCalledWith('BTC-USD');
+    expect(mocks.loadResilientQuote).not.toHaveBeenCalled();
+    expect(response.headers.get('X-Market-Quote-Provider')).toBe('yahoo-finance-chart');
   });
 
   it('rejects an invalid symbol at the schema before calling providers', async () => {

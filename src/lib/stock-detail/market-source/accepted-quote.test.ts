@@ -300,4 +300,16 @@ describe('candidateFromUpdate', () => {
     // 00:30Z = 20:30 ET, past the after-hours window.
     expect(candidateFromUpdate(update(11.41, 'aggregate-fallback', '2026-07-22T00:30:00.000Z'))).toBeNull();
   });
+
+  it('accepts weekend and overnight BTC prints in the single continuous domain', () => {
+    const weekend = {
+      ...update(118_250, 'aggregate-fallback', '2026-07-25T15:00:00.000Z'),
+      symbol: 'BTC-USD',
+    };
+    expect(candidateFromUpdate(weekend, 'continuous')).toMatchObject({
+      price: 118_250,
+      priceRole: 'regular',
+      exchangeTimestamp: '2026-07-25T15:00:00.000Z',
+    });
+  });
 });

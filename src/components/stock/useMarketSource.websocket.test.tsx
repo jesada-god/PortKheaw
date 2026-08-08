@@ -175,6 +175,20 @@ describe('useMarketSource live WebSocket wiring', () => {
     handle.unmount();
   });
 
+  it('keeps BTC-USD on REST Yahoo polling and never opens the equity live socket', () => {
+    const handle = mount(baseOptions({
+      symbol: 'BTC-USD',
+      session: 'regular',
+      marketKind: 'continuous',
+      allowWebSocket: false,
+    }));
+    expect(acquireCount).toBe(1);
+    expect(acquisitions[0].symbol).toBe('BTC-USD');
+    expect(acquisitions[0].wsUrl).toBeNull();
+    expect(acquisitions[0].source.transport).toBe('polling');
+    handle.unmount();
+  });
+
   it('holds exactly one net subscriber across a Strict-Mode mount→cleanup→remount', () => {
     const handle = mount(baseOptions(), /* strict */ true);
     // Strict Mode double-invokes: acquire, release, acquire → net one subscriber

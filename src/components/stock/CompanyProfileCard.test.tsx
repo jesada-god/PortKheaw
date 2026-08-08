@@ -129,6 +129,14 @@ describe('instrument wording', () => {
     expect(heading()).toBe('ข้อมูลกองทุน');
   });
 
+  it('hides company-only fields for a crypto asset without failing the card', () => {
+    render({ assetType: 'crypto', language: 'en' });
+    expect(heading()).toBe('Crypto Asset Profile');
+    expect(container.textContent).toContain('Currency');
+    expect(container.textContent).not.toContain('Employees');
+    expect(container.textContent).not.toContain('Fiscal year end');
+  });
+
   it('leaves a common stock, and an unknown instrument, as a company', () => {
     render({ assetType: 'Stock' });
     expect(heading()).toBe('ข้อมูลบริษัท');

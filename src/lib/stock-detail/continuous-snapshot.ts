@@ -1,8 +1,13 @@
 import 'server-only';
 
-import { getYahooChartProvider } from '@/src/lib/market-data/candles';
-import { CONTINUOUS_MARKET_SESSION_LABEL } from '@/src/lib/overview/continuous-market';
+import { getCandleMarketDataService, getYahooChartProvider } from '@/src/lib/market-data/candles';
+import {
+  CONTINUOUS_MARKET_SESSION_LABEL,
+  resolveContinuousAcceptedMarketData,
+  type ContinuousAcceptedMarketData,
+} from '@/src/lib/overview/continuous-market';
 import type { MarketAsset } from '@/src/lib/overview/market-assets';
+import type { InstrumentMetadata } from '@/src/lib/overview/types';
 import type { ResolvedInstrument } from '@/src/lib/market-data/gateway/contracts';
 import type {
   CompanyProfile,
@@ -12,6 +17,7 @@ import type {
   Quote,
 } from '@/src/lib/market-data/types';
 import type { StockDetailQuoteResource, StockDetailResource } from './types';
+import { buildAcceptedResource } from './market-source';
 
 /**
  * Stock Detail for an asset that never closes.
@@ -47,6 +53,22 @@ export function continuousInstrument(asset: MarketAsset): ResolvedInstrument {
     active: true,
     supported: true,
     unsupportedReason: null,
+  };
+}
+
+function continuousOverviewInstrument(asset: MarketAsset): InstrumentMetadata {
+  return {
+    symbol: asset.symbol,
+    companyName: asset.name,
+    exchange: null,
+    assetType: 'crypto',
+    currency: 'USD',
+    sector: null,
+    industry: null,
+    websiteDomain: null,
+    logoUrl: asset.logoUrl,
+    metadataSource: 'continuous-market',
+    updatedAt: null,
   };
 }
 
@@ -86,6 +108,45 @@ export function continuousQuoteResource(
     error: null,
     fallbackLabel: null,
   };
+}
+
+/** Builds Stock Detail from the same accepted quote/candle event as Overview. */
+export function continuousAcceptedQuoteResource(
+  symbol: string,
+  resolved: ContinuousAcceptedMarketData,
+): StockDetailQuoteResource {
+  if (!resolved.accepted) return continuousQuoteUnavailable();
+  if (resolved.accepted.source === 'snapshot' && resolved.quote) {
+    return {
+      data: { ...resolved.quote, symbol: symbol.trim().toUpperCase(), session: 'regular' },
+      freshness: resolved.freshness,
+      provider: resolved.provider ?? 'yahoo-finance-chart',
+      reason: null,
+      error: null,
+      fallbackLabel: null,
+    };
+  }
+  const resource = buildAcceptedResource({
+    accepted: resolved.accepted,
+    snapshotResource: null,
+    baseQuote: resolved.quote,
+    symbol,
+    marketKind: 'continuous',
+    comparisonBase: resolved.comparisonBase,
+  });
+  const latest = resolved.candles.at(-1);
+  return latest && resource.data
+    ? {
+        ...resource,
+        data: {
+          ...resource.data,
+          open: latest.open,
+          high: latest.high,
+          low: latest.low,
+          volume: Math.round(latest.volume),
+        },
+      }
+    : resource;
 }
 
 export function continuousProfile(
@@ -138,4 +199,25 @@ export function continuousQuoteUnavailable(): StockDetailQuoteResource {
 /** The quote a continuous asset shows, from the chart pipeline it belongs to. */
 export async function loadContinuousQuote(symbol: string): Promise<ProviderResult<Quote>> {
   return getYahooChartProvider().getQuote(symbol);
+}
+
+/** Quote + current candles for a 24/7 detail snapshot, both from Yahoo Chart. */
+export async function loadContinuousAcceptedMarket(
+  asset: MarketAsset,
+  now: Date = new Date(),
+): Promise<ContinuousAcceptedMarketData> {
+  const referenceSeconds = Math.floor(now.valueOf() / 1_000);
+  return resolveContinuousAcceptedMarketData({
+    instrument: continuousOverviewInstrument(asset),
+    quote: loadContinuousQuote(asset.symbol),
+    candles: getCandleMarketDataService().getCandles({
+      symbol: asset.symbol,
+      interval: '5m',
+      range: '1d',
+      period1: referenceSeconds - 86_400,
+      period2: referenceSeconds + 300,
+      adjusted: false,
+      session: 'regular',
+    }),
+  });
 }

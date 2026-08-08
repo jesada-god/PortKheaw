@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { equityMarketSymbols, MARKET_ASSETS } from './market-assets';
+import { continuousMarketAsset, equityMarketSymbols, MARKET_ASSETS } from './market-assets';
 
 describe('Overview market asset mapping', () => {
   it('maps all eight cards to entitled ETF proxies or the actual Bitcoin asset', () => {
@@ -22,5 +22,11 @@ describe('Overview market asset mapping', () => {
   it('keeps the canonical Bitcoin symbol out of the US-equity resolver batch', () => {
     expect(equityMarketSymbols()).not.toContain('BTC-USD');
     expect(equityMarketSymbols()).toHaveLength(7);
+  });
+
+  it('canonicalizes only BTC-USD as continuous and leaves AAPL/SPY on equity paths', () => {
+    expect(continuousMarketAsset(' btc-usd ')?.symbol).toBe('BTC-USD');
+    expect(continuousMarketAsset('AAPL')).toBeNull();
+    expect(continuousMarketAsset('SPY')).toBeNull();
   });
 });

@@ -12,9 +12,9 @@ import {
   continuousInstrument,
   continuousMarketStatus,
   continuousProfile,
-  continuousQuoteResource,
+  continuousAcceptedQuoteResource,
   continuousQuoteUnavailable,
-  loadContinuousQuote,
+  loadContinuousAcceptedMarket,
 } from './continuous-snapshot';
 import type { InitialHistoryResponse, StockDetailQuoteResource, StockDetailResource } from './types';
 
@@ -150,8 +150,8 @@ export interface StockDetailGatewaySnapshot {
 }
 
 async function continuousSnapshot(asset: MarketAsset): Promise<StockDetailGatewaySnapshot> {
-  const quote = await loadContinuousQuote(asset.symbol)
-    .then(continuousQuoteResource)
+  const quote = await loadContinuousAcceptedMarket(asset)
+    .then((resolved) => continuousAcceptedQuoteResource(asset.symbol, resolved))
     .catch(() => continuousQuoteUnavailable());
   return {
     instrument: continuousInstrument(asset),

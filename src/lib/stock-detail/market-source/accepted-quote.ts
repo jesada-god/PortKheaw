@@ -9,6 +9,8 @@ import type { StockDetailQuoteResource } from '@/src/lib/stock-detail/types';
 import type { AcceptedPriceCandidate } from './accepted-price';
 import type { MarketDataLabel, MarketDataMode, MarketUpdate } from './types';
 
+export type PriceMarketKind = 'us-equity' | 'continuous';
+
 /**
  * Pure helpers that turn the single accepted price (see {@link resolveAcceptedPrice})
  * into the displayed quote resource, its freshness and its provenance label. Kept
@@ -63,7 +65,13 @@ export function freshnessFromMode(mode: MarketDataMode, asOf: string | null): Da
  * an unclassifiable value is not a regular price, and admitting it as one is
  * exactly how a stale tick reached the main row.
  */
-function priceRoleOfUpdate(update: MarketUpdate): AcceptedPriceCandidate['priceRole'] | null {
+function priceRoleOfUpdate(
+  update: MarketUpdate,
+  marketKind: PriceMarketKind,
+): AcceptedPriceCandidate['priceRole'] | null {
+  // A continuously traded asset has one semantic price domain. Its weekend and
+  // overnight prints are ordinary prices, not unclassifiable US-equity ticks.
+  if (marketKind === 'continuous') return 'regular';
   if (
     update.label.source === 'snapshot'
     && positivePrice(update.quote?.regularClose)
@@ -92,9 +100,12 @@ function priceRoleOfUpdate(update: MarketUpdate): AcceptedPriceCandidate['priceR
  * Returns null when the price's semantic domain cannot be established, so an
  * unclassifiable print is dropped rather than admitted as a regular price.
  */
-export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidate | null {
+export function candidateFromUpdate(
+  update: MarketUpdate,
+  marketKind: PriceMarketKind = 'us-equity',
+): AcceptedPriceCandidate | null {
   if (update.price === null || !update.label.source || update.label.source === 'history-fallback') return null;
-  const priceRole = priceRoleOfUpdate(update);
+  const priceRole = priceRoleOfUpdate(update, marketKind);
   if (!priceRole) return null;
   return {
     price: update.price,
@@ -118,8 +129,10 @@ export function candidateFromUpdate(update: MarketUpdate): AcceptedPriceCandidat
  */
 export function historyBarPriceRole(
   exchangeTimestamp: string | null,
+  marketKind: PriceMarketKind = 'us-equity',
 ): AcceptedPriceCandidate['priceRole'] | null {
   if (!exchangeTimestamp) return null;
+  if (marketKind === 'continuous') return 'regular';
   if (/^\d{4}-\d{2}-\d{2}$/.test(exchangeTimestamp)) return 'regular';
   switch (classifyUsEquitySession(exchangeTimestamp)) {
     case 'premarket': return 'pre-market';
@@ -217,6 +230,37 @@ export function comparisonCloseForAcceptedPrice(
   return positivePrice(close) ? close : null;
 }
 
+function utcDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function previousUtcDate(value: string): string {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+/**
+ * Comparison close for a 24/7 asset. Calendar days are UTC provider days, not
+ * US trading sessions: the same-day quote carries its explicit previous close;
+ * a quote from the immediately preceding UTC day contributes its own close.
+ */
+export function continuousComparisonClose(
+  quote: Quote | null,
+  priceAsOf: string | null | undefined,
+): number | null {
+  if (!quote) return null;
+  const priceDate = utcDate(priceAsOf);
+  const quoteDate = utcDate(quote.quoteTimestamp) ?? quote.latestTradingDay ?? null;
+  if (!priceDate || !quoteDate) return null;
+  if (priceDate === quoteDate) return regularComparisonClose(quote);
+  if (previousUtcDate(priceDate) !== quoteDate) return null;
+  const close = positivePrice(quote.regularClose) ? quote.regularClose : quote.price;
+  return positivePrice(close) ? close : null;
+}
+
 /**
  * Build the displayed quote resource from the single accepted price. A snapshot
  * keeps its full verified quote; an aggregate/history fallback refines only the
@@ -230,22 +274,50 @@ export function buildAcceptedResource(input: {
   snapshotResource: StockDetailQuoteResource | null;
   baseQuote: Quote | null;
   symbol: string;
+  marketKind?: PriceMarketKind;
+  comparisonBase?: number | null;
 }): StockDetailQuoteResource {
-  const { accepted, snapshotResource, baseQuote, symbol } = input;
+  const {
+    accepted,
+    snapshotResource,
+    baseQuote,
+    symbol,
+    marketKind = 'us-equity',
+  } = input;
   if (accepted.source === 'snapshot' && snapshotResource) return snapshotResource;
 
   // The comparison base must belong to the session before the ACCEPTED price,
   // not before the base quote — see `comparisonCloseForAcceptedPrice`.
-  const previousClose = comparisonCloseForAcceptedPrice(baseQuote, accepted.exchangeTimestamp);
+  const previousClose = input.comparisonBase !== undefined
+    ? input.comparisonBase
+    : marketKind === 'continuous'
+      ? continuousComparisonClose(baseQuote, accepted.exchangeTimestamp)
+      : comparisonCloseForAcceptedPrice(baseQuote, accepted.exchangeTimestamp);
   const change = previousClose != null ? accepted.price - previousClose : null;
   const changePercent = previousClose ? (change! / previousClose) * 100 : null;
   // Only the four fields that describe the DISPLAYED price are refined.
   // `regularClose` / `previousRegularClose` keep describing the base quote's own
   // session, which is what the header's extended-hours partitioning reads.
+  const acceptedTradingDay = utcDate(accepted.exchangeTimestamp);
   const data: Quote = baseQuote
-    ? { ...baseQuote, price: accepted.price, previousClose, change, changePercent }
+    ? {
+        ...baseQuote,
+        price: accepted.price,
+        previousClose,
+        change,
+        changePercent,
+        ...(marketKind === 'continuous' ? {
+          symbol: symbol.trim().toUpperCase(),
+          regularClose: accepted.price,
+          previousRegularClose: previousClose,
+          latestTradingDay: acceptedTradingDay,
+          quoteTimestamp: accepted.exchangeTimestamp,
+          session: 'regular' as const,
+          priceSource: `${accepted.provider ?? 'unknown-provider'}.candle`,
+        } : {}),
+      }
     : {
-      symbol,
+      symbol: symbol.trim().toUpperCase(),
       currency: null,
       price: accepted.price,
       open: null,
@@ -255,7 +327,14 @@ export function buildAcceptedResource(input: {
       change: null,
       changePercent: null,
       volume: null,
-      latestTradingDay: accepted.exchangeTimestamp?.slice(0, 10) ?? null,
+      latestTradingDay: acceptedTradingDay,
+      ...(marketKind === 'continuous' ? {
+        regularClose: accepted.price,
+        previousRegularClose: previousClose,
+        quoteTimestamp: accepted.exchangeTimestamp,
+        session: 'regular' as const,
+        priceSource: `${accepted.provider ?? 'unknown-provider'}.candle`,
+      } : {}),
     };
   // A genuine live stream is not a fallback: keep its provenance truthful.
   if (accepted.realtime) {

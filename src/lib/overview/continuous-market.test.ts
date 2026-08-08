@@ -85,7 +85,7 @@ describe('continuous-market Overview adapter', () => {
       session: 'CONTINUOUS',
       sessionLabel: 'ซื้อขายตลอด 24 ชม.',
       status: 'live',
-      source: 'yahoo-finance-chart · yahoo-chart-meta.regularMarketPrice',
+      source: 'yahoo-finance-chart · snapshot',
     });
     expect(result.sparkline).toEqual([114_200, 116_000]);
   });
@@ -99,8 +99,8 @@ describe('continuous-market Overview adapter', () => {
     expect(result).toMatchObject({
       price: 116_000,
       change: 1_800,
-      status: 'live',
-      source: 'yahoo-finance-chart · candle fallback',
+      status: 'delayed',
+      source: 'yahoo-finance-chart · aggregate-fallback',
     });
     expect(result.changePercent).toBeCloseTo(1.57618, 4);
   });
@@ -113,6 +113,30 @@ describe('continuous-market Overview adapter', () => {
     });
     expect(result.status).toBe('saved');
     expect(result.freshness?.status).toBe('stale');
+  });
+
+  it('uses the newer candle for both price and timestamp when the quote is stale', async () => {
+    const oldQuote = quote('stale');
+    oldQuote.data.price = 115_000;
+    oldQuote.data.quoteTimestamp = '2026-08-01T06:10:00.000Z';
+    oldQuote.freshness.asOf = oldQuote.data.quoteTimestamp;
+    const currentCandles = candles();
+    currentCandles.data.candles = [
+      { timestamp: Date.parse('2026-08-01T06:15:00.000Z') / 1_000, open: 115_100, high: 115_300, low: 115_000, close: 115_200, volume: 1 },
+      { timestamp: Date.parse('2026-08-01T06:20:00.000Z') / 1_000, open: 115_200, high: 116_100, low: 115_100, close: 116_000, volume: 1 },
+    ];
+
+    const result = await loadContinuousMarketPrice({
+      instrument,
+      quote: Promise.resolve(oldQuote),
+      candles: Promise.resolve(currentCandles),
+    });
+
+    expect(result).toMatchObject({
+      price: 116_000,
+      asOf: '2026-08-01T06:20:00.000Z',
+      source: 'yahoo-finance-chart · aggregate-fallback',
+    });
   });
 
   it('isolates total provider failure as one unavailable card with a reason', async () => {

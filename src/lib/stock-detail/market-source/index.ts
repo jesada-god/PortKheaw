@@ -54,12 +54,14 @@ export {
 export {
   buildAcceptedResource,
   candidateFromUpdate,
+  continuousComparisonClose,
   freshnessFromMode,
   historyBarPriceRole,
   labelFromAccepted,
   regularComparisonClose,
   AGGREGATE_FALLBACK_LABEL,
   HISTORY_FALLBACK_LABEL,
+  type PriceMarketKind,
 } from './accepted-quote';
 export {
   resolveMarketSourceConfig,

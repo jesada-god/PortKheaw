@@ -76,6 +76,7 @@ describe('instrument kind wording', () => {
     expect(resolveCompanyProfileLabels('th', companyProfileKind('ETF')).title).toBe('ข้อมูลกองทุน');
     expect(resolveCompanyProfileLabels('th', companyProfileKind('etf')).title).toBe('ข้อมูลกองทุน');
     expect(resolveCompanyProfileLabels('th', companyProfileKind('Stock')).title).toBe('ข้อมูลบริษัท');
+    expect(resolveCompanyProfileLabels('th', companyProfileKind('crypto')).title).toBe('ข้อมูลสินทรัพย์ดิจิทัล');
   });
 
   it('never guesses: an unknown asset type keeps the existing company wording', () => {
