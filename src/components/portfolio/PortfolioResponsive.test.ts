@@ -2,21 +2,38 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const portfolio = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioClient.tsx'), 'utf8');
-const options = readFileSync(resolve(process.cwd(), 'src/components/portfolio/OptionsSection.tsx'), 'utf8');
-const manager = readFileSync(resolve(process.cwd(), 'src/components/portfolio/PortfolioManager.tsx'), 'utf8');
-const modal = readFileSync(resolve(process.cwd(), 'src/components/ui/Modal.tsx'), 'utf8');
+const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
+
+const portfolio = read('src/components/portfolio/PortfolioClient.tsx');
+const options = read('src/components/portfolio/OptionsSection.tsx');
+const manager = read('src/components/portfolio/PortfolioManager.tsx');
+const modal = read('src/components/ui/Modal.tsx');
+const holdingCard = read('src/components/portfolio/tracker/HoldingCard.tsx');
+const optionCard = read('src/components/portfolio/tracker/OptionPositionCard.tsx');
+const chips = read('src/components/portfolio/tracker/FilterChips.tsx');
 
 describe('portfolio responsive and accessibility contract', () => {
-  it('uses compact desktop tables and dedicated mobile cards without page overflow', () => {
+  /*
+   * One reading language at every width.
+   *
+   * The holdings and the option positions used to be a table from `md` up and
+   * cards below it — the same figures said twice, and the table could only fit
+   * by scrolling sideways inside its own box. Both are now one card list that
+   * grows denser on a wide screen, so this asserts the tables are gone rather
+   * than that they are well behaved.
+   */
+  it('renders holdings and options as one card list, with no table and no page overflow', () => {
     expect(portfolio).toContain('overflow-x-clip');
-    expect(portfolio).toContain('data-testid="holdings-desktop-table"');
-    expect(portfolio).toContain('data-testid="holdings-mobile-cards"');
-    expect(portfolio).toContain('hidden overflow-x-auto md:block');
-    expect(portfolio).toContain('divide-y divide-slate-800 md:hidden');
-    expect(options).toContain('data-testid="options-desktop-table"');
-    expect(options).toContain('data-testid="options-mobile-cards"');
-    expect(options).not.toMatch(/md:hidden[^"]*min-w-\[/);
+    expect(portfolio).toContain('data-testid="holdings-list"');
+    expect(portfolio).not.toContain('<table');
+    expect(options).toContain('data-testid="options-position-list"');
+    expect(options).not.toContain('<table');
+    for (const source of [holdingCard, optionCard]) {
+      expect(source).not.toMatch(/min-w-\[\d{3,}px\]/);
+      expect(source).toContain('min-w-0');
+    }
+    // The chip rails scroll; the page never does.
+    expect(chips).toContain('overflow-x-auto');
   });
 
   it('keeps forms inside the viewport and preserves keyboard dialog semantics', () => {
@@ -74,21 +91,33 @@ describe('portfolio responsive and accessibility contract', () => {
     expect(options).toContain("onChange={(value) => onChange('multiplier', value)}");
   });
 
-  it('exposes expanded state and complete mobile option information', () => {
-    expect(portfolio).toContain('aria-expanded={expanded}');
-    expect(options).toContain('aria-expanded={expanded}');
-    for (const label of ['Bid / Ask / Mark', 'Today P&L', 'Unrealized P&L', 'Breakeven', 'DTE', 'Delta', 'Theta']) {
-      expect(options).toContain(label);
+  it('exposes expanded state and complete option information on the card itself', () => {
+    expect(holdingCard).toContain('aria-expanded={expanded}');
+    expect(optionCard).toContain('aria-expanded={expanded}');
+    for (const label of ['Bid / Ask / Mark', 'Today P&L', 'Unrealized P&L', 'Breakeven', 'DTE', 'Delta', 'Theta', 'Strike', 'Underlying']) {
+      expect(optionCard).toContain(label);
+    }
+    // Status is never carried by colour alone.
+    for (const word of ['position.side', 'position.status', 'moneyness']) {
+      expect(optionCard).toContain(word);
     }
   });
 
+  it('never invents a moneyness, a Greek or an implied volatility it was not given', () => {
+    const presentation = read('src/lib/portfolio/options/presentation.ts');
+    expect(presentation).toContain('if (underlyingPrice === null || !Number.isFinite(underlyingPrice)) return null;');
+    expect(optionCard).toContain('{moneyness && ');
+    expect(optionCard).toContain("position.impliedVolatility === null ? '—'");
+    expect(optionCard).toContain('quoteNumber(position.delta, 4)');
+  });
+
   it('keeps internal option identifiers out of every user-facing label', () => {
-    expect(options).toContain('optionPositionTitle(position)');
-    expect(options).toContain('optionPositionDescription(position)');
-    expect(options).toContain('UNMATCHED_OPTION_MESSAGE');
+    expect(optionCard).toContain('optionPositionTitle(position)');
+    expect(optionCard).toContain('optionPositionDescription(position)');
+    expect(optionCard).toContain('UNMATCHED_OPTION_MESSAGE');
     expect(options).not.toContain('targetPosition?.contractSymbol');
     expect(options).not.toContain('targetDeleting?.contractSymbol');
-    expect(options).not.toContain('>{position.contractSymbol}</span>');
+    expect(optionCard).not.toContain('>{position.contractSymbol}</span>');
   });
 
   it('provides stacked portfolio cards, goal/transfer controls and explicit unavailable reasons', () => {
@@ -106,8 +135,8 @@ describe('portfolio responsive and accessibility contract', () => {
     expect(options).toContain('Premium ต่อหุ้น (USD)');
     expect(options).toContain("$${helperPrice} × ${helperContracts} × ${helperMultiplier}");
     expect(options).toContain('กรอก 194 หมายถึง $19,400');
-    expect(options).toContain('maximumFractionDigits: 8');
-    expect(options).toContain('Mark precision (raw quote)');
+    expect(optionCard).toContain('maximumFractionDigits: 8');
+    expect(optionCard).toContain('Mark precision (raw quote)');
     expect(options).toContain('สัญญา × $');
     expect(options).toContain('ค่าธรรมเนียม');
     expect(options).toContain('Estimated profit %');

@@ -100,10 +100,18 @@ function render() {
       signed={(value) => (value === null ? '—' : `${value}`)}
       percent={(value) => (value === null ? '—' : `${value}%`)}
       onSelect={() => undefined}
-      transferOpenRequest={0}
-      onTransferRequestHandled={() => undefined}
+      openRequest={null}
+      onOpenRequestHandled={() => undefined}
     />);
   });
+  // Managing a portfolio now lives behind one disclosure, so the reset control
+  // is reached the way a reader reaches it.
+  openManagePanel();
+}
+
+function openManagePanel() {
+  const toggle = container.querySelector('[data-testid="portfolio-manage-panel"] button');
+  if (toggle && toggle.getAttribute('aria-expanded') === 'false') click(toggle);
 }
 
 function click(element: Element | null) {
@@ -253,10 +261,11 @@ describe('the reset control on a portfolio card', () => {
         signed={(value) => String(value)}
         percent={(value) => String(value)}
         onSelect={() => undefined}
-        transferOpenRequest={0}
-        onTransferRequestHandled={() => undefined}
+        openRequest={null}
+        onOpenRequestHandled={() => undefined}
       />);
     });
+    openManagePanel();
 
     expect((resetButton(FIRST) as HTMLButtonElement).disabled).toBe(true);
   });

@@ -12,22 +12,25 @@ const historyPage = read('app/portfolio/transactions/page.tsx');
 const presentation = read('src/lib/portfolio/presentation.ts');
 const mascot = read('src/components/portfolio/PortfolioGoalMascot.tsx');
 const shell = read('src/components/layout/MainLayout.tsx');
+const hero = read('src/components/portfolio/tracker/TrackerHero.tsx');
+const panels = read('src/components/portfolio/tracker/SecondaryPanels.tsx');
 
 describe('portfolio summary card', () => {
   it('labels profit and loss in Thai, with no mixed Thai/English wording', () => {
-    expect(client).toContain('label="กำไร/ขาดทุนวันนี้"');
-    expect(client).toContain('label="กำไร/ขาดทุนรวม"');
-    expect(client).not.toContain('label="P/L วันนี้"');
-    expect(client).not.toContain('label="P/L รวม"');
+    // The headline figures live on the shared hero card now, which is the one
+    // place either of them is named.
+    expect(hero).toContain('label="กำไร/ขาดทุนวันนี้"');
+    expect(hero).toContain("totalGainLabel = 'กำไร/ขาดทุนรวม'");
+    expect(hero).not.toContain('label="P/L วันนี้"');
+    expect(hero).not.toContain('label="P/L รวม"');
     /*
-     * Scoped to the summary cards on purpose. The holdings table keeps its own
-     * column headings, which are a different surface with their own contract;
-     * what had to stop was a portfolio *summary* naming its headline figures in
+     * Scoped to the hero on purpose. The accounting panel keeps the ledger's own
+     * English terms, which are a different surface with their own contract; what
+     * had to stop was a portfolio *summary* naming its headline figures in
      * English while everything around them is Thai.
      */
-    const summaryCard = client.slice(client.indexOf('มูลค่าพอร์ตรวม'), client.indexOf('data-testid="holdings-desktop-table"'));
-    expect(summaryCard).not.toContain('Total P&L');
-    expect(summaryCard).not.toContain('Today P&L');
+    expect(hero).not.toContain('Total P&L');
+    expect(hero).not.toContain('Today P&L');
     expect(manager).not.toContain('label="Total P&L"');
     expect(manager).not.toContain('label="Today P&L"');
   });
@@ -36,7 +39,7 @@ describe('portfolio summary card', () => {
     expect(client).toContain('ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน');
     expect(client).not.toContain('Today P&amp;L ยังไม่พร้อม');
     expect(client).toMatch(/data-testid="portfolio-today-unavailable">[\s\S]{0,20}ยังคำนวณกำไร/);
-    expect(client).toMatch(/text-xs text-slate-400"[^>]*data-testid="portfolio-today-unavailable"/);
+    expect(client).toMatch(/text-xs text-\[var\(--text-muted\)\]"[^>]*data-testid="portfolio-today-unavailable"/);
   });
 
   it('keeps one profit/loss colour mapping and hands masked values a neutral tone', () => {
@@ -46,18 +49,20 @@ describe('portfolio summary card', () => {
     expect(mascot).toContain('export const portfolioGoalReturnTone = portfolioReturnTone;');
     expect(mascot).toContain('export const portfolioGoalReturnToneClass = portfolioReturnToneClass;');
     for (const field of ['todayChange', 'totalGain']) {
-      expect(client).toContain(`portfolioReturnToneClass(showBalances ? aggregateSummary.${field} : null, 'text-slate-400')`);
+      expect(hero).toContain(`portfolioReturnToneClass(showBalances ? ${field} : null, 'text-[var(--text-secondary)]')`);
     }
-    // The summary card no longer repeats its own null-and-sign colour test.
+    // The hero never repeats its own null-and-sign colour test.
+    expect(hero).not.toContain("=== null ? 'text-slate-400' : gainColor");
     expect(client).not.toContain("aggregateSummary.todayChange === null ? 'text-slate-400' : gainColor");
     expect(client).not.toContain("aggregateSummary.totalGain === null ? 'text-slate-400' : gainColor");
-    // Total value and cash stay the ordinary text colour.
-    expect(client).toContain('<Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />');
+    // Total value stays the ordinary text colour, and cash reads as a balance in
+    // the accounting panel rather than as a return.
+    expect(panels).toContain('<Figure label="เงินสด" value={money(summary.cashBalance)} />');
   });
 
   it('offers the balance-adjustment sheet from the total itself', () => {
-    expect(client).toContain('aria-label="ปรับยอดพอร์ต"');
-    expect(client).toContain('data-testid="portfolio-value-edit"');
+    expect(hero).toContain('aria-label="ปรับยอดพอร์ต"');
+    expect(hero).toContain('data-testid="portfolio-value-edit"');
     expect(client).toContain('openValueSheet()');
     expect(client).toContain('requestPortfolioWrite()');
     expect(sheet).toContain('title="ปรับยอดพอร์ต"');
@@ -76,11 +81,26 @@ describe('portfolio page carries no transaction history', () => {
   });
 
   it('replaces them with one compact entry point that describes what is inside', () => {
-    expect(client).toContain('data-testid="portfolio-history-entry"');
+    expect(client).toContain('testId="portfolio-history-entry"');
+    expect(panels).toContain('data-testid={testId}');
     expect(client).toContain('ดูรายการซื้อ ขาย ฝาก ถอน โอน และปรับยอดทั้งหมด');
-    expect(client).toContain('href={`/portfolio/transactions?portfolio=${portfolio.id}`}');
-    expect(client).toContain('data-testid="portfolio-history-link"');
+    expect(client).toContain('href={`/portfolio/transactions?portfolio=${detailPortfolio.id}`}');
+    expect(client).toContain('testId="portfolio-history-link"');
     expect(client).toContain('ประวัติเงินเข้า–ออก');
+  });
+
+  it('moves the accounting one tap down without losing any of it', () => {
+    for (const label of [
+      'เงินฝากสุทธิ (Net deposits)', 'มูลค่าหุ้น', 'มูลค่าออปชันสุทธิ',
+      'ต้นทุนคงเหลือ', 'Realized P&L', 'Unrealized P&L',
+    ]) {
+      expect(panels).toContain(label);
+    }
+    expect(panels).toContain('data-testid="portfolio-accounting-details"');
+    expect(client).toContain('<AccountingDetails');
+    // Every figure is still read off the summary the ledger produced.
+    expect(panels).toContain('summary.netDepositedCapital');
+    expect(panels).toContain('summary.costBasis + summary.optionRemainingCost');
   });
 
   it('keeps the add-transaction flow and its buy/sell/deposit/withdraw/transfer choices', () => {

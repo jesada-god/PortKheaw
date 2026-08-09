@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Edit3, Eraser, FolderOpen, History, Lock, Plus, RotateCcw, Target, Trash2, Undo2 } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, Edit3, Eraser, FolderOpen, History, Lock, Plus, RotateCcw, Settings2, Target, Trash2, Undo2 } from 'lucide-react';
 import {
   archivePortfolioAction,
   createPortfolioAction,
@@ -59,6 +59,23 @@ import { useEntitlement } from '@/src/components/subscription/EntitlementProvide
 
 type Money = (value: number | string | null) => string;
 
+/**
+ * A request from another surface to open one of the dialogs this component
+ * owns.
+ *
+ * Every portfolio mutation — create, rename, goal, reset, archive, delete, move
+ * cash, move assets — lives here and only here, with its confirmation copy, its
+ * server-loaded facts and its idempotency keys. The tracker's overflow menu and
+ * its empty states therefore ask for a dialog rather than growing a second
+ * implementation of one: the `id` is a monotonic event boundary, the same
+ * pattern the transfer request already used.
+ */
+export interface PortfolioManagerRequest {
+  id: number;
+  kind: 'create' | 'edit' | 'goal' | 'delete' | 'reset' | 'transfer' | 'moveAssets';
+  portfolioId?: string;
+}
+
 function displayTime(value: string) {
   return new Intl.DateTimeFormat('th-TH', {
     dateStyle: 'medium',
@@ -89,8 +106,9 @@ export function PortfolioManager({
   signed,
   percent,
   onSelect,
-  transferOpenRequest,
-  onTransferRequestHandled,
+  openRequest,
+  onOpenRequestHandled,
+  sectionHidden = false,
 }: {
   portfolios: PortfolioRecord[];
   summaries: Record<string, PortfolioSummary>;
@@ -107,14 +125,21 @@ export function PortfolioManager({
   signed: (value: number | null) => string;
   percent: (value: number | null) => string;
   onSelect: (portfolioId: string) => void;
-  transferOpenRequest: number;
-  onTransferRequestHandled: () => void;
+  openRequest: PortfolioManagerRequest | null;
+  onOpenRequestHandled: () => void;
+  /**
+   * Hides the visible panel while leaving every dialog mounted. The tracker's
+   * drill-down screens replace the panel on screen but still need its dialogs,
+   * and those render through a portal, so hiding the panel cannot hide them.
+   */
+  sectionHidden?: boolean;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
   const { requestUpgrade } = useEntitlement();
   const [pending, startTransition] = useTransition();
   const [goalScope, setGoalScope] = useState<PortfolioGoalScope>('selected');
+  const [manageOpen, setManageOpen] = useState(false);
   const [tab, setTab] = useState<'STOCK' | 'OPTION'>('STOCK');
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
@@ -315,17 +340,29 @@ export function PortfolioManager({
   }
 
   useEffect(() => {
-    if (!transferOpenRequest) return;
+    if (!openRequest) return;
     let activeRequest = true;
     queueMicrotask(() => {
       if (!activeRequest) return;
-      openTransfer();
-      onTransferRequestHandled();
+      const target = openRequest.portfolioId
+        ? portfolios.find((portfolio) => portfolio.id === openRequest.portfolioId) ?? null
+        : null;
+      switch (openRequest.kind) {
+        case 'transfer': openTransfer(); break;
+        case 'create': requestCreate(); break;
+        case 'edit': if (target) openEdit(target); break;
+        case 'goal': if (target) openGoal(target); break;
+        case 'delete': if (target) openDelete(target); break;
+        case 'reset': if (target) openReset(target); break;
+        case 'moveAssets': if (target) openAssetTransfer(target); break;
+      }
+      onOpenRequestHandled();
     });
     return () => { activeRequest = false; };
-    // A monotonically increasing request is the event boundary.
+    // A monotonically increasing request id is the event boundary; the
+    // portfolios and handlers are snapshots for that one event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transferOpenRequest]);
+  }, [openRequest?.id]);
 
   function closeTransfer() {
     setTransferOpen(false);
@@ -564,19 +601,16 @@ export function PortfolioManager({
   const transferCashAfter = (summaries[transferSource]?.cashBalance ?? 0)
     - (Number.isFinite(transferAmountNumber) ? transferAmountNumber : 0);
 
-  return <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-4 shadow-xl sm:p-5">
-    <div className="flex flex-col gap-4 border-b border-slate-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
-      <div>
-        <h3 className="text-lg font-bold text-white">พอร์ตของฉัน</h3>
-        <p className="mt-1 text-xs text-slate-400">แต่ละพอร์ตใช้ Transaction Ledger และยอดเงินสดของตัวเอง พอร์ตรวมเป็นผลรวมเท่านั้น</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" disabled={!isOnline || active.length < 2} onClick={openTransfer}>ย้ายเงิน</Button>
-        <Button size="sm" disabled={!isOnline} onClick={() => requestCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
-      </div>
-    </div>
-
-    <div className="mt-4">
+  return <>
+    {/*
+      The goal card keeps its place on the screen — it is where Kheaw lives, and
+      a goal somebody set is a reason to open the app. Everything that *manages*
+      a portfolio rather than reporting on one now sits behind one disclosure
+      below it: creating, renaming, resetting, archiving, deleting and the
+      recovery window are all rare, deliberate acts, and none of them belongs in
+      the first screenful.
+    */}
+    <div className={sectionHidden ? 'hidden' : 'min-w-0 space-y-4'}>
       <PortfolioGoalCard
         model={goalCard}
         selectedPortfolioName={selectedPortfolio.name}
@@ -588,6 +622,54 @@ export function PortfolioManager({
         onScopeChange={setGoalScope}
         onEditGoal={() => openGoal(goalScope === 'aggregate' ? 'aggregate' : selectedPortfolio)}
       />
+
+      {/*
+        The undo, on the page rather than in a toast, and outside the disclosure
+        so a collapsed panel can never swallow it. A toast that disappears after
+        three seconds is not an offer to reverse a deletion — it is a notice that
+        one happened.
+      */}
+      {undoTarget && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2,var(--surface))] p-3 text-sm" data-testid="portfolio-undo-delete">
+        <p className="min-w-0 text-[var(--text)]">
+          ลบพอร์ต “<strong className="break-words">{undoTarget.name}</strong>” แล้ว กู้คืนได้ภายใน 7 วัน
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={!isOnline || pending} onClick={() => restoreDeleted(undoTarget.id)}>
+            <Undo2 aria-hidden="true" size={14} /> กู้คืน
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setUndoTarget(null)}>ปิด</Button>
+        </div>
+      </div>}
+
+      <section className="min-w-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]" data-testid="portfolio-manage-panel">
+        <button
+          type="button"
+          aria-expanded={manageOpen}
+          onClick={() => setManageOpen((current) => !current)}
+          className="flex min-h-16 w-full min-w-0 items-center gap-3 p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+        >
+          <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+            <Settings2 size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <strong className="block text-sm font-bold text-[var(--text)]">จัดการพอร์ต</strong>
+            <span className="mt-0.5 block text-xs text-[var(--text-muted)]">สร้าง แก้ไข ตั้งเป้าหมาย ย้ายเงิน รีเซ็ต ลบ และกู้คืนพอร์ต</span>
+          </span>
+          {manageOpen
+            ? <ChevronUp aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />
+            : <ChevronDown aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />}
+        </button>
+
+        {manageOpen && <div className="border-t border-[var(--border)] p-4">
+    <div className="flex flex-col gap-4 border-b border-slate-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h3 className="text-lg font-bold text-white">พอร์ตของฉัน</h3>
+        <p className="mt-1 text-xs text-slate-400">แต่ละพอร์ตใช้ Transaction Ledger และยอดเงินสดของตัวเอง พอร์ตรวมเป็นผลรวมเท่านั้น</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={!isOnline || active.length < 2} onClick={openTransfer}>ย้ายเงิน</Button>
+        <Button size="sm" disabled={!isOnline} onClick={() => requestCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
+      </div>
     </div>
 
     <div className="mt-4 flex gap-2" role="tablist" aria-label="ประเภทพอร์ต">
@@ -689,23 +771,6 @@ export function PortfolioManager({
       })}
     </div>
 
-    {/*
-      The undo, on the page rather than in a toast. A toast that disappears after
-      three seconds is not an offer to reverse a deletion — it is a notice that
-      one happened.
-    */}
-    {undoTarget && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm" data-testid="portfolio-undo-delete">
-      <p className="min-w-0 text-[var(--text)]">
-        ลบพอร์ต “<strong className="break-words">{undoTarget.name}</strong>” แล้ว กู้คืนได้ภายใน 7 วัน
-      </p>
-      <div className="flex gap-2">
-        <Button size="sm" disabled={!isOnline || pending} onClick={() => restoreDeleted(undoTarget.id)}>
-          <Undo2 aria-hidden="true" size={14} /> กู้คืน
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => setUndoTarget(null)}>ปิด</Button>
-      </div>
-    </div>}
-
     {recentlyDeleted.length > 0 && <section className="mt-4 rounded-2xl border border-[var(--border)] bg-slate-950/35 p-4" data-testid="recently-deleted-portfolios">
       <div className="flex items-center gap-2">
         <History aria-hidden="true" className="shrink-0 text-slate-400" size={16} />
@@ -729,6 +794,9 @@ export function PortfolioManager({
         </li>)}
       </ul>
     </section>}
+        </div>}
+      </section>
+    </div>
 
     <Modal isOpen={createOpen} onClose={() => !pending && closeCreate()} title="สร้างพอร์ตใหม่">
       <form className="space-y-4" onSubmit={(event) => {
@@ -926,7 +994,7 @@ export function PortfolioManager({
       <p className="text-sm text-slate-300">แพ็กเกจ {effectiveTier.toUpperCase()} ใช้พอร์ต {limitType === 'OPTION' ? 'Options' : 'หุ้น/ETF'} ครบ {limitType ? portfolioCreationEntitlement(effectiveTier, limitType).maxCount : 0} พอร์ตแล้ว โปรด Archive พอร์ตที่ไม่ใช้ก่อนสร้างใหม่</p>
       <div className="mt-5"><Button className="w-full" onClick={() => setLimitType(null)}>เข้าใจแล้ว</Button></div>
     </Modal>
-  </section>;
+  </>;
 }
 
 function CardMetric({ label, value, tone = 'text-slate-200', helper }: {

@@ -65,6 +65,21 @@ export default async function PortfolioPage() {
     symbol,
     canonicalPrices.get(symbol)?.display.instrument.logoUrl ?? null,
   ]));
+  /*
+   * The same snapshot, read twice more for two labels rather than a price: the
+   * instrument master's `asset_type`, which is what sorts a holding into หุ้น or
+   * ETF on the asset view, and its company name, which is what a row shows under
+   * the symbol. Both are already loaded — this adds no query and no provider
+   * call — and neither takes part in any valuation.
+   */
+  const instrumentAssetTypes = Object.fromEntries(stockSymbols.map((symbol) => [
+    symbol,
+    canonicalPrices.get(symbol)?.display.instrument.assetType ?? null,
+  ]));
+  const instrumentNames = Object.fromEntries(stockSymbols.map((symbol) => [
+    symbol,
+    canonicalPrices.get(symbol)?.display.instrument.companyName ?? null,
+  ]));
   const quotes = stockSymbols.map((symbol) => {
     const item = canonicalPrices.get(symbol)?.display;
     if (!item || item.price === null) return [symbol, null] as const;
@@ -108,6 +123,8 @@ export default async function PortfolioPage() {
         fx={fx}
         timezone={timezone}
         effectiveTier={effectiveTier}
+        assetTypes={instrumentAssetTypes}
+        companyNames={instrumentNames}
       />
     </InstrumentLogoProvider>
   </div>;

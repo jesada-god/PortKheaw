@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useState, useTransition, type FormEven
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  AlertTriangle, Briefcase, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff,
-  ArrowDownCircle, ArrowUpCircle, History, Lock, LoaderCircle, PencilLine, Plus, RefreshCw, Repeat2, WalletCards,
+  AlertTriangle, ArrowDownCircle, ArrowLeft, ArrowUpCircle, Eraser, Eye, EyeOff, History,
+  LoaderCircle, Lock, MoreHorizontal, PencilLine, Plus, RefreshCw, Repeat2, Target, Trash2,
+  WalletCards,
 } from 'lucide-react';
 import {
   createPortfolioTransactionAction,
@@ -13,19 +14,21 @@ import {
 } from '@/app/portfolio/actions';
 import { reconcilePortfolioValueAction } from '@/app/portfolio/reconcile-actions';
 import { Button } from '@/src/components/ui/Button';
-import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { rememberInstrumentLogo } from '@/src/components/instruments/InstrumentLogoProvider';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
-import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
+import { aggregatePortfolioSummaries, calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
+import { buildAssetCategories, type AssetCategoryKey } from '@/src/lib/portfolio/asset-categories';
+import { latestPortfolioPriceTime, portfolioAssetCount } from '@/src/lib/portfolio/goal-card';
+import { sortAssets, type HoldingSortKey } from '@/src/lib/portfolio/holdings-sort';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
 import type {
   DeletedPortfolioSummary,
-  HoldingSummary,
   MarketPriceInput,
   PortfolioGoal,
   PortfolioRecord,
+  PortfolioSummary,
   PortfolioTransactionType,
 } from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
@@ -33,8 +36,6 @@ import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
 import {
   formatPortfolioMoney,
-  gainColor,
-  portfolioReturnToneClass,
   signedMoney,
   signedPercent,
 } from '@/src/lib/portfolio/presentation';
@@ -43,9 +44,23 @@ import {
   validateTransactionDateTime,
 } from '@/src/lib/portfolio/transaction-datetime';
 import { OptionsSection } from './OptionsSection';
-import { PortfolioManager } from './PortfolioManager';
+import { PortfolioManager, type PortfolioManagerRequest } from './PortfolioManager';
 import { PortfolioValueSheet, type PortfolioValueSubmission } from './PortfolioValueSheet';
 import { TransactionFormModal, type TransactionFormState } from './TransactionFormModal';
+import { AssetCategoryCard } from './tracker/AssetCategoryCard';
+import { FilterChips } from './tracker/FilterChips';
+import { HoldingCard } from './tracker/HoldingCard';
+import { OptionPositionCard } from './tracker/OptionPositionCard';
+import { PortfolioSummaryCard } from './tracker/PortfolioSummaryCard';
+import {
+  AccountingDetails,
+  EmptyAssets,
+  NavRow,
+  SectionHeading,
+  SortControl,
+} from './tracker/SecondaryPanels';
+import { TrackerHero, type HeroAllocationSlice } from './tracker/TrackerHero';
+import { ViewToggle, type TrackerView } from './tracker/ViewToggle';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -81,10 +96,6 @@ const emptyForm = (portfolioId = '', timezone = 'Asia/Bangkok'): TransactionForm
   idempotencyKey: crypto.randomUUID(),
 });
 
-function number(value: number, maximumFractionDigits = 8) {
-  return new Intl.NumberFormat('th-TH', { maximumFractionDigits }).format(value);
-}
-
 function transactionDate(value: string, timezone: string) {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) return value;
@@ -92,7 +103,41 @@ function transactionDate(value: string, timezone: string) {
     .format(parsed);
 }
 
-export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optionQuotes, optionTargets, recentlyDeleted, fx, timezone, effectiveTier }: {
+/** One colour per asset class, all theme tokens, none of them a market direction. */
+const allocationColor: Record<AssetCategoryKey, string> = {
+  cash: 'var(--text-muted)',
+  stock: 'var(--accent)',
+  etf: 'var(--info)',
+  option: 'var(--color-accent-purple)',
+};
+
+/**
+ * Which screen is on the phone.
+ *
+ * Deliberately component state rather than a route. Every figure on all three
+ * screens comes from the same `summaries` map this component already holds, so a
+ * navigation would re-run the page's whole server load — every quote, every
+ * option chain — to show numbers that are already in memory. Back is an explicit
+ * control on each drill-down instead.
+ */
+type Screen =
+  | { kind: 'home' }
+  | { kind: 'category'; key: AssetCategoryKey }
+  | { kind: 'portfolio'; id: string };
+
+export function PortfolioClient({
+  portfolios,
+  aggregateGoal,
+  marketPrices,
+  optionQuotes,
+  optionTargets,
+  recentlyDeleted,
+  fx,
+  timezone,
+  effectiveTier,
+  assetTypes = {},
+  companyNames = {},
+}: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
   marketPrices: Record<string, MarketPriceInput | null>;
@@ -102,6 +147,13 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   fx: FxResult;
   timezone: string;
   effectiveTier: SubscriptionTier;
+  /**
+   * `asset_type` and display name straight off the instrument master, for the
+   * symbols this page already priced. They classify a holding into หุ้น or ETF
+   * and let a row show a company name; nothing here is a price or a valuation.
+   */
+  assetTypes?: Record<string, string | null>;
+  companyNames?: Record<string, string | null>;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -116,7 +168,7 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const [currentFx, setCurrentFx] = useState(fx);
   const [fxLoading, setFxLoading] = useState(true);
   const [fxError, setFxError] = useState(fx.quote === null);
-  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [valueSheetOpen, setValueSheetOpen] = useState(false);
   const [valueSheetError, setValueSheetError] = useState('');
   /*
@@ -129,7 +181,15 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const [optionActionRequest, setOptionActionRequest] = useState<{ id: number; type: 'buy' | 'sell' } | null>(null);
-  const [transferRequest, setTransferRequest] = useState(0);
+  const [managerRequest, setManagerRequest] = useState<PortfolioManagerRequest | null>(null);
+  const [view, setView] = useState<TrackerView>('assets');
+  const [assetFilter, setAssetFilter] = useState<'all' | AssetCategoryKey>('all');
+  const [portfolioFilter, setPortfolioFilter] = useState<'all' | 'STOCK' | 'OPTION'>('all');
+  const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  const [sortKey, setSortKey] = useState<HoldingSortKey>('value');
+  const [accountingOpen, setAccountingOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+
   const prices = useMemo(
     () => Object.fromEntries(Object.entries(marketPrices).filter((entry): entry is [string, MarketPriceInput] => entry[1] != null)),
     [marketPrices],
@@ -153,6 +213,42 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     () => aggregatePortfolioSummaries(portfolios.map((item) => summaries[item.id])),
     [portfolios, summaries],
   );
+  const activePortfolios = useMemo(() => portfolios.filter((item) => item.archivedAt === null), [portfolios]);
+
+  /*
+   * The asset view, grouped from the very same summaries the portfolio view
+   * reads. Two ways of looking at one calculation — never two calculations.
+   */
+  const categories = useMemo(() => buildAssetCategories({
+    cash: portfolios.map((item) => ({
+      portfolioId: item.id,
+      portfolioName: item.name,
+      balance: summaries[item.id].cashBalance,
+    })),
+    holdings: portfolios.flatMap((item) => summaries[item.id].holdings.map((holding) => ({
+      portfolioId: item.id,
+      portfolioName: item.name,
+      holding,
+    }))),
+    options: portfolios.flatMap((item) => summaries[item.id].optionPositions.map((position) => ({
+      portfolioId: item.id,
+      portfolioName: item.name,
+      position,
+    }))),
+    assetTypeBySymbol: assetTypes,
+  }), [assetTypes, portfolios, summaries]);
+
+  const allocation = useMemo<HeroAllocationSlice[]>(() => {
+    const priced = categories.filter((group) => group.value !== null && group.value > 0);
+    const total = priced.reduce((sum, group) => sum + (group.value ?? 0), 0);
+    if (total <= 0) return [];
+    return priced.map((group) => ({
+      key: group.key,
+      label: group.label,
+      percent: (group.value ?? 0) / total * 100,
+      color: allocationColor[group.key],
+    }));
+  }, [categories]);
 
   async function loadFx() {
     setFxLoading(true);
@@ -292,97 +388,484 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
     });
   }
 
-  return <main className="mx-auto w-full max-w-7xl space-y-5 overflow-x-clip p-3 pb-24 sm:p-4 md:p-8">
-    {!isOnline && <aside className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+  function openPortfolio(portfolioId: string) {
+    setSelectedPortfolioId(portfolioId);
+    setExpandedKey(null);
+    closeForm();
+    setScreen({ kind: 'portfolio', id: portfolioId });
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  }
+
+  function goHome() {
+    setScreen({ kind: 'home' });
+    setExpandedKey(null);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  }
+
+  function requestManager(kind: PortfolioManagerRequest['kind'], portfolioId?: string) {
+    setOverflowOpen(false);
+    setManagerRequest({ id: Date.now(), kind, portfolioId });
+  }
+
+  const privacyButton = <button
+    type="button"
+    onClick={toggleVisibility}
+    aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินชั่วคราว'}
+    aria-pressed={!showBalances}
+    className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+  >{showBalances ? <EyeOff size={19} /> : <Eye size={19} />}</button>;
+
+  const fxFooter = <div className="flex flex-col gap-2 border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)] sm:flex-row sm:items-center sm:justify-between sm:px-6">
+    <div className="min-w-0">
+      {fxLoading && <p className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={14} /> กำลังโหลดอัตราแลกเปลี่ยน…</p>}
+      {hasValidRate && <p className="break-words">🇺🇸 1 USD = {formatFxRate(rate)} THB · อัปเดต {transactionDate(currentFx.quote!.asOf, timezone)}</p>}
+      {!fxLoading && !hasValidRate && <p className="text-[var(--warning)]">ไม่มีอัตราแลกเปลี่ยนจริง จึงปิดการแสดงผล THB</p>}
+      {currentFx.quote?.stale && <p className="mt-1 text-[var(--warning)]">กำลังใช้อัตราแลกเปลี่ยนล่าสุดที่บันทึกไว้ (Stale)</p>}
+      {fxError && hasValidRate && <p className="mt-1 text-[var(--warning)]">โหลดอัตราใหม่ไม่สำเร็จ แต่ยังใช้อัตราที่มีอยู่ได้</p>}
+    </div>
+    <button
+      type="button"
+      onClick={() => void loadFx()}
+      disabled={fxLoading}
+      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 self-start rounded-lg border border-[var(--border)] px-3 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text)] disabled:opacity-50"
+    >
+      <RefreshCw className={fxLoading ? 'animate-spin' : ''} size={14} /> อัตราแลกเปลี่ยน
+    </button>
+  </div>;
+
+  const categoryChips = [
+    { key: 'all', label: 'ทั้งหมด' },
+    ...categories.map((group) => ({ key: group.key, label: group.label, count: group.count })),
+  ];
+  const visibleCategories = assetFilter === 'all'
+    ? categories
+    : categories.filter((group) => group.key === assetFilter);
+
+  const portfolioChips = [
+    { key: 'all', label: 'ทั้งหมด', count: activePortfolios.length },
+    { key: 'STOCK', label: 'พอร์ตหุ้น', count: activePortfolios.filter((item) => item.type !== 'OPTION').length },
+    { key: 'OPTION', label: 'พอร์ตออปชัน', count: activePortfolios.filter((item) => item.type === 'OPTION').length },
+  ].filter((chip) => chip.key === 'all' || chip.count > 0);
+  const visiblePortfolios = portfolios.filter((item) => {
+    if (portfolioFilter === 'all') return true;
+    if (portfolioFilter === 'OPTION') return item.type === 'OPTION';
+    return item.type !== 'OPTION';
+  });
+
+  const missingPriceNote = aggregateSummary.hasMissingPrices
+    ? <p className="mt-3 text-xs text-[var(--warning)]">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>
+    : null;
+
+  function heroFor(
+    target: PortfolioSummary,
+    label: string,
+    updatedAt: string | null,
+    slices: HeroAllocationSlice[],
+    onEdit?: () => void,
+  ) {
+    return <TrackerHero
+      testId="portfolio-hero"
+      label={label}
+      value={money(target.totalValue)}
+      updatedAtLabel={updatedAt ? transactionDate(updatedAt, timezone) : null}
+      todayChange={target.todayChange}
+      todayChangeText={`${signed(target.todayChange)} · ${percent(target.todayChangePercent)}`}
+      totalGain={target.totalGain}
+      totalGainText={`${signed(target.totalGain)} · ${percent(target.totalGainPercent)}`}
+      currency={currency}
+      onCurrencyChange={selectCurrency}
+      currencyDisabled={pending}
+      thbDisabled={!hasValidRate}
+      showBalances={showBalances}
+      onEditValue={onEdit}
+      editDisabled={!isOnline || Boolean(portfolio.archivedAt)}
+      allocation={slices}
+      notes={<>
+        {missingPriceNote}
+        {target.todayChange === null && <p className="mt-2 text-xs text-[var(--text-muted)]" data-testid="portfolio-today-unavailable">
+          ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน
+        </p>}
+      </>}
+      footer={fxFooter}
+    />;
+  }
+
+  /*
+   * A portfolio can disappear underneath this screen — deleted from the
+   * overflow menu, or reset and re-read after `router.refresh()`. Standing on a
+   * detail screen for a portfolio the server no longer returns would put the
+   * fallback portfolio's numbers under the deleted one's heading, so the screen
+   * resolves back to the home view. Derived during render rather than corrected
+   * in an effect: there is no frame in which the wrong portfolio is painted.
+   */
+  const activeScreen: Screen = screen.kind === 'portfolio' && !portfolios.some((item) => item.id === screen.id)
+    ? { kind: 'home' }
+    : screen;
+  const detailPortfolio = activeScreen.kind === 'portfolio'
+    ? portfolios.find((item) => item.id === activeScreen.id) ?? portfolio
+    : portfolio;
+  const detailSummary = summaries[detailPortfolio.id];
+  const detailWriteBlock = portfolioWriteBlock(effectiveTier, detailPortfolio, writableStockId);
+  const detailCanWrite = !detailWriteBlock && isOnline && !detailPortfolio.archivedAt;
+
+  return <main className="mx-auto w-full max-w-5xl space-y-4 overflow-x-clip p-3 sm:p-4 md:p-6">
+    {!isOnline && <aside className="rounded-xl border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] p-3 text-sm text-[var(--warning)]">
       โหมดอ่านอย่างเดียวขณะออฟไลน์ — ปิดการเพิ่ม แก้ไข และลบเพื่อป้องกันข้อมูลขัดแย้ง
     </aside>}
-    <aside className="flex gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-amber-100" role="note">
-      <AlertTriangle className="mt-0.5 shrink-0 text-amber-300" size={19} />
-      <p><strong>พอร์ตจำลองเพื่อบันทึกย้อนหลังเท่านั้น</strong><br />ไม่มีการส่งคำสั่งไปยังตลาดหลักทรัพย์ โบรกเกอร์ หรือผู้ให้บริการซื้อขายใด ๆ</p>
-    </aside>
 
-    <section className="overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-br from-[#151B28] to-[#0A0E17] p-4 sm:p-7">
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-xs font-medium uppercase tracking-widest text-slate-400">มูลค่าพอร์ตรวม</p>
-            <div className="inline-flex rounded-lg border border-slate-700 bg-slate-950 p-1" aria-label="สกุลเงินที่แสดง">
-              {(['USD', 'THB'] as const).map((item) => <button
-                key={item}
-                type="button"
-                disabled={pending || (item === 'THB' && !hasValidRate)}
-                onClick={() => selectCurrency(item)}
-                className={`min-h-9 rounded-md px-3 text-xs font-bold ${currency === item ? 'bg-[#D4FF00] text-slate-950' : 'text-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-40'}`}
-              >{item}</button>)}
+    {activeScreen.kind === 'home' && <>
+      <header className="flex min-w-0 items-center justify-between gap-2">
+        <h1 className="min-w-0 truncate text-xl font-black tracking-tight text-[var(--text)]">สินทรัพย์ของฉัน</h1>
+        <div className="flex shrink-0 items-center gap-2">
+          {privacyButton}
+          <Button
+            size="sm"
+            disabled={!isOnline || Boolean(portfolio.archivedAt)}
+            onClick={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
+            data-testid="portfolio-add-entry"
+          ><Plus size={16} /> เพิ่มรายการ</Button>
+        </div>
+      </header>
+
+      <ViewToggle value={view} onChange={(next) => { setView(next); setAssetFilter('all'); setPortfolioFilter('all'); }} />
+
+      {view === 'assets'
+        ? <FilterChips items={categoryChips} value={assetFilter} onChange={(key) => setAssetFilter(key as 'all' | AssetCategoryKey)} label="ประเภทสินทรัพย์" />
+        : <FilterChips items={portfolioChips} value={portfolioFilter} onChange={(key) => setPortfolioFilter(key as 'all' | 'STOCK' | 'OPTION')} label="ประเภทพอร์ต" />}
+
+      {heroFor(
+        aggregateSummary,
+        'มูลค่าสินทรัพย์รวม',
+        latestPortfolioPriceTime(aggregateSummary),
+        allocation,
+        () => { if (requestPortfolioWrite()) openValueSheet(); },
+      )}
+
+      {view === 'assets'
+        ? <section className="min-w-0 space-y-3" data-testid="asset-category-list">
+          <SectionHeading title="สินทรัพย์ตามประเภท" />
+          {visibleCategories.length === 0
+            ? <EmptyAssets
+              title="ยังไม่มีสินทรัพย์"
+              description="เพิ่มเงินเข้า หรือบันทึกรายการซื้อ เพื่อเริ่มติดตามมูลค่าพอร์ต"
+              actionLabel="เพิ่มรายการ"
+              disabled={!isOnline}
+              onAction={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
+            />
+            : <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+              {visibleCategories.map((group) => <AssetCategoryCard
+                key={group.key}
+                group={group}
+                showBalances={showBalances}
+                valueText={money(group.value)}
+                todayText={group.todayChange === null ? '— วันนี้' : `${signed(group.todayChange)} วันนี้`}
+                gainText={group.unrealizedGain === null ? null : signed(group.unrealizedGain)}
+                onOpen={() => { setScreen({ kind: 'category', key: group.key }); setExpandedKey(null); }}
+              />)}
+            </div>}
+        </section>
+        : <section className="min-w-0 space-y-3" data-testid="portfolio-card-list">
+          <SectionHeading
+            title="พอร์ตของฉัน"
+            action={<Button size="sm" variant="outline" disabled={!isOnline} onClick={() => requestManager('create')}>
+              <Plus size={15} /> สร้างพอร์ต
+            </Button>}
+          />
+          <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+            {visiblePortfolios.map((item) => {
+              const itemSummary = summaries[item.id];
+              const goalProgress = calculateGoalProgress(itemSummary.totalValue, {
+                targetValueUsd: item.targetValueUsd,
+                targetDate: item.targetDate,
+              });
+              return <PortfolioSummaryCard
+                key={item.id}
+                portfolio={item}
+                summary={itemSummary}
+                assetCount={portfolioAssetCount(itemSummary)}
+                valueText={money(itemSummary.totalValue)}
+                todayText={itemSummary.todayChange === null ? '—' : `${signed(itemSummary.todayChange)} · ${percent(itemSummary.todayChangePercent)}`}
+                totalGainText={`${signed(itemSummary.totalGain)} · ${percent(itemSummary.totalGainPercent)}`}
+                goalPercent={goalProgress.progressPercent}
+                readOnly={Boolean(portfolioWriteBlock(effectiveTier, item, writableStockId))}
+                showBalances={showBalances}
+                onOpen={() => openPortfolio(item.id)}
+              />;
+            })}
+          </div>
+        </section>}
+
+      <AccountingDetails
+        summary={aggregateSummary}
+        open={accountingOpen}
+        onToggle={() => setAccountingOpen((current) => !current)}
+        money={money}
+        signed={signed}
+        note="ทุกตัวเลขคำนวณใหม่จาก Transaction Ledger ทั้งหมดในทุกครั้งที่เปิดหน้านี้"
+      />
+
+      {/*
+        No ledger rows live on this page any more — not even a preview of the
+        latest one. A portfolio page is about what is held now; what happened is
+        a statement, and it has its own route.
+      */}
+      <NavRow
+        testId="portfolio-history-entry"
+        icon={<History size={19} />}
+        title="ประวัติเงินเข้า–ออก"
+        detail="ดูรายการซื้อ ขาย ฝาก ถอน โอน และปรับยอดทั้งหมด"
+        href="/portfolio/transactions"
+      />
+    </>}
+
+    {activeScreen.kind === 'category' && (() => {
+      const group = categories.find((item) => item.key === activeScreen.key);
+      return <>
+        <DrillHeader title={group?.label ?? 'สินทรัพย์'} onBack={goHome} action={privacyButton} />
+        {!group
+          ? <EmptyAssets title="ไม่มีสินทรัพย์ในหมวดนี้แล้ว" description="กลับไปหน้าสินทรัพย์เพื่อดูหมวดที่มีอยู่" />
+          : <>
+            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+              <div className="min-w-0">
+                <p className="text-xs text-[var(--text-muted)]">มูลค่ารวมในหมวดนี้</p>
+                <p className="mt-1 break-all font-mono text-2xl font-black text-[var(--text)]">{money(group.value)}</p>
+              </div>
+              <p className="text-sm text-[var(--text-muted)]">{group.count} รายการ</p>
             </div>
+
+            {group.key === 'cash'
+              ? <ul className="grid min-w-0 gap-3">
+                {group.cash.map((entry) => <li key={entry.portfolioId} className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                  <span className="min-w-0 break-words text-sm font-semibold text-[var(--text)]">{entry.portfolioName}</span>
+                  <span className="shrink-0 break-all font-mono text-base font-bold text-[var(--text)]">{money(entry.balance)}</span>
+                </li>)}
+              </ul>
+              : <>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                  <SortControl id="category-sort" value={sortKey} onChange={setSortKey} options={['value', 'today', 'gain', 'name']} />
+                </div>
+                <div className="grid min-w-0 gap-3" data-testid="category-asset-list">
+                  {group.key === 'option'
+                    ? sortAssets(group.positions, sortKey, (entry) => ({
+                      name: entry.position.contractSymbol,
+                      value: entry.position.marketValue,
+                      todayChange: entry.position.todayChange,
+                      unrealizedGain: entry.position.unrealizedGain,
+                    })).map((entry) => <OptionPositionCard
+                      key={`${entry.portfolioId}-${entry.position.key}`}
+                      position={entry.position}
+                      portfolioLabel={entry.portfolioName}
+                      expanded={expandedKey === `${entry.portfolioId}-${entry.position.key}`}
+                      showBalances={showBalances}
+                      timezone={timezone}
+                      money={money}
+                      signed={signed}
+                      onToggle={() => setExpandedKey((current) => current === `${entry.portfolioId}-${entry.position.key}` ? null : `${entry.portfolioId}-${entry.position.key}`)}
+                    >
+                      <Button size="sm" variant="outline" onClick={() => openPortfolio(entry.portfolioId)}>เปิดพอร์ต {entry.portfolioName}</Button>
+                    </OptionPositionCard>)
+                    : sortAssets(group.holdings, sortKey, (entry) => ({
+                      name: entry.holding.symbol,
+                      value: entry.holding.marketValue,
+                      todayChange: entry.holding.todayChange,
+                      unrealizedGain: entry.holding.unrealizedGain,
+                    })).map((entry) => <HoldingCard
+                      key={`${entry.portfolioId}-${entry.holding.symbol}`}
+                      holding={entry.holding}
+                      companyName={companyNames[entry.holding.symbol]}
+                      portfolioLabel={entry.portfolioName}
+                      expanded={expandedKey === `${entry.portfolioId}-${entry.holding.symbol}`}
+                      showBalances={showBalances}
+                      timezone={timezone}
+                      portfolioId={entry.portfolioId}
+                      canWrite={false}
+                      money={money}
+                      signed={signed}
+                      hidden={hidden}
+                      onToggle={() => setExpandedKey((current) => current === `${entry.portfolioId}-${entry.holding.symbol}` ? null : `${entry.portfolioId}-${entry.holding.symbol}`)}
+                      onBuy={() => undefined}
+                      onSell={() => undefined}
+                      onCloseAll={() => undefined}
+                    />)}
+                </div>
+              </>}
+          </>}
+      </>;
+    })()}
+
+    {activeScreen.kind === 'portfolio' && <>
+      <DrillHeader
+        title={detailPortfolio.name}
+        onBack={goHome}
+        action={<>
+          {privacyButton}
+          <button
+            type="button"
+            onClick={() => setOverflowOpen(true)}
+            aria-label={`ตัวเลือกของพอร์ต ${detailPortfolio.name}`}
+            data-testid="portfolio-overflow"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+          ><MoreHorizontal size={19} /></button>
+        </>}
+      />
+
+      <FilterChips
+        label="เลือกพอร์ต"
+        value={detailPortfolio.id}
+        onChange={(key) => { if (key === '__all') goHome(); else openPortfolio(key); }}
+        items={[
+          { key: '__all', label: '← ทั้งหมด' },
+          /*
+             Active portfolios, plus the one being read if it has been archived:
+             an archived portfolio is still readable, and a rail with no selected
+             chip on it reads as a bug.
+          */
+          ...portfolios
+            .filter((item) => item.archivedAt === null || item.id === detailPortfolio.id)
+            .map((item) => ({ key: item.id, label: item.name })),
+        ]}
+      />
+
+      {heroFor(
+        detailSummary,
+        'มูลค่าพอร์ต',
+        latestPortfolioPriceTime(detailSummary),
+        [],
+        () => { if (requestPortfolioWrite()) openValueSheet(); },
+      )}
+
+      {detailPortfolio.targetValueUsd !== null && (() => {
+        const progress = calculateGoalProgress(detailSummary.totalValue, {
+          targetValueUsd: detailPortfolio.targetValueUsd,
+          targetDate: detailPortfolio.targetDate,
+        });
+        return <section className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4" data-testid="portfolio-detail-goal">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="inline-flex items-center gap-2 font-bold text-[var(--text)]"><Target aria-hidden="true" size={16} className="text-[var(--accent)]" /> เป้าหมายพอร์ต</span>
+            <span className="font-mono text-[var(--text-secondary)]">
+              {money(detailSummary.totalValue)} / {money(detailPortfolio.targetValueUsd)}
+              {' · '}
+              {progress.progressPercent === null || !showBalances ? '—' : `${progress.progressPercent.toFixed(2)}%`}
+            </span>
           </div>
-          <div className="mt-2 flex min-w-0 items-center gap-2">
-            <h2 className="min-w-0 break-all font-mono text-3xl font-bold tracking-tight text-white sm:text-5xl">{money(aggregateSummary.totalValue)}</h2>
-            <button
-              type="button"
-              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white disabled:opacity-40"
-              disabled={!isOnline || Boolean(portfolio.archivedAt)}
-              onClick={() => { if (requestPortfolioWrite()) openValueSheet(); }}
-              aria-label="ปรับยอดพอร์ต"
-              data-testid="portfolio-value-edit"
-            >
-              <PencilLine size={19} />
-            </button>
-            <button type="button" className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-slate-400 hover:text-white" onClick={toggleVisibility} aria-label={showBalances ? 'ซ่อนยอดเงินทั้งหมด' : 'แสดงยอดเงินชั่วคราว'}>
-              {showBalances ? <EyeOff size={20} /> : <Eye size={20} />}
-            </button>
-          </div>
-          {/*
-            One profit/loss colour mapping, shared with the goal card. Masking
-            passes `null` on purpose — a green or red figure behind the mask
-            still says which way the portfolio moved.
-          */}
-          <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            <Metric
-              label="กำไร/ขาดทุนวันนี้"
-              value={`${signed(aggregateSummary.todayChange)} · ${percent(aggregateSummary.todayChangePercent)}`}
-              tone={portfolioReturnToneClass(showBalances ? aggregateSummary.todayChange : null, 'text-slate-400')}
+          <div
+            role="progressbar"
+            aria-label="ความคืบหน้าเป้าหมายพอร์ต"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress.progressPercent === null || !showBalances ? undefined : Math.min(100, Math.max(0, progress.progressPercent))}
+            className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-hover)]"
+          >
+            <div
+              className="h-full rounded-full bg-[var(--accent)]"
+              style={{ width: `${showBalances ? Math.min(100, Math.max(0, progress.progressPercent ?? 0)) : 0}%` }}
             />
-            <Metric
-              label="กำไร/ขาดทุนรวม"
-              value={`${signed(aggregateSummary.totalGain)} · ${percent(aggregateSummary.totalGainPercent)}`}
-              tone={portfolioReturnToneClass(showBalances ? aggregateSummary.totalGain : null, 'text-slate-400')}
-            />
-            <Metric label="เงินสด" value={money(aggregateSummary.cashBalance)} />
           </div>
-          {aggregateSummary.hasMissingPrices && <p className="mt-2 text-xs text-amber-300">มูลค่ารวมแสดง “—” เพราะมีสินทรัพย์ที่ยังไม่มีราคาจริง ระบบไม่แทนราคาด้วย 0</p>}
-          {aggregateSummary.todayChange === null && <p className="mt-1 text-xs text-slate-400" data-testid="portfolio-today-unavailable">ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน</p>}
-        </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto">
-          <Button disabled={!isOnline || Boolean(portfolio.archivedAt)} onClick={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}><Plus size={17} /> เพิ่มรายการ</Button>
-          <Link
-            href="/portfolio/transactions"
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
-            data-testid="portfolio-history-link"
-          ><History aria-hidden="true" size={17} /> ประวัติเงินเข้า–ออก</Link>
-        </div>
-      </div>
-      <div className="mt-7 grid grid-cols-2 gap-4 border-t border-slate-800 pt-5 sm:grid-cols-3 lg:grid-cols-5">
-        <Metric label="เงินฝากสุทธิ (Net deposits)" value={money(aggregateSummary.netDepositedCapital)} />
-        <Metric label="มูลค่าหุ้น" value={money(aggregateSummary.equityMarketValue)} />
-        <Metric label="มูลค่าออปชันสุทธิ" value={money(aggregateSummary.optionsMarketValue)} />
-        <Metric label="ต้นทุนคงเหลือ" value={money(aggregateSummary.costBasis + aggregateSummary.optionRemainingCost)} />
-        <Metric label="Realized P&L" value={signed(aggregateSummary.realizedGain)} tone={gainColor(aggregateSummary.realizedGain)} />
-        <Metric label="Unrealized P&L" value={signed(aggregateSummary.unrealizedGain)} tone={aggregateSummary.unrealizedGain === null ? 'text-slate-400' : gainColor(aggregateSummary.unrealizedGain)} />
-      </div>
-      <div className="mt-5 flex flex-col gap-2 border-t border-slate-800 pt-4 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          {fxLoading && <p className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={14} /> กำลังโหลดอัตราแลกเปลี่ยน…</p>}
-          {hasValidRate && <p>1 USD = {formatFxRate(rate)} THB · อัปเดต {transactionDate(currentFx.quote!.asOf, timezone)} · แหล่งข้อมูล {currentFx.quote!.source}</p>}
-          {!fxLoading && !hasValidRate && <p className="text-amber-300">ไม่มีอัตราแลกเปลี่ยนจริง จึงปิดการแสดงผล THB</p>}
-          {currentFx.quote?.stale && <p className="mt-1 text-amber-300">กำลังใช้อัตราแลกเปลี่ยนล่าสุดที่บันทึกไว้ (Stale)</p>}
-          {fxError && hasValidRate && <p className="mt-1 text-amber-300">โหลดอัตราใหม่ไม่สำเร็จ แต่ยังใช้อัตราที่มีอยู่ได้</p>}
-        </div>
-        <button type="button" onClick={() => void loadFx()} disabled={fxLoading} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 self-start rounded-lg border border-slate-700 px-3 text-slate-300 hover:border-slate-500 hover:text-white disabled:opacity-50">
-          <RefreshCw className={fxLoading ? 'animate-spin' : ''} size={14} /> โหลดอัตราใหม่
-        </button>
-      </div>
-    </section>
+          {progress.reason && <p className="mt-2 text-xs text-[var(--warning)]">{progress.reason}</p>}
+        </section>;
+      })()}
+
+      {detailPortfolio.archivedAt && <p className="text-xs text-[var(--warning)]">พอร์ตนี้ถูก Archive แล้ว จึงรับ transaction ใหม่ไม่ได้ แต่ยังรวมในพอร์ตรวมและเก็บ history ครบถ้วน</p>}
+
+      {/*
+        Says what is still possible before what is not: the ledger is fully
+        readable on the statement route, and only writing needs a higher tier.
+        The database is what actually refuses the write; this explains it first.
+      */}
+      {detailWriteBlock && <p className="flex items-start gap-2 text-xs text-[var(--warning)]">
+        <Lock aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
+        <span>
+          {detailWriteBlock === 'upgrade'
+            ? 'พอร์ต Options นี้ยังเปิดดูได้ครบ แต่ต้องใช้ Pro เพื่อแก้ไขต่อ'
+            : READ_ONLY_PORTFOLIO_MESSAGE}
+          {' '}
+          <Link href="/settings/subscription" className="font-medium underline underline-offset-2">ดูแพ็กเกจ</Link>
+        </span>
+      </p>}
+
+      {portfolioAssetCount(detailSummary) === 0 && detailSummary.optionPositions.length === 0
+        ? <EmptyAssets
+          title="ยังไม่มีสินทรัพย์ในพอร์ตนี้"
+          description="เพิ่มรายการซื้อ หรือนำเข้าสถานะตั้งต้น เพื่อเริ่มคำนวณมูลค่าและกำไร/ขาดทุน"
+          actionLabel="เพิ่มสินทรัพย์"
+          disabled={!detailCanWrite}
+          onAction={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
+        />
+        : <>
+          {detailPortfolio.type !== 'OPTION' && <section className="min-w-0 space-y-3">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <SectionHeading title="สินทรัพย์ที่ถืออยู่" />
+              <SortControl id="portfolio-sort" value={sortKey} onChange={setSortKey} options={['value', 'today', 'gain', 'name']} />
+            </div>
+            {detailSummary.holdings.length === 0
+              ? <p className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-6 text-center text-sm text-[var(--text-muted)]">ยังไม่มีหุ้นหรือ ETF ในพอร์ตนี้</p>
+              : <div className="grid min-w-0 gap-3" data-testid="holdings-list">
+                {sortAssets(detailSummary.holdings, sortKey, (holding) => ({
+                  name: holding.symbol,
+                  value: holding.marketValue,
+                  todayChange: holding.todayChange,
+                  unrealizedGain: holding.unrealizedGain,
+                })).map((holding) => <HoldingCard
+                  key={holding.symbol}
+                  holding={holding}
+                  companyName={companyNames[holding.symbol]}
+                  expanded={expandedKey === holding.symbol}
+                  showBalances={showBalances}
+                  timezone={timezone}
+                  portfolioId={detailPortfolio.id}
+                  canWrite={detailCanWrite}
+                  money={money}
+                  signed={signed}
+                  hidden={hidden}
+                  onToggle={() => setExpandedKey((current) => current === holding.symbol ? null : holding.symbol)}
+                  onBuy={() => openCreate('acquisition', holding.symbol)}
+                  onSell={() => openCreate('disposal', holding.symbol)}
+                  onCloseAll={() => openCreate('disposal', holding.symbol, String(holding.quantity))}
+                />)}
+              </div>}
+            <p className="text-xs text-[var(--text-muted)]">
+              ทุกสถานะคำนวณจาก Transaction Ledger เท่านั้น การเพิ่มซื้อ ขาย แก้ไข หรือลบจะสร้างหรือเปลี่ยนรายการต้นทางแล้วคำนวณใหม่ทั้งพอร์ต
+            </p>
+          </section>}
+
+          {detailPortfolio.type !== 'STOCK' && <OptionsSection
+            portfolio={detailPortfolio}
+            portfolios={portfolios.filter((item) => item.archivedAt === null && (item.type === 'OPTION' || item.type === 'LEGACY'))}
+            positions={detailSummary.optionPositions}
+            targets={optionTargets.filter((target) => target.portfolioId === detailPortfolio.id)}
+            cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
+            currency={currency}
+            usdThbRate={rate}
+            showBalances={showBalances}
+            isOnline={isOnline}
+            timezone={timezone}
+            readOnly={Boolean(detailWriteBlock)}
+            actionRequest={optionActionRequest}
+            onActionRequestHandled={handleOptionActionRequest}
+          />}
+        </>}
+
+      <AccountingDetails
+        summary={detailSummary}
+        open={accountingOpen}
+        onToggle={() => setAccountingOpen((current) => !current)}
+        money={money}
+        signed={signed}
+      />
+
+      <NavRow
+        testId="portfolio-history-link"
+        icon={<History size={19} />}
+        title="ประวัติเงินเข้า–ออก"
+        detail={`รายการทั้งหมดของ ${detailPortfolio.name}`}
+        href={`/portfolio/transactions?portfolio=${detailPortfolio.id}`}
+      />
+    </>}
+
+    <aside className="flex gap-3 rounded-xl border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3 text-xs text-[var(--warning)]" role="note">
+      <AlertTriangle className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+      <p><strong>พอร์ตจำลองเพื่อบันทึกย้อนหลังเท่านั้น</strong> — ไม่มีการส่งคำสั่งไปยังตลาดหลักทรัพย์ โบรกเกอร์ หรือผู้ให้บริการซื้อขายใด ๆ</p>
+    </aside>
 
     <PortfolioManager
       portfolios={portfolios}
@@ -399,161 +882,39 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
       money={money}
       signed={signed}
       percent={percent}
-      onSelect={(portfolioId) => {
-        setSelectedPortfolioId(portfolioId);
-        closeForm();
-      }}
-      transferOpenRequest={transferRequest}
-      onTransferRequestHandled={() => setTransferRequest(0)}
+      onSelect={openPortfolio}
+      openRequest={managerRequest}
+      onOpenRequestHandled={() => setManagerRequest(null)}
+      sectionHidden={activeScreen.kind !== 'home'}
     />
 
-    <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div><p className="text-xs uppercase tracking-wider text-slate-500">กำลังดูพอร์ต</p><h3 className="mt-1 text-lg font-bold text-white">{portfolio.name} · {portfolio.type}</h3></div>
-        <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-          <Metric label="มูลค่าพอร์ต" value={money(summary.totalValue)} />
-          <Metric label="เงินสด" value={money(summary.cashBalance)} />
-          <Metric
-            label="กำไร/ขาดทุนรวม"
-            value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`}
-            tone={portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-slate-400')}
-          />
-          <Metric
-            label="กำไร/ขาดทุนวันนี้"
-            value={summary.todayChange === null ? '—' : signed(summary.todayChange)}
-            tone={portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-slate-400')}
-          />
-        </div>
+    <ResponsiveDialog isOpen={overflowOpen} onClose={() => setOverflowOpen(false)} title={`ตัวเลือกพอร์ต ${detailPortfolio.name}`}>
+      <div className="grid gap-2" data-testid="portfolio-overflow-menu">
+        <OverflowChoice icon={<PencilLine size={18} />} label="แก้ไขพอร์ต" disabled={!isOnline || Boolean(detailWriteBlock)} onClick={() => requestManager('edit', detailPortfolio.id)} />
+        <OverflowChoice icon={<Target size={18} />} label="ตั้งเป้าหมายพอร์ต" disabled={!isOnline || Boolean(detailWriteBlock)} onClick={() => requestManager('goal', detailPortfolio.id)} />
+        <OverflowChoice icon={<Repeat2 size={18} />} label="ย้ายสินทรัพย์ไปพอร์ตอื่น" disabled={!isOnline || activePortfolios.length < 2} onClick={() => requestManager('moveAssets', detailPortfolio.id)} />
+        <OverflowChoice icon={<Eraser size={18} />} label="รีเซ็ตพอร์ต" tone="danger" disabled={!isOnline || Boolean(detailWriteBlock)} onClick={() => requestManager('reset', detailPortfolio.id)} />
+        {!detailPortfolio.isLegacy && <OverflowChoice
+          icon={<Trash2 size={18} />}
+          label="ลบพอร์ต"
+          tone="danger"
+          disabled={!isOnline || Boolean(detailWriteBlock)}
+          onClick={() => requestManager('delete', detailPortfolio.id)}
+        />}
       </div>
-      {summary.todayChange === null && <p className="mt-2 text-xs text-slate-400">ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน</p>}
-      {portfolio.archivedAt && <p className="mt-3 text-xs text-amber-300">พอร์ตนี้ถูก Archive แล้ว จึงรับ transaction ใหม่ไม่ได้ แต่ยังรวมในพอร์ตรวมและเก็บ history ครบถ้วน</p>}
-      {/*
-        Says what is still possible before what is not: the ledger is fully
-        readable on the statement route, and only writing needs a higher tier.
-        The database is what actually refuses the write; this explains it first.
-      */}
-      {writeBlock && <p className="mt-3 flex items-start gap-2 text-xs text-[var(--warning)]">
-        <Lock aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
-        <span>
-          {writeBlock === 'upgrade'
-            ? 'พอร์ต Options นี้ยังเปิดดูได้ครบ แต่ต้องใช้ Pro เพื่อแก้ไขต่อ'
-            : READ_ONLY_PORTFOLIO_MESSAGE}
-          {' '}
-          <Link href="/settings/subscription" className="font-medium underline underline-offset-2">
-            ดูแพ็กเกจ
-          </Link>
-        </span>
-      </p>}
-    </section>
-
-    {/*
-      No ledger rows live on this page any more — not even a preview of the
-      latest one. A portfolio page is about what is held now; what happened is
-      a statement, and it has its own route.
-    */}
-    <Link
-      href={`/portfolio/transactions?portfolio=${portfolio.id}`}
-      className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-[#151B28] p-4 hover:border-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
-      data-testid="portfolio-history-entry"
-    >
-      <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[#D4FF00]">
-        <History size={19} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <strong className="block text-sm font-bold text-white">ประวัติเงินเข้า–ออก</strong>
-        <span className="mt-0.5 block text-xs text-slate-400">ดูรายการซื้อ ขาย ฝาก ถอน โอน และปรับยอดทั้งหมด</span>
-      </span>
-      <ChevronRight aria-hidden="true" className="shrink-0 text-slate-500" size={18} />
-    </Link>
-
-    {portfolio.type !== 'OPTION' && <>
-    <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
-        <div className="flex min-w-0 items-center gap-2">
-          <Briefcase aria-hidden="true" className="shrink-0 text-[#D4FF00]" size={20} />
-          <h3 className="min-w-0 font-bold text-white">สินทรัพย์ที่ถืออยู่</h3>
-        </div>
-        <Button size="sm" disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={16} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
-      </div>
-      {summary.holdings.length === 0
-        ? <div className="p-8 text-center sm:p-10">
-          <p className="font-semibold text-white">ยังไม่มีหุ้นหรือ ETF ในพอร์ต</p>
-          <p className="mt-1 text-sm text-slate-400">เพิ่มรายการซื้อ หรือนำเข้าสถานะตั้งต้นเพื่อเริ่มคำนวณ</p>
-          <Button className="mt-5" disabled={!isOnline || Boolean(writeBlock) || Boolean(portfolio.archivedAt)} onClick={() => openCreate('acquisition')}><Plus size={17} /> เพิ่มสินทรัพย์ที่ถืออยู่</Button>
-        </div>
-        : <>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[1040px] text-left text-sm" data-testid="holdings-desktop-table">
-              <thead><tr className="border-b border-slate-800 text-xs text-slate-500">
-                {['Symbol', 'จำนวน', 'ต้นทุนเฉลี่ย', 'ราคาปัจจุบัน', 'มูลค่าตลาด', 'Today P&L', 'Total P&L', 'น้ำหนัก'].map((label, index) =>
-                  <th key={label} className={`px-3 py-3 ${index ? 'text-right' : ''}`}>{label}</th>)}
-              </tr></thead>
-              <tbody>{summary.holdings.map((holding) => <HoldingDesktopRows
-                key={holding.symbol}
-                holding={holding}
-                expanded={expandedSymbol === holding.symbol}
-                showBalances={showBalances}
-                timezone={timezone}
-                money={money}
-                signed={signed}
-                hidden={hidden}
-                onToggle={() => setExpandedSymbol((current) => current === holding.symbol ? null : holding.symbol)}
-                onBuy={() => openCreate('acquisition', holding.symbol)}
-                onSell={() => openCreate('disposal', holding.symbol)}
-                onClose={() => openCreate('disposal', holding.symbol, String(holding.quantity))}
-                portfolioId={portfolio.id}
-              />)}</tbody>
-            </table>
-          </div>
-          <div className="divide-y divide-slate-800 md:hidden" data-testid="holdings-mobile-cards">
-            {summary.holdings.map((holding) => <HoldingMobileCard
-              key={holding.symbol}
-              holding={holding}
-              expanded={expandedSymbol === holding.symbol}
-              showBalances={showBalances}
-              timezone={timezone}
-              money={money}
-              signed={signed}
-              hidden={hidden}
-              onToggle={() => setExpandedSymbol((current) => current === holding.symbol ? null : holding.symbol)}
-              onBuy={() => openCreate('acquisition', holding.symbol)}
-              onSell={() => openCreate('disposal', holding.symbol)}
-              onClose={() => openCreate('disposal', holding.symbol, String(holding.quantity))}
-              portfolioId={portfolio.id}
-            />)}
-          </div>
-        </>}
-      <p className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500">
-        ทุกสถานะคำนวณจาก Transaction Ledger เท่านั้น การเพิ่มซื้อ ขาย แก้ไข หรือลบจะสร้างหรือเปลี่ยนรายการต้นทางแล้วคำนวณใหม่ทั้งพอร์ต
+      <p className="mt-4 text-xs text-[var(--text-muted)]">
+        การลบจะนำพอร์ตนี้พร้อมรายการใน Transaction Ledger ออกจากทุกหน้า และกู้คืนได้ภายใน 7 วัน
       </p>
-    </section>
-    </>}
-
-    {portfolio.type !== 'STOCK' &&
-    <OptionsSection
-      portfolio={portfolio}
-      portfolios={portfolios.filter((item) => item.archivedAt === null && (item.type === 'OPTION' || item.type === 'LEGACY'))}
-      positions={summary.optionPositions}
-      targets={optionTargets.filter((target) => target.portfolioId === portfolio.id)}
-      cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
-      currency={currency}
-      usdThbRate={rate}
-      showBalances={showBalances}
-      isOnline={isOnline}
-      timezone={timezone}
-      readOnly={Boolean(writeBlock)}
-      actionRequest={optionActionRequest}
-      onActionRequestHandled={handleOptionActionRequest}
-    />}
+    </ResponsiveDialog>
 
     <ResponsiveDialog isOpen={actionSheetOpen} onClose={() => setActionSheetOpen(false)} title="+ เพิ่มรายการ">
-      <p className="mb-4 text-sm text-slate-400">บันทึกใน {portfolio.name} โดยใช้ Ledger เดิม</p>
+      <p className="mb-4 text-sm text-[var(--text-muted)]">บันทึกใน {portfolio.name} โดยใช้ Ledger เดิม</p>
       <div className="grid gap-3 sm:grid-cols-2" data-testid="portfolio-add-action-sheet">
         <ActionChoice icon={<WalletCards size={20} />} title="ซื้อหุ้น / ออปชัน" detail="เพิ่มสินทรัพย์และหักเงินสด" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'buy' }); else openCreate('acquisition'); }} />
         <ActionChoice icon={<ArrowUpCircle size={20} />} title="ขาย" detail="ลดสถานะและบันทึกเงินเข้า" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'sell' }); else openCreate('disposal'); }} />
         <ActionChoice icon={<ArrowDownCircle size={20} />} title="เติมเงินจำลอง" detail="เพิ่มเงินสดเข้าพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('deposit'); }} />
         <ActionChoice icon={<ArrowUpCircle size={20} />} title="ถอนเงินจำลอง" detail="ลดเงินสดออกจากพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('withdrawal'); }} />
-        <ActionChoice icon={<Repeat2 size={20} />} title="โอนพอร์ต" detail="ย้ายเงินด้วยรายการคู่ใน Ledger" disabled={portfolios.filter((item) => item.archivedAt === null).length < 2} onClick={() => { setActionSheetOpen(false); setTransferRequest(Date.now()); }} />
+        <ActionChoice icon={<Repeat2 size={20} />} title="โอนพอร์ต" detail="ย้ายเงินด้วยรายการคู่ใน Ledger" disabled={activePortfolios.length < 2} onClick={() => { setActionSheetOpen(false); requestManager('transfer'); }} />
       </div>
     </ResponsiveDialog>
 
@@ -589,116 +950,36 @@ export function PortfolioClient({ portfolios, aggregateGoal, marketPrices, optio
   </main>;
 }
 
-function quoteMeta(holding: HoldingSummary, timezone: string) {
-  if (holding.marketPrice === null) {
-    return <span className="block text-[10px] text-amber-300">ข้อมูลราคายังไม่พร้อม</span>;
-  }
-  return (
-    <span className={`block text-[10px] ${holding.priceStale ? 'text-amber-300' : 'text-slate-500'}`}>
-      {holding.priceStale || holding.priceCached
-        ? 'ข้อมูลล่าสุดที่บันทึกไว้'
-        : 'ข้อมูลตลาด'}
-      {holding.priceAsOf ? ` · ${transactionDate(holding.priceAsOf, timezone)}` : ''}
-    </span>
-  );
+/** Back, title and the screen's own actions — the header a drill-down needs. */
+function DrillHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: React.ReactNode }) {
+  return <header className="flex min-w-0 items-center gap-2">
+    <button
+      type="button"
+      onClick={onBack}
+      aria-label="กลับไปหน้าสินทรัพย์ของฉัน"
+      className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+    ><ArrowLeft size={19} /></button>
+    <h1 className="min-w-0 flex-1 truncate text-xl font-black tracking-tight text-[var(--text)]">{title}</h1>
+    <div className="flex shrink-0 items-center gap-2">{action}</div>
+  </header>;
 }
 
-function totalPnlPercent(holding: HoldingSummary) {
-  return holding.unrealizedGain === null || holding.costBasis === 0 ? null : holding.unrealizedGain / holding.costBasis * 100;
-}
-
-function HoldingDesktopRows({ holding, expanded, showBalances, timezone, portfolioId, money, signed, hidden, onToggle, onBuy, onSell, onClose }: HoldingViewProps) {
-  return <>
-    <tr className="border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
-      <td className="p-0">
-        <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-14 w-full items-center gap-2 px-3 text-left font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} size={32} />
-          {holding.symbol}
-        </button>
-      </td>
-      <td className="px-3 py-3 text-right font-mono">{hidden(number(holding.quantity))}</td>
-      <td className="px-3 py-3 text-right font-mono">{money(holding.averageCost)}</td>
-      <td className="px-3 py-3 text-right font-mono">{money(holding.marketPrice)}{quoteMeta(holding, timezone)}</td>
-      <td className="px-3 py-3 text-right font-mono text-white">{money(holding.marketValue)}</td>
-      <td className={`px-3 py-3 text-right font-mono ${holding.todayChange === null ? 'text-slate-400' : gainColor(holding.todayChange)}`}>{signed(holding.todayChange)}</td>
-      <td className={`px-3 py-3 text-right font-mono ${holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)}`}>{signed(holding.unrealizedGain)}<span className="block text-[10px]">{holding.unrealizedGain === null ? '—' : signedPercent(totalPnlPercent(holding)!, showBalances)}</span></td>
-      <td className="px-3 py-3 text-right font-mono">{showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</td>
-    </tr>
-    {expanded && <tr className="border-b border-slate-800"><td colSpan={8} className="bg-slate-950/35 p-4"><HoldingDetails holding={holding} timezone={timezone} portfolioId={portfolioId} money={money} hidden={hidden} onBuy={onBuy} onSell={onSell} onClose={onClose} /></td></tr>}
-  </>;
-}
-
-function HoldingMobileCard(props: HoldingViewProps) {
-  const { holding, expanded, showBalances, timezone, money, signed, hidden, onToggle } = props;
-  return <article className="p-4">
-    <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-center justify-between gap-3 text-left">
-      <InstrumentLogo symbol={holding.symbol} companyName={holding.symbol} size={40} />
-      <span><strong className="text-lg text-white">{holding.symbol}</strong><span className="mt-1 block text-xs text-slate-400">{hidden(number(holding.quantity))} หน่วย · น้ำหนัก {showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK}</span></span>
-      {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
-    </button>
-    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
-      <MobileMetric label="ต้นทุนเฉลี่ย" value={money(holding.averageCost)} />
-      <MobileMetric label="ราคาปัจจุบัน" value={money(holding.marketPrice)} extra={quoteMeta(holding, timezone)} />
-      <MobileMetric label="มูลค่าตลาด" value={money(holding.marketValue)} />
-      <MobileMetric label="Today P&L" value={signed(holding.todayChange)} tone={holding.todayChange === null ? 'text-slate-400' : gainColor(holding.todayChange)} />
-      <MobileMetric label="Total P&L" value={signed(holding.unrealizedGain)} tone={holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)} />
-      <MobileMetric label="Total P&L %" value={holding.unrealizedGain === null ? '—' : signedPercent(totalPnlPercent(holding)!, showBalances)} tone={holding.unrealizedGain === null ? 'text-slate-400' : gainColor(holding.unrealizedGain)} />
-    </dl>
-    {expanded && <div className="mt-4 border-t border-slate-800 pt-4"><HoldingDetails {...props} /></div>}
-  </article>;
-}
-
-interface HoldingViewProps {
-  holding: HoldingSummary;
-  expanded: boolean;
-  showBalances: boolean;
-  timezone: string;
-  money: (value: number | string | null) => string;
-  signed: (value: number | null) => string;
-  hidden: (value: string) => string;
-  onToggle: () => void;
-  onBuy: () => void;
-  onSell: () => void;
-  onClose: () => void;
-  portfolioId: string;
-}
-
-function HoldingDetails({ holding, timezone, portfolioId, money, hidden, onBuy, onSell, onClose }: Pick<HoldingViewProps, 'holding' | 'timezone' | 'portfolioId' | 'money' | 'hidden' | 'onBuy' | 'onSell' | 'onClose'>) {
-  return <div className="min-w-0 space-y-4">
-    <div className="flex flex-wrap gap-2">
-      <Button size="sm" onClick={onBuy}>เพิ่มซื้อ</Button>
-      <Button size="sm" variant="outline" onClick={onSell}>ขายบางส่วน</Button>
-      <Button size="sm" variant="outline" onClick={onClose}>ปิดทั้งหมด</Button>
-    </div>
-    <div>
-      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Lots ที่เหลือ</h4>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">{holding.lots.map((lot) => <div key={lot.transactionId} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs">
-        <p className="font-mono text-white">{hidden(number(lot.remainingQuantity))} / {hidden(number(lot.originalQuantity))} หน่วย</p>
-        <p className="mt-1 text-slate-400">{transactionDate(lot.occurredAt, timezone)} · ต้นทุนคงเหลือ {money(lot.remainingCost)}</p>
-        {lot.broker && <p className="text-slate-500">{lot.broker}</p>}
-      </div>)}</div>
-    </div>
-    {/*
-      Lots describe what is still held, so they belong here. The transactions
-      behind them are history, and history lives on the statement route where
-      it can be read, filtered and corrected in one place.
-    */}
-    <Link
-      href={`/portfolio/transactions?portfolio=${portfolioId}`}
-      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 hover:border-slate-500 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
-    >
-      <History aria-hidden="true" size={14} /> ดูประวัติของ {holding.symbol} ในประวัติเงินเข้า–ออก
-    </Link>
-  </div>;
-}
-
-function MobileMetric({ label, value, tone = 'text-white', extra }: { label: string; value: string; tone?: string; extra?: React.ReactNode }) {
-  return <div className="min-w-0"><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 break-words font-mono font-semibold ${tone}`}>{value}</dd>{extra}</div>;
-}
-
-function Metric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
-  return <div className="min-w-0"><p className="text-xs text-slate-500">{label}</p><p className={`mt-1 break-all font-mono text-sm font-semibold sm:text-base ${tone}`}>{value}</p></div>;
+function OverflowChoice({ icon, label, onClick, disabled = false, tone = 'default' }: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'default' | 'danger';
+}) {
+  return <button
+    type="button"
+    disabled={disabled}
+    onClick={onClick}
+    className={`flex min-h-14 w-full min-w-0 items-center gap-3 rounded-xl border border-[var(--border)] px-4 text-left text-sm font-semibold transition-colors hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-40 ${tone === 'danger' ? 'text-[var(--negative)]' : 'text-[var(--text)]'}`}
+  >
+    <span aria-hidden="true" className="shrink-0">{icon}</span>
+    <span className="min-w-0 break-words">{label}</span>
+  </button>;
 }
 
 function ActionChoice({ icon, title, detail, onClick, disabled = false }: {
@@ -708,8 +989,8 @@ function ActionChoice({ icon, title, detail, onClick, disabled = false }: {
   onClick: () => void;
   disabled?: boolean;
 }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="flex min-h-20 min-w-0 items-start gap-3 rounded-xl border border-slate-700 bg-slate-950/45 p-3 text-left hover:border-[#D4FF00]/60 disabled:cursor-not-allowed disabled:opacity-40">
-    <span className="mt-0.5 shrink-0 text-[#D4FF00]">{icon}</span>
-    <span className="min-w-0"><strong className="block break-words text-sm text-white">{title}</strong><span className="mt-1 block break-words text-xs text-slate-400">{detail}</span></span>
+  return <button type="button" disabled={disabled} onClick={onClick} className="flex min-h-20 min-w-0 items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-left hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40">
+    <span className="mt-0.5 shrink-0 text-[var(--accent)]">{icon}</span>
+    <span className="min-w-0"><strong className="block break-words text-sm text-[var(--text)]">{title}</strong><span className="mt-1 block break-words text-xs text-[var(--text-muted)]">{detail}</span></span>
   </button>;
 }

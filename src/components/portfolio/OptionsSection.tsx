@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronUp, Edit3, Plus, Target, Trash2 } from 'lucide-react';
+import { Edit3, Plus, Target, Trash2 } from 'lucide-react';
 import { createPortfolioTransactionAction, deletePortfolioTransactionAction, updatePortfolioTransactionAction } from '@/app/portfolio/actions';
 import { deleteOptionTargetAction, upsertOptionTargetAction } from '@/app/portfolio/target-actions';
 import { Button } from '@/src/components/ui/Button';
@@ -11,8 +11,6 @@ import { useToast } from '@/src/components/ui/Toast';
 import { calculateOptionTarget } from '@/src/lib/portfolio/options/calculations';
 import { isInternalOptionContractSymbol } from '@/src/lib/portfolio/options/contract-symbol-status';
 import {
-  UNMATCHED_OPTION_MESSAGE,
-  optionPositionDescription,
   optionPositionMarketSymbol,
   optionPositionTitle,
 } from '@/src/lib/portfolio/options/presentation';
@@ -20,7 +18,12 @@ import type { OptionPositionSummary, OptionTarget, OptionTargetMode } from '@/sr
 import type { PortfolioRecord, PortfolioTransaction, PortfolioTransactionType } from '@/src/lib/portfolio/types';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { formatPortfolioMoney, gainColor, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
-import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
+import {
+  OptionMetric,
+  OptionPositionCard,
+  optionDisplayTime,
+  quoteNumber,
+} from './tracker/OptionPositionCard';
 import { estimateCashAfterTransaction } from '@/src/lib/portfolio/cash-preview';
 import {
   currentDateTimeLocal,
@@ -66,21 +69,7 @@ function editDateTime(value: string, timezone: string) {
   return formatDateTimeLocal(value, timezone) || `${value}T12:00`;
 }
 
-function displayTime(value: string, timezone = 'Asia/Bangkok') {
-  const parsed = Date.parse(value);
-  return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone })
-    .format(Number.isFinite(parsed) ? new Date(parsed) : new Date(`${value}T12:00:00+07:00`));
-}
-
-function quoteNumber(value: number | null, digits?: number) {
-  if (value === null) return '—';
-  if (digits !== undefined) return value.toFixed(digits);
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 8,
-    useGrouping: false,
-  }).format(value);
-}
+const displayTime = optionDisplayTime;
 
 export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, actionRequest = null, onActionRequestHandled }: {
   portfolio: PortfolioRecord;
@@ -296,64 +285,48 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     });
   }
 
-  return <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
-      <div>
-        <h3 className="font-bold text-white">สัญญาออปชันที่ถืออยู่</h3>
-        <p className="mt-1 text-xs text-slate-500">ทุก Action เป็นรายการใน Transaction Ledger และไม่ส่ง Order ไปโบรกเกอร์</p>
+  return <section className="min-w-0 space-y-3">
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-muted)]">สัญญาออปชันที่ถืออยู่</h3>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">ทุก Action เป็นรายการใน Transaction Ledger และไม่ส่ง Order ไปโบรกเกอร์</p>
       </div>
       <Button size="sm" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
     </div>
-    <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+    <p className="rounded-xl border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3.5 py-3 text-xs text-[var(--warning)]">
       ราคาและมูลค่าปิดเป็นการประเมินจากข้อมูลตลาดจริง ไม่ใช่ราคาที่รับประกัน: Long ใช้ Bid สำหรับประมาณการปิด และ Short ใช้ Ask สำหรับประมาณการซื้อคืน
-    </div>
+    </p>
 
     {positions.length === 0
-      ? <div className="p-8 text-center"><p className="font-semibold text-white">ยังไม่มีรายการออปชันใน Ledger</p><Button className="mt-4" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button></div>
-      : <>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[1180px] text-left text-xs" data-testid="options-desktop-table">
-            <thead><tr className="border-b border-slate-800 text-slate-500">
-              {['สัญญา', 'ฝั่ง', 'จำนวน', 'Avg premium', 'ต้นทุนคงเหลือ', 'Bid / Ask / Mark', 'มูลค่าปัจจุบัน', 'Today P&L', 'Unrealized P&L', 'สถานะ'].map((label, index) =>
-                <th key={label} className={`px-3 py-3 ${index > 1 ? 'text-right' : ''}`}>{label}</th>)}
-            </tr></thead>
-            <tbody>{positions.map((position) => <OptionDesktopRows
-              key={position.key}
-              position={position}
-              target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
-              expanded={expanded === position.key}
-              showBalances={showBalances}
-              timezone={timezone}
-              money={money}
-              signed={signed}
-              onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
-              onAction={(type) => openCreate(position, type)}
-              onEdit={openEdit}
-              onDelete={setDeleting}
-              onTarget={() => openTarget(position)}
-              onDeleteTarget={setTargetDeleting}
-            />)}</tbody>
-          </table>
-        </div>
-        <div className="divide-y divide-slate-800 md:hidden" data-testid="options-mobile-cards">
-          {positions.map((position) => <OptionMobileCard
-            key={position.key}
+      ? <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 text-center">
+        <p className="font-semibold text-[var(--text)]">ยังไม่มีรายการออปชันใน Ledger</p>
+        <Button className="mt-4" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
+      </div>
+      : <div className="grid min-w-0 gap-3 xl:grid-cols-2" data-testid="options-position-list">
+        {positions.map((position) => <OptionPositionCard
+          key={position.key}
+          position={position}
+          expanded={expanded === position.key}
+          showBalances={showBalances}
+          timezone={timezone}
+          money={money}
+          signed={signed}
+          onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
+        >
+          <OptionDetails
             position={position}
             target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
-            expanded={expanded === position.key}
-            showBalances={showBalances}
             timezone={timezone}
             money={money}
             signed={signed}
-            onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
             onAction={(type) => openCreate(position, type)}
             onEdit={openEdit}
             onDelete={setDeleting}
             onTarget={() => openTarget(position)}
             onDeleteTarget={setTargetDeleting}
-          />)}
-        </div>
-      </>}
+          />
+        </OptionPositionCard>)}
+      </div>}
 
     <OptionTransactionModal
       open={formOpen}
@@ -406,15 +379,17 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   </section>;
 }
 
-interface OptionViewProps {
+/**
+ * What the expanded half of an option card needs: the actions, the sell target
+ * and the contract's own ledger rows. The card above it owns the summary
+ * figures, so none of them are repeated here.
+ */
+interface OptionDetailsProps {
   position: OptionPositionSummary;
   target?: OptionTarget;
-  expanded: boolean;
-  showBalances: boolean;
   timezone: string;
   money: (value: number | null) => string;
   signed: (value: number | null) => string;
-  onToggle: () => void;
   onAction: (type: PortfolioTransactionType) => void;
   onEdit: (transaction: PortfolioTransaction) => void;
   onDelete: (transaction: PortfolioTransaction) => void;
@@ -422,46 +397,7 @@ interface OptionViewProps {
   onDeleteTarget: (target: OptionTarget) => void;
 }
 
-function OptionDesktopRows(props: OptionViewProps) {
-  const { position, expanded, showBalances, money, signed, onToggle } = props;
-  return <>
-    <tr className="border-b border-slate-800/60 hover:bg-slate-800/30">
-      <td className="p-0"><button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-16 w-full items-center gap-2 px-3 text-left"><span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span><span className="min-w-0"><strong className="block text-sm text-white">{optionPositionTitle(position)}</strong><span className="block text-[10px] text-slate-400">{optionPositionDescription(position)}</span></span></button></td>
-      <td className="px-3 py-3"><SideBadge side={position.side} /></td>
-      <td className="px-3 py-3 text-right font-mono">{showBalances ? position.contracts : SENSITIVE_VALUE_MASK}</td>
-      <td className="px-3 py-3 text-right font-mono">${position.averagePremium.toFixed(2)}</td>
-      <td className="px-3 py-3 text-right font-mono">{money(position.remainingCost)}</td>
-      <td className="px-3 py-3 text-right font-mono">{quoteNumber(position.bid)} / {quoteNumber(position.ask)} / {quoteNumber(position.mark)}<QuoteMeta position={position} /></td>
-      <td className="px-3 py-3 text-right font-mono">{money(position.marketValue)}</td>
-      <td className={`px-3 py-3 text-right font-mono ${position.todayChange === null ? 'text-slate-400' : gainColor(position.todayChange)}`}>{position.todayChange === null ? <><span>—</span><span className="block max-w-32 text-[10px] font-sans">ไม่มีราคาปิดวันก่อน</span></> : signed(position.todayChange)}</td>
-      <td className={`px-3 py-3 text-right font-mono ${position.unrealizedGain === null ? 'text-slate-400' : gainColor(position.unrealizedGain)}`}>{signed(position.unrealizedGain)}<span className="block text-[10px]">{position.unrealizedGainPercent === null ? '—' : signedPercent(position.unrealizedGainPercent, showBalances)}</span></td>
-      <td className="px-3 py-3 text-right"><StatusBadge position={position} /></td>
-    </tr>
-    {expanded && <tr className="border-b border-slate-800"><td colSpan={10} className="bg-slate-950/35 p-4"><OptionDetails {...props} /></td></tr>}
-  </>;
-}
-
-function OptionMobileCard(props: OptionViewProps) {
-  const { position, expanded, showBalances, money, signed, onToggle } = props;
-  return <article className="min-w-0 p-4">
-    <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex min-h-11 w-full items-start justify-between gap-3 text-left">
-      <span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><strong className="text-white">{optionPositionTitle(position)}</strong><SideBadge side={position.side} /><StatusBadge position={position} /></span><span className="mt-1 block text-[10px] text-slate-400">{optionPositionDescription(position)}</span></span>
-      {expanded ? <ChevronUp className="shrink-0" size={18} /> : <ChevronDown className="shrink-0" size={18} />}
-    </button>
-    <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-sm">
-      <OptionMetric label="จำนวน" value={showBalances ? `${position.contracts} สัญญา` : SENSITIVE_VALUE_MASK} />
-      <OptionMetric label="Avg premium" value={`$${position.averagePremium.toFixed(2)}`} />
-      <OptionMetric label="ต้นทุนคงเหลือ" value={money(position.remainingCost)} />
-      <OptionMetric label="มูลค่าปัจจุบัน" value={money(position.marketValue)} />
-      <OptionMetric label="Today P&L" value={position.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : signed(position.todayChange)} tone={position.todayChange === null ? 'text-slate-400' : gainColor(position.todayChange)} />
-      <OptionMetric label="Unrealized P&L" value={`${signed(position.unrealizedGain)} ${position.unrealizedGainPercent === null ? '' : `(${signedPercent(position.unrealizedGainPercent, showBalances)})`}`} tone={position.unrealizedGain === null ? 'text-slate-400' : gainColor(position.unrealizedGain)} />
-      <div className="col-span-2"><dt className="text-xs text-slate-500">Bid / Ask / Mark</dt><dd className="mt-1 font-mono text-white">{quoteNumber(position.bid)} / {quoteNumber(position.ask)} / {quoteNumber(position.mark)}</dd><QuoteMeta position={position} /></div>
-    </dl>
-    {expanded && <div className="mt-4 border-t border-slate-800 pt-4"><OptionDetails {...props} /></div>}
-  </article>;
-}
-
-function OptionDetails({ position, target, money, signed, timezone, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionViewProps) {
+function OptionDetails({ position, target, money, signed, timezone, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionDetailsProps) {
   const actionTypes: PortfolioTransactionType[] = position.side === 'long'
     ? ['buy_to_open', 'sell_to_close', 'exercise', 'expired']
     : ['sell_to_open', 'buy_to_close', 'assignment', 'expired'];
@@ -488,18 +424,6 @@ function OptionDetails({ position, target, money, signed, timezone, onAction, on
         >Copy</button>
       </div>
     </details>
-    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-      <OptionMetric label="Mark precision (raw quote)" value={quoteNumber(position.mark)} />
-      <OptionMetric label="ราคาปิดโดยประมาณ" value={position.estimatedClosePrice === null ? '—' : `$${position.estimatedClosePrice.toFixed(2)}`} />
-      <OptionMetric label="มูลค่าปิดโดยประมาณ" value={money(position.estimatedCloseValue)} />
-      <OptionMetric label="Underlying" value={position.underlyingPrice === null ? '—' : `$${position.underlyingPrice.toFixed(2)}`} />
-      <OptionMetric label="Breakeven" value={`$${position.breakeven.toFixed(2)}`} />
-      <OptionMetric label="DTE" value={String(position.dte)} />
-      <OptionMetric label="IV" value={position.impliedVolatility === null ? '—' : `${(position.impliedVolatility * 100).toFixed(2)}%`} />
-      <OptionMetric label="Delta" value={quoteNumber(position.delta, 4)} />
-      <OptionMetric label="Theta" value={quoteNumber(position.theta, 4)} />
-      <OptionMetric label="Realized P&L" value={signed(position.realizedGain)} tone={gainColor(position.realizedGain)} />
-    </dl>
     <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h4 className="flex items-center gap-2 text-sm font-bold text-white"><Target size={16} className="text-[#D4FF00]" /> เป้าหมายขาย</h4><p className="mt-1 text-xs text-slate-500">ติดตามในแอปเท่านั้น ไม่ส่ง Order</p></div>
@@ -598,33 +522,6 @@ function OptionTransactionModal({ open, editing, form, errors, pending, portfoli
       <div className="sticky bottom-0 flex gap-2 bg-[#151B28] py-2"><Button type="button" variant="outline" className="flex-1" onClick={onClose}>ยกเลิก</Button><Button type="submit" className="flex-1" disabled={pending}>{pending ? 'กำลังบันทึก…' : 'บันทึกรายการ'}</Button></div>
     </form>
   </Modal>;
-}
-
-function QuoteMeta({ position }: { position: OptionPositionSummary }) {
-  if (isInternalOptionContractSymbol(position.contractSymbol) && position.quoteFreshness === 'missing') {
-    return <span className="mt-1 block text-[10px] text-amber-300">{UNMATCHED_OPTION_MESSAGE}</span>;
-  }
-  if (position.quoteFreshness === 'missing') return <span className="mt-1 block text-[10px] text-amber-300">ไม่มีราคา · แสดง —</span>;
-  return <span className={`mt-1 block text-[10px] ${position.quoteFreshness === 'stale' ? 'text-amber-300' : 'text-slate-500'}`}>
-    {position.quoteFreshness === 'stale' ? 'ราคาเก่า (Stale)' : position.quoteFreshness} · {position.quoteSource ?? 'ไม่ทราบแหล่ง'}{position.quoteAsOf ? ` · ${displayTime(position.quoteAsOf)}` : ''}
-  </span>;
-}
-
-function SideBadge({ side }: { side: 'long' | 'short' }) {
-  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${side === 'long' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>{side}</span>;
-}
-
-function StatusBadge({ position }: { position: OptionPositionSummary }) {
-  const style = position.status === 'open'
-    ? 'bg-emerald-500/15 text-emerald-300'
-    : position.status === 'expired'
-      ? 'bg-amber-500/15 text-amber-300'
-      : 'bg-slate-700 text-slate-300';
-  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${style}`}>{position.status}</span>;
-}
-
-function OptionMetric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
-  return <div className="min-w-0"><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 break-words font-mono text-sm font-semibold ${tone}`}>{value}</dd></div>;
 }
 
 function TargetMetric({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
