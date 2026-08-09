@@ -38,26 +38,25 @@ const appearances: Array<{
 
 /** The plan the paid themes ask for, read from the entitlement matrix. */
 const PREMIUM_THEME_PLAN = PLAN_DISPLAY_NAME[upgradeTargetTier('theme.premium')];
+/** The same plan, worn as a badge on the paid rows. Never typed by hand. */
+const PREMIUM_THEME_BADGE = `${PREMIUM_THEME_PLAN.toUpperCase()}+`;
 
 /**
- * The three colours that describe a theme, published by that theme's own
- * palette file. The picker previews a theme it is not currently wearing without
- * holding a copy of anyone's palette.
+ * One 16px dot in the theme's own accent, published by that theme's palette
+ * file. The picker previews a theme it is not currently wearing without holding
+ * a copy of anyone's palette.
+ *
+ * It is exactly one solid circle, with no track, capsule or ring around it. The
+ * shape this replaced — a knob riding inside a rounded container — read as a
+ * per-row on/off switch, and a theme is chosen by pressing the whole row.
  */
 function ThemeSwatch({ theme, className }: { theme: ThemeId; className?: string }) {
   return (
     <span
       data-theme-swatch={theme}
       aria-hidden="true"
-      className={cn(
-        'flex shrink-0 items-center rounded-full border border-[var(--border-strong)] p-0.5',
-        className,
-      )}
-    >
-      <span className="size-4 rounded-full bg-[var(--swatch-bg)]" />
-      <span className="-ml-1 size-4 rounded-full bg-[var(--swatch-surface)]" />
-      <span className="-ml-1 size-4 rounded-full bg-[var(--swatch-accent)]" />
-    </span>
+      className={cn('size-4 shrink-0 rounded-full bg-[var(--swatch-accent)]', className)}
+    />
   );
 }
 
@@ -118,7 +117,7 @@ export function ThemeControls() {
                 data-testid={`theme-option-${definition.id}`}
                 data-locked={locked ? 'true' : undefined}
                 aria-label={locked
-                  ? `${definition.label} — ต้องใช้แพ็กเกจ ${PREMIUM_THEME_PLAN} ขึ้นไป`
+                  ? `${definition.label} — ล็อกอยู่ ต้องใช้แพ็กเกจ ${PREMIUM_THEME_PLAN} ขึ้นไป`
                   : definition.label}
                 onClick={() => choose(definition.id, locked)}
                 className={cn(
@@ -128,21 +127,34 @@ export function ThemeControls() {
                     : 'border-[var(--border)] bg-[var(--surface-elevated)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)]',
                 )}
               >
-                <ThemeSwatch theme={definition.id} />
-                <span className="min-w-0 flex-1">
+                <ThemeSwatch theme={definition.id} className={locked ? 'opacity-45' : undefined} />
+                <span className={cn('min-w-0 flex-1', locked && 'opacity-60')}>
                   <span className="block text-sm font-semibold text-[var(--text)]">{definition.label}</span>
                   <span className="mt-0.5 block text-xs leading-5 text-[var(--text-muted)]">
                     {definition.description}
                   </span>
                 </span>
-                {locked
-                  ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                      <Lock aria-hidden="true" size={11} />
-                      {PREMIUM_THEME_PLAN}
-                    </span>
-                  )
-                  : selected && <Check aria-hidden="true" size={18} className="shrink-0 text-[var(--accent)]" />}
+                {/*
+                  A paid row says so whether or not it is open, so nobody has to
+                  guess which two cost money. Locked adds the padlock and the
+                  dimmed colours; open leaves the plan name on its own.
+                */}
+                {definition.premium && (
+                  <span
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                      locked
+                        ? 'border-[var(--border)] text-[var(--text-muted)]'
+                        : 'border-[var(--accent)] text-[var(--accent)]',
+                    )}
+                  >
+                    {locked && <Lock aria-hidden="true" size={11} />}
+                    {PREMIUM_THEME_BADGE}
+                  </span>
+                )}
+                {selected && !locked && (
+                  <Check aria-hidden="true" size={18} className="shrink-0 text-[var(--accent)]" />
+                )}
               </button>
             );
           })}

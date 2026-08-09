@@ -167,7 +167,66 @@ describe('the picker sheet', () => {
   });
 });
 
+describe('how a row reads', () => {
+  /*
+   * A theme is chosen by pressing the whole row, so nothing in front of the
+   * label may look like a per-row on/off control. One colour dot, and the plan
+   * badge only where a plan is actually being asked for.
+   */
+  it('previews each theme with one bare dot — no track, knob or wrapper', async () => {
+    themeState.premiumThemesAllowed = true;
+    await render();
+    await click(row());
+
+    for (const id of ['portkheaw', 'bitswap', 'dokturek']) {
+      const swatches = option(id)!.querySelectorAll('[data-theme-swatch]');
+      expect(swatches.length, id).toBe(1);
+      // The dot is the whole thing: a child would be a knob inside a track.
+      expect(swatches[0]!.children.length, id).toBe(0);
+      expect(swatches[0]!.className, id).toContain('rounded-full');
+    }
+  });
+
+  it('badges the paid themes with the plan and leaves the free one unbadged', async () => {
+    themeState.premiumThemesAllowed = true;
+    await render();
+    await click(row());
+
+    expect(option('portkheaw')!.textContent).not.toContain('PRO');
+    for (const id of ['bitswap', 'dokturek']) {
+      expect(option(id)!.textContent, id).toContain('PRO+');
+      // Entitled: the badge names the plan without claiming the row is shut.
+      expect(option(id)!.querySelector('.lucide-lock'), id).toBeNull();
+    }
+  });
+
+  it('keeps the checkmark as the only mark of the chosen theme', async () => {
+    themeState.theme = 'bitswap';
+    themeState.premiumThemesAllowed = true;
+    await render();
+    await click(row());
+
+    expect(option('bitswap')!.querySelector('.lucide-check')).not.toBeNull();
+    expect(option('portkheaw')!.querySelector('.lucide-check')).toBeNull();
+    expect(option('dokturek')!.querySelector('.lucide-check')).toBeNull();
+  });
+});
+
 describe('a reader without the paid plan', () => {
+  it('shows the paid themes as locked, badged with the plan they need', async () => {
+    await render();
+    await click(row());
+
+    expect(option('portkheaw')!.dataset.locked).toBeUndefined();
+    expect(option('portkheaw')!.querySelector('.lucide-lock')).toBeNull();
+    for (const id of ['bitswap', 'dokturek']) {
+      expect(option(id)!.querySelector('.lucide-lock'), id).not.toBeNull();
+      expect(option(id)!.textContent, id).toContain('PRO+');
+      // Locked is a state to escape, not the current choice.
+      expect(option(id)!.querySelector('.lucide-check'), id).toBeNull();
+    }
+  });
+
   it('shows the paid themes locked, with the plan they need', async () => {
     await render();
     await click(row());
