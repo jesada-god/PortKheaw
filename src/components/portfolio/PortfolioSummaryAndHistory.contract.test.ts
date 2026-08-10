@@ -14,6 +14,7 @@ const mascot = read('src/components/portfolio/PortfolioGoalMascot.tsx');
 const shell = read('src/components/layout/MainLayout.tsx');
 const hero = read('src/components/portfolio/tracker/TrackerHero.tsx');
 const panels = read('src/components/portfolio/tracker/SecondaryPanels.tsx');
+const options = read('src/components/portfolio/OptionsSection.tsx');
 
 describe('portfolio summary card', () => {
   it('labels profit and loss in Thai, with no mixed Thai/English wording', () => {
@@ -103,12 +104,40 @@ describe('portfolio page carries no transaction history', () => {
     expect(panels).toContain('summary.costBasis + summary.optionRemainingCost');
   });
 
-  it('keeps the add-transaction flow and its buy/sell/deposit/withdraw/transfer choices', () => {
-    expect(client).toContain('data-testid="portfolio-add-action-sheet"');
-    for (const label of ['ซื้อหุ้น / ออปชัน', 'ขาย', 'เติมเงินจำลอง', 'ถอนเงินจำลอง', 'โอนพอร์ต']) {
+  /*
+   * One sheet, asset kind first.
+   *
+   * "ซื้อ" and "ขาย" used to be two of its choices, which forced the sheet to
+   * guess an option or a share from the portfolio's own type before the reader
+   * had said which they meant. Both are now the transaction form's own
+   * ประเภทรายการ selector, reached through หุ้น / ETF — so the two rows that
+   * disappeared are a relocation, not a removal, and the cash rows below them
+   * are untouched.
+   */
+  it('keeps the add flow and its asset-kind, deposit, withdraw and transfer choices', () => {
+    expect(client).toContain('data-testid="portfolio-add-asset-sheet"');
+    for (const label of ['หุ้น / ETF', 'ออปชัน', 'เติมเงินจำลอง', 'ถอนเงินจำลอง', 'โอนระหว่างพอร์ต']) {
       expect(client).toContain(`title="${label}"`);
     }
     expect(client).toContain('createPortfolioTransactionAction');
+    // Buy and sell live on as ledger types the one stock flow can still select.
+    expect(read('src/components/portfolio/TransactionFormModal.tsx'))
+      .toContain("'acquisition', 'disposal', 'initial_position'");
+  });
+
+  /*
+   * Exactly one call to action on the page, and no section allowed to grow a
+   * second one. The empty state carries no button at all now, which is why
+   * `EmptyAssets` no longer accepts one.
+   */
+  it('offers a single add entry point, written once and reused by every screen', () => {
+    expect(client).toContain('data-testid="portfolio-add-asset"');
+    expect(client.match(/data-testid="portfolio-add-asset"/g)).toHaveLength(1);
+    expect(client).toContain('เพิ่มสินทรัพย์');
+    expect(client).not.toContain('เพิ่มรายการออปชัน');
+    expect(options).not.toContain('เพิ่มรายการออปชัน</Button>');
+    expect(panels).not.toContain('actionLabel');
+    expect(panels).not.toContain('onAction');
   });
 
   it('leaves the dock clearance to the shell instead of stacking its own padding', () => {

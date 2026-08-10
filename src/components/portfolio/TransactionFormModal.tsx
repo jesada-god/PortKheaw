@@ -101,7 +101,7 @@ export function TransactionFormModal({ open, editing, form, errors, pending, por
     title={editing ? 'แก้ไขรายการใน Transaction Ledger' : 'เพิ่มรายการใน Transaction Ledger'}
     className="scroll-pb-40"
   >
-    <form onSubmit={onSubmit} className="space-y-4 pb-2">
+    <form onSubmit={onSubmit} className="space-y-4 pb-2" data-testid="portfolio-transaction-form">
       <Field label="พอร์ตปลายทาง" error={errors.portfolioId} helper={editing ? 'รายการเดิมเปลี่ยนพอร์ตไม่ได้ เพื่อรักษา audit trail' : 'รายการนี้จะบันทึกใน Transaction Ledger ของพอร์ตที่เลือกเท่านั้น'}>
         <select
           ref={firstFieldRef}

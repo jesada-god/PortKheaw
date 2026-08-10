@@ -231,9 +231,10 @@ describe('the portfolio view', () => {
 
   /*
    * An unfunded portfolio is a decision somebody has not made yet. It gets a
-   * full card and, inside, a call to action rather than an empty table.
+   * full card and, inside, a statement of what is missing — and no button,
+   * because the header's one call to action is the way to add.
    */
-  it('shows an intentional empty state, with the add flow behind it', async () => {
+  it('shows an intentional empty state, with the page’s one add flow behind it', async () => {
     await render();
     click(byText('[data-testid="tracker-view-toggle"] button', 'แยกพอร์ต'));
     click(find(`[data-testid="portfolio-card-${EMPTY}"]`));
@@ -241,9 +242,10 @@ describe('the portfolio view', () => {
     const empty = find('[data-testid="portfolio-empty-state"]');
     expect(empty).not.toBeNull();
     expect(empty?.textContent).toContain('ยังไม่มีสินทรัพย์ในพอร์ตนี้');
+    expect(empty?.querySelector('button')).toBeNull();
 
-    click(byText('[data-testid="portfolio-empty-state"] button', 'เพิ่มสินทรัพย์'));
-    expect(document.querySelector('[data-testid="portfolio-add-action-sheet"]')).not.toBeNull();
+    click(find('[data-testid="portfolio-add-asset"]'));
+    expect(document.querySelector('[data-testid="portfolio-add-asset-sheet"]')).not.toBeNull();
   });
 
   it('offers edit and delete from the detail overflow, and nothing that deletes on the press', async () => {

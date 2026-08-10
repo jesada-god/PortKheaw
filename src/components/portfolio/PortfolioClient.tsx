@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState, useTransition, type FormEven
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  AlertTriangle, ArrowDownCircle, ArrowLeft, ArrowUpCircle, Eraser, Eye, EyeOff, History,
-  LoaderCircle, Lock, MoreHorizontal, PencilLine, Plus, RefreshCw, Repeat2, Target, Trash2,
-  WalletCards,
+  AlertTriangle, ArrowDownCircle, ArrowLeft, ArrowUpCircle, CandlestickChart, Eraser, Eye, EyeOff,
+  History, Layers, LoaderCircle, Lock, MoreHorizontal, PencilLine, Plus, RefreshCw, Repeat2, Target,
+  Trash2,
 } from 'lucide-react';
 import {
   createPortfolioTransactionAction,
@@ -19,6 +19,7 @@ import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries, calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
+import { addAssetDestinationId, portfolioAcceptsAsset } from '@/src/lib/portfolio/add-asset';
 import { buildAssetCategories, type AssetCategoryKey } from '@/src/lib/portfolio/asset-categories';
 import { latestPortfolioPriceTime, portfolioAssetCount } from '@/src/lib/portfolio/goal-card';
 import { sortAssets, type HoldingSortKey } from '@/src/lib/portfolio/holdings-sort';
@@ -179,7 +180,7 @@ export function PortfolioClient({
   const [valueSheetKey, setValueSheetKey] = useState('');
   const [form, setForm] = useState<TransactionFormState>(() => emptyForm(portfolio?.id, timezone));
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [addAssetSheetOpen, setAddAssetSheetOpen] = useState(false);
   const [optionActionRequest, setOptionActionRequest] = useState<{ id: number; type: 'buy' | 'sell' } | null>(null);
   const [managerRequest, setManagerRequest] = useState<PortfolioManagerRequest | null>(null);
   const [view, setView] = useState<TrackerView>('assets');
@@ -277,9 +278,20 @@ export function PortfolioClient({
     return () => { active = false; };
   }, []);
 
-  function openCreate(type: PortfolioTransactionType = 'acquisition', symbol = '', quantity = '') {
+  /*
+   * `portfolioId` defaults to the portfolio on screen, which is what every
+   * contextual action wants. The one add-asset entry point overrides it, because
+   * the kind being added — not the portfolio being read — decides where the row
+   * can legally land.
+   */
+  function openCreate(
+    type: PortfolioTransactionType = 'acquisition',
+    symbol = '',
+    quantity = '',
+    portfolioId = portfolio.id,
+  ) {
     setErrors({});
-    setForm({ ...emptyForm(portfolio.id, timezone), type, symbol, quantity });
+    setForm({ ...emptyForm(portfolioId, timezone), type, symbol, quantity });
     setFormOpen(true);
   }
 
@@ -407,6 +419,30 @@ export function PortfolioClient({
     setManagerRequest({ id: Date.now(), kind, portfolioId });
   }
 
+  /*
+   * One entry point, two kinds, and a destination chosen per kind.
+   *
+   * A reader standing in a stock portfolio can still add an option, and one
+   * standing in an option portfolio can still add a share — what is already held
+   * never decides what may be added. When nothing in the account can accept the
+   * kind at all, the answer is to create a portfolio for it, which is the same
+   * flow the manage panel already owns.
+   */
+  const stockDestinationId = addAssetDestinationId(portfolios, 'stock', portfolio.id);
+  const optionDestinationId = addAssetDestinationId(portfolios, 'option', portfolio.id);
+
+  function chooseStockAsset() {
+    setAddAssetSheetOpen(false);
+    if (!stockDestinationId) { requestManager('create'); return; }
+    openCreate('acquisition', '', '', stockDestinationId);
+  }
+
+  function chooseOptionAsset() {
+    setAddAssetSheetOpen(false);
+    if (!optionDestinationId) { requestManager('create'); return; }
+    setOptionActionRequest({ id: Date.now(), type: 'buy' });
+  }
+
   const privacyButton = <button
     type="button"
     onClick={toggleVisibility}
@@ -507,6 +543,53 @@ export function PortfolioClient({
   const detailSummary = summaries[detailPortfolio.id];
   const detailWriteBlock = portfolioWriteBlock(effectiveTier, detailPortfolio, writableStockId);
   const detailCanWrite = !detailWriteBlock && isOnline && !detailPortfolio.archivedAt;
+  const detailIsEmpty = portfolioAssetCount(detailSummary) === 0 && detailSummary.optionPositions.length === 0;
+
+  /*
+   * The page's only call to action.
+   *
+   * It is written once and placed in whichever header is on screen, so there is
+   * never a second way to add — not in a section heading, not inside an empty
+   * state. Everything it can open is a flow that already existed.
+   */
+  const addAssetCta = <Button
+    size="sm"
+    disabled={!isOnline || Boolean(portfolio.archivedAt)}
+    onClick={() => { if (requestPortfolioWrite()) setAddAssetSheetOpen(true); }}
+    data-testid="portfolio-add-asset"
+  ><Plus size={16} /> เพิ่มสินทรัพย์</Button>;
+
+  /*
+   * The option flow, mounted exactly once.
+   *
+   * Its dialogs are the only option entry this product has, and the add-asset
+   * sheet must reach them from screens that show no option positions at all — so
+   * the section is hidden rather than absent there, the way the manage panel
+   * already works. The two placements below are mutually exclusive, so only one
+   * instance is ever mounted and no second ledger or persistence path exists.
+   */
+  const optionsShownInline = activeScreen.kind === 'portfolio'
+    && portfolioAcceptsAsset(detailPortfolio.type, 'option')
+    && !detailIsEmpty;
+  const optionsHost = optionsShownInline
+    ? detailPortfolio
+    : portfolios.find((item) => item.id === optionDestinationId) ?? null;
+  const optionsSection = optionsHost && <OptionsSection
+    portfolio={optionsHost}
+    portfolios={portfolios.filter((item) => item.archivedAt === null && (item.type === 'OPTION' || item.type === 'LEGACY'))}
+    positions={summaries[optionsHost.id].optionPositions}
+    targets={optionTargets.filter((target) => target.portfolioId === optionsHost.id)}
+    cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
+    currency={currency}
+    usdThbRate={rate}
+    showBalances={showBalances}
+    isOnline={isOnline}
+    timezone={timezone}
+    readOnly={Boolean(portfolioWriteBlock(effectiveTier, optionsHost, writableStockId))}
+    sectionHidden={!optionsShownInline}
+    actionRequest={optionActionRequest}
+    onActionRequestHandled={handleOptionActionRequest}
+  />;
 
   return <main className="mx-auto w-full max-w-5xl space-y-4 overflow-x-clip p-3 sm:p-4 md:p-6">
     {!isOnline && <aside className="rounded-xl border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] p-3 text-sm text-[var(--warning)]">
@@ -518,12 +601,7 @@ export function PortfolioClient({
         <h1 className="min-w-0 truncate text-xl font-black tracking-tight text-[var(--text)]">สินทรัพย์ของฉัน</h1>
         <div className="flex shrink-0 items-center gap-2">
           {privacyButton}
-          <Button
-            size="sm"
-            disabled={!isOnline || Boolean(portfolio.archivedAt)}
-            onClick={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
-            data-testid="portfolio-add-entry"
-          ><Plus size={16} /> เพิ่มรายการ</Button>
+          {addAssetCta}
         </div>
       </header>
 
@@ -547,10 +625,7 @@ export function PortfolioClient({
           {visibleCategories.length === 0
             ? <EmptyAssets
               title="ยังไม่มีสินทรัพย์"
-              description="เพิ่มเงินเข้า หรือบันทึกรายการซื้อ เพื่อเริ่มติดตามมูลค่าพอร์ต"
-              actionLabel="เพิ่มรายการ"
-              disabled={!isOnline}
-              onAction={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
+              description="ใช้ปุ่ม “เพิ่มสินทรัพย์” ด้านบนเพื่อบันทึกหุ้น ETF หรือออปชันรายการแรก"
             />
             : <div className="grid min-w-0 gap-3 lg:grid-cols-2">
               {visibleCategories.map((group) => <AssetCategoryCard
@@ -706,6 +781,7 @@ export function PortfolioClient({
             data-testid="portfolio-overflow"
             className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
           ><MoreHorizontal size={19} /></button>
+          {addAssetCta}
         </>}
       />
 
@@ -783,13 +859,10 @@ export function PortfolioClient({
         </span>
       </p>}
 
-      {portfolioAssetCount(detailSummary) === 0 && detailSummary.optionPositions.length === 0
+      {detailIsEmpty
         ? <EmptyAssets
           title="ยังไม่มีสินทรัพย์ในพอร์ตนี้"
-          description="เพิ่มรายการซื้อ หรือนำเข้าสถานะตั้งต้น เพื่อเริ่มคำนวณมูลค่าและกำไร/ขาดทุน"
-          actionLabel="เพิ่มสินทรัพย์"
-          disabled={!detailCanWrite}
-          onAction={() => { if (requestPortfolioWrite()) setActionSheetOpen(true); }}
+          description="ใช้ปุ่ม “เพิ่มสินทรัพย์” ด้านบนเพื่อบันทึกรายการซื้อ หรือนำเข้าสถานะตั้งต้น แล้วระบบจะเริ่มคำนวณมูลค่าและกำไร/ขาดทุน"
         />
         : <>
           {detailPortfolio.type !== 'OPTION' && <section className="min-w-0 space-y-3">
@@ -828,21 +901,7 @@ export function PortfolioClient({
             </p>
           </section>}
 
-          {detailPortfolio.type !== 'STOCK' && <OptionsSection
-            portfolio={detailPortfolio}
-            portfolios={portfolios.filter((item) => item.archivedAt === null && (item.type === 'OPTION' || item.type === 'LEGACY'))}
-            positions={detailSummary.optionPositions}
-            targets={optionTargets.filter((target) => target.portfolioId === detailPortfolio.id)}
-            cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
-            currency={currency}
-            usdThbRate={rate}
-            showBalances={showBalances}
-            isOnline={isOnline}
-            timezone={timezone}
-            readOnly={Boolean(detailWriteBlock)}
-            actionRequest={optionActionRequest}
-            onActionRequestHandled={handleOptionActionRequest}
-          />}
+          {optionsShownInline && optionsSection}
         </>}
 
       <AccountingDetails
@@ -862,11 +921,18 @@ export function PortfolioClient({
       />
     </>}
 
-    <aside className="flex gap-3 rounded-xl border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3 text-xs text-[var(--warning)]" role="note">
-      <AlertTriangle className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
-      <p><strong>พอร์ตจำลองเพื่อบันทึกย้อนหลังเท่านั้น</strong> — ไม่มีการส่งคำสั่งไปยังตลาดหลักทรัพย์ โบรกเกอร์ หรือผู้ให้บริการซื้อขายใด ๆ</p>
-    </aside>
+    {/*
+      Off screen, but mounted: the add-asset sheet opens this flow from every
+      screen, including ones with no option positions on them.
+    */}
+    {!optionsShownInline && optionsSection}
 
+    {/*
+      Kheaw and the goal he is reporting on, then the one row that leads to
+      managing a portfolio — both below the holdings and the statement, because
+      progressive disclosure puts what is held first and what is administered
+      last.
+    */}
     <PortfolioManager
       portfolios={portfolios}
       summaries={summaries}
@@ -888,6 +954,16 @@ export function PortfolioClient({
       sectionHidden={activeScreen.kind !== 'home'}
     />
 
+    {/*
+      The disclaimer, compact and last. It is a standing fact about the whole
+      product rather than a step in reading a portfolio, so it stops interrupting
+      the flow — but it is on every screen this page has, at every width.
+    */}
+    <aside className="flex items-start gap-2 rounded-lg border border-[color-mix(in_srgb,var(--warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--warning)_7%,transparent)] px-2.5 py-2 text-[11px] leading-snug text-[var(--warning)]" role="note">
+      <AlertTriangle className="mt-px shrink-0" size={13} aria-hidden="true" />
+      <p className="min-w-0"><strong>พอร์ตจำลองเพื่อบันทึกย้อนหลังเท่านั้น</strong> — ไม่มีการส่งคำสั่งไปยังตลาดหลักทรัพย์ โบรกเกอร์ หรือผู้ให้บริการซื้อขายใด ๆ</p>
+    </aside>
+
     <ResponsiveDialog isOpen={overflowOpen} onClose={() => setOverflowOpen(false)} title={`ตัวเลือกพอร์ต ${detailPortfolio.name}`}>
       <div className="grid gap-2" data-testid="portfolio-overflow-menu">
         <OverflowChoice icon={<PencilLine size={18} />} label="แก้ไขพอร์ต" disabled={!isOnline || Boolean(detailWriteBlock)} onClick={() => requestManager('edit', detailPortfolio.id)} />
@@ -907,14 +983,38 @@ export function PortfolioClient({
       </p>
     </ResponsiveDialog>
 
-    <ResponsiveDialog isOpen={actionSheetOpen} onClose={() => setActionSheetOpen(false)} title="+ เพิ่มรายการ">
-      <p className="mb-4 text-sm text-[var(--text-muted)]">บันทึกใน {portfolio.name} โดยใช้ Ledger เดิม</p>
-      <div className="grid gap-3 sm:grid-cols-2" data-testid="portfolio-add-action-sheet">
-        <ActionChoice icon={<WalletCards size={20} />} title="ซื้อหุ้น / ออปชัน" detail="เพิ่มสินทรัพย์และหักเงินสด" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'buy' }); else openCreate('acquisition'); }} />
-        <ActionChoice icon={<ArrowUpCircle size={20} />} title="ขาย" detail="ลดสถานะและบันทึกเงินเข้า" onClick={() => { setActionSheetOpen(false); if (portfolio.type === 'OPTION') setOptionActionRequest({ id: Date.now(), type: 'sell' }); else openCreate('disposal'); }} />
-        <ActionChoice icon={<ArrowDownCircle size={20} />} title="เติมเงินจำลอง" detail="เพิ่มเงินสดเข้าพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('deposit'); }} />
-        <ActionChoice icon={<ArrowUpCircle size={20} />} title="ถอนเงินจำลอง" detail="ลดเงินสดออกจากพอร์ต" onClick={() => { setActionSheetOpen(false); openCreate('withdrawal'); }} />
-        <ActionChoice icon={<Repeat2 size={20} />} title="โอนพอร์ต" detail="ย้ายเงินด้วยรายการคู่ใน Ledger" disabled={activePortfolios.length < 2} onClick={() => { setActionSheetOpen(false); requestManager('transfer'); }} />
+    {/*
+      The one sheet the one call to action opens. Asset kind first, because that
+      is the decision somebody came here to make; the cash rows underneath are
+      the same ledger entries they always were, kept reachable rather than moved.
+      Each choice hands off to a flow that already exists — this sheet routes,
+      and calculates nothing.
+    */}
+    <ResponsiveDialog isOpen={addAssetSheetOpen} onClose={() => setAddAssetSheetOpen(false)} title="+ เพิ่มสินทรัพย์">
+      <p className="mb-4 text-sm text-[var(--text-muted)]">เลือกประเภทสินทรัพย์ที่ต้องการเพิ่ม ทุกอย่างบันทึกเป็นรายการใน Transaction Ledger เดิม</p>
+      <div className="grid gap-3 sm:grid-cols-2" data-testid="portfolio-add-asset-sheet">
+        <ActionChoice
+          testId="add-asset-stock"
+          icon={<CandlestickChart size={20} />}
+          title="หุ้น / ETF"
+          detail="เพิ่มรายการซื้อ ขาย หรือสินทรัพย์ที่ถืออยู่"
+          onClick={chooseStockAsset}
+        />
+        <ActionChoice
+          testId="add-asset-option"
+          icon={<Layers size={20} />}
+          title="ออปชัน"
+          detail="เพิ่ม Call / Put position"
+          onClick={chooseOptionAsset}
+        />
+      </div>
+      <div className="mt-5 border-t border-[var(--border)] pt-4">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">เงินสดในพอร์ต</h3>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <ActionChoice icon={<ArrowDownCircle size={20} />} title="เติมเงินจำลอง" detail="เพิ่มเงินสดเข้าพอร์ต" onClick={() => { setAddAssetSheetOpen(false); openCreate('deposit'); }} />
+          <ActionChoice icon={<ArrowUpCircle size={20} />} title="ถอนเงินจำลอง" detail="ลดเงินสดออกจากพอร์ต" onClick={() => { setAddAssetSheetOpen(false); openCreate('withdrawal'); }} />
+          <ActionChoice icon={<Repeat2 size={20} />} title="โอนระหว่างพอร์ต" detail="ย้ายเงินด้วยรายการคู่ใน Ledger" disabled={activePortfolios.length < 2} onClick={() => { setAddAssetSheetOpen(false); requestManager('transfer'); }} />
+        </div>
       </div>
     </ResponsiveDialog>
 
@@ -982,14 +1082,15 @@ function OverflowChoice({ icon, label, onClick, disabled = false, tone = 'defaul
   </button>;
 }
 
-function ActionChoice({ icon, title, detail, onClick, disabled = false }: {
+function ActionChoice({ icon, title, detail, onClick, disabled = false, testId }: {
   icon: React.ReactNode;
   title: string;
   detail: string;
   onClick: () => void;
   disabled?: boolean;
+  testId?: string;
 }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="flex min-h-20 min-w-0 items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-left hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40">
+  return <button type="button" disabled={disabled} onClick={onClick} data-testid={testId} className="flex min-h-20 min-w-0 items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-left hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40">
     <span className="mt-0.5 shrink-0 text-[var(--accent)]">{icon}</span>
     <span className="min-w-0"><strong className="block break-words text-sm text-[var(--text)]">{title}</strong><span className="mt-1 block break-words text-xs text-[var(--text-muted)]">{detail}</span></span>
   </button>;

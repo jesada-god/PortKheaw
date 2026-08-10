@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit3, Plus, Target, Trash2 } from 'lucide-react';
+import { Edit3, Target, Trash2 } from 'lucide-react';
 import { createPortfolioTransactionAction, deletePortfolioTransactionAction, updatePortfolioTransactionAction } from '@/app/portfolio/actions';
 import { deleteOptionTargetAction, upsertOptionTargetAction } from '@/app/portfolio/target-actions';
 import { Button } from '@/src/components/ui/Button';
@@ -71,7 +71,7 @@ function editDateTime(value: string, timezone: string) {
 
 const displayTime = optionDisplayTime;
 
-export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, actionRequest = null, onActionRequestHandled }: {
+export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, sectionHidden = false, actionRequest = null, onActionRequestHandled }: {
   portfolio: PortfolioRecord;
   portfolios: PortfolioRecord[];
   positions: OptionPositionSummary[];
@@ -84,6 +84,14 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   timezone: string;
   /** True when the subscription may read this portfolio but not write to it. */
   readOnly?: boolean;
+  /**
+   * Hides the visible section while leaving every dialog mounted — the same
+   * arrangement the manage panel uses. The page's one "เพิ่มสินทรัพย์" call to
+   * action has to reach the option flow from screens that do not show a list of
+   * option positions, and the flow renders through a portal, so hiding the
+   * section cannot hide it.
+   */
+  sectionHidden?: boolean;
   actionRequest?: { id: number; type: 'buy' | 'sell' } | null;
   onActionRequestHandled?: () => void;
 }) {
@@ -285,48 +293,56 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     });
   }
 
-  return <section className="min-w-0 space-y-3">
-    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+  /*
+   * The section states what is held and nothing more.
+   *
+   * It used to carry its own "เพิ่มรายการออปชัน" button twice — once beside the
+   * heading and once inside the empty state — which read as two different ways
+   * of adding an option next to the page's own add button. Adding is now one
+   * call to action at the top of the page, and it arrives here as an
+   * `actionRequest` opening this very same form.
+   */
+  return <>
+    <section className={sectionHidden ? 'hidden' : 'min-w-0 space-y-3'}>
       <div className="min-w-0">
         <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-muted)]">สัญญาออปชันที่ถืออยู่</h3>
         <p className="mt-1 text-xs text-[var(--text-muted)]">ทุก Action เป็นรายการใน Transaction Ledger และไม่ส่ง Order ไปโบรกเกอร์</p>
       </div>
-      <Button size="sm" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
-    </div>
-    <p className="rounded-xl border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3.5 py-3 text-xs text-[var(--warning)]">
-      ราคาและมูลค่าปิดเป็นการประเมินจากข้อมูลตลาดจริง ไม่ใช่ราคาที่รับประกัน: Long ใช้ Bid สำหรับประมาณการปิด และ Short ใช้ Ask สำหรับประมาณการซื้อคืน
-    </p>
+      <p className="rounded-xl border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3.5 py-3 text-xs text-[var(--warning)]">
+        ราคาและมูลค่าปิดเป็นการประเมินจากข้อมูลตลาดจริง ไม่ใช่ราคาที่รับประกัน: Long ใช้ Bid สำหรับประมาณการปิด และ Short ใช้ Ask สำหรับประมาณการซื้อคืน
+      </p>
 
-    {positions.length === 0
-      ? <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 text-center">
-        <p className="font-semibold text-[var(--text)]">ยังไม่มีรายการออปชันใน Ledger</p>
-        <Button className="mt-4" disabled={!isOnline || readOnly || Boolean(portfolio.archivedAt)} onClick={() => openCreate()}><Plus size={16} /> เพิ่มรายการออปชัน</Button>
-      </div>
-      : <div className="grid min-w-0 gap-3 xl:grid-cols-2" data-testid="options-position-list">
-        {positions.map((position) => <OptionPositionCard
-          key={position.key}
-          position={position}
-          expanded={expanded === position.key}
-          showBalances={showBalances}
-          timezone={timezone}
-          money={money}
-          signed={signed}
-          onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
-        >
-          <OptionDetails
+      {positions.length === 0
+        ? <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 text-center" data-testid="options-empty-state">
+          <p className="font-semibold text-[var(--text)]">ยังไม่มีรายการออปชันใน Ledger</p>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">เพิ่ม Call / Put ได้จากปุ่ม “เพิ่มสินทรัพย์” ด้านบนของหน้า</p>
+        </div>
+        : <div className="grid min-w-0 gap-3 xl:grid-cols-2" data-testid="options-position-list">
+          {positions.map((position) => <OptionPositionCard
+            key={position.key}
             position={position}
-            target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
+            expanded={expanded === position.key}
+            showBalances={showBalances}
             timezone={timezone}
             money={money}
             signed={signed}
-            onAction={(type) => openCreate(position, type)}
-            onEdit={openEdit}
-            onDelete={setDeleting}
-            onTarget={() => openTarget(position)}
-            onDeleteTarget={setTargetDeleting}
-          />
-        </OptionPositionCard>)}
-      </div>}
+            onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}
+          >
+            <OptionDetails
+              position={position}
+              target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
+              timezone={timezone}
+              money={money}
+              signed={signed}
+              onAction={(type) => openCreate(position, type)}
+              onEdit={openEdit}
+              onDelete={setDeleting}
+              onTarget={() => openTarget(position)}
+              onDeleteTarget={setTargetDeleting}
+            />
+          </OptionPositionCard>)}
+        </div>}
+    </section>
 
     <OptionTransactionModal
       open={formOpen}
@@ -376,7 +392,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
       <p className="text-sm text-slate-300">ระบบจะหยุดติดตามเป้าหมายของ {targetDeletingPosition ? optionPositionTitle(targetDeletingPosition) : 'สัญญาออปชันนี้'}</p>
       <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setTargetDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline || readOnly} onClick={confirmTargetDelete}>ยืนยันการลบ</Button></div>
     </Modal>
-  </section>;
+  </>;
 }
 
 /**

@@ -3,8 +3,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import Image from 'next/image';
-import { ArrowUpDown, ChevronDown, ChevronRight, ChevronUp, Plus } from 'lucide-react';
-import { Button } from '@/src/components/ui/Button';
+import { ArrowUpDown, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
 import { HOLDING_SORT_LABELS, type HoldingSortKey } from '@/src/lib/portfolio/holdings-sort';
 import { gainColor } from '@/src/lib/portfolio/presentation';
 import type { PortfolioSummary } from '@/src/lib/portfolio/types';
@@ -117,13 +116,15 @@ export function SortControl({ value, onChange, options, id }: {
  * An empty portfolio, drawn as a decision somebody has not made yet rather than
  * as a failure. The mascot is the same artwork the goal card uses, so the state
  * is unmistakably part of this product.
+ *
+ * It says what is missing and stops there. It used to carry an add button of its
+ * own, which meant an empty screen showed the same call to action twice — once
+ * in the header and once here. Adding lives in exactly one place on the page, so
+ * this state has no action to take and no way to grow one.
  */
-export function EmptyAssets({ title, description, actionLabel, onAction, disabled = false }: {
+export function EmptyAssets({ title, description }: {
   title: string;
   description: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  disabled?: boolean;
 }) {
   return <div
     className="flex min-w-0 flex-col items-center rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 text-center"
@@ -140,9 +141,6 @@ export function EmptyAssets({ title, description, actionLabel, onAction, disable
     />
     <p className="mt-4 text-base font-bold text-[var(--text)]">{title}</p>
     <p className="mt-1 max-w-sm text-sm text-[var(--text-muted)]">{description}</p>
-    {actionLabel && onAction && <Button className="mt-5" disabled={disabled} onClick={onAction}>
-      <Plus size={17} /> {actionLabel}
-    </Button>}
   </div>;
 }
 
