@@ -104,14 +104,19 @@ function render() {
       onOpenRequestHandled={() => undefined}
     />);
   });
-  // Managing a portfolio now lives behind one disclosure, so the reset control
-  // is reached the way a reader reaches it.
+  // Managing a portfolio now lives behind one navigation row, so the reset
+  // control is reached the way a reader reaches it.
   openManagePanel();
 }
 
+/*
+ * The manage area is a dialog, so it renders through a portal to `document.body`
+ * rather than inside the container — which is also why opening the reset dialog
+ * closes it, and why the assertions below read the document.
+ */
 function openManagePanel() {
-  const toggle = container.querySelector('[data-testid="portfolio-manage-panel"] button');
-  if (toggle && toggle.getAttribute('aria-expanded') === 'false') click(toggle);
+  const entry = container.querySelector('[data-testid="portfolio-manage-entry"]');
+  if (entry && !document.querySelector('[data-testid="portfolio-manage-panel"]')) click(entry);
 }
 
 function click(element: Element | null) {
@@ -122,7 +127,7 @@ function click(element: Element | null) {
 }
 
 function resetButton(id: string) {
-  return container.querySelector(`[data-testid="reset-portfolio-${id}"]`);
+  return document.querySelector(`[data-testid="reset-portfolio-${id}"]`);
 }
 
 function dialogText() {

@@ -17,12 +17,33 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
     expect(metadata).toBeGreaterThan(mascot);
   });
 
-  it('uses the requested mobile and desktop mascot sizes without horizontal overflow', () => {
-    expect(mascot).toContain("'h-20 sm:h-24 lg:h-28'");
-    expect(mascot).toContain('w-auto object-contain');
+  /*
+   * Kheaw is the card's visual identity, not a badge on it. He is drawn at the
+   * scale of the goal figures beside him and, from `lg` up, in his own column to
+   * their right — while the Overview tile keeps the small size it needs.
+   */
+  it('draws the mascot large enough to read as the card’s subject, without horizontal overflow', () => {
+    expect(mascot).toContain("'h-28 sm:h-36 lg:h-44'");
+    expect(mascot).toContain("compact\n    ? 'h-16 sm:h-20 lg:h-24'");
+    expect(mascot).toContain('w-auto max-w-full object-contain');
+    expect(component).toContain('lg:grid-cols-[minmax(0,1fr)_minmax(0,15rem)]');
+    expect(component).toContain('h-28 items-end justify-center sm:h-36 lg:h-44');
     expect(component).toContain('overflow-hidden');
     expect(component).toContain('min-w-0');
     expect(component).toContain('break-words');
+  });
+
+  /*
+   * The card used to be a hardcoded dark gradient with slate lettering, which is
+   * the one thing on this page that could not follow a light or a paid theme.
+   * Only the mood accent stays a literal colour, and it is the mascot's own.
+   */
+  it('draws itself from the semantic tokens rather than a fixed dark palette', () => {
+    expect(component).not.toMatch(/from-\[#|to-\[#|text-white|text-slate-|bg-slate-|border-slate-|text-amber-/);
+    expect(component).toContain('bg-[linear-gradient(140deg,var(--surface-elevated),var(--surface))]');
+    expect(component).toContain('border-[var(--border)]');
+    expect(component).toContain('text-[var(--text)]');
+    expect(component).toContain('text-[var(--warning)]');
   });
 
   it('keeps motion subtle and disables it for reduced-motion users', () => {

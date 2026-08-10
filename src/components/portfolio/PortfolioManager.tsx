@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, ChevronDown, ChevronUp, Edit3, Eraser, FolderOpen, History, Lock, Plus, RotateCcw, Settings2, Target, Trash2, Undo2 } from 'lucide-react';
+import { Archive, Edit3, Eraser, History, Lock, Plus, RotateCcw, Settings2, Target, Trash2, Undo2 } from 'lucide-react';
 import {
   archivePortfolioAction,
   createPortfolioAction,
@@ -26,12 +26,11 @@ import type { PortfolioDeletionSummary, TransferPreview } from '@/src/lib/portfo
 import type { TransferableAssets } from '@/src/lib/portfolio/transfer/plan';
 import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
+import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { useToast } from '@/src/components/ui/Toast';
-import { calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
-import { portfolioReturnToneClass } from '@/src/lib/portfolio/presentation';
+import { NavRow } from './tracker/SecondaryPanels';
 import {
   buildPortfolioGoalCardModel,
-  latestPortfolioPriceTime,
   type PortfolioGoalScope,
 } from '@/src/lib/portfolio/goal-card';
 import type {
@@ -262,7 +261,18 @@ export function PortfolioManager({
     });
   }
 
+  /*
+   * Every mutation is a dialog, and the manage area is one too. Nesting two of
+   * them would put two focus traps and two Escape handlers on the same page, so
+   * stepping into a flow closes the area it was reached from — the flow itself
+   * is unchanged, and finishing it lands back on the portfolio page.
+   */
+  function leaveManage() {
+    setManageOpen(false);
+  }
+
   function openCreate(type: 'STOCK' | 'OPTION' = tab) {
+    leaveManage();
     setCreateName('');
     setCreateType(type === 'OPTION' && !optionsEntitlement.canCreate ? 'STOCK' : type);
     setError('');
@@ -270,6 +280,7 @@ export function PortfolioManager({
   }
 
   function requestCreate(type: 'STOCK' | 'OPTION' = tab) {
+    leaveManage();
     const entitlement = portfolioCreationEntitlement(effectiveTier, type);
     const count = active.filter((portfolio) => portfolio.type === type).length;
     if (!entitlement.canCreate) {
@@ -295,6 +306,7 @@ export function PortfolioManager({
   }
 
   function openEdit(portfolio: PortfolioRecord) {
+    leaveManage();
     setEditing(portfolio);
     setEditName(portfolio.name);
     setEditType(portfolio.type);
@@ -309,6 +321,7 @@ export function PortfolioManager({
   }
 
   function openGoal(portfolio: PortfolioRecord | 'aggregate') {
+    leaveManage();
     const goal = portfolio === 'aggregate'
       ? aggregateGoal
       : { targetValueUsd: portfolio.targetValueUsd, targetDate: portfolio.targetDate };
@@ -326,6 +339,7 @@ export function PortfolioManager({
   }
 
   function openTransfer() {
+    leaveManage();
     const source = active.some((portfolio) => portfolio.id === selectedPortfolioId)
       ? selectedPortfolioId
       : active[0]?.id ?? '';
@@ -382,6 +396,7 @@ export function PortfolioManager({
    * the portfolio as it is now.
    */
   function openDelete(portfolio: PortfolioRecord) {
+    leaveManage();
     setDialogSessionKey(crypto.randomUUID());
     setDeleteTarget(portfolio);
     setDeleteSummary(null);
@@ -424,6 +439,7 @@ export function PortfolioManager({
   }
 
   function openReset(portfolio: PortfolioRecord) {
+    leaveManage();
     setResetError('');
     setResetTarget(portfolio);
   }
@@ -476,6 +492,7 @@ export function PortfolioManager({
   }
 
   function openAssetTransfer(portfolio: PortfolioRecord) {
+    leaveManage();
     setDialogSessionKey(crypto.randomUUID());
     setAssetTransferSource(portfolio);
     setAssetStep('destination');
@@ -605,10 +622,9 @@ export function PortfolioManager({
     {/*
       The goal card keeps its place on the screen — it is where Kheaw lives, and
       a goal somebody set is a reason to open the app. Everything that *manages*
-      a portfolio rather than reporting on one now sits behind one disclosure
-      below it: creating, renaming, resetting, archiving, deleting and the
-      recovery window are all rare, deliberate acts, and none of them belongs in
-      the first screenful.
+      a portfolio rather than reporting on one is one row below it: creating,
+      renaming, resetting, archiving, deleting and the recovery window are all
+      rare, deliberate acts, and none of them belongs in the first screenful.
     */}
     <div className={sectionHidden ? 'hidden' : 'min-w-0 space-y-4'}>
       <PortfolioGoalCard
@@ -641,162 +657,132 @@ export function PortfolioManager({
         </div>
       </div>}
 
-      <section className="min-w-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]" data-testid="portfolio-manage-panel">
-        <button
-          type="button"
-          aria-expanded={manageOpen}
-          onClick={() => setManageOpen((current) => !current)}
-          className="flex min-h-16 w-full min-w-0 items-center gap-3 p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-        >
-          <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
-            <Settings2 size={18} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <strong className="block text-sm font-bold text-[var(--text)]">จัดการพอร์ต</strong>
-            <span className="mt-0.5 block text-xs text-[var(--text-muted)]">สร้าง แก้ไข ตั้งเป้าหมาย ย้ายเงิน รีเซ็ต ลบ และกู้คืนพอร์ต</span>
-          </span>
-          {manageOpen
-            ? <ChevronUp aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />
-            : <ChevronDown aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />}
-        </button>
-
-        {manageOpen && <div className="border-t border-[var(--border)] p-4">
-    <div className="flex flex-col gap-4 border-b border-slate-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
-      <div>
-        <h3 className="text-lg font-bold text-white">พอร์ตของฉัน</h3>
-        <p className="mt-1 text-xs text-slate-400">แต่ละพอร์ตใช้ Transaction Ledger และยอดเงินสดของตัวเอง พอร์ตรวมเป็นผลรวมเท่านั้น</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" disabled={!isOnline || active.length < 2} onClick={openTransfer}>ย้ายเงิน</Button>
-        <Button size="sm" disabled={!isOnline} onClick={() => requestCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
-      </div>
+      {/*
+        One row, and everything that manages a portfolio is behind it. The list
+        of portfolios itself belongs to "พอร์ตของฉัน" on the page above — this
+        row leads to the *verbs*, not to a second copy of the cards.
+      */}
+      <NavRow
+        testId="portfolio-manage-entry"
+        icon={<Settings2 size={19} />}
+        title="จัดการพอร์ต"
+        detail="สร้าง แก้ไข ตั้งเป้าหมาย ย้ายเงิน รีเซ็ต ลบ และกู้คืนพอร์ต"
+        onClick={() => setManageOpen(true)}
+      />
     </div>
 
-    <div className="mt-4 flex gap-2" role="tablist" aria-label="ประเภทพอร์ต">
-      {(['STOCK', 'OPTION'] as const).map((type) => <button
-        key={type}
-        type="button"
-        role="tab"
-        aria-selected={tab === type}
-        onClick={() => setTab(type)}
-        className={`min-h-11 flex-1 rounded-xl px-3 text-sm font-bold sm:flex-none ${tab === type ? 'bg-[#D4FF00] text-slate-950' : 'border border-slate-700 text-slate-300'}`}
-      >{type === 'STOCK' ? 'พอร์ตหุ้น' : 'พอร์ตออปชัน'}</button>)}
-    </div>
+    <ResponsiveDialog isOpen={manageOpen} onClose={() => setManageOpen(false)} title="จัดการพอร์ต">
+      <div className="min-w-0 space-y-4" data-testid="portfolio-manage-panel">
+        <p className="text-xs text-[var(--text-muted)]">แต่ละพอร์ตใช้ Transaction Ledger และยอดเงินสดของตัวเอง พอร์ตรวมเป็นผลรวมเท่านั้น</p>
 
-    <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {visible.map((portfolio) => {
-        const summary = summaries[portfolio.id];
-        const goal = { targetValueUsd: portfolio.targetValueUsd, targetDate: portfolio.targetDate };
-        const goalProgress = calculateGoalProgress(summary.totalValue, goal);
-        const positions = summary.holdings.length + summary.optionPositions.filter((position) => position.status === 'open').length;
-        const keyHoldings = [
-          ...summary.holdings.map((holding) => holding.symbol),
-          ...summary.optionPositions.filter((position) => position.status === 'open').map((position) => position.contractSymbol),
-        ].slice(0, 3);
-        const updated = latestPortfolioPriceTime(summary);
-        const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
-        return <article key={portfolio.id} className={`min-w-0 rounded-2xl border p-4 ${portfolio.id === selectedPortfolioId ? 'border-[#D4FF00]/50 bg-[#D4FF00]/5' : 'border-slate-800 bg-slate-950/35'} ${portfolio.archivedAt ? 'opacity-75' : ''}`}>
-          <button type="button" onClick={() => onSelect(portfolio.id)} className="min-h-11 w-full text-left focus-visible:rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]">
-            <span className="flex items-start justify-between gap-2">
-              <span className="min-w-0"><strong className="block break-words text-white">{portfolio.name}</strong><span className="mt-1 block text-xs text-slate-400">{typeLabel(portfolio.type)}{portfolio.archivedAt ? ' · Archived' : ''}{writeBlock ? ' · อ่านอย่างเดียว' : ''}</span></span>
-              <FolderOpen className="shrink-0 text-[#D4FF00]" size={18} />
-            </span>
-          </button>
-          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
-            <CardMetric label="มูลค่าปัจจุบัน" value={money(summary.totalValue)} />
-            <CardMetric label="เงินสด" value={money(summary.cashBalance)} />
-            <CardMetric
-              label="กำไร/ขาดทุนรวม"
-              value={`${signed(summary.totalGain)} · ${percent(summary.totalGainPercent)}`}
-              tone={portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-slate-200')}
-            />
-            <CardMetric
-              label="กำไร/ขาดทุนวันนี้"
-              value={summary.todayChange === null ? '—' : signed(summary.todayChange)}
-              tone={portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-slate-200')}
-              helper={summary.todayChange === null ? 'ยังคำนวณกำไร/ขาดทุนวันนี้ไม่ได้ เพราะไม่มีราคาปิดวันก่อน' : undefined}
-            />
-          </dl>
-          <div className="mt-3 min-w-0 text-xs"><span className="text-slate-500">สินทรัพย์สำคัญ</span><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{keyHoldings.length ? keyHoldings.map((symbol) => <span key={symbol} className="max-w-full truncate rounded-full bg-slate-800 px-2 py-1 font-mono text-slate-200">{symbol}</span>) : <span className="text-slate-500">ยังไม่มี · {positions} positions</span>}</div></div>
-          {goal.targetValueUsd !== null && <div className="mt-3 rounded-lg bg-slate-900/70 p-3 text-xs">
-            <p className="font-semibold text-slate-200">เป้าหมาย {money(goal.targetValueUsd)} · {goalProgress.progressPercent === null ? '—' : `${goalProgress.progressPercent.toFixed(2)}%`}</p>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-[#D4FF00]" style={{ width: `${Math.min(100, Math.max(0, goalProgress.progressPercent ?? 0))}%` }} /></div>
-            {goalProgress.reason && <p className="mt-1 text-amber-300">{goalProgress.reason}</p>}
-          </div>}
-          <p className="mt-3 text-[11px] text-slate-500">{updated ? `ราคาล่าสุด ${displayTime(updated)}` : positions ? 'ยังไม่มีเวลาราคาที่ตรวจสอบได้' : 'ยังไม่มีสถานะเปิด'}</p>
-          {writeBlock && <p className="mt-3 flex items-start gap-1.5 text-[11px] text-amber-300">
-            <Lock aria-hidden="true" size={12} className="mt-0.5 shrink-0" />
-            <span>{READ_ONLY_PORTFOLIO_MESSAGE}</span>
-          </p>}
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <Button size="sm" variant="outline" onClick={() => onSelect(portfolio.id)}>เปิดดู</Button>
-            <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
-            <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
-            {portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> เลิก Archive</Button>}
-            {/*
-              Reset sits next to deletion because it answers the neighbouring
-              question — "start this one over" rather than "get rid of it" — and
-              it is styled to read as the lesser of the two: destructive lettering
-              on the ordinary outline, against the delete button's red border. The
-              Default / Legacy portfolio gets it too, and there it matters most:
-              that portfolio cannot be deleted, so this is the only way to empty
-              it.
-            */}
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-[var(--negative)]/85 hover:bg-[var(--negative)]/10 hover:text-[var(--negative)]"
-              disabled={!isOnline || Boolean(writeBlock)}
-              onClick={() => openReset(portfolio)}
-              data-testid={`reset-portfolio-${portfolio.id}`}
-            ><Eraser size={14} /> รีเซ็ต</Button>
-            {/*
-              Deleting is now a real, reversible action rather than a euphemism.
-              The Default / Legacy portfolio still cannot go — the account is
-              anchored to it — so it keeps Archive, which is what it always
-              actually offered.
-            */}
-            {portfolio.isLegacy
-              ? !portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => { setError(''); setConfirming(portfolio); }}><Archive size={14} /> Archive</Button>
-              : <Button
-                size="sm"
-                variant="outline"
-                className="border-[var(--negative)]/50 text-[var(--negative)] hover:bg-[var(--negative)]/10"
-                disabled={!isOnline || Boolean(writeBlock)}
-                onClick={() => openDelete(portfolio)}
-                data-testid={`delete-portfolio-${portfolio.id}`}
-              ><Trash2 size={14} /> ลบพอร์ต</Button>}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={!isOnline} onClick={() => requestCreate()}><Plus size={16} /> สร้างพอร์ต</Button>
+          <Button size="sm" variant="outline" disabled={!isOnline || active.length < 2} onClick={openTransfer}>ย้ายเงิน</Button>
+        </div>
+
+        <div className="flex gap-2" role="tablist" aria-label="ประเภทพอร์ต">
+          {(['STOCK', 'OPTION'] as const).map((type) => <button
+            key={type}
+            type="button"
+            role="tab"
+            aria-selected={tab === type}
+            onClick={() => setTab(type)}
+            className={`min-h-11 flex-1 rounded-xl px-3 text-sm font-bold transition-colors ${tab === type
+              ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+              : 'border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'}`}
+          >{type === 'STOCK' ? 'พอร์ตหุ้น' : 'พอร์ตออปชัน'}</button>)}
+        </div>
+
+        {/*
+          A management row, not a summary card: a name, what kind of portfolio it
+          is, and the actions. Every figure this list used to repeat is already
+          on the card in "พอร์ตของฉัน", one screen up.
+        */}
+        <ul className="grid min-w-0 gap-2" data-testid="portfolio-manage-list">
+          {visible.map((portfolio) => {
+            const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
+            return <li
+              key={portfolio.id}
+              className={`min-w-0 rounded-xl border p-3 ${portfolio.id === selectedPortfolioId ? 'border-[var(--accent)]/50 bg-[var(--accent-soft)]' : 'border-[var(--border)] bg-[var(--surface-elevated)]'} ${portfolio.archivedAt ? 'opacity-75' : ''}`}
+            >
+              <div className="min-w-0">
+                <strong className="block break-words text-sm font-bold text-[var(--text)]">{portfolio.name}</strong>
+                <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
+                  {typeLabel(portfolio.type)}{portfolio.archivedAt ? ' · Archived' : ''}{writeBlock ? ' · อ่านอย่างเดียว' : ''}
+                </span>
+              </div>
+              {writeBlock && <p className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--warning)]">
+                <Lock aria-hidden="true" size={12} className="mt-0.5 shrink-0" />
+                <span>{READ_ONLY_PORTFOLIO_MESSAGE}</span>
+              </p>}
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <Button size="sm" variant="outline" onClick={() => { leaveManage(); onSelect(portfolio.id); }}>เปิดดู</Button>
+                <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openEdit(portfolio)}><Edit3 size={14} /> ชื่อ</Button>
+                <Button size="sm" variant="outline" disabled={!isOnline || Boolean(writeBlock)} onClick={() => openGoal(portfolio)}><Target size={14} /> เป้าหมาย</Button>
+                {portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => run(() => restorePortfolioAction(portfolio.id), 'นำพอร์ตกลับมาใช้แล้ว', () => undefined)}><RotateCcw size={14} /> เลิก Archive</Button>}
+                {/*
+                  Reset sits next to deletion because it answers the neighbouring
+                  question — "start this one over" rather than "get rid of it" — and
+                  it is styled to read as the lesser of the two: destructive lettering
+                  on the ordinary outline, against the delete button's red border. The
+                  Default / Legacy portfolio gets it too, and there it matters most:
+                  that portfolio cannot be deleted, so this is the only way to empty
+                  it.
+                */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[var(--negative)]/85 hover:bg-[var(--negative)]/10 hover:text-[var(--negative)]"
+                  disabled={!isOnline || Boolean(writeBlock)}
+                  onClick={() => openReset(portfolio)}
+                  data-testid={`reset-portfolio-${portfolio.id}`}
+                ><Eraser size={14} /> รีเซ็ต</Button>
+                {/*
+                  Deleting is now a real, reversible action rather than a euphemism.
+                  The Default / Legacy portfolio still cannot go — the account is
+                  anchored to it — so it keeps Archive, which is what it always
+                  actually offered.
+                */}
+                {portfolio.isLegacy
+                  ? !portfolio.archivedAt && <Button size="sm" variant="outline" disabled={!isOnline} onClick={() => { leaveManage(); setError(''); setConfirming(portfolio); }}><Archive size={14} /> Archive</Button>
+                  : <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-[var(--negative)]/50 text-[var(--negative)] hover:bg-[var(--negative)]/10"
+                    disabled={!isOnline || Boolean(writeBlock)}
+                    onClick={() => openDelete(portfolio)}
+                    data-testid={`delete-portfolio-${portfolio.id}`}
+                  ><Trash2 size={14} /> ลบพอร์ต</Button>}
+              </div>
+            </li>;
+          })}
+        </ul>
+
+        {recentlyDeleted.length > 0 && <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3" data-testid="recently-deleted-portfolios">
+          <div className="flex items-center gap-2">
+            <History aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={16} />
+            <h4 className="text-sm font-bold text-[var(--text)]">พอร์ตที่ลบล่าสุด</h4>
           </div>
-        </article>;
-      })}
-    </div>
-
-    {recentlyDeleted.length > 0 && <section className="mt-4 rounded-2xl border border-[var(--border)] bg-slate-950/35 p-4" data-testid="recently-deleted-portfolios">
-      <div className="flex items-center gap-2">
-        <History aria-hidden="true" className="shrink-0 text-slate-400" size={16} />
-        <h4 className="text-sm font-bold text-white">พอร์ตที่ลบล่าสุด</h4>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">กู้คืนได้ภายใน 7 วันนับจากวันที่ลบ หลังจากนั้นข้อมูลจะถูกลบถาวร</p>
+          <ul className="mt-3 grid gap-2">
+            {recentlyDeleted.map((portfolio) => <li
+              key={portfolio.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3"
+            >
+              <div className="min-w-0">
+                <strong className="block break-words text-sm text-[var(--text)]">{portfolio.name}</strong>
+                <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
+                  ลบเมื่อ {displayTime(portfolio.deletedAt)} · กู้คืนได้ถึง {displayTime(portfolio.purgeAfter)}
+                </span>
+              </div>
+              <Button size="sm" variant="outline" disabled={!isOnline || pending} onClick={() => restoreDeleted(portfolio.id)}>
+                <RotateCcw aria-hidden="true" size={14} /> กู้คืน
+              </Button>
+            </li>)}
+          </ul>
+        </section>}
       </div>
-      <p className="mt-1 text-xs text-slate-400">กู้คืนได้ภายใน 7 วันนับจากวันที่ลบ หลังจากนั้นข้อมูลจะถูกลบถาวร</p>
-      <ul className="mt-3 grid gap-2">
-        {recentlyDeleted.map((portfolio) => <li
-          key={portfolio.id}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 p-3"
-        >
-          <div className="min-w-0">
-            <strong className="block break-words text-sm text-white">{portfolio.name}</strong>
-            <span className="mt-0.5 block text-xs text-slate-400">
-              ลบเมื่อ {displayTime(portfolio.deletedAt)} · กู้คืนได้ถึง {displayTime(portfolio.purgeAfter)}
-            </span>
-          </div>
-          <Button size="sm" variant="outline" disabled={!isOnline || pending} onClick={() => restoreDeleted(portfolio.id)}>
-            <RotateCcw aria-hidden="true" size={14} /> กู้คืน
-          </Button>
-        </li>)}
-      </ul>
-    </section>}
-        </div>}
-      </section>
-    </div>
+    </ResponsiveDialog>
 
     <Modal isOpen={createOpen} onClose={() => !pending && closeCreate()} title="สร้างพอร์ตใหม่">
       <form className="space-y-4" onSubmit={(event) => {
@@ -995,19 +981,6 @@ export function PortfolioManager({
       <div className="mt-5"><Button className="w-full" onClick={() => setLimitType(null)}>เข้าใจแล้ว</Button></div>
     </Modal>
   </>;
-}
-
-function CardMetric({ label, value, tone = 'text-slate-200', helper }: {
-  label: string;
-  value: string;
-  tone?: string;
-  helper?: string;
-}) {
-  return <div className="min-w-0">
-    <dt className="text-slate-500">{label}</dt>
-    <dd className={`mt-1 break-words font-mono font-semibold ${tone}`}>{value}</dd>
-    {helper && <dd className="mt-1 text-[11px] font-normal text-slate-500">{helper}</dd>}
-  </div>;
 }
 
 function ActionError({ value }: { value: string }) {

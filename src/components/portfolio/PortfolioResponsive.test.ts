@@ -120,13 +120,40 @@ describe('portfolio responsive and accessibility contract', () => {
     expect(optionCard).not.toContain('>{position.contractSymbol}</span>');
   });
 
-  it('provides stacked portfolio cards, goal/transfer controls and explicit unavailable reasons', () => {
-    expect(manager).toContain('พอร์ตของฉัน');
+  /*
+   * One portfolio list, in one place.
+   *
+   * The manage panel used to repeat the whole list as a second set of cards,
+   * with the same value, cash, profit and goal bar the tracker's own cards
+   * already carry. The list belongs to "พอร์ตของฉัน"; the manage area keeps the
+   * verbs and a name to apply them to, and nothing else.
+   */
+  it('lists portfolios once, and keeps the manage area to the actions', () => {
+    expect(portfolio).toContain('title="พอร์ตของฉัน"');
+    expect(portfolio).toContain('data-testid="portfolio-card-list"');
+    // Rendered text, not the prose explaining why it is not rendered here.
+    expect(manager).not.toMatch(/>\s*พอร์ตของฉัน/);
+    expect(manager).not.toContain('md:grid-cols-2 xl:grid-cols-3');
+    expect(manager).not.toContain('สินทรัพย์สำคัญ');
+    expect(manager).not.toContain('มูลค่าปัจจุบัน');
+    // The reason a today figure can be missing is stated where the figure is.
+    expect(manager).not.toContain('ไม่มีราคาปิดวันก่อน');
+    expect(portfolio).toContain('ไม่มีราคาปิดวันก่อน');
+  });
+
+  it('reaches the manage area from one compact row and keeps every action behind it', () => {
+    expect(manager).toContain('testId="portfolio-manage-entry"');
+    expect(manager).toContain('title="จัดการพอร์ต"');
+    expect(manager).toContain('data-testid="portfolio-manage-panel"');
+    expect(manager).toContain('data-testid="portfolio-manage-list"');
     expect(manager).toContain('role="tablist"');
-    expect(manager).toContain('md:grid-cols-2 xl:grid-cols-3');
     expect(manager).toContain('เป้าหมายพอร์ตรวม');
     expect(manager).toContain('ย้ายเงินระหว่างพอร์ต');
-    expect(manager).toContain('ไม่มีราคาปิดวันก่อน');
+    // Stepping into a flow leaves the area, so two focus traps never overlap.
+    expect(manager).toContain('function leaveManage()');
+    for (const opener of ['openEdit', 'openGoal', 'openReset', 'openDelete', 'openAssetTransfer', 'openTransfer', 'requestCreate']) {
+      expect(manager).toMatch(new RegExp(`function ${opener}\\([^)]*\\) \\{\\s*leaveManage\\(\\);`));
+    }
     expect(options).toContain('เงินสดติดลบ โปรดตรวจเงินฝากย้อนหลังหรือสถานะ Margin');
     expect(options).toContain('Technical details / Copy');
   });

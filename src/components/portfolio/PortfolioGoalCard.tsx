@@ -54,7 +54,7 @@ export function PortfolioGoalCard({
 
   return <section
     aria-labelledby="portfolio-goal-title"
-    className={`${styles.card} relative overflow-hidden rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#151B28] to-[#0A0E17] p-4 shadow-xl sm:p-5`}
+    className={`${styles.card} relative min-w-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[linear-gradient(140deg,var(--surface-elevated),var(--surface))] p-4 shadow-[var(--shadow)] sm:p-5`}
     data-testid="portfolio-goal-card"
     data-scope={model.scope}
     data-today-state={model.today.kind}
@@ -63,16 +63,16 @@ export function PortfolioGoalCard({
     data-special-event={model.mascot.specialEvent ?? 'none'}
     style={cardStyle}
   >
-    <header className="relative flex min-w-0 flex-col gap-3 border-b border-slate-800/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
+    <header className="relative flex min-w-0 flex-col gap-3 border-b border-[var(--border)] pb-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--goal-accent)]">Portfolio Goal</p>
-        <h3 id="portfolio-goal-title" className="mt-1 text-lg font-bold text-white">เป้าหมายพอร์ต</h3>
-        <p className="mt-1 break-words text-xs text-slate-400">
+        <h3 id="portfolio-goal-title" className="mt-1 text-lg font-bold text-[var(--text)]">เป้าหมายพอร์ต</h3>
+        <p className="mt-1 break-words text-xs text-[var(--text-muted)]">
           {model.scope === 'aggregate' ? 'รวมทุกพอร์ต' : selectedPortfolioName}
         </p>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="inline-flex min-w-0 rounded-lg border border-slate-700 bg-slate-950/60 p-1" aria-label="ขอบเขตเป้าหมายพอร์ต">
+        <div className="inline-flex min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1" aria-label="ขอบเขตเป้าหมายพอร์ต">
           {([
             ['selected', 'พอร์ตที่เลือก'],
             ['aggregate', 'พอร์ตรวม'],
@@ -80,7 +80,7 @@ export function PortfolioGoalCard({
             key={scope}
             type="button"
             aria-pressed={model.scope === scope}
-            className={`min-h-9 min-w-0 rounded-md px-2.5 text-xs font-bold transition-colors ${model.scope === scope ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+            className={`min-h-9 min-w-0 rounded-md px-2.5 text-xs font-bold transition-colors ${model.scope === scope ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
             onClick={() => onScopeChange(scope)}
           >{label}</button>)}
         </div>
@@ -91,10 +91,16 @@ export function PortfolioGoalCard({
       </div>
     </header>
 
-    <div className="relative mt-5 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-center">
+    {/*
+      Kheaw sits in his own column from `lg` up, beside the progress rather than
+      under it, and spans the metadata row so the mascot and the goal figures
+      carry equal weight. Below `lg` the grid collapses to one column and he
+      falls under the progress bar — never beside a number he could crowd.
+    */}
+    <div className="relative mt-5 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,15rem)] lg:items-start">
       <div className="min-w-0" data-testid="portfolio-goal-primary">
-        <p className="text-xs font-medium text-slate-400">ความคืบหน้า</p>
-        <p className="mt-1 break-words font-mono text-4xl font-black tracking-tight text-white sm:text-5xl">
+        <p className="text-xs font-medium text-[var(--text-muted)]">ความคืบหน้า</p>
+        <p className="mt-1 break-words font-mono text-4xl font-black tracking-tight text-[var(--text)] sm:text-5xl">
           {progressText}
         </p>
         <div className="mt-5 grid min-w-0 gap-4 sm:grid-cols-2">
@@ -107,7 +113,7 @@ export function PortfolioGoalCard({
           aria-valuemin={0}
           aria-valuenow={hasGoal && showBalances ? model.progressBarPercent : undefined}
           aria-valuetext={hasGoal ? progressText : 'ยังไม่ได้ตั้งเป้าหมาย'}
-          className="mt-5 h-2.5 overflow-hidden rounded-full bg-slate-800"
+          className="mt-5 h-2.5 overflow-hidden rounded-full bg-[var(--surface-hover)]"
           role="progressbar"
         >
           <div
@@ -116,17 +122,17 @@ export function PortfolioGoalCard({
             style={{ width: `${hasGoal && showBalances ? model.progressBarPercent : 0}%` }}
           />
         </div>
-        {model.progress.reason && <p className="mt-2 text-xs text-amber-300">{model.progress.reason}</p>}
+        {model.progress.reason && <p className="mt-2 text-xs text-[var(--warning)]">{model.progress.reason}</p>}
       </div>
 
       <aside className="min-w-0 text-center lg:row-span-2" data-testid="portfolio-goal-mascot">
-        <div className="flex h-20 items-end justify-center sm:h-24 lg:h-28">
+        <div className="flex h-28 items-end justify-center sm:h-36 lg:h-44">
           <PortfolioGoalMascot state={model.mascot} />
         </div>
         <div className="min-h-24">
           {model.mascot.source === 'today' && model.today.kind === 'ready' && (
             <p
-              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.today.percent : null, 'text-white')}`}
+              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.today.percent : null, 'text-[var(--text)]')}`}
               data-return-tone={portfolioGoalReturnTone(showBalances ? model.today.percent : null)}
               data-testid="portfolio-goal-return"
             >
@@ -135,20 +141,20 @@ export function PortfolioGoalCard({
           )}
           {model.mascot.source === 'total' && (
             <p
-              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.mascot.percent : null, 'text-white')}`}
+              className={`mt-3 break-words font-mono text-sm font-bold ${portfolioGoalReturnToneClass(showBalances ? model.mascot.percent : null, 'text-[var(--text)]')}`}
               data-return-tone={portfolioGoalReturnTone(showBalances ? model.mascot.percent : null)}
               data-testid="portfolio-goal-return"
             >
               ผลตอบแทนรวม ({percent(model.mascot.percent)})
             </p>
           )}
-          <p className={`${model.mascot.source === 'none' ? 'mt-3' : 'mt-1'} mx-auto max-w-72 text-sm leading-relaxed text-slate-300`}>
+          <p className={`${model.mascot.source === 'none' ? 'mt-3' : 'mt-1'} mx-auto max-w-72 text-sm leading-relaxed text-[var(--text-secondary)]`}>
             {model.mascot.message}
           </p>
         </div>
       </aside>
 
-      <dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-800/70 pt-4 text-xs text-slate-400 sm:grid-cols-3 lg:col-start-1">
+      <dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)] sm:grid-cols-3 lg:col-start-1">
         <MetaMetric label="พอร์ตใช้งาน" value={`${model.activePortfolios}/${model.totalPortfolios}`} />
         <MetaMetric label="สินทรัพย์" value={`${model.assetCount} รายการ`} />
         <MetaMetric
@@ -163,15 +169,15 @@ export function PortfolioGoalCard({
 
 function GoalMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
   return <div className="min-w-0">
-    <p className="text-xs font-medium text-slate-400">{label}</p>
-    <p className="mt-1 break-words font-mono text-xl font-bold text-white sm:text-2xl">{value}</p>
-    {helper && <p className="mt-1 text-xs text-slate-500">{helper}</p>}
+    <p className="text-xs font-medium text-[var(--text-muted)]">{label}</p>
+    <p className="mt-1 break-words font-mono text-xl font-bold text-[var(--text)] sm:text-2xl">{value}</p>
+    {helper && <p className="mt-1 text-xs text-[var(--text-muted)]">{helper}</p>}
   </div>;
 }
 
 function MetaMetric({ label, value, className = '' }: { label: string; value: string; className?: string }) {
   return <div className={`min-w-0 ${className}`}>
     <dt>{label}</dt>
-    <dd className="mt-1 break-words font-medium text-slate-300">{value}</dd>
+    <dd className="mt-1 break-words font-medium text-[var(--text-secondary)]">{value}</dd>
   </div>;
 }

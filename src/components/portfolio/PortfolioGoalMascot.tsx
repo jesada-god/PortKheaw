@@ -95,17 +95,23 @@ export function PortfolioGoalMascot({
   compact?: boolean;
 }) {
   const appearance = portfolioGoalAppearance[state.mood];
+  /*
+   * The full card's Kheaw is the portfolio's visual identity rather than an
+   * icon beside it, so he is drawn at the scale of the goal figures he stands
+   * next to. The compact size is unchanged: on Overview he is one tile among
+   * several and has to stay one.
+   */
   const sizes = compact
     ? 'h-16 sm:h-20 lg:h-24'
-    : 'h-20 sm:h-24 lg:h-28';
+    : 'h-28 sm:h-36 lg:h-44';
   return <Image
     alt={`น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`}
-    className={`${styles.mascot} ${sizes} aspect-square w-auto object-contain object-center`}
+    className={`${styles.mascot} ${sizes} aspect-square w-auto max-w-full object-contain object-center`}
     data-visual-variant={state.specialEvent ?? state.mood}
     height={512}
     sizes={compact
       ? '(max-width: 640px) 64px, (max-width: 1024px) 80px, 96px'
-      : '(max-width: 640px) 80px, (max-width: 1024px) 96px, 112px'}
+      : '(max-width: 640px) 112px, (max-width: 1024px) 144px, 176px'}
     src={portfolioGoalMascotAsset(state)}
     width={512}
   />;
