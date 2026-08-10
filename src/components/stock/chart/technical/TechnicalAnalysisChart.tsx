@@ -41,6 +41,7 @@ import { levelsRequestKey, requestChartLevels } from './levels-client';
 import { buildPriceLineSpecs } from './level-lines';
 import { ChartToolbar, type ToolbarToggleKey } from './ChartToolbar';
 import { OptionsLevelsPanel } from './OptionsLevelsPanel';
+import { ChartAttribution } from '../ChartAttribution';
 import { TechnicalChartHost, type ChartPriceLineSpec, type EmaLineSpec, type VisibleLogicalRange } from './TechnicalChartHost';
 import { SupportResistancePanel, volumeProfileConfirmation, type SupportResistanceRow } from './SupportResistancePanel';
 import { assembleLevelRows, nearestLevel, toLevelInputs } from './level-rows';
@@ -411,6 +412,10 @@ export function TechnicalAnalysisChart({
           </div>
         )}
       </div>
+
+      {/* The chart library's licence notice and link. Unconditional: the plot no
+          longer carries the built-in mark, so this footer is what satisfies it. */}
+      <ChartAttribution className="border-t border-[#242733] px-3 py-1.5"/>
 
       {(rsiUnavailable || macdUnavailable) && (
         <p className="border-t border-[#242733] px-3 py-1.5 text-[11px] text-amber-300">

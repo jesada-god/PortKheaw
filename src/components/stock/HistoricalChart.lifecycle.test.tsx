@@ -18,11 +18,13 @@ vi.mock('lightweight-charts', () => {
     CandlestickSeries: definition('Candlestick'),
     HistogramSeries: definition('Histogram'),
     LineSeries: definition('Line'),
-    createChart: vi.fn(() => {
+    createChart: vi.fn((_container: HTMLElement, chartOptions: Record<string, unknown>) => {
       const series: Array<Record<string, ReturnType<typeof vi.fn>>> = [];
       const crosshair = new Set<(value: unknown) => void>();
       const visibleRangeHandlers = new Set<(value: unknown) => void>();
       const chart = {
+        /** The options the host asked for — what the attribution contract reads. */
+        chartOptions,
         series,
         visibleRangeHandlers,
         addSeries: vi.fn(() => {
@@ -119,6 +121,29 @@ describe('HistoricalChart Lightweight Charts boundary', () => {
     await act(async () => root.unmount());
     expect(lightweight.charts.every((chart) => (chart.remove as ReturnType<typeof vi.fn>).mock.calls.length === 1)).toBe(true);
     expect(lightweight.charts.every((chart) => (chart.unsubscribeCrosshairMove as ReturnType<typeof vi.fn>).mock.calls.length === 1)).toBe(true);
+  });
+
+  /*
+   * The whole chart screen, not just the host: the plot is asked to draw no
+   * TradingView mark, and the notice that permission depends on is standing in
+   * the DOM beneath it. Asserting both in one mount is the point — the licence is
+   * satisfied by the pair, and a change that removes either one fails here.
+   */
+  it('drops the in-plot attribution mark and carries the notice in the footer instead', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<HistoricalChart symbol="RKLB" prices={prices} datasetKey="RKLB:1d:5m"/>));
+
+    const options = lightweight.charts[0].chartOptions as { layout: { attributionLogo: boolean } };
+    expect(options.layout.attributionLogo).toBe(false);
+
+    const footer = host.querySelector('[data-testid="chart-attribution"]');
+    expect(footer).not.toBeNull();
+    expect(footer!.textContent).toContain('TradingView Lightweight Charts™');
+    expect(footer!.textContent).toContain('Copyright (с) 2025 TradingView, Inc.');
+    expect(footer!.querySelector('a[href="https://www.tradingview.com/"]')).not.toBeNull();
+    await act(async () => root.unmount());
   });
 
   it('updates the latest bar without recreating the chart or resetting viewport', async () => {

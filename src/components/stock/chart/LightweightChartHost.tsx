@@ -86,7 +86,11 @@ export function LightweightChartHost({
     const colors = getChartThemeColors();
     const chart = createChart(container, {
       autoSize: false,
-      layout: { background: { type: ColorType.Solid, color: colors.background }, textColor: colors.text, attributionLogo: true },
+      // `attributionLogo: false` is the library's own supported way to keep the
+      // TradingView mark out of the plot. It is allowed only because the licence's
+      // notice-and-link requirement is met in the footer instead — see
+      // `ChartAttribution`, which StockChart renders directly beneath this host.
+      layout: { background: { type: ColorType.Solid, color: colors.background }, textColor: colors.text, attributionLogo: false },
       grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
       rightPriceScale: { borderColor: colors.border },
       timeScale: { borderColor: colors.border, timeVisible: true, secondsVisible: false, rightOffset: 4 },

@@ -75,7 +75,11 @@ function layout() {
     layout: {
       textColor: colors.text,
       background: { type: ColorType.Solid, color: colors.background },
-      attributionLogo: true,
+      // The library's own supported way to keep the TradingView mark out of the
+      // plot. Allowed only because the licence's notice-and-link requirement is
+      // met in the footer instead — see `ChartAttribution`, which
+      // TechnicalAnalysisChart renders directly beneath this host.
+      attributionLogo: false,
       panes: { separatorColor: colors.border, separatorHoverColor: colors.axis, enableResize: true },
     },
     grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },

@@ -46,7 +46,7 @@ vi.mock('lightweight-charts', () => {
     LineSeries: definition('Line'),
     AreaSeries: definition('Area'),
     BarSeries: definition('Bar'),
-    createChart: vi.fn((container: HTMLElement) => {
+    createChart: vi.fn((container: HTMLElement, chartOptions: Record<string, unknown>) => {
       const series: SeriesStub[] = [];
       const panes: Array<{ setHeight: ReturnType<typeof vi.fn> }> = [
         { setHeight: vi.fn() }, { setHeight: vi.fn() },
@@ -62,6 +62,8 @@ vi.mock('lightweight-charts', () => {
       };
       const chart = {
         container,
+        /** The options the host asked for — what the attribution contract reads. */
+        chartOptions,
         series,
         removed: 0,
         addSeries: vi.fn((def: { name: string }, _options: unknown, paneIndex?: number) => {
@@ -194,6 +196,22 @@ describe('TechnicalChartHost — one chart, one time scale', () => {
     expect(panes[1].setHeight).toHaveBeenCalledWith(96);
     expect(panes[1].setHeight.mock.invocationCallOrder[0])
       .toBeLessThan(volumeOf(chart).setData.mock.invocationCallOrder[0]);
+    await act(async () => root.unmount());
+  });
+
+  /*
+   * The in-plot TradingView mark is off, and it is off the way the library
+   * supports: an option the host passes at creation. The licence debt it used to
+   * pay is paid by the footer instead (see `ChartAttribution`), so this asserts
+   * the request itself — not the absence of a rendered element, which any
+   * stylesheet could fake.
+   */
+  it('asks the library to leave the attribution mark out of the plot', async () => {
+    const { root } = mount();
+    await act(async () => root.render(<TechnicalChartHost {...baseProps(bars(20))} />));
+
+    const options = lightweight.charts[0].chartOptions as { layout: { attributionLogo: boolean } };
+    expect(options.layout.attributionLogo).toBe(false);
     await act(async () => root.unmount());
   });
 

@@ -45,6 +45,7 @@ import {
   toZoneCandles,
 } from './institutional-overlays';
 import type { ChartActions, ChartIndicatorLine, ChartTooltipContext } from './chart-types';
+import { ChartAttribution } from './ChartAttribution';
 import { LightweightChartHost, type VisibleLogicalRange } from './LightweightChartHost';
 import { useFinalizedTimeline } from './use-finalized-timeline';
 
@@ -313,6 +314,9 @@ export function StockChart({
   return <div ref={rootRef} className={fullscreen ? 'fixed inset-0 z-50 overflow-y-auto bg-[#0A0E17] p-3' : 'relative'}>
     <ChartControls volumeVisible={showVolume} onToggleVolume={onToggleVolume} supportResistanceAvailable={supportResistance !== undefined} supportResistanceVisible={showSr} onToggleSupportResistance={() => setShowSr((value) => !value)} institutional={institutional} optionsSr={optionsControls} fullscreen={fullscreen} onToggleFullscreen={() => void toggleFullscreen()} actions={actions}/>
     <LightweightChartHost bars={bars} chartType={chartType} volumeVisible={showVolume} priceLines={priceLines} indicatorLines={indicators} datasetKey={stableDatasetKey} tooltipContext={tooltipContext} overlaySpec={overlaySpec} onVisibleRangeChange={onVisibleRangeChange} onActions={onActions}/>
+    {/* The chart library's licence notice and link. Unconditional: the plot no
+        longer carries the built-in mark, so this footer is what satisfies it. */}
+    <ChartAttribution className="mt-2"/>
     {chartType === 'heikin-ashi' && <p className="mt-2 text-xs text-amber-300">Heikin Ashi เปลี่ยนเฉพาะ OHLC; Volume, indicators และ S/R ใช้ canonical raw OHLCV เดิม</p>}
     {/* Single source of truth for options-derived levels: the DecisionPanel renders
         Call Wall / Put Wall / Max Pain as reference cards (with the disclosure in its
