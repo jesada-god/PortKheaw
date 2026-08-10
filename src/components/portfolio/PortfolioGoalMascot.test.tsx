@@ -46,26 +46,20 @@ const assetNames = [
   '07_event_gain_over_100.png',
   '08_event_loss_over_50.png',
   '09_event_gain_over_50.png',
+  '10_empty_laptop.png',
 ] as const;
 
 /**
- * Widest opaque scanline of the largest opaque component — Kheaw's body base.
+ * Widest scanline of the largest component of `mask` — Kheaw's body base.
  * Detached confetti, lightning and warning signs form their own components and
  * are ignored, which is what makes this a body measurement rather than an
  * artwork measurement.
  */
-async function mascotBodyWidth(assetName: string) {
-  const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', assetName))
-    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const { width, height, channels } = info;
-  const opaque = new Uint8Array(width * height);
-  for (let index = 0; index < opaque.length; index += 1) {
-    if (data[index * channels + 3] > 24) opaque[index] = 1;
-  }
-  const seen = new Uint8Array(opaque.length);
+function widestComponent(mask: Uint8Array, width: number, height: number) {
+  const seen = new Uint8Array(mask.length);
   let best = { count: 0, width: 0 };
-  for (let start = 0; start < opaque.length; start += 1) {
-    if (!opaque[start] || seen[start]) continue;
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || seen[start]) continue;
     const queue = [start];
     seen[start] = 1;
     const rowMin = new Int32Array(height).fill(width);
@@ -82,7 +76,7 @@ async function mascotBodyWidth(assetName: string) {
       for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy += 1) {
         for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx += 1) {
           const next = yy * width + xx;
-          if (opaque[next] && !seen[next]) { seen[next] = 1; queue.push(next); }
+          if (mask[next] && !seen[next]) { seen[next] = 1; queue.push(next); }
         }
       }
     }
@@ -97,9 +91,68 @@ async function mascotBodyWidth(assetName: string) {
   return best.width;
 }
 
+/**
+ * Kheaw's body width in an exported asset, in that asset's own pixels.
+ *
+ * Two masks, and the narrower one wins when they disagree by more than a tenth.
+ * The silhouette is the right measurement for a mascot drawn on his own — it
+ * includes the dark outline that is part of how big he reads. It is the wrong
+ * one the moment a prop is drawn across him: the empty-state Kheaw holds a
+ * laptop welded to his silhouette, and measuring that gives 383px of
+ * body-plus-laptop against a real body of 310px. Kheaw is always a saturated
+ * colour and the laptop never is, so chroma is what separates them.
+ *
+ * This mirrors `scripts/normalize-kheaw-assets.mjs` on purpose: the assertion is
+ * that the shipped files are the size the build tool claims, measured the same
+ * way, and a copy that agreed with the tool by construction would assert nothing.
+ */
+async function mascotBodyWidth(assetName: string) {
+  const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', assetName))
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  const silhouette = new Uint8Array(width * height);
+  const coloured = new Uint8Array(width * height);
+  for (let index = 0; index < silhouette.length; index += 1) {
+    const offset = index * channels;
+    if (data[offset + 3] <= 24) continue;
+    silhouette[index] = 1;
+    const peak = Math.max(data[offset], data[offset + 1], data[offset + 2]);
+    const trough = Math.min(data[offset], data[offset + 1], data[offset + 2]);
+    if (peak > 60 && peak - trough > 40) coloured[index] = 1;
+  }
+  const opaqueWidth = widestComponent(silhouette, width, height);
+  const colouredWidth = widestComponent(coloured, width, height);
+  return opaqueWidth > colouredWidth * 1.1 ? colouredWidth : opaqueWidth;
+}
+
+/**
+ * One share, so the model is about a portfolio that holds something. A holding
+ * list of nothing is the empty state now, and the empty state deliberately has
+ * no mood, no return and no progress to assert on.
+ */
+const holding = {
+  symbol: 'KHEAW',
+  quantity: 1,
+  averageCost: 100,
+  costBasis: 100,
+  marketPrice: 100,
+  marketValue: 100,
+  realizedGain: 0,
+  unrealizedGain: 0,
+  allocation: 100,
+  priceCached: false,
+  priceStale: false,
+  priceSource: 'test',
+  priceAsOf: '2026-08-11T03:00:00.000Z',
+  todayChange: null,
+  todayChangePercent: null,
+  lots: [],
+  transactions: [],
+};
+
 function cardModel(totalGainPercent: number | null) {
   const summary: PortfolioSummary = {
-    holdings: [],
+    holdings: [holding],
     cashBalance: 100,
     marketValue: 0,
     costBasis: 0,
@@ -121,6 +174,36 @@ function cardModel(totalGainPercent: number | null) {
   return buildPortfolioGoalCardModel({
     scope: 'selected',
     summary,
+    goal: { targetValueUsd: 200, targetDate: null },
+    activePortfolios: 1,
+    totalPortfolios: 1,
+  });
+}
+
+/** The same portfolio with nothing in it: no holdings, no contracts, no value. */
+function emptyCardModel() {
+  return buildPortfolioGoalCardModel({
+    scope: 'selected',
+    summary: {
+      holdings: [],
+      cashBalance: 0,
+      marketValue: 0,
+      costBasis: 0,
+      realizedGain: 0,
+      unrealizedGain: 0,
+      totalValue: 0,
+      equityMarketValue: 0,
+      optionsMarketValue: 0,
+      optionRemainingCost: 0,
+      netDepositedCapital: 0,
+      netTransferredCapital: 0,
+      totalGain: 0,
+      totalGainPercent: null,
+      todayChange: null,
+      todayChangePercent: null,
+      optionPositions: [],
+      hasMissingPrices: false,
+    },
     goal: { targetValueUsd: 200, targetDate: null },
     activePortfolios: 1,
     totalPortfolios: 1,
@@ -245,7 +328,7 @@ describe('Portfolio Goal mascot rendering', () => {
     }
   });
 
-  it('gives every variant, event ones included, the same visible body width', async () => {
+  it('gives every variant, event and empty-state ones included, the same visible body width', async () => {
     const widths: number[] = [];
     for (const assetName of assetNames) widths.push(await mascotBodyWidth(assetName));
     const ordinary = widths.slice(0, 6);
@@ -261,6 +344,71 @@ describe('Portfolio Goal mascot rendering', () => {
     for (const width of widths.slice(6)) expect(width).toBeGreaterThanOrEqual(smallestOrdinary * 0.98);
   });
 
+  /*
+   * The empty-state variant is the one the naive measurement gets wrong, so it
+   * gets its own assertion rather than only being averaged into the one above.
+   * A regression here does not fail the size check by much — it fails it by
+   * shipping a Kheaw at four-fifths of himself, which is exactly the amount that
+   * reads as "smaller" without reading as "broken".
+   */
+  it('draws the empty-state Kheaw at the body size of the ordinary moods, laptop excluded', async () => {
+    const empty = await mascotBodyWidth('10_empty_laptop.png');
+    const neutral = await mascotBodyWidth('03_neutral.png');
+    expect(empty / neutral).toBeGreaterThan(0.98);
+    expect(empty / neutral).toBeLessThan(1.02);
+
+    // What the measurement would have said if the prop counted as body.
+    const { data, info } = await sharp(resolve(process.cwd(), 'public', 'brand', '10_empty_laptop.png'))
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const silhouette = new Uint8Array(info.width * info.height);
+    for (let index = 0; index < silhouette.length; index += 1) {
+      if (data[index * info.channels + 3] > 24) silhouette[index] = 1;
+    }
+    const withLaptop = widestComponent(silhouette, info.width, info.height);
+    expect(withLaptop).toBeGreaterThan(empty * 1.1);
+  });
+
+  it('renders the empty-state variant at the same CSS size as every other mood', async () => {
+    const emptyModel = emptyCardModel();
+    expect(emptyModel.isEmpty).toBe(true);
+    await act(async () => root.render(
+      <PortfolioGoalCard
+        model={emptyModel}
+        selectedPortfolioName="Kheaw"
+        portfolios={[{ id: 'portfolio-1', name: 'Kheaw', assetCount: 0 }]}
+        selectedPortfolioId="portfolio-1"
+        showBalances
+        isOnline
+        money={money}
+        signed={signed}
+        percent={percent}
+        onScopeChange={() => undefined}
+        onSelectPortfolio={() => undefined}
+        onEditGoal={() => undefined}
+      />,
+    ));
+    const emptyClass = container.querySelector('img')?.getAttribute('class');
+
+    await act(async () => root.render(
+      <PortfolioGoalCard
+        model={cardModel(12.51)}
+        selectedPortfolioName="Kheaw"
+        portfolios={[{ id: 'portfolio-1', name: 'Kheaw', assetCount: 1 }]}
+        selectedPortfolioId="portfolio-1"
+        showBalances
+        isOnline
+        money={money}
+        signed={signed}
+        percent={percent}
+        onScopeChange={() => undefined}
+        onSelectPortfolio={() => undefined}
+        onEditGoal={() => undefined}
+      />,
+    ));
+    expect(container.querySelector('img')?.getAttribute('class')).toBe(emptyClass);
+    expect(emptyClass).toContain('h-28 sm:h-36 lg:h-44');
+  });
+
   it('gives Overview and Portfolio identical state for the same selected scope', async () => {
     const model = cardModel(50);
     await act(async () => root.render(<>
@@ -274,12 +422,15 @@ describe('Portfolio Goal mascot rendering', () => {
       <PortfolioGoalCard
         model={model}
         selectedPortfolioName="Kheaw"
+        portfolios={[{ id: 'portfolio-1', name: 'Kheaw', assetCount: 1 }]}
+        selectedPortfolioId="portfolio-1"
         showBalances
         isOnline
         money={money}
         signed={signed}
         percent={percent}
         onScopeChange={() => undefined}
+        onSelectPortfolio={() => undefined}
         onEditGoal={() => undefined}
       />
     </>));
@@ -311,12 +462,15 @@ describe('Portfolio Goal mascot rendering', () => {
       <PortfolioGoalCard
         model={model}
         selectedPortfolioName="Kheaw"
+        portfolios={[{ id: 'portfolio-1', name: 'Kheaw', assetCount: 1 }]}
+        selectedPortfolioId="portfolio-1"
         showBalances
         isOnline
         money={money}
         signed={signed}
         percent={percent}
         onScopeChange={() => undefined}
+        onSelectPortfolio={() => undefined}
         onEditGoal={() => undefined}
       />
     </>));

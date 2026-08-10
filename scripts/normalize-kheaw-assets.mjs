@@ -25,6 +25,13 @@ import { resolve } from 'node:path';
  * decorations (confetti, lightning, the warning triangle) form their own
  * components and are excluded from the measurement, but they are never cropped
  * away — the frame is sized so all of them survive.
+ *
+ * A prop drawn in front of the body defeats that measurement on its own, which
+ * is what `measureBody` exists to catch. The empty-state variant holds a laptop
+ * that overlaps the silhouette, so the opaque component is body-plus-laptop and
+ * its widest scanline is 805px against a real body of 653px. Normalising on 805
+ * would have shipped a Kheaw drawn at 81% of every other variant — a mascot that
+ * looks shrunken precisely because he is carrying something.
  */
 
 const assets = [
@@ -37,6 +44,7 @@ const assets = [
   ['kheaw-goal-event-gain-over-100.png', '07_event_gain_over_100.png'],
   ['kheaw-goal-event-loss-over-50.png', '08_event_loss_over_50.png'],
   ['kheaw-goal-event-gain-over-50.png', '09_event_gain_over_50.png'],
+  ['kheaw-goal-empty.png', '10_empty_laptop.png'],
 ];
 
 const root = resolve(process.cwd(), 'public', 'brand');
@@ -48,13 +56,42 @@ const BASELINE = Math.round(FRAME * 0.918);
 /** Body width every variant is normalised to, in output pixels. */
 const BODY_WIDTH = Math.round(FRAME * 0.605);
 const ALPHA_FLOOR = 24;
+/*
+ * Kheaw himself is always a saturated colour — he is drawn green when up, and
+ * tinted yellow, pink and red as the moods darken — while the props are not:
+ * the laptop is grey, its screen near-black. `CHROMA_FLOOR` is what tells the
+ * two apart, and `PROP_TOLERANCE` is how much wider than the coloured body the
+ * opaque silhouette may be before that difference is read as a prop lying over
+ * it rather than as the body's own dark outline.
+ */
+const CHROMA_FLOOR = 40;
+const VALUE_FLOOR = 60;
+const PROP_TOLERANCE = 1.1;
 
-function measure(data, width, height, channels) {
+function silhouette(data, width, height, channels) {
   const opaque = new Uint8Array(width * height);
   for (let index = 0; index < opaque.length; index += 1) {
     if (data[index * channels + 3] > ALPHA_FLOOR) opaque[index] = 1;
   }
+  return opaque;
+}
 
+/** The silhouette with every achromatic pixel — outline, eyes, props — removed. */
+function coloured(data, width, height, channels) {
+  const mask = new Uint8Array(width * height);
+  for (let index = 0; index < mask.length; index += 1) {
+    const offset = index * channels;
+    if (data[offset + 3] <= ALPHA_FLOOR) continue;
+    const red = data[offset];
+    const green = data[offset + 1];
+    const blue = data[offset + 2];
+    const peak = Math.max(red, green, blue);
+    if (peak > VALUE_FLOOR && peak - Math.min(red, green, blue) > CHROMA_FLOOR) mask[index] = 1;
+  }
+  return mask;
+}
+
+function measure(opaque, width, height) {
   const seen = new Uint8Array(opaque.length);
   const content = { minX: width, minY: height, maxX: 0, maxY: 0 };
   let body = null;
@@ -112,10 +149,36 @@ function measure(data, width, height, channels) {
   return { body, content };
 }
 
+/**
+ * The body, measured from the silhouette unless a prop is lying over it.
+ *
+ * The silhouette is the right thing to measure almost always: it includes the
+ * body's own dark outline, which is part of how big Kheaw looks. It stops being
+ * the right thing when an achromatic prop is drawn across the body, because
+ * then the opaque component is no longer only Kheaw. The two measurements are
+ * taken and compared rather than chosen per file, so nothing has to be declared
+ * by hand and the nine existing variants — whose readings differ by under 1% —
+ * keep the silhouette measurement they were exported with.
+ */
+function measureBody(data, width, height, channels) {
+  const opaque = measure(silhouette(data, width, height, channels), width, height);
+  const chroma = measure(coloured(data, width, height, channels), width, height);
+  const propOverlaps = opaque.body.width > chroma.body.width * PROP_TOLERANCE;
+  return {
+    body: propOverlaps ? chroma.body : opaque.body,
+    // Bounds always come from the silhouette: the prop must not be measured as
+    // the body, and must not be cropped away either.
+    content: opaque.content,
+    measuredBy: propOverlaps ? 'colour' : 'silhouette',
+    silhouetteWidth: opaque.body.width,
+    colouredWidth: chroma.body.width,
+  };
+}
+
 async function inspect(name) {
   const { data, info } = await sharp(resolve(root, name)).ensureAlpha()
     .raw().toBuffer({ resolveWithObject: true });
-  const measured = measure(data, info.width, info.height, info.channels);
+  const measured = measureBody(data, info.width, info.height, info.channels);
   /*
    * The largest body width this variant could take before its own decorations
    * would leave the frame. The export uses the smallest cap across all nine so
@@ -148,10 +211,7 @@ if (process.argv.includes('--report')) {
   process.exit(0);
 }
 
-for (let index = 0; index < assets.length; index += 1) {
-  const [source, destination] = assets[index];
-  const current = inspected[index];
-  const scale = BODY_WIDTH / current.body.width;
+async function write(source, destination, current, scale) {
   const window = Math.round(FRAME / scale);
   const left = Math.round(current.body.centerX - (FRAME / 2) / scale);
   const top = Math.round(current.body.bottom - BASELINE / scale);
@@ -174,10 +234,68 @@ for (let index = 0; index < assets.length; index += 1) {
     .toFile(resolve(root, destination));
 }
 
+/** The body of a written file, read back the same way its source was read. */
+async function verify(destination) {
+  const { data, info } = await sharp(resolve(root, destination)).ensureAlpha()
+    .raw().toBuffer({ resolveWithObject: true });
+  return measureBody(data, info.width, info.height, info.channels).body.width;
+}
+
+/*
+ * Scaling to a measured width does not land exactly on that width, because the
+ * resample softens the edge the measurement is taken from and the crop window
+ * is snapped to whole source pixels. For the nine that is a sub-pixel residual:
+ * they are measured and rendered off the same silhouette and land within 1px of
+ * the target on the first try. For a variant measured off colour it is not —
+ * dropping the prop also drops the edge that antialiases into it, and the
+ * empty-state Kheaw came out 315px wide against a target of 310.
+ *
+ * So the output is read back, and when the first attempt misses, a bounded
+ * sweep of nearby scales is exported and the closest kept. It is a sweep rather
+ * than a feedback loop because the measurement is not monotonic in the scale —
+ * shifting the crop by one source pixel moves the sampling grid, and a
+ * correcting loop oscillates between 304 and 315 forever without ever landing.
+ */
+const TOLERANCE = 0.005;
+const SWEEP = 0.03;
+const SWEEP_STEPS = 24;
+
+async function bestScale(source, destination, current, analytic) {
+  await write(source, destination, current, analytic);
+  const first = await verify(destination);
+  if (Math.abs(first - BODY_WIDTH) <= BODY_WIDTH * TOLERANCE) return { scale: analytic, bodyWidth: first };
+
+  let best = { scale: analytic, bodyWidth: first };
+  for (let step = 0; step <= SWEEP_STEPS; step += 1) {
+    const scale = analytic * (1 - SWEEP + (2 * SWEEP * step) / SWEEP_STEPS);
+    await write(source, destination, current, scale);
+    const bodyWidth = await verify(destination);
+    const better = Math.abs(bodyWidth - BODY_WIDTH) < Math.abs(best.bodyWidth - BODY_WIDTH);
+    if (better) best = { scale, bodyWidth };
+    if (Math.abs(bodyWidth - BODY_WIDTH) === 0) break;
+  }
+  // The sweep left the file at whichever scale it tried last.
+  await write(source, destination, current, best.scale);
+  return best;
+}
+
+const written = [];
+for (let index = 0; index < assets.length; index += 1) {
+  const [source, destination] = assets[index];
+  const current = inspected[index];
+  const { bodyWidth } = await bestScale(source, destination, current, BODY_WIDTH / current.body.width);
+  written.push({ destination, measuredBy: current.measuredBy, bodyWidth });
+}
+
+const worst = Math.max(...written.map((item) => Math.abs(item.bodyWidth - BODY_WIDTH)));
+if (worst > BODY_WIDTH * TOLERANCE) {
+  throw new Error(`A variant's body is ${worst}px from ${BODY_WIDTH}px after correction`);
+}
+
 console.log(JSON.stringify({
   frame: FRAME,
   baseline: BASELINE,
   bodyWidth: BODY_WIDTH,
   cap: Number(cap.toFixed(1)),
-  written: assets.map(([, destination]) => destination),
+  written,
 }, null, 2));

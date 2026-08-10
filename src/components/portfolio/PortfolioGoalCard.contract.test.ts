@@ -56,12 +56,48 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
     expect(component).toContain('aria-labelledby="portfolio-goal-title"');
     expect(component).toContain('aria-label="ขอบเขตเป้าหมายพอร์ต"');
     expect(component).toContain('role="progressbar"');
-    expect(mascot).toContain('alt={`น้อง Kheaw สี');
+    // Every variant names itself in the alt: the mood ones by colour, the
+    // empty-state one by what Kheaw is holding and what he is waiting for.
+    expect(mascot).toContain('`น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`');
+    expect(mascot).toContain("'น้อง Kheaw กับโน้ตบุ๊ก รอสินทรัพย์ชิ้นแรกในพอร์ต'");
     expect(component).toContain('data-mood-source={model.mascot.source}');
     expect(component).toContain("data-special-event={model.mascot.specialEvent ?? 'none'}");
     expect(css).not.toContain('hue-rotate');
     expect(component).not.toContain('Total P&L');
     expect(manager).toContain("useState<PortfolioGoalScope>('selected')");
-    expect(manager).toContain("goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id]");
+    expect(manager).toContain("goalScope === 'aggregate' ? aggregate : summaries[goalCardPortfolio.id]");
+  });
+
+  /*
+   * The segment names a portfolio, so it has to be able to change which one.
+   * Choosing from it must not be wired to the page's `onSelect`, which opens a
+   * portfolio's own screen — that would navigate the reader away from the card
+   * they were reading in order to change what it shows.
+   */
+  it('makes พอร์ตที่เลือก an interactive selector that does not navigate the page', () => {
+    expect(component).toContain('aria-haspopup="listbox"');
+    expect(component).toContain('role="listbox"');
+    expect(component).toContain('role="option"');
+    expect(component).toContain('data-testid="portfolio-goal-scope-selected"');
+    expect(component).toContain('data-testid="portfolio-goal-portfolio-list"');
+    expect(manager).toContain('setGoalCardPortfolioId(portfolioId)');
+    expect(manager).not.toMatch(/onSelectPortfolio=\{onSelect\}/);
+    // Escape and an outside press both close it, like the page's other popovers.
+    expect(component).toContain("event.key !== 'Escape'");
+    expect(component).toContain("document.addEventListener('mousedown', onPointerDown)");
+  });
+
+  it('replaces the goal figures with the empty state rather than blanking them', () => {
+    const empty = component.indexOf('data-testid="portfolio-goal-empty"');
+    const primary = component.indexOf('data-testid="portfolio-goal-primary"');
+    expect(empty).toBeGreaterThan(-1);
+    // The normal branch stays first in source, so mobile DOM order is unchanged.
+    expect(empty).toBeGreaterThan(primary);
+    expect(component).toContain('{!model.isEmpty ?');
+    expect(component).toContain('items-center justify-center');
+    expect(mascot).toContain("state.emptyPortfolio) return EMPTY_PORTFOLIO_ASSET");
+    expect(mascot).toContain('/brand/10_empty_laptop.png');
+    // The size classes are shared with every other variant, never overridden.
+    expect(mascot).not.toMatch(/emptyPortfolio[\s\S]{0,200}h-\d/);
   });
 });

@@ -19,6 +19,36 @@ export interface PortfolioMascotState {
   specialEvent: PortfolioMascotSpecialEvent | null;
   percent: number | null;
   message: string;
+  /**
+   * Set only on a portfolio that holds nothing yet. It is not a mood and not an
+   * event — those describe how a portfolio is doing, and this one is not doing
+   * anything — so it stays off the mood/event mapping entirely and only decides
+   * which artwork Kheaw is drawn with. `resolvePortfolioMascotState` never sets
+   * it: emptiness is a fact about the holdings, not about the return.
+   */
+  emptyPortfolio?: boolean;
+}
+
+/** The exact words an empty portfolio is asked for its first asset with. */
+export const PORTFOLIO_EMPTY_MESSAGE = 'เพิ่มสินทรัพย์ลงในพอร์ตก่อนนะ';
+
+/**
+ * Kheaw with his laptop, waiting for something to track.
+ *
+ * The mood stays `neutral` deliberately. It is what colours the card, and a
+ * portfolio with nothing in it has not gained or lost anything — reaching for
+ * green or red here would be the card inventing a direction. `percent` is null
+ * for the same reason: there is no return to state, so none is stated.
+ */
+export function portfolioEmptyMascotState(): PortfolioMascotState {
+  return {
+    mood: 'neutral',
+    source: 'none',
+    specialEvent: null,
+    percent: null,
+    message: PORTFOLIO_EMPTY_MESSAGE,
+    emptyPortfolio: true,
+  };
 }
 
 interface ReadyTodayState {
@@ -51,6 +81,13 @@ export interface PortfolioGoalCardModel {
   goal: PortfolioGoal;
   progress: ReturnType<typeof calculateGoalProgress>;
   progressBarPercent: number;
+  /**
+   * The portfolio in scope holds no shares and no open contracts. The card
+   * draws its empty state instead of the goal figures — progress against a
+   * target, a return, a "last updated" — because every one of those would be
+   * reporting on a portfolio that has nothing to report.
+   */
+  isEmpty: boolean;
   assetCount: number;
   activePortfolios: number;
   totalPortfolios: number;
@@ -261,21 +298,26 @@ export function buildPortfolioGoalCardModel({
 }): PortfolioGoalCardModel {
   const progress = calculateGoalProgress(summary.totalValue, goal);
   const today = portfolioTodayState(summary);
+  const assetCount = portfolioAssetCount(summary);
+  const isEmpty = assetCount === 0;
   return {
     scope,
     currentValue: summary.totalValue,
     goal,
     progress,
     progressBarPercent: Math.min(100, Math.max(0, progress.progressPercent ?? 0)),
-    assetCount: portfolioAssetCount(summary),
+    isEmpty,
+    assetCount,
     activePortfolios,
     totalPortfolios,
     latestUpdatedAt: latestPortfolioPriceTime(summary),
     today,
-    mascot: resolvePortfolioMascotState({
-      todayReturnPct: summary.todayChangePercent,
-      totalReturnPct: summary.totalGainPercent,
-      todayDataComplete: today.kind === 'ready',
-    }),
+    mascot: isEmpty
+      ? portfolioEmptyMascotState()
+      : resolvePortfolioMascotState({
+        todayReturnPct: summary.todayChangePercent,
+        totalReturnPct: summary.totalGainPercent,
+        todayDataComplete: today.kind === 'ready',
+      }),
   };
 }

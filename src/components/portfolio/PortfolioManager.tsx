@@ -31,6 +31,7 @@ import { useToast } from '@/src/components/ui/Toast';
 import { NavRow } from './tracker/SecondaryPanels';
 import {
   buildPortfolioGoalCardModel,
+  portfolioAssetCount,
   type PortfolioGoalScope,
 } from '@/src/lib/portfolio/goal-card';
 import type {
@@ -220,10 +221,20 @@ export function PortfolioManager({
    */
   const writableStockId = basicWritableStockPortfolioId(portfolios);
   const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? portfolios[0];
-  const goalSummary = goalScope === 'aggregate' ? aggregate : summaries[selectedPortfolio.id];
+  /*
+   * Which portfolio the goal card is pointed at, which is not the same question
+   * as which portfolio the page has open. Until the reader picks one from the
+   * card's own selector it follows the page, exactly as it always has; once they
+   * pick, the card holds their choice — choosing from the goal card must not
+   * navigate the page out from under the card they were reading.
+   */
+  const [goalCardPortfolioId, setGoalCardPortfolioId] = useState<string | null>(null);
+  const goalCardPortfolio = portfolios.find((portfolio) => portfolio.id === goalCardPortfolioId)
+    ?? selectedPortfolio;
+  const goalSummary = goalScope === 'aggregate' ? aggregate : summaries[goalCardPortfolio.id];
   const goal = goalScope === 'aggregate'
     ? aggregateGoal
-    : { targetValueUsd: selectedPortfolio.targetValueUsd, targetDate: selectedPortfolio.targetDate };
+    : { targetValueUsd: goalCardPortfolio.targetValueUsd, targetDate: goalCardPortfolio.targetDate };
   const goalCard = buildPortfolioGoalCardModel({
     scope: goalScope,
     summary: goalSummary,
@@ -231,6 +242,11 @@ export function PortfolioManager({
     activePortfolios: active.length,
     totalPortfolios: portfolios.length,
   });
+  const goalOptions = portfolios.map((portfolio) => ({
+    id: portfolio.id,
+    name: portfolio.name,
+    assetCount: portfolioAssetCount(summaries[portfolio.id]),
+  }));
 
   function complete(message: string) {
     addToast({ title: message, type: 'success' });
@@ -629,14 +645,20 @@ export function PortfolioManager({
     <div className={sectionHidden ? 'hidden' : 'min-w-0 space-y-4'}>
       <PortfolioGoalCard
         model={goalCard}
-        selectedPortfolioName={selectedPortfolio.name}
+        selectedPortfolioName={goalCardPortfolio.name}
+        portfolios={goalOptions}
+        selectedPortfolioId={goalCardPortfolio.id}
         showBalances={showBalances}
         isOnline={isOnline}
         money={money}
         signed={signed}
         percent={percent}
         onScopeChange={setGoalScope}
-        onEditGoal={() => openGoal(goalScope === 'aggregate' ? 'aggregate' : selectedPortfolio)}
+        onSelectPortfolio={(portfolioId) => {
+          setGoalCardPortfolioId(portfolioId);
+          setGoalScope('selected');
+        }}
+        onEditGoal={() => openGoal(goalScope === 'aggregate' ? 'aggregate' : goalCardPortfolio)}
       />
 
       {/*

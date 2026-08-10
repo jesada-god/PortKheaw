@@ -73,6 +73,16 @@ const specialEventAssets: Record<PortfolioMascotSpecialEvent, string> = {
 };
 
 /*
+ * Kheaw at his laptop, for a portfolio that holds nothing yet.
+ *
+ * The laptop is drawn across his body, so the export could not be normalised
+ * the way the other nine are — the opaque silhouette is body-plus-laptop and
+ * measuring it would have shipped Kheaw at 81% of his usual size. The build
+ * script measures this one by colour instead; see `normalize-kheaw-assets.mjs`.
+ */
+const EMPTY_PORTFOLIO_ASSET = '/brand/10_empty_laptop.png';
+
+/*
  * The goal card reads the same profit/loss colour mapping as the portfolio
  * summary card. These aliases exist only so the goal card's call sites keep
  * their local name; the decision itself lives in `presentation`.
@@ -82,6 +92,7 @@ export const portfolioGoalReturnTone = portfolioReturnTone;
 export const portfolioGoalReturnToneClass = portfolioReturnToneClass;
 
 export function portfolioGoalMascotAsset(state: PortfolioMascotState): string {
+  if (state.emptyPortfolio) return EMPTY_PORTFOLIO_ASSET;
   return state.specialEvent
     ? specialEventAssets[state.specialEvent]
     : moodAssets[state.mood];
@@ -104,10 +115,18 @@ export function PortfolioGoalMascot({
   const sizes = compact
     ? 'h-16 sm:h-20 lg:h-24'
     : 'h-28 sm:h-36 lg:h-44';
+  /*
+   * The size classes are the same ones every other variant gets, and they have
+   * to be: the artwork is what carries the body scale, normalised at export, so
+   * a prop can never be corrected for here without making this Kheaw a
+   * different size from the rest.
+   */
   return <Image
-    alt={`น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`}
+    alt={state.emptyPortfolio
+      ? 'น้อง Kheaw กับโน้ตบุ๊ก รอสินทรัพย์ชิ้นแรกในพอร์ต'
+      : `น้อง Kheaw สี${appearance.colorLabel} แสดงสถานะพอร์ต`}
     className={`${styles.mascot} ${sizes} aspect-square w-auto max-w-full object-contain object-center`}
-    data-visual-variant={state.specialEvent ?? state.mood}
+    data-visual-variant={state.emptyPortfolio ? 'emptyPortfolio' : state.specialEvent ?? state.mood}
     height={512}
     sizes={compact
       ? '(max-width: 640px) 64px, (max-width: 1024px) 80px, 96px'

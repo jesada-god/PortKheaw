@@ -51,6 +51,26 @@ export function OverviewPortfolioGoalCard({
       aria-hidden="true"
       className="pointer-events-none absolute -bottom-16 -right-16 h-48 w-48 rounded-full bg-[radial-gradient(circle,var(--goal-accent-soft)_0%,transparent_68%)]"
     />
+    {model.isEmpty ? (
+      /*
+        The same withholding as the full card, at tile size: a portfolio holding
+        nothing has no progress to draw and no return to state, so Kheaw and the
+        one sentence are the tile.
+      */
+      <div
+        className="relative flex min-w-0 flex-col items-center justify-center gap-2 py-3 text-center"
+        data-testid="overview-portfolio-goal-empty"
+      >
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--goal-accent)]">Portfolio Goal</p>
+        <h2 id="overview-portfolio-goal-title" className="sr-only">เป้าหมายพอร์ต</h2>
+        <div data-testid="overview-portfolio-goal-mascot">
+          <PortfolioGoalMascot compact state={model.mascot} />
+        </div>
+        <p className="mx-auto max-w-60 break-words text-xs font-bold leading-5 text-[var(--text)]">
+          {model.mascot.message}
+        </p>
+      </div>
+    ) : <>
     <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)_72px] gap-3 sm:grid-cols-[minmax(0,1fr)_88px] lg:grid-cols-[minmax(0,1fr)_104px]">
       <div className="min-w-0">
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--goal-accent)]">Portfolio Goal</p>
@@ -123,6 +143,7 @@ export function OverviewPortfolioGoalCard({
           : 'ยังไม่มีเวลาที่ตรวจสอบได้'}
       />
     </dl>
+    </>}
   </section>;
 }
 

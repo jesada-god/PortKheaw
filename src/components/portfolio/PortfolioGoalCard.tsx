@@ -1,7 +1,7 @@
 'use client';
 
-import type { CSSProperties } from 'react';
-import { Target } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Check, ChevronDown, Target } from 'lucide-react';
 import { Button } from '@/src/components/ui/Button';
 import {
   formatPortfolioGoalTime,
@@ -19,25 +19,38 @@ import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
 type Money = (value: number | string | null) => string;
 
+export interface PortfolioGoalOption {
+  id: string;
+  name: string;
+  assetCount: number;
+}
+
 export function PortfolioGoalCard({
   model,
   selectedPortfolioName,
+  portfolios,
+  selectedPortfolioId,
   showBalances,
   isOnline,
   money,
   signed,
   percent,
   onScopeChange,
+  onSelectPortfolio,
   onEditGoal,
 }: {
   model: PortfolioGoalCardModel;
   selectedPortfolioName: string;
+  /** Every portfolio the reader can point the card at, in the page's order. */
+  portfolios: PortfolioGoalOption[];
+  selectedPortfolioId: string;
   showBalances: boolean;
   isOnline: boolean;
   money: Money;
   signed: (value: number | null) => string;
   percent: (value: number | null) => string;
   onScopeChange: (scope: PortfolioGoalScope) => void;
+  onSelectPortfolio: (portfolioId: string) => void;
   onEditGoal: () => void;
 }) {
   const moodAppearance = portfolioGoalAppearance[model.mascot.mood];
@@ -73,16 +86,24 @@ export function PortfolioGoalCard({
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <div className="inline-flex min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1" aria-label="ขอบเขตเป้าหมายพอร์ต">
-          {([
-            ['selected', 'พอร์ตที่เลือก'],
-            ['aggregate', 'พอร์ตรวม'],
-          ] as const).map(([scope, label]) => <button
-            key={scope}
+          {/*
+            The left segment names a portfolio, so it has to be able to change
+            which one — it used to only switch scope back to whichever portfolio
+            was open elsewhere on the page, which made "พอร์ตที่เลือก" a label
+            for a choice the reader could not make from here.
+          */}
+          <PortfolioScopeSelector
+            active={model.scope === 'selected'}
+            portfolios={portfolios}
+            selectedPortfolioId={selectedPortfolioId}
+            onSelect={onSelectPortfolio}
+          />
+          <button
             type="button"
-            aria-pressed={model.scope === scope}
-            className={`min-h-9 min-w-0 rounded-md px-2.5 text-xs font-bold transition-colors ${model.scope === scope ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
-            onClick={() => onScopeChange(scope)}
-          >{label}</button>)}
+            aria-pressed={model.scope === 'aggregate'}
+            className={`min-h-9 min-w-0 rounded-md px-2.5 text-xs font-bold transition-colors ${model.scope === 'aggregate' ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+            onClick={() => onScopeChange('aggregate')}
+          >พอร์ตรวม</button>
         </div>
         <Button size="sm" variant="outline" disabled={!isOnline} onClick={onEditGoal}>
           <Target aria-hidden="true" size={15} />
@@ -97,7 +118,7 @@ export function PortfolioGoalCard({
       carry equal weight. Below `lg` the grid collapses to one column and he
       falls under the progress bar — never beside a number he could crowd.
     */}
-    <div className="relative mt-5 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,15rem)] lg:items-start">
+    {!model.isEmpty ? <div className="relative mt-5 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,15rem)] lg:items-start">
       <div className="min-w-0" data-testid="portfolio-goal-primary">
         <p className="text-xs font-medium text-[var(--text-muted)]">ความคืบหน้า</p>
         <p className="mt-1 break-words font-mono text-4xl font-black tracking-tight text-[var(--text)] sm:text-5xl">
@@ -163,8 +184,122 @@ export function PortfolioGoalCard({
           value={model.latestUpdatedAt ? formatPortfolioGoalTime(model.latestUpdatedAt) : 'ยังไม่มีเวลาที่ตรวจสอบได้'}
         />
       </dl>
-    </div>
+    </div> : (
+      /*
+        A portfolio with nothing in it, which is a state to be met rather than
+        reported on. The progress figure, the target, the return and the
+        "last updated" line are all withheld — not blanked out — because a 0.00%
+        against a goal reads as a portfolio that has gone nowhere rather than one
+        that has not started. Kheaw and one sentence, centred, are the whole card.
+      */
+      <div
+        className="relative mt-5 flex min-w-0 flex-col items-center justify-center gap-4 py-6 text-center"
+        data-testid="portfolio-goal-empty"
+      >
+        <div className="flex h-28 items-end justify-center sm:h-36 lg:h-44" data-testid="portfolio-goal-mascot">
+          <PortfolioGoalMascot state={model.mascot} />
+        </div>
+        <p className="mx-auto max-w-72 break-words text-base font-bold leading-relaxed text-[var(--text)]">
+          {model.mascot.message}
+        </p>
+      </div>
+    )}
   </section>;
+}
+
+/**
+ * The "พอร์ตที่เลือก" segment, which both scopes the card and chooses what it is
+ * scoped to.
+ *
+ * It keeps the segmented control's own styling — this is one of two segments in
+ * a shared pill, not a select box dropped beside it — and adds only the chevron
+ * that says it opens. Pressing it always points the card at a portfolio, so a
+ * reader who opens the list and dismisses it still ends up in the scope the
+ * button names.
+ */
+function PortfolioScopeSelector({
+  active,
+  portfolios,
+  selectedPortfolioId,
+  onSelect,
+}: {
+  active: boolean;
+  portfolios: PortfolioGoalOption[];
+  selectedPortfolioId: string;
+  onSelect: (portfolioId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    const onPointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onPointerDown);
+    };
+  }, [open]);
+
+  return <span className="relative inline-flex min-w-0" ref={containerRef}>
+    <button
+      ref={triggerRef}
+      type="button"
+      aria-expanded={open}
+      aria-haspopup="listbox"
+      aria-pressed={active}
+      className={`inline-flex min-h-9 min-w-0 items-center gap-1 rounded-md px-2.5 text-xs font-bold transition-colors ${active ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+      data-testid="portfolio-goal-scope-selected"
+      onClick={() => {
+        onSelect(selectedPortfolioId);
+        setOpen((current) => !current);
+      }}
+    >
+      พอร์ตที่เลือก
+      <ChevronDown aria-hidden="true" className={open ? 'rotate-180 transition-transform' : 'transition-transform'} size={13} />
+    </button>
+
+    {open && <span
+      aria-label="เลือกพอร์ตสำหรับเป้าหมาย"
+      className="absolute right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 w-56 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow)]"
+      data-testid="portfolio-goal-portfolio-list"
+      role="listbox"
+    >
+      {portfolios.map((portfolio) => <button
+        key={portfolio.id}
+        type="button"
+        aria-selected={portfolio.id === selectedPortfolioId}
+        className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors ${portfolio.id === selectedPortfolioId ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'}`}
+        data-testid={`portfolio-goal-option-${portfolio.id}`}
+        role="option"
+        onClick={() => {
+          onSelect(portfolio.id);
+          setOpen(false);
+          triggerRef.current?.focus();
+        }}
+      >
+        <Check
+          aria-hidden="true"
+          className={portfolio.id === selectedPortfolioId ? 'shrink-0 text-[var(--goal-accent)]' : 'shrink-0 opacity-0'}
+          size={13}
+        />
+        <span className="min-w-0 flex-1 break-words">{portfolio.name}</span>
+        <span className="shrink-0 text-[10px] font-medium text-[var(--text-muted)]">
+          {portfolio.assetCount > 0 ? `${portfolio.assetCount} รายการ` : 'ยังไม่มีสินทรัพย์'}
+        </span>
+      </button>)}
+    </span>}
+  </span>;
 }
 
 function GoalMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
