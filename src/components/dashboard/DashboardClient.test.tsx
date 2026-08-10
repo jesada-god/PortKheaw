@@ -83,6 +83,19 @@ function marketCard(symbol: string, name: string): MarketIndexCard {
   };
 }
 
+function watchlistPrice(symbol: string, extendedChangePercent: number): MarketIndexCard {
+  return {
+    ...marketCard(symbol, `${symbol} Corp`),
+    extended: {
+      label: 'หลังตลาด',
+      price: 101,
+      change: extendedChangePercent,
+      changePercent: extendedChangePercent,
+      asOf: '2026-08-06T21:00:00.000Z',
+    },
+  };
+}
+
 function dashboardData(
   industryState: OverviewDashboardData['industryData']['state'],
 ): OverviewDashboardData {
@@ -204,6 +217,31 @@ describe('market overview cards', () => {
       '/api/market/overview/section?section=market',
       expect.anything(),
     );
+  });
+});
+
+describe('watchlist after-hours direction colors', () => {
+  it('colors only the directional value for gains, losses, and zero', () => {
+    const data = dashboardData('ready');
+    data.watchlist = [
+      watchlistPrice('GAIN', 1.25),
+      watchlistPrice('LOSS', -1.25),
+      watchlistPrice('FLAT', 0),
+    ];
+    render(data);
+
+    const expectedClasses = {
+      GAIN: 'text-[var(--positive)]',
+      LOSS: 'text-[var(--negative)]',
+      FLAT: 'text-[var(--text-muted)]',
+    } as const;
+
+    for (const [symbol, expectedClass] of Object.entries(expectedClasses)) {
+      const value = container.querySelector(`[data-testid="watchlist-extended-change-${symbol}"]`);
+      expect(value?.className).toContain(expectedClass);
+      expect(value?.parentElement?.className).toContain('text-[var(--text-secondary)]');
+      expect(value?.parentElement?.textContent).toContain('หลังตลาด 101.00');
+    }
   });
 });
 

@@ -712,7 +712,13 @@ function WatchlistSection({
                 </span>
                 {item.extended && (
                   <span className="mt-1 block text-[10px] text-[var(--text-secondary)]">
-                    {item.extended.label} {formatNumber(item.extended.price)} {signed(item.extended.changePercent, '%')}
+                    {item.extended.label} {formatNumber(item.extended.price)}{' '}
+                    <span
+                      className={tone(item.extended.changePercent)}
+                      data-testid={`watchlist-extended-change-${item.symbol}`}
+                    >
+                      {signed(item.extended.changePercent, '%')}
+                    </span>
                   </span>
                 )}
               </span>
