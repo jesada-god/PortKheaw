@@ -1,4 +1,5 @@
 import { fixed, fixedPercent, fixedToNumber, type Fixed } from '../money/fixed';
+import { portfolioTotalReturnPercent } from './total-return';
 import type { GoalProgress, PortfolioGoal, PortfolioSummary } from './types';
 
 export interface PortfolioValuationCoverage {
@@ -23,6 +24,7 @@ export function aggregatePortfolioSummaries(summaries: readonly PortfolioSummary
   const totalGain = sumNullable(summaries.map((summary) => summary.totalGain));
   const todayChange = sumNullable(summaries.map((summary) => summary.todayChange));
   const netDepositedCapital = sum(summaries.map((summary) => summary.netDepositedCapital));
+  const netTransferredCapital = sum(summaries.map((summary) => summary.netTransferredCapital));
   const previousValue = totalValue === null || todayChange === null ? null : fixed(totalValue) - fixed(todayChange);
   return {
     holdings: summaries.flatMap((summary) => summary.holdings),
@@ -37,11 +39,18 @@ export function aggregatePortfolioSummaries(summaries: readonly PortfolioSummary
     unrealizedGain: sumNullable(summaries.map((summary) => summary.unrealizedGain)),
     totalValue,
     netDepositedCapital,
-    netTransferredCapital: sum(summaries.map((summary) => summary.netTransferredCapital)),
+    netTransferredCapital,
     totalGain,
-    totalGainPercent: totalGain === null
-      ? null
-      : fixedToNumber(fixedPercent(fixed(totalGain), fixed(netDepositedCapital))),
+    /*
+     * Aggregating two portfolios that transferred a position between them nets
+     * their transferred capital back to zero, which is the correct combined
+     * base: the pair as a whole was funded by what was deposited into it.
+     */
+    totalGainPercent: portfolioTotalReturnPercent(
+      totalGain === null ? null : fixed(totalGain),
+      fixed(netDepositedCapital),
+      fixed(netTransferredCapital),
+    ),
     todayChange,
     todayChangePercent: todayChange === null || previousValue === null
       ? null

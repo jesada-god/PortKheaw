@@ -6,6 +6,7 @@ import {
   fixedToNumber as number,
   type Fixed,
 } from '../money/fixed';
+import { portfolioTotalReturnPercent } from './total-return';
 import { calculateOptionLedger } from './options/calculations';
 import type { OptionQuoteInput } from './options/types';
 import type { HoldingLot, HoldingSummary, MarketPriceInput, PortfolioSummary, PortfolioTransaction } from './types';
@@ -360,7 +361,7 @@ export function calculatePortfolio(
     netDepositedCapital: number(netDeposited),
     netTransferredCapital: number(netTransferred),
     totalGain: totalGainFixed === null ? null : number(totalGainFixed),
-    totalGainPercent: totalGainFixed === null ? null : number(fixedPercent(totalGainFixed, netDeposited)),
+    totalGainPercent: portfolioTotalReturnPercent(totalGainFixed, netDeposited, netTransferred),
     todayChange: totalToday === null ? null : number(totalToday),
     todayChangePercent: totalToday === null || previousValue === null ? null : number(fixedPercent(totalToday, previousValue)),
     optionPositions: optionLedger.positions,
