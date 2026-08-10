@@ -1,0 +1,77 @@
+/*
+  Jet Black Orchid — dark appearance.
+
+  Jet Black #1D1D1D is a true neutral, so this is the one theme whose shell has
+  no hue of its own: the page, card and elevated steps are a straight
+  achromatic ramp with #1D1D1D as the card. The colour arrives only where it is
+  meant to — the accent, and the faint orchid cast in --surface-selected that
+  tells a chosen row apart from a hovered one.
+
+  Orchid #E5BDDF is a soft, high-luminance pink at 309°. Like Vanilla in Cosmic,
+  it is an accent that takes dark text rather than white.
+
+  The status, session, plan and role tones are product meaning and unchanged.
+  Note that --role-admin's rose sits close to Orchid in hue; that is fine, an
+  ADMIN badge is never read against the accent, and it is still 25°+ off the
+  error red, which is the separation that carries meaning.
+*/
+html[data-theme="orchid"][data-appearance="dark"],
+html[data-theme="orchid"]:not([data-appearance]) {
+  --bg: #131313;
+  --surface: #1D1D1D;
+  --surface-elevated: #262626;
+  --surface-hover: #2F2F2F;
+  --surface-selected: #3B333A;
+  --text: #F7F2F6;
+  --text-secondary: #C8C1C6;
+  --text-muted: #A09AA0;
+  --border: #333133;
+  --border-strong: #4A464A;
+  /* Orchid itself, at 11:1 on the jet surface. The hover step lifts it and the
+     active step is the orchid family one shade down. */
+  --accent: #E5BDDF;
+  --accent-hover: #F2D4EE;
+  --accent-active: #CDA2C7;
+  --accent-soft: rgba(229, 189, 223, 0.12);
+  --accent-fg: #1C1219;
+  --positive: #34D9A0;
+  --negative: #FF6B6B;
+  --warning: #F5B94C;
+  --info: #6FB4FF;
+  /* Market-session icon tones — unchanged from PortKheaw. */
+  --session-pre: #A3B2FF;
+  --session-regular: #F5C451;
+  --session-post: #A8C0F7;
+  --session-closed: #9DACB6;
+  --session-event: #F5A85C;
+  /* Plan and role identity, unchanged. */
+  --plan-basic: #6FD39A;
+  --plan-pro: #4CC9D6;
+  --plan-elite: #E5C069;
+  --plan-elite-trial: #EBD9A6;
+  --role-admin: #EE8CB6;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 18%, transparent);
+  --focus-ring: #E5BDDF;
+  --input-bg: #181818;
+  --chart-bg: #1D1D1D;
+  --chart-grid: #333133;
+  --chart-axis: #A09AA0;
+  /* The mascot plate and the wordmark never recolour with the theme. */
+  --brand-mark-bg: #000000;
+  --brand-green: #96DD5C;
+  --brand-green-deep: #7ECB3C;
+  --dock-bg: #262626;
+  --dock-border: #423E42;
+  --dock-shadow: 0 20px 48px rgba(0, 0, 0, 0.62), 0 2px 10px rgba(0, 0, 0, 0.45);
+  --overlay: rgba(8, 6, 8, 0.78);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+}
+
+html[data-appearance="dark"] [data-theme-swatch="orchid"],
+html:not([data-appearance]) [data-theme-swatch="orchid"] {
+  --swatch-bg: #131313;
+  --swatch-surface: #2F2F2F;
+  --swatch-accent: #E5BDDF;
+}

@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeControls } from './ThemeControls';
+import { PREMIUM_THEMES, themeIds } from './types';
 
 /**
  * The display section's UI contract.
@@ -117,14 +118,15 @@ describe('the display section at rest', () => {
 });
 
 describe('the picker sheet', () => {
-  it('opens on the row as a modal dialog and lists all three themes', async () => {
+  it('opens on the row as a modal dialog and lists every registered theme', async () => {
     themeState.premiumThemesAllowed = true;
     await render();
     await click(row());
 
     expect(row().getAttribute('aria-expanded')).toBe('true');
     expect(dialog()?.getAttribute('aria-modal')).toBe('true');
-    for (const id of ['portkheaw', 'bitswap', 'dokturek']) {
+    // Driven off the registry: a theme added there must appear here or fail.
+    for (const id of themeIds) {
       expect(option(id), id).not.toBeNull();
       expect(option(id)!.type).toBe('button');
     }
@@ -137,8 +139,9 @@ describe('the picker sheet', () => {
     await click(row());
 
     expect(option('bitswap')!.getAttribute('aria-pressed')).toBe('true');
-    expect(option('portkheaw')!.getAttribute('aria-pressed')).toBe('false');
-    expect(option('dokturek')!.getAttribute('aria-pressed')).toBe('false');
+    for (const id of themeIds.filter((candidate) => candidate !== 'bitswap')) {
+      expect(option(id)!.getAttribute('aria-pressed'), id).toBe('false');
+    }
   });
 
   it('selects an available theme and closes', async () => {
@@ -178,7 +181,7 @@ describe('how a row reads', () => {
     await render();
     await click(row());
 
-    for (const id of ['portkheaw', 'bitswap', 'dokturek']) {
+    for (const id of themeIds) {
       const swatches = option(id)!.querySelectorAll('[data-theme-swatch]');
       expect(swatches.length, id).toBe(1);
       // The dot is the whole thing: a child would be a knob inside a track.
@@ -193,7 +196,7 @@ describe('how a row reads', () => {
     await click(row());
 
     expect(option('portkheaw')!.textContent).not.toContain('PRO');
-    for (const id of ['bitswap', 'dokturek']) {
+    for (const id of PREMIUM_THEMES) {
       expect(option(id)!.textContent, id).toContain('PRO+');
       // Entitled: the badge names the plan without claiming the row is shut.
       expect(option(id)!.querySelector('.lucide-lock'), id).toBeNull();
@@ -207,8 +210,9 @@ describe('how a row reads', () => {
     await click(row());
 
     expect(option('bitswap')!.querySelector('.lucide-check')).not.toBeNull();
-    expect(option('portkheaw')!.querySelector('.lucide-check')).toBeNull();
-    expect(option('dokturek')!.querySelector('.lucide-check')).toBeNull();
+    for (const id of themeIds.filter((candidate) => candidate !== 'bitswap')) {
+      expect(option(id)!.querySelector('.lucide-check'), id).toBeNull();
+    }
   });
 });
 
@@ -219,7 +223,7 @@ describe('a reader without the paid plan', () => {
 
     expect(option('portkheaw')!.dataset.locked).toBeUndefined();
     expect(option('portkheaw')!.querySelector('.lucide-lock')).toBeNull();
-    for (const id of ['bitswap', 'dokturek']) {
+    for (const id of PREMIUM_THEMES) {
       expect(option(id)!.querySelector('.lucide-lock'), id).not.toBeNull();
       expect(option(id)!.textContent, id).toContain('PRO+');
       // Locked is a state to escape, not the current choice.
@@ -232,7 +236,7 @@ describe('a reader without the paid plan', () => {
     await click(row());
 
     expect(option('portkheaw')!.dataset.locked).toBeUndefined();
-    for (const id of ['bitswap', 'dokturek']) {
+    for (const id of PREMIUM_THEMES) {
       expect(option(id)!.dataset.locked, id).toBe('true');
       // Locked is a state, not a pressed toggle, and the plan is in the name.
       expect(option(id)!.getAttribute('aria-pressed')).toBeNull();

@@ -1,0 +1,78 @@
+/*
+  Cosmic Vanilla — dark appearance.
+
+  The reference is two colours: Cosmic #23212C and Vanilla #F1FEC8. Cosmic is a
+  near-black at 251° with very little saturation, so it is used as the card
+  surface itself rather than as the page — the page sits one step below it, and
+  the elevated/hover/selected steps climb the same 251° axis so the whole shell
+  keeps the cosmic cast instead of turning into neutral grey.
+
+  Vanilla is the accent. It is far too light to take dark text against it, which
+  is the right way round here: it behaves like PortKheaw's lime — a single point
+  of emphasis with a near-black --accent-fg on top.
+
+  Only surfaces and accent move. The status, session, plan and role tones below
+  are product meaning, not decoration, and are the same in every theme.
+*/
+html[data-theme="cosmic"][data-appearance="dark"],
+html[data-theme="cosmic"]:not([data-appearance]) {
+  --bg: #16151D;
+  --surface: #23212C;
+  --surface-elevated: #2B2936;
+  --surface-hover: #333040;
+  --surface-selected: #3D3A4C;
+  --text: #F6F8EC;
+  --text-secondary: #C7CBBA;
+  --text-muted: #A2A697;
+  --border: #35323F;
+  --border-strong: #4B4759;
+  /* Vanilla itself. It reads 14:1 on the cosmic surface, so it needs no
+     lightening — the hover step warms it and the active step is the vanilla
+     family one shade down rather than an invented tint. */
+  --accent: #F1FEC8;
+  --accent-hover: #F8FFE0;
+  --accent-active: #DCEBAF;
+  --accent-soft: rgba(241, 254, 200, 0.10);
+  --accent-fg: #1B1D12;
+  --positive: #34D9A0;
+  --negative: #FF6B6B;
+  --warning: #F5B94C;
+  --info: #6FB4FF;
+  /* Market-session icon tones — unchanged from PortKheaw. */
+  --session-pre: #A3B2FF;
+  --session-regular: #F5C451;
+  --session-post: #A8C0F7;
+  --session-closed: #9DACB6;
+  --session-event: #F5A85C;
+  /* Plan and role identity, unchanged. Admin stays at 334°, still 60°+ off
+     every plan tone and 25°+ off this theme's error red. */
+  --plan-basic: #6FD39A;
+  --plan-pro: #4CC9D6;
+  --plan-elite: #E5C069;
+  --plan-elite-trial: #EBD9A6;
+  --role-admin: #EE8CB6;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 18%, transparent);
+  --focus-ring: #F1FEC8;
+  --input-bg: #1A1922;
+  --chart-bg: #23212C;
+  --chart-grid: #35323F;
+  --chart-axis: #A2A697;
+  /* The mascot plate and the wordmark never recolour with the theme. */
+  --brand-mark-bg: #000000;
+  --brand-green: #96DD5C;
+  --brand-green-deep: #7ECB3C;
+  --dock-bg: #2B2936;
+  --dock-border: #454154;
+  --dock-shadow: 0 20px 48px rgba(8, 7, 14, 0.62), 0 2px 10px rgba(8, 7, 14, 0.45);
+  --overlay: rgba(9, 8, 14, 0.78);
+  --shadow: 0 18px 50px rgba(8, 7, 14, 0.38);
+}
+
+html[data-appearance="dark"] [data-theme-swatch="cosmic"],
+html:not([data-appearance]) [data-theme-swatch="cosmic"] {
+  --swatch-bg: #16151D;
+  --swatch-surface: #333040;
+  --swatch-accent: #F1FEC8;
+}

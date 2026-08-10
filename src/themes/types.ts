@@ -3,9 +3,9 @@ export const DEFAULT_APPEARANCE = 'system' as const;
 
 /**
  * Every colour theme the product ships, cheapest access first. PortKheaw is the
- * default and is available to everyone; the two that follow are paid.
+ * default and is available to everyone; the four that follow are paid.
  */
-export const themeIds = ['portkheaw', 'bitswap', 'dokturek'] as const;
+export const themeIds = ['portkheaw', 'bitswap', 'dokturek', 'cosmic', 'orchid'] as const;
 
 /**
  * The themes an account must hold Pro-or-better *effective access* to use.
@@ -15,7 +15,7 @@ export const themeIds = ['portkheaw', 'bitswap', 'dokturek'] as const;
  * capability in the entitlement matrix, resolved on the server from the same
  * effective access tier every other gate reads.
  */
-export const PREMIUM_THEMES = ['bitswap', 'dokturek'] as const;
+export const PREMIUM_THEMES = ['bitswap', 'dokturek', 'cosmic', 'orchid'] as const;
 
 export type ThemeId = typeof themeIds[number];
 export type PremiumThemeId = typeof PREMIUM_THEMES[number];

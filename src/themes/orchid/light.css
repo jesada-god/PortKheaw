@@ -1,0 +1,67 @@
+/*
+  Jet Black Orchid — light appearance.
+
+  The roles swap the same way Cosmic's do: the Orchid family becomes the page
+  and the raised steps, and Jet Black becomes the ink — --text is #1D1D1D, the
+  reference colour itself, doing in light exactly what it does as a surface in
+  dark.
+
+  --accent is Orchid taken down to a plum deep enough to carry label text on
+  white and to sit under white button text at AA. The reference tint stays
+  visible as the field the whole page sits on.
+*/
+html[data-theme="orchid"][data-appearance="light"] {
+  --bg: #FCF5FB;
+  --surface: #FFFFFF;
+  --surface-elevated: #F8EDF6;
+  --surface-hover: #F2E3EF;
+  --surface-selected: #EAD5E6;
+  --text: #1D1D1D;
+  --text-secondary: #4A444A;
+  --text-muted: #645D64;
+  --border: #EBDCE8;
+  --border-strong: #CDB4C8;
+  --accent: #85306F;
+  --accent-hover: #6E2A5C;
+  --accent-active: #57224A;
+  --accent-soft: rgba(133, 48, 111, 0.10);
+  --accent-fg: #FFFFFF;
+  --positive: #076B4B;
+  --negative: #B62E2E;
+  --warning: #855000;
+  --info: #1F58A6;
+  /* Market-session icon tones — the same five meanings as dark, at the light
+     appearance's depth, unchanged from PortKheaw. */
+  --session-pre: #4442B5;
+  --session-regular: #7A5000;
+  --session-post: #2A5099;
+  --session-closed: #4F5E68;
+  --session-event: #8A4E14;
+  --plan-basic: #0D5E3D;
+  --plan-pro: #0D6069;
+  --plan-elite: #6F5010;
+  --plan-elite-trial: #5E4A21;
+  --role-admin: #930947;
+  --role-admin-text: var(--role-admin);
+  --role-admin-border: var(--role-admin);
+  --role-admin-bg: color-mix(in srgb, var(--role-admin) 12%, transparent);
+  --focus-ring: #85306F;
+  --input-bg: #FFFFFF;
+  --chart-bg: #FFFFFF;
+  --chart-grid: #EBDCE8;
+  --chart-axis: #645D64;
+  --brand-mark-bg: #000000;
+  --brand-green: #38771B;
+  --brand-green-deep: #2B6212;
+  --dock-bg: #FFFFFF;
+  --dock-border: #EBDCE8;
+  --dock-shadow: 0 20px 44px rgba(35, 18, 31, 0.16), 0 2px 8px rgba(35, 18, 31, 0.08);
+  --overlay: rgba(29, 29, 29, 0.48);
+  --shadow: 0 18px 45px rgba(35, 18, 31, 0.12);
+}
+
+html[data-appearance="light"] [data-theme-swatch="orchid"] {
+  --swatch-bg: #FCF5FB;
+  --swatch-surface: #FFFFFF;
+  --swatch-accent: #85306F;
+}

@@ -92,7 +92,7 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
   },
   'theme.premium': {
     title: 'ธีมสีพิเศษ',
-    benefit: 'เปลี่ยนโทนสีทั้งแอปเป็น Bitswap Cyan หรือ Dokturek Violet ใช้ได้ทั้งโหมดสว่างและมืด',
+    benefit: 'เปลี่ยนโทนสีทั้งแอปเป็น Bitswap Cyan, Dokturek Violet, Cosmic Vanilla หรือ Jet Black Orchid ใช้ได้ทั้งโหมดสว่างและมืด',
     lockedLabel: 'ธีมสีนี้ใช้ได้ใน Pro',
   },
 };

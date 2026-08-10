@@ -26,6 +26,18 @@ export const themeRegistry = {
     description: 'โทนม่วงนุ่ม อ่านสบายทั้งกลางวันและกลางคืน',
     premium: true,
   },
+  cosmic: {
+    id: 'cosmic',
+    label: 'Cosmic Vanilla',
+    description: 'คอสมิกเข้ม ตัดวานิลลานุ่ม',
+    premium: true,
+  },
+  orchid: {
+    id: 'orchid',
+    label: 'Jet Black Orchid',
+    description: 'ดำเจ็ตแบล็ก ตัดออร์คิดโทนนุ่ม',
+    premium: true,
+  },
 } as const satisfies Record<ThemeId, ThemeDefinition>;
 
 export const themeDefinitions: readonly ThemeDefinition[] = themeIds.map((id) => themeRegistry[id]);

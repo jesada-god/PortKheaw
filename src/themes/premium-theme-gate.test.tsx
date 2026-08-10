@@ -131,7 +131,7 @@ describe('resolving a requested theme against the entitlement', () => {
   });
 
   it('marks exactly the paid themes as premium in the registry', () => {
-    expect(themeIds).toEqual(['portkheaw', 'bitswap', 'dokturek']);
+    expect(themeIds).toEqual(['portkheaw', 'bitswap', 'dokturek', 'cosmic', 'orchid']);
     for (const id of themeIds) {
       expect(themeRegistry[id].premium).toBe((PREMIUM_THEMES as readonly string[]).includes(id));
     }
