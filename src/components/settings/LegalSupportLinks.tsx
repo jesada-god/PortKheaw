@@ -3,6 +3,7 @@ import {
   ChevronRight,
   FileText,
   LifeBuoy,
+  Package,
   Receipt,
   RefreshCw,
   ShieldCheck,
@@ -10,6 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { legalLinkOrder, legalDocuments, type LegalDocumentSlug } from '@/src/lib/legal/documents';
+import { OPEN_SOURCE_PAGE } from '@/src/lib/legal/open-source';
 
 /**
  * The policy and help pages, as a section of Settings rather than a footnote.
@@ -47,6 +49,12 @@ export function LegalSupportLinks() {
       description: legalDocuments[slug].subtitle,
       Icon: ICON[slug],
     })),
+    {
+      href: OPEN_SOURCE_PAGE.href,
+      label: OPEN_SOURCE_PAGE.title,
+      description: OPEN_SOURCE_PAGE.subtitle,
+      Icon: Package,
+    },
     {
       href: '/support',
       label: 'ศูนย์ช่วยเหลือและรายงานปัญหา',

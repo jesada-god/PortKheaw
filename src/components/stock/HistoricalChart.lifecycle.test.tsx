@@ -125,11 +125,11 @@ describe('HistoricalChart Lightweight Charts boundary', () => {
 
   /*
    * The whole chart screen, not just the host: the plot is asked to draw no
-   * TradingView mark, and the notice that permission depends on is standing in
+   * TradingView mark, and the credit that permission depends on is standing in
    * the DOM beneath it. Asserting both in one mount is the point — the licence is
    * satisfied by the pair, and a change that removes either one fails here.
    */
-  it('drops the in-plot attribution mark and carries the notice in the footer instead', async () => {
+  it('drops the in-plot attribution mark and carries the credit beneath the chart instead', async () => {
     const host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
@@ -140,8 +140,7 @@ describe('HistoricalChart Lightweight Charts boundary', () => {
 
     const footer = host.querySelector('[data-testid="chart-attribution"]');
     expect(footer).not.toBeNull();
-    expect(footer!.textContent).toContain('TradingView Lightweight Charts™');
-    expect(footer!.textContent).toContain('Copyright (с) 2025 TradingView, Inc.');
+    expect(footer!.textContent).toContain('Charts powered by TradingView Lightweight Charts™');
     expect(footer!.querySelector('a[href="https://www.tradingview.com/"]')).not.toBeNull();
     await act(async () => root.unmount());
   });

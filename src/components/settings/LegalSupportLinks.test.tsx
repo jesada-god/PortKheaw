@@ -20,6 +20,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { legalDocuments, legalLinkOrder } from '@/src/lib/legal/documents';
+import { OPEN_SOURCE_PAGE } from '@/src/lib/legal/open-source';
 import { LegalSupportLinks } from './LegalSupportLinks';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,13 +57,14 @@ describe('the section a reader goes looking for', () => {
       .toBe('legal-support-heading');
   });
 
-  it('links to all five policy pages and the support centre', () => {
+  it('links to all five policy pages, the attribution page and the support centre', () => {
     expect(links().map((link) => link.getAttribute('href'))).toEqual([
       '/terms',
       '/privacy',
       '/subscription-policy',
       '/refund-policy',
       '/investment-disclaimer',
+      '/open-source',
       '/support',
     ]);
   });
@@ -78,7 +80,9 @@ describe('the section a reader goes looking for', () => {
       expect(rows[index].textContent, slug).toContain(legalDocuments[slug].title);
       expect(rows[index].textContent, slug).toContain(legalDocuments[slug].subtitle);
     });
-    expect(rows[5].textContent).toContain('ศูนย์ช่วยเหลือและรายงานปัญหา');
+    expect(rows[5].textContent).toContain(OPEN_SOURCE_PAGE.title);
+    expect(rows[5].textContent).toContain(OPEN_SOURCE_PAGE.subtitle);
+    expect(rows[6].textContent).toContain('ศูนย์ช่วยเหลือและรายงานปัญหา');
   });
 
   it('gives every row a tap target and a visible focus ring', () => {
