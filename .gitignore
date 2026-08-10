@@ -9,4 +9,10 @@ coverage/
 
 supabase/.temp/
 
+# QA scratch: browser-driven run output, server logs and whole copies of the
+# tree. Vitest already refuses to collect tests from here; this keeps it out of
+# commits and, because `vercel` falls back to .gitignore, out of deployment
+# uploads too — some of it is production QA logging.
+.qa/
+
 .vercel
