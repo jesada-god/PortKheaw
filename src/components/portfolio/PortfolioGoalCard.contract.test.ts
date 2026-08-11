@@ -23,8 +23,9 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
    * their right — while the Overview tile keeps the small size it needs.
    */
   it('draws the mascot large enough to read as the card’s subject, without horizontal overflow', () => {
-    expect(mascot).toContain("'h-28 sm:h-36 lg:h-44'");
-    expect(mascot).toContain("compact\n    ? 'h-16 sm:h-20 lg:h-24'");
+    expect(mascot).toContain("default: 'h-28 sm:h-36 lg:h-44'");
+    expect(mascot).toContain("compact: 'h-16 sm:h-20 lg:h-24'");
+    expect(mascot).toContain("hero: 'h-36 sm:h-44 lg:h-48'");
     expect(mascot).toContain('w-auto max-w-full object-contain');
     expect(component).toContain('lg:grid-cols-[minmax(0,1fr)_minmax(0,15rem)]');
     expect(component).toContain('h-28 items-end justify-center sm:h-36 lg:h-44');
@@ -97,7 +98,13 @@ describe('PortfolioGoalCard responsive and accessibility contract', () => {
     expect(component).toContain('items-center justify-center');
     expect(mascot).toContain("state.emptyPortfolio) return EMPTY_PORTFOLIO_ASSET");
     expect(mascot).toContain('/brand/10_empty_laptop.png');
-    // The size classes are shared with every other variant, never overridden.
+    /*
+     * The box is chosen by the surface, never by the variant: `hero` is offered
+     * to whatever a surface draws alone, and the empty state is the only caller
+     * of it today. A variant that picked its own size would be an artwork scale
+     * correction in CSS, which is what the export normalisation exists to avoid.
+     */
     expect(mascot).not.toMatch(/emptyPortfolio[\s\S]{0,200}h-\d/);
+    expect(component).toContain('<PortfolioGoalMascot size="hero" state={model.mascot} />');
   });
 });

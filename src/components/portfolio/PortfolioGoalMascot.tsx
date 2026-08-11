@@ -98,29 +98,43 @@ export function portfolioGoalMascotAsset(state: PortfolioMascotState): string {
     : moodAssets[state.mood];
 }
 
+export type PortfolioGoalMascotSize = 'compact' | 'default' | 'hero';
+
+/*
+ * Three boxes, and every mood is drawn in whichever one its surface uses — the
+ * artwork carries the body scale, normalised at export, so no variant is ever
+ * corrected for here. A prop cannot make one Kheaw smaller than another.
+ *
+ * `hero` is not a bigger Kheaw. It is a bigger box, used only where Kheaw is
+ * the whole of what a surface is showing: on an empty portfolio there are no
+ * figures beside him, and at 112px in a 366px-wide card with nothing else in it
+ * he read as an icon for a message rather than as the message.
+ */
+const MASCOT_BOX: Record<PortfolioGoalMascotSize, string> = {
+  compact: 'h-16 sm:h-20 lg:h-24',
+  default: 'h-28 sm:h-36 lg:h-44',
+  hero: 'h-36 sm:h-44 lg:h-48',
+};
+
+const MASCOT_SIZES: Record<PortfolioGoalMascotSize, string> = {
+  compact: '(max-width: 640px) 64px, (max-width: 1024px) 80px, 96px',
+  default: '(max-width: 640px) 112px, (max-width: 1024px) 144px, 176px',
+  hero: '(max-width: 640px) 144px, (max-width: 1024px) 176px, 192px',
+};
+
 export function PortfolioGoalMascot({
   state,
   compact = false,
+  size,
 }: {
   state: PortfolioMascotState;
+  /** Kept for the Overview tile, where Kheaw is one tile among several. */
   compact?: boolean;
+  size?: PortfolioGoalMascotSize;
 }) {
   const appearance = portfolioGoalAppearance[state.mood];
-  /*
-   * The full card's Kheaw is the portfolio's visual identity rather than an
-   * icon beside it, so he is drawn at the scale of the goal figures he stands
-   * next to. The compact size is unchanged: on Overview he is one tile among
-   * several and has to stay one.
-   */
-  const sizes = compact
-    ? 'h-16 sm:h-20 lg:h-24'
-    : 'h-28 sm:h-36 lg:h-44';
-  /*
-   * The size classes are the same ones every other variant gets, and they have
-   * to be: the artwork is what carries the body scale, normalised at export, so
-   * a prop can never be corrected for here without making this Kheaw a
-   * different size from the rest.
-   */
+  const box = size ?? (compact ? 'compact' : 'default');
+  const sizes = MASCOT_BOX[box];
   return <Image
     alt={state.emptyPortfolio
       ? 'น้อง Kheaw กับโน้ตบุ๊ก รอสินทรัพย์ชิ้นแรกในพอร์ต'
@@ -128,9 +142,7 @@ export function PortfolioGoalMascot({
     className={`${styles.mascot} ${sizes} aspect-square w-auto max-w-full object-contain object-center`}
     data-visual-variant={state.emptyPortfolio ? 'emptyPortfolio' : state.specialEvent ?? state.mood}
     height={512}
-    sizes={compact
-      ? '(max-width: 640px) 64px, (max-width: 1024px) 80px, 96px'
-      : '(max-width: 640px) 112px, (max-width: 1024px) 144px, 176px'}
+    sizes={MASCOT_SIZES[box]}
     src={portfolioGoalMascotAsset(state)}
     width={512}
   />;

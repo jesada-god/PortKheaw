@@ -368,7 +368,7 @@ describe('Portfolio Goal mascot rendering', () => {
     expect(withLaptop).toBeGreaterThan(empty * 1.1);
   });
 
-  it('renders the empty-state variant at the same CSS size as every other mood', async () => {
+  it('draws the empty state in the hero box while every mood keeps the default one', async () => {
     const emptyModel = emptyCardModel();
     expect(emptyModel.isEmpty).toBe(true);
     await act(async () => root.render(
@@ -405,8 +405,21 @@ describe('Portfolio Goal mascot rendering', () => {
         onEditGoal={() => undefined}
       />,
     ));
-    expect(container.querySelector('img')?.getAttribute('class')).toBe(emptyClass);
-    expect(emptyClass).toContain('h-28 sm:h-36 lg:h-44');
+    /*
+     * Different boxes, deliberately. The empty card has nothing in it but Kheaw,
+     * so he is drawn at hero scale there; beside the goal figures he is drawn at
+     * their scale. What must not differ is the body inside the artwork, and that
+     * is asserted on the files themselves above — never corrected for in CSS.
+     */
+    const moodClass = container.querySelector('img')?.getAttribute('class');
+    expect(moodClass).toContain('h-28 sm:h-36 lg:h-44');
+    expect(emptyClass).toContain('h-36 sm:h-44 lg:h-48');
+    expect(moodClass).not.toBe(emptyClass);
+    // Both keep the same fit rules, so neither is cropped or stretched.
+    for (const value of [emptyClass, moodClass]) {
+      expect(value).toContain('aspect-square');
+      expect(value).toContain('w-auto max-w-full object-contain');
+    }
   });
 
   it('gives Overview and Portfolio identical state for the same selected scope', async () => {

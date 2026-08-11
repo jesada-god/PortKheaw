@@ -1,8 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Target } from 'lucide-react';
 import { Button } from '@/src/components/ui/Button';
+import {
+  resolveAnchoredPanel,
+  type AnchoredPanelPlacement,
+} from '@/src/components/ui/anchored-panel';
+import { useHydrated } from '@/src/hooks/useHydrated';
 import {
   formatPortfolioGoalTime,
   type PortfolioGoalCardModel,
@@ -96,6 +109,7 @@ export function PortfolioGoalCard({
             active={model.scope === 'selected'}
             portfolios={portfolios}
             selectedPortfolioId={selectedPortfolioId}
+            selectedPortfolioName={selectedPortfolioName}
             onSelect={onSelectPortfolio}
           />
           <button
@@ -196,8 +210,8 @@ export function PortfolioGoalCard({
         className="relative mt-5 flex min-w-0 flex-col items-center justify-center gap-4 py-6 text-center"
         data-testid="portfolio-goal-empty"
       >
-        <div className="flex h-28 items-end justify-center sm:h-36 lg:h-44" data-testid="portfolio-goal-mascot">
-          <PortfolioGoalMascot state={model.mascot} />
+        <div className="flex h-36 items-end justify-center sm:h-44 lg:h-48" data-testid="portfolio-goal-mascot">
+          <PortfolioGoalMascot size="hero" state={model.mascot} />
         </div>
         <p className="mx-auto max-w-72 break-words text-base font-bold leading-relaxed text-[var(--text)]">
           {model.mascot.message}
@@ -207,30 +221,73 @@ export function PortfolioGoalCard({
   </section>;
 }
 
+/** Roomy enough for a portfolio name and its count side by side. */
+const SELECTOR_MENU_WIDTH = 288;
+const SELECTOR_MENU_MAX_HEIGHT = 320;
+
 /**
- * The "พอร์ตที่เลือก" segment, which both scopes the card and chooses what it is
- * scoped to.
+ * The left segment of the scope control, which both scopes the card and chooses
+ * what it is scoped to.
  *
  * It keeps the segmented control's own styling — this is one of two segments in
- * a shared pill, not a select box dropped beside it — and adds only the chevron
- * that says it opens. Pressing it always points the card at a portfolio, so a
- * reader who opens the list and dismisses it still ends up in the scope the
- * button names.
+ * a shared pill, not a select box dropped beside it — and shows the portfolio it
+ * is currently pointed at rather than the word "พอร์ตที่เลือก", because a
+ * control that names its own function instead of its value leaves the reader
+ * with no way to see which portfolio they are looking at. Pressing it always
+ * points the card at a portfolio, so a reader who opens the list and dismisses
+ * it still ends up in the scope the button represents.
+ *
+ * The list is portalled to `document.body` and placed as `fixed`, for the same
+ * reason the chart toolbar's menus are: the goal card is `overflow-hidden`, and
+ * an absolutely positioned panel anchored to a trigger that sits near the card's
+ * right edge is clipped by it. On a 390px viewport the old `right-0` panel
+ * resolved to `left: -85px` — off the screen entirely, with the portfolio names
+ * sliced in half. `resolveAnchoredPanel` resolves against the real viewport, so
+ * the panel cannot leave it on any edge at any width.
  */
 function PortfolioScopeSelector({
   active,
   portfolios,
   selectedPortfolioId,
+  selectedPortfolioName,
   onSelect,
 }: {
   active: boolean;
   portfolios: PortfolioGoalOption[];
   selectedPortfolioId: string;
+  selectedPortfolioName: string;
   onSelect: (portfolioId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLSpanElement>(null);
+  const [placement, setPlacement] = useState<AnchoredPanelPlacement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const mounted = useHydrated();
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    setPlacement(resolveAnchoredPanel({
+      rect: trigger.getBoundingClientRect(),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      width: SELECTOR_MENU_WIDTH,
+      preferredMaxHeight: SELECTOR_MENU_MAX_HEIGHT,
+      minHeight: 120,
+      align: 'end',
+    }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [open, reposition]);
 
   useEffect(() => {
     if (!open) return;
@@ -240,65 +297,95 @@ function PortfolioScopeSelector({
       setOpen(false);
       triggerRef.current?.focus();
     };
-    const onPointerDown = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    const onPointerDown = (event: Event) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('mousedown', onPointerDown);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('mousedown', onPointerDown);
     };
   }, [open]);
 
-  return <span className="relative inline-flex min-w-0" ref={containerRef}>
+  return <span className="relative inline-flex min-w-0">
     <button
       ref={triggerRef}
       type="button"
       aria-expanded={open}
       aria-haspopup="listbox"
+      aria-label={`พอร์ตที่เลือก: ${selectedPortfolioName}`}
       aria-pressed={active}
-      className={`inline-flex min-h-9 min-w-0 items-center gap-1 rounded-md px-2.5 text-xs font-bold transition-colors ${active ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+      className={`inline-flex min-h-9 min-w-0 max-w-[9.5rem] items-center gap-1 rounded-md px-2.5 text-xs font-bold transition-colors sm:max-w-[12rem] ${active ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
       data-testid="portfolio-goal-scope-selected"
       onClick={() => {
         onSelect(selectedPortfolioId);
         setOpen((current) => !current);
       }}
     >
-      พอร์ตที่เลือก
-      <ChevronDown aria-hidden="true" className={open ? 'rotate-180 transition-transform' : 'transition-transform'} size={13} />
+      {/*
+        The name truncates rather than wrapping or widening the pill: the two
+        segments have to stay one control at 320px, and the full name is one
+        press away in the list — and on the line under the card's title.
+      */}
+      <span className="min-w-0 flex-1 truncate text-left">{selectedPortfolioName}</span>
+      <ChevronDown
+        aria-hidden="true"
+        className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+        size={13}
+      />
     </button>
 
-    {open && <span
-      aria-label="เลือกพอร์ตสำหรับเป้าหมาย"
-      className="absolute right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 w-56 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow)]"
-      data-testid="portfolio-goal-portfolio-list"
-      role="listbox"
-    >
-      {portfolios.map((portfolio) => <button
-        key={portfolio.id}
-        type="button"
-        aria-selected={portfolio.id === selectedPortfolioId}
-        className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors ${portfolio.id === selectedPortfolioId ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'}`}
-        data-testid={`portfolio-goal-option-${portfolio.id}`}
-        role="option"
-        onClick={() => {
-          onSelect(portfolio.id);
-          setOpen(false);
-          triggerRef.current?.focus();
+    {mounted && open && placement && createPortal(
+      <div
+        ref={panelRef}
+        aria-label="เลือกพอร์ตสำหรับเป้าหมาย"
+        className="z-[110] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow)]"
+        data-testid="portfolio-goal-portfolio-list"
+        role="listbox"
+        style={{
+          position: 'fixed',
+          top: placement.top,
+          left: placement.left,
+          width: placement.width,
+          maxHeight: placement.maxHeight,
         }}
       >
-        <Check
-          aria-hidden="true"
-          className={portfolio.id === selectedPortfolioId ? 'shrink-0 text-[var(--goal-accent)]' : 'shrink-0 opacity-0'}
-          size={13}
-        />
-        <span className="min-w-0 flex-1 break-words">{portfolio.name}</span>
-        <span className="shrink-0 text-[10px] font-medium text-[var(--text-muted)]">
-          {portfolio.assetCount > 0 ? `${portfolio.assetCount} รายการ` : 'ยังไม่มีสินทรัพย์'}
-        </span>
-      </button>)}
-    </span>}
+        {portfolios.map((portfolio) => <button
+          key={portfolio.id}
+          type="button"
+          aria-selected={portfolio.id === selectedPortfolioId}
+          className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2.5 text-left text-xs font-semibold transition-colors ${portfolio.id === selectedPortfolioId ? 'bg-[var(--surface-selected)] text-[var(--text)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'}`}
+          data-testid={`portfolio-goal-option-${portfolio.id}`}
+          role="option"
+          onClick={() => {
+            onSelect(portfolio.id);
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}
+        >
+          <Check
+            aria-hidden="true"
+            className={portfolio.id === selectedPortfolioId ? 'shrink-0 text-[var(--goal-accent)]' : 'shrink-0 opacity-0'}
+            size={13}
+          />
+          {/*
+            The name wraps and the count never shrinks: a portfolio called
+            something long must be readable in full here, since this is the one
+            place the reader picks between them.
+          */}
+          <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{portfolio.name}</span>
+          <span className="shrink-0 text-[10px] font-medium text-[var(--text-muted)]">
+            {portfolio.assetCount > 0 ? `${portfolio.assetCount} รายการ` : 'ยังไม่มีสินทรัพย์'}
+          </span>
+        </button>)}
+      </div>,
+      document.body,
+    )}
   </span>;
 }
 
