@@ -173,6 +173,17 @@ function PublicValueProposition() {
           เริ่มใช้ฟรี
           <ChevronRight size={16} aria-hidden="true" />
         </Link>
+        {/*
+          A visitor deciding whether this is worth an account should be able to
+          see what it costs without making one, so the prices are one link away
+          rather than behind sign-up.
+        */}
+        <Link
+          href="/pricing"
+          className="inline-flex min-h-11 items-center rounded-xl px-1 text-sm font-medium text-[var(--text-secondary)] underline-offset-4 hover:underline"
+        >
+          ดูแพ็กเกจและราคา
+        </Link>
         <p className="text-xs text-[var(--text-muted)]">ไม่ต้องผูกบัตร • ทดลอง Elite ฟรี 7 วัน</p>
       </div>
     </section>
@@ -841,11 +852,31 @@ function BreadthSection({
               <strong className="tabular-nums text-[var(--text)]">{data.aboveEma20Percent.toFixed(1)}%</strong>
             </div>
           )}
-          <div className="mt-4 space-y-1 text-[10px] leading-4 text-[var(--text-muted)]">
-            <p>คำนวณจากหุ้นที่มีข้อมูลพร้อมใช้ {data.validCount.toLocaleString()} จากทั้งหมด {data.universeCount.toLocaleString()} ตัว ({data.coveragePercent.toFixed(1)}%)</p>
-            <p>Failed {data.failedCount.toLocaleString()} · Stale {data.staleCount.toLocaleString()} · ใช้เวลา {(data.durationMs / 1_000).toFixed(1)} วินาที</p>
-            <p>ประเมิน {formatBangkokDateTime(data.evaluatedAt)}{data.updatedAt ? ` · ราคาล่าสุด ${formatBangkokDateTime(data.updatedAt)}` : ''}</p>
-          </div>
+          {/*
+            The headline answers the only question most readers have — how much of
+            the market this number actually covers, and how recent it is. The run's
+            failure counts, stale counts and wall-clock duration are real and stay
+            available, but they were reading as a debug panel on the home screen,
+            so they moved one tap away into the same disclosure pattern the service
+            status above already uses. Nothing about the health CALCULATION changed.
+          */}
+          <details className="group mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)]">
+            <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-xs sm:flex sm:items-center sm:justify-between sm:gap-3">
+              <span className="text-[var(--text-secondary)]">
+                ข้อมูลพร้อมใช้ {data.coveragePercent.toFixed(1)}%
+                {' · '}
+                อัปเดตเมื่อ {formatBangkokDateTime(data.updatedAt ?? data.evaluatedAt)}
+              </span>
+              <span className="text-[10px] text-[var(--text-muted)] sm:shrink-0">
+                รายละเอียดข้อมูล
+              </span>
+            </summary>
+            <div className="space-y-1 border-t border-[var(--border)] px-3 py-3 text-[10px] leading-4 text-[var(--text-muted)]">
+              <p>คำนวณจากหุ้นที่มีข้อมูลพร้อมใช้ {data.validCount.toLocaleString()} จากทั้งหมด {data.universeCount.toLocaleString()} ตัว ({data.coveragePercent.toFixed(1)}%)</p>
+              <p>ดึงข้อมูลไม่สำเร็จ {data.failedCount.toLocaleString()} ตัว · ข้อมูลเก่ากว่ากำหนด {data.staleCount.toLocaleString()} ตัว · ใช้เวลาประมวลผล {(data.durationMs / 1_000).toFixed(1)} วินาที</p>
+              <p>ประเมิน {formatBangkokDateTime(data.evaluatedAt)}{data.updatedAt ? ` · ราคาล่าสุด ${formatBangkokDateTime(data.updatedAt)}` : ''}</p>
+            </div>
+          </details>
           {data.validCount < 800 && (
             <p className="mt-3 rounded-xl bg-[var(--warning-soft)] p-3 text-xs leading-5 text-[var(--warning)]">
               ข้อมูลตลาดยังไม่ครบ: มีหุ้นพร้อมคำนวณน้อยกว่า 800 ตัว จึงยังไม่ถือว่าเป็นภาพรวมทั้งตลาด

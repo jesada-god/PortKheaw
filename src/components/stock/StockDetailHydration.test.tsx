@@ -283,12 +283,12 @@ describe('Stock Detail hydration regression', () => {
       expect(serverMarkup).not.toContain('Loading Analyst Consensus');
       expect(serverMarkup).not.toContain('Target Price');
       expect(serverMarkup).not.toContain('Market Signal');
-      expect(serverMarkup).toContain('Open');
-      expect(serverMarkup).toContain('High');
-      expect(serverMarkup).toContain('Low');
-      expect(serverMarkup).toContain('Prev Close');
+      expect(serverMarkup).toContain('ราคาเปิด');
+      expect(serverMarkup).toContain('สูงสุดวันนี้');
+      expect(serverMarkup).toContain('ต่ำสุดวันนี้');
+      expect(serverMarkup).toContain('ราคาปิดก่อนหน้า');
       expect(serverMarkup).toContain('50.5');
-      expect(serverMarkup).toContain('December');
+      expect(serverMarkup).toContain('ธันวาคม');
     } finally {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
@@ -310,7 +310,7 @@ describe('Stock Detail hydration regression', () => {
     const host = document.createElement('div');
     host.innerHTML = markup;
     const label = [...host.querySelectorAll('p')]
-      .find((item) => item.textContent?.includes('Prev Close'));
+      .find((item) => item.textContent?.includes('ราคาปิดก่อนหน้า'));
     expect(label?.parentElement?.textContent).toContain('—');
   });
 

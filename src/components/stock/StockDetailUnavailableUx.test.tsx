@@ -38,6 +38,7 @@ describe('Stock Detail unavailable UX', () => {
         loading={false}
         retryAt={0}
         onRetry={vi.fn()}
+        language="en"
       />,
     );
 
@@ -52,7 +53,7 @@ describe('Stock Detail unavailable UX', () => {
     expect(html).not.toContain('Profile quota exceeded');
   });
 
-  it('disables Thai translation when no source description exists', () => {
+  it('hides the language toggle when there is no description to translate', () => {
     const html = renderToStaticMarkup(
       <CompanyProfileCard
         symbol="RKLB"
@@ -66,8 +67,7 @@ describe('Stock Detail unavailable UX', () => {
       />,
     );
 
-    expect(html).toContain('disabled=""');
-    expect(html).toContain('title="ยังไม่มีข้อความต้นฉบับสำหรับแปล"');
+    expect(html).not.toContain('aria-label="Company Profile language"');
     expect(html).toContain('ยังไม่มีรายละเอียดบริษัทสำหรับแปล');
   });
 
@@ -127,7 +127,10 @@ describe('Stock Detail unavailable UX', () => {
     );
 
     expect(html).toContain('Rocket Lab provides launch services.');
-    expect(html).toContain('Stale · alpha-vantage');
+    // The reader sees the source's real name; the raw provider id stays available
+    // as the element's tooltip rather than as primary copy.
+    expect(html).toContain('Stale · Alpha Vantage');
+    expect(html).toContain('title="alpha-vantage"');
     expect(html).toContain('19 ก.ค. 2569 15:30');
     expect(html).not.toContain('Company profile is temporarily unavailable');
   });

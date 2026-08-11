@@ -66,7 +66,8 @@ describe('SubscriptionFaq', () => {
     expect(questionCount(open)).toBe(questionCount(closed));
     for (const markup of [closed, open]) {
       expect(markup).toContain('พอร์ต รายการใน Transaction Ledger และเป้าหมายทั้งหมดยังอยู่ครบ');
-      expect(markup).toContain('สิทธิ์ทดลองใช้ได้ครั้งเดียวต่อบัญชี');
+      expect(markup).toContain('ได้หนึ่งครั้งต่อข้อมูลยืนยันตัวตนที่มีสิทธิ์');
+      expect(markup).toContain('แม้ลบบัญชีแล้วสมัครใหม่ด้วยข้อมูลเดิม สิทธิทดลองจะไม่เริ่มใหม่');
     }
   });
 });

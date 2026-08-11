@@ -7,6 +7,7 @@ import { planDescriptor } from '@/src/lib/subscription/plan-catalog';
 import {
   formatBangkokDateTime,
   TRIAL_DURATION_DAYS,
+  TRIAL_ELIGIBILITY_SHORT,
   type TrialState,
 } from '@/src/lib/subscription/trial';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
@@ -183,7 +184,7 @@ function HeroAction({ state, trialBlockedReason }: { state: TrialState; trialBlo
   if (state.kind === 'used') {
     return (
       <p className="border-t border-[var(--border)] pt-5 text-sm text-[var(--text-secondary)]">
-        สิทธิ์ทดลองใช้ได้ครั้งเดียวต่อบัญชี เลือกแพ็กเกจด้านล่างเพื่อใช้เครื่องมือชุดเต็มต่อ
+        {TRIAL_ELIGIBILITY_SHORT} เลือกแพ็กเกจด้านล่างเพื่อใช้เครื่องมือชุดเต็มต่อ
       </p>
     );
   }

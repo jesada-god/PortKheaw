@@ -52,3 +52,42 @@ describe('tools catalog', () => {
     }
   });
 });
+
+/**
+ * The locked card explains the tool's VALUE without becoming the tool.
+ *
+ * A preview that fetched, computed, or reproduced the paid output would be the
+ * paywall failing rather than the paywall explaining itself, so the copy is
+ * static, sourced from this catalog, and shown only in the locked branch.
+ */
+describe('locked tool value preview', () => {
+  it('says what each locked tool answers, in outcomes', () => {
+    for (const tool of TOOL_CATALOG) {
+      expect(tool.valuePreview.length).toBeGreaterThanOrEqual(2);
+      for (const line of tool.valuePreview) expect(line.trim().length).toBeGreaterThan(0);
+      expect(tool.sampleOutcome.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('labels the illustrative line and renders it only while locked', () => {
+    expect(toolsPageSource).toContain('ตัวอย่าง');
+    expect(toolsPageSource).toContain('tool.valuePreview');
+    expect(toolsPageSource).toContain('tool.sampleOutcome');
+    // Both live inside the `!unlocked` branch, which is the only place the
+    // preview may appear.
+    const lockedBranch = toolsPageSource.slice(toolsPageSource.indexOf('{!unlocked && ('));
+    expect(lockedBranch).toContain('tool.valuePreview');
+    expect(lockedBranch).toContain('tool.sampleOutcome');
+  });
+
+  it('adds no request and no computation for a locked reader', () => {
+    expect(toolsPageSource).not.toContain('fetch(');
+    expect(toolsPageSource).not.toContain('useEffect');
+    for (const tool of TOOL_CATALOG) {
+      // The preview carries no figures at all, so nothing in it can be read as
+      // a result — least of all one about the reader's own positions.
+      const text = [...tool.valuePreview, tool.sampleOutcome].join(' ');
+      expect(text).not.toMatch(/\d/);
+    }
+  });
+});

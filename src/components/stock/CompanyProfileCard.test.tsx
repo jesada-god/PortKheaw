@@ -137,6 +137,30 @@ describe('instrument wording', () => {
     expect(container.textContent).not.toContain('Fiscal year end');
   });
 
+  /*
+   * A digital asset has no description to translate, so the card used to be
+   * forced into English and a Thai reader met "Crypto Asset Profile". The card's
+   * own wording now follows the reader's language.
+   */
+  it('speaks Thai to a Thai reader even with no description to translate', () => {
+    render({ assetType: 'crypto', profile: profile(null) });
+    expect(heading()).toBe('ข้อมูลสินทรัพย์ดิจิทัล');
+    expect(container.querySelector('[aria-label="Company Profile language"]')).toBeNull();
+  });
+
+  /*
+   * SPY's provider "sector" is State Street's, not the fund's exposure, and its
+   * headcount and fiscal year describe the issuer. None of them may appear
+   * beside a fund's price.
+   */
+  it('withholds the issuer’s headcount and fiscal year from a fund', () => {
+    render({ assetType: 'ETF' });
+    expect(heading()).toBe('ข้อมูลกองทุน');
+    expect(container.textContent).toContain('สกุลเงิน');
+    expect(container.textContent).not.toContain('จำนวนพนักงาน');
+    expect(container.textContent).not.toContain('สิ้นสุดปีบัญชี');
+  });
+
   it('leaves a common stock, and an unknown instrument, as a company', () => {
     render({ assetType: 'Stock' });
     expect(heading()).toBe('ข้อมูลบริษัท');

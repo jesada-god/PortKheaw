@@ -40,6 +40,31 @@ export type TrialFailureCode =
 export const TRIAL_DURATION_DAYS = 7;
 
 /**
+ * THE sentence that describes who may start a trial, in one place.
+ *
+ * The product's copy used to say "หนึ่งครั้งต่อบัญชี" while the system enforces
+ * something stricter and more durable: the grant is recorded against the
+ * account's verified IDENTITIES, and that record outlives the account. Somebody
+ * who deletes their account and signs up again with the same email or the same
+ * Google account is refused — correctly — by a page that had promised them a
+ * fresh trial per account. These two constants are what the Terms, the
+ * subscription policy, the FAQ and the plan hero all read from, so the promise
+ * and the behaviour cannot drift apart again.
+ *
+ * They describe WHAT is true, never how it is implemented: the storage
+ * mechanism is the Privacy Policy's subject, and nothing else needs to name it.
+ */
+export const TRIAL_ELIGIBILITY_STATEMENT =
+  `ทดลองใช้ฟรี Elite ${TRIAL_DURATION_DAYS} วัน ได้หนึ่งครั้งต่อข้อมูลยืนยันตัวตนที่มีสิทธิ์ `
+  + '(อีเมลที่ยืนยันแล้ว หรือบัญชีผู้ให้บริการที่ใช้เข้าสู่ระบบ เช่น Google) '
+  + 'แม้ลบบัญชีแล้วสมัครใหม่ด้วยข้อมูลเดิม สิทธิทดลองจะไม่เริ่มใหม่';
+
+/** The same rule in one line, for a slot that has no room for the full sentence. */
+export const TRIAL_ELIGIBILITY_SHORT =
+  'สิทธิทดลองใช้ได้ครั้งเดียวต่อข้อมูลยืนยันตัวตนที่มีสิทธิ์ '
+  + 'ลบบัญชีแล้วสมัครใหม่ด้วยข้อมูลเดิมก็ไม่ได้สิทธิใหม่';
+
+/**
  * What the Current Plan hero is looking at. Derived only from the server
  * snapshot and the database clock inside it — never from the browser's clock,
  * and never from a value the client could have chosen.
@@ -180,7 +205,7 @@ export const TRIAL_BETA_BLOCKED_MESSAGE = 'ขณะนี้เปิดให�
  * surfaces — the hero, the action's answer, and the paywall.
  */
 export const TRIAL_IDENTITY_USED_MESSAGE =
-  'บัญชีนี้เคยใช้สิทธิทดลองฟรีแล้ว สามารถเลือกแพ็กเกจเพื่อใช้งานต่อได้';
+  'ข้อมูลยืนยันตัวตนนี้เคยใช้สิทธิทดลองฟรีแล้ว สามารถเลือกแพ็กเกจเพื่อใช้งานต่อได้';
 
 const TRIAL_FAILURE_MESSAGES: Record<TrialFailureCode, string> = {
   TRIAL_ALREADY_USED: 'บัญชีนี้เคยใช้สิทธิ์ทดลอง Elite ไปแล้ว จึงใช้ซ้ำไม่ได้',

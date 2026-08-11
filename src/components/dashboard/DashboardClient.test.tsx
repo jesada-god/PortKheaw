@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  MarketBreadth,
   MarketIndexCard,
   OverviewDashboardData,
 } from '@/src/lib/overview/types';
@@ -345,5 +346,64 @@ describe('public value proposition', () => {
     expect(container.querySelector('#market-overview')).not.toBeNull();
     const sections = [...container.querySelectorAll('main > section, main > div > section')];
     expect(sections[0]?.getAttribute('aria-labelledby')).toBe('portkheaw-intro');
+  });
+});
+
+/**
+ * Market breadth run diagnostics belong to the run, not to the reader's first
+ * glance. They stay reachable — transparency about coverage is the point — but
+ * behind a disclosure rather than as a debug line on the home screen.
+ */
+describe('market breadth data health', () => {
+  function breadth(): MarketBreadth {
+    return {
+      advancing: 300,
+      declining: 200,
+      unchanged: 50,
+      validCount: 550,
+      universeCount: 578,
+      returnedCount: 560,
+      failedCount: 1,
+      staleCount: 210,
+      upDownRatio: 1.5,
+      breadthPercent: 54.5,
+      coveragePercent: 95.1,
+      aboveEma20Percent: null,
+      updatedAt: '2026-08-06T13:55:00.000Z',
+      evaluatedAt: '2026-08-06T14:00:00.000Z',
+      durationMs: 400,
+      tradingDate: '2026-08-06',
+      session: 'regular',
+      source: 'alpaca-multi-snapshot',
+      feed: 'delayed_sip',
+      status: 'ready',
+      universeDescription: 'หุ้นสหรัฐที่ระบบติดตาม',
+    };
+  }
+
+  function disclosure(): HTMLDetailsElement | null {
+    return [...container.querySelectorAll('details')]
+      .find((item) => item.textContent?.includes('รายละเอียดข้อมูล')) as HTMLDetailsElement ?? null;
+  }
+
+  it('leads with coverage and freshness, in plain Thai', () => {
+    render({ ...dashboardData('ready'), breadth: breadth() });
+    const summary = disclosure()?.querySelector('summary');
+    expect(summary?.textContent).toContain('ข้อมูลพร้อมใช้ 95.1%');
+    expect(summary?.textContent).toContain('อัปเดตเมื่อ');
+    expect(summary?.textContent).not.toContain('Failed');
+    expect(summary?.textContent).not.toContain('Stale');
+    expect(summary?.textContent).not.toContain('วินาที');
+  });
+
+  it('keeps every run detail, one tap away and closed by default', () => {
+    render({ ...dashboardData('ready'), breadth: breadth() });
+    const details = disclosure();
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain('ดึงข้อมูลไม่สำเร็จ 1');
+    expect(details?.textContent).toContain('ข้อมูลเก่ากว่ากำหนด 210');
+    expect(details?.textContent).toContain('0.4 วินาที');
+    expect(details?.textContent).toContain('550');
+    expect(details?.textContent).toContain('578');
   });
 });

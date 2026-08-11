@@ -25,6 +25,7 @@
 import { billingPlanKeys, billingPlans, formatBillingBaht } from '@/src/lib/billing/billing-plans';
 import { REFUND_WINDOW_DAYS } from '@/src/lib/billing/refund-window';
 import { TRIAL_IDENTITY_RETENTION_YEARS } from '@/src/lib/trial-identity/retention';
+import { TRIAL_ELIGIBILITY_STATEMENT } from '@/src/lib/subscription/trial';
 
 /**
  * The two channels a reader who cannot sign in can still reach us on.
@@ -36,7 +37,23 @@ import { TRIAL_IDENTITY_RETENTION_YEARS } from '@/src/lib/trial-identity/retenti
  * number handed to every reader is a support channel that stops working the
  * moment there is more than one of them.
  */
-export const SUPPORT_CONTACTS = {
+export interface SupportContact {
+  label: string;
+  value: string;
+  detail: string;
+  /**
+   * The canonical destination, when one exists.
+   *
+   * Facebook has none — not in this file, not in configuration, not in the
+   * environment. A profile URL guessed from a person's name is not a contact
+   * channel; it is a link that may open somebody else entirely. The card
+   * therefore renders this contact as the name to search for, and becomes a real
+   * link the moment a verified URL is added here, with no other change.
+   */
+  href?: string;
+}
+
+export const SUPPORT_CONTACTS: Record<'lineOpenChat' | 'facebook', SupportContact> = {
   lineOpenChat: {
     label: 'LINE OpenChat',
     value: 'PORTKHEAW COMMUNITY',
@@ -48,7 +65,7 @@ export const SUPPORT_CONTACTS = {
     value: 'Jesada Tawinteung',
     detail: 'สำหรับเรื่องบัญชีและการชำระเงิน',
   },
-} as const;
+};
 
 export type LegalBlock =
   | { kind: 'paragraph'; text: string }
@@ -241,7 +258,8 @@ const TERMS: LegalDocument = {
           kind: 'list',
           items: [
             'คุณต้องให้ข้อมูลที่ถูกต้องในการสมัคร และดูแลรหัสผ่านของคุณเอง',
-            'หนึ่งบัญชีมีสิทธิ์ใช้แพ็กเกจได้ครั้งละหนึ่งแพ็กเกจ และมีสิทธิ์ทดลอง Elite ฟรีได้หนึ่งครั้งต่อบัญชี',
+            'หนึ่งบัญชีมีสิทธิ์ใช้แพ็กเกจได้ครั้งละหนึ่งแพ็กเกจ',
+            TRIAL_ELIGIBILITY_STATEMENT,
             'ห้ามใช้บัญชีร่วมกันหลายคน หรือใช้เครื่องมืออัตโนมัติดึงข้อมูลออกจากระบบในลักษณะที่กระทบผู้ใช้อื่น',
             'เราอาจระงับบัญชีที่ใช้งานผิดวัตถุประสงค์ ละเมิดกฎหมาย หรือมีการโต้แย้งการชำระเงินที่ยังไม่ได้ข้อยุติ',
           ],
@@ -622,8 +640,8 @@ const SUBSCRIPTION_POLICY: LegalDocument = {
         {
           kind: 'paragraph',
           text:
-            'แพ็กเกจ Basic ใช้งานได้ฟรีโดยไม่มีค่าใช้จ่าย และบัญชีใหม่ที่ยืนยันอีเมลแล้วมีสิทธิ์ทดลอง Elite ฟรี 7 วัน '
-            + 'หนึ่งครั้งต่อบัญชี โดยไม่ต้องผูกบัตร',
+            'แพ็กเกจ Basic ใช้งานได้ฟรีโดยไม่มีค่าใช้จ่าย และบัญชีที่ยืนยันอีเมลแล้วเริ่มทดลอง Elite ได้โดยไม่ต้องผูกบัตร '
+            + `— ${TRIAL_ELIGIBILITY_STATEMENT}`,
         },
         { kind: 'callout', tone: 'info', text: FOUNDER_RULE },
       ],

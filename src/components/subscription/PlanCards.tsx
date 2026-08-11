@@ -99,7 +99,7 @@ function PlanCard({ plan, current, availability, hasLiveSubscription, hasOpenInv
         <p className="text-sm text-[var(--text-secondary)]">{plan.tagline}</p>
       </header>
 
-      <PlanPrice plan={plan} billingOpen={availability.enabled} />
+      <PlanPriceBlock plan={plan} billingOpen={availability.enabled} />
 
       <ul className="flex flex-1 flex-col gap-2.5 text-sm text-[var(--text-secondary)]">
         {plan.highlights.map((id) => (
@@ -127,7 +127,12 @@ function PlanCard({ plan, current, availability, hasLiveSubscription, hasOpenInv
   );
 }
 
-function PlanPrice({ plan, billingOpen }: { plan: PlanDescriptor; billingOpen: boolean }) {
+/**
+ * The price block, shared with the public pricing page so a visitor and a
+ * signed-in reader are quoted from one piece of markup and one catalogue —
+ * including the Founder first-year line and its renewal caveat.
+ */
+export function PlanPriceBlock({ plan, billingOpen }: { plan: PlanDescriptor; billingOpen: boolean }) {
   if (!plan.pricing) {
     return (
       <p className="text-2xl font-bold tabular-nums text-[var(--text)]">

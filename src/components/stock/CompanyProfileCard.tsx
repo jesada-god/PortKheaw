@@ -10,10 +10,11 @@ import { companyProfileErrorPresentation } from '@/src/lib/stock-detail/error-pr
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import {
   awaitsThaiDescription,
-  companyProfileKind,
   displayCountry,
   displayFiscalYearEnd,
   isCompanyProfileTranslationLoading,
+  profileSourceLabel,
+  resolveAssetPresentationPolicy,
   resolveCompanyProfileLabels,
   resolvedDescription,
   shouldRequestCompanyProfileTranslation,
@@ -38,7 +39,7 @@ function Field({
   missingLabel: string;
 }) {
   return (
-    <div className="min-w-0">
+    <div data-profile-field={label} className="min-w-0">
       <p className="text-xs text-slate-500">{label}</p>
       <p className="mt-1 break-words text-sm text-white">{value ?? missingLabel}</p>
     </div>
@@ -98,9 +99,10 @@ export function CompanyProfileCard({
   assetType?: string | null;
 }) {
   const sourceText = profile?.description?.trim() || null;
-  const [localLanguage, setLocalLanguage] = useState<CompanyProfileLanguage>(
-    sourceText ? 'th' : 'en',
-  );
+  // Thai is the reader's language. It used to default to English whenever there
+  // was no description, which put the whole card into English over a fact about
+  // one paragraph.
+  const [localLanguage, setLocalLanguage] = useState<CompanyProfileLanguage>('th');
   const language = controlledLanguage ?? localLanguage;
   const setLanguage = onLanguageChange ?? setLocalLanguage;
   const [attempt, setAttempt] = useState(0);
@@ -163,33 +165,36 @@ export function CompanyProfileCard({
     sourceText,
     translationSettled: Boolean(activeTranslation),
   });
-  const profileKind = companyProfileKind(assetType);
-  const labels = resolveCompanyProfileLabels(activeLanguage, profileKind);
-  const errorPresentation = companyProfileErrorPresentation(error, activeLanguage);
-  const status = PROFILE_STATUS_LABELS[activeLanguage][freshness.status];
+  /*
+   * The card's own wording follows the READER's language, not the description's.
+   * They used to be the same value, so an instrument with no description to
+   * translate — every crypto asset, and any symbol whose provider returned no
+   * paragraph — forced the whole card into English: a Thai reader met
+   * "Crypto Asset Profile". Only the description still falls back to English,
+   * because that is the only text there is no Thai version of.
+   */
+  const policy = resolveAssetPresentationPolicy(assetType);
+  const labels = resolveCompanyProfileLabels(language, policy.kind);
+  const errorPresentation = companyProfileErrorPresentation(error, language);
+  const status = PROFILE_STATUS_LABELS[language][freshness.status];
   const website = profile?.website ?? null;
   const profileCoolingDown = retryAt > 0;
   const profileTimestamp = freshness.cachedAt ?? freshness.asOf;
-  const fields = useMemo(() => profileKind === 'crypto'
-    ? [{ label: labels.currency, value: profile?.currency ?? null }]
-    : [
-        {
-          label: labels.country,
-          value: displayCountry(profile?.country ?? null, activeLanguage),
-        },
-        {
-          label: labels.employees,
-          value: profile?.employees == null ? null : profile.employees.toLocaleString('en-US'),
-        },
-        {
-          label: labels.currency,
-          value: profile?.currency ?? null,
-        },
-        {
-          label: labels.fiscalYearEnd,
-          value: displayFiscalYearEnd(profile?.fiscalYearEnd ?? null, activeLanguage),
-        },
-      ], [activeLanguage, labels, profile, profileKind]);
+  const fields = useMemo(() => [
+    ...(policy.showCountry ? [{
+      label: labels.country,
+      value: displayCountry(profile?.country ?? null, language),
+    }] : []),
+    ...(policy.showEmployees ? [{
+      label: labels.employees,
+      value: profile?.employees == null ? null : profile.employees.toLocaleString('en-US'),
+    }] : []),
+    { label: labels.currency, value: profile?.currency ?? null },
+    ...(policy.showFiscalYearEnd ? [{
+      label: labels.fiscalYearEnd,
+      value: displayFiscalYearEnd(profile?.fiscalYearEnd ?? null, language),
+    }] : []),
+  ], [labels, language, policy, profile]);
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
@@ -197,8 +202,8 @@ export function CompanyProfileCard({
         <div className="min-w-0">
           <h2 className="font-bold text-white">{labels.title}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-            <span className="break-words">
-              {status} · {provider ?? labels.unknownProvider}
+            <span className="break-words" title={provider ?? undefined}>
+              {status} · {profileSourceLabel(provider) ?? labels.unknownProvider}
               {profileTimestamp
                 ? ` · ${formatMarketDataAsOf(profileTimestamp, {
                     dateOnly: !freshness.cachedAt && profileTimestamp === freshness.asOf,
@@ -212,26 +217,32 @@ export function CompanyProfileCard({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 rounded-lg border border-slate-700 p-1" aria-label="Company Profile language">
-          <button
-            type="button"
-            aria-pressed={activeLanguage === 'th'}
-            disabled={!sourceText}
-            title={!sourceText ? 'ยังไม่มีข้อความต้นฉบับสำหรับแปล' : undefined}
-            onClick={() => setLanguage('th')}
-            className={`min-h-9 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${activeLanguage === 'th' ? 'bg-[#D4FF00] text-black' : 'text-slate-300'}`}
-          >
-            ไทย
-          </button>
-          <button
-            type="button"
-            aria-pressed={activeLanguage === 'en'}
-            onClick={() => setLanguage('en')}
-            className={`min-h-9 rounded-md px-3 text-xs ${activeLanguage === 'en' ? 'bg-[#D4FF00] text-black' : 'text-slate-300'}`}
-          >
-            English
-          </button>
-        </div>
+        {/*
+          The toggle switches the DESCRIPTION's language, so it appears only when
+          there is a description. It used to render permanently disabled beside a
+          card that had already been forced into English, which read as a broken
+          control rather than as "there is nothing here to translate".
+        */}
+        {sourceText && (
+          <div className="flex shrink-0 rounded-lg border border-slate-700 p-1" aria-label="Company Profile language">
+            <button
+              type="button"
+              aria-pressed={activeLanguage === 'th'}
+              onClick={() => setLanguage('th')}
+              className={`min-h-9 rounded-md px-3 text-xs ${activeLanguage === 'th' ? 'bg-[#D4FF00] text-black' : 'text-slate-300'}`}
+            >
+              ไทย
+            </button>
+            <button
+              type="button"
+              aria-pressed={activeLanguage === 'en'}
+              onClick={() => setLanguage('en')}
+              className={`min-h-9 rounded-md px-3 text-xs ${activeLanguage === 'en' ? 'bg-[#D4FF00] text-black' : 'text-slate-300'}`}
+            >
+              English
+            </button>
+          </div>
+        )}
       </div>
 
       {errorPresentation && (

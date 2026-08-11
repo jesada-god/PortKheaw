@@ -63,9 +63,26 @@ function legacyQuote(quote: NormalizedQuote): Quote {
   };
 }
 
+function localDate(seconds: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(seconds * 1_000));
+}
+
 function quoteFromBars(instrument: ResolvedInstrument, bars: NormalizedBarsResult): NormalizedQuote | null {
   const latest = bars.bars.at(-1);
   if (!latest) return null;
+  /*
+   * The displayed day's open/high/low/volume, not the last five-minute bucket's.
+   * These bars are the regular session of a single day, so its FIRST bar is the
+   * session open — taking `latest.open` here published a five-minute bucket as
+   * "ราคาเปิด". Every field still comes from real bars; nothing is derived from
+   * the price.
+   */
+  const day = bars.bars.filter((bar) => (
+    localDate(bar.time, instrument.timezone) === localDate(latest.time, instrument.timezone)
+  ));
+  const session = day.length > 0 ? day : [latest];
   return {
     symbol: instrument.canonicalSymbol,
     price: latest.close,
@@ -80,10 +97,10 @@ function quoteFromBars(instrument: ResolvedInstrument, bars: NormalizedBarsResul
     status: bars.dataStatus === 'cached' || bars.dataStatus === 'stale'
       ? bars.dataStatus : bars.dataStatus === 'end-of-day' ? 'end-of-day' : 'delayed',
     delayedByMinutes: bars.delayedByMinutes,
-    open: latest.open,
-    high: latest.high,
-    low: latest.low,
-    volume: latest.volume,
+    open: session[0]!.open,
+    high: Math.max(...session.map((bar) => bar.high)),
+    low: Math.min(...session.map((bar) => bar.low)),
+    volume: session.reduce((total, bar) => total + bar.volume, 0),
   };
 }
 

@@ -6,6 +6,8 @@ import {
   displayFiscalYearEnd,
   formatMarketCapitalization,
   isCompanyProfileTranslationLoading,
+  profileSourceLabel,
+  resolveAssetPresentationPolicy,
   resolveCompanyProfileLabels,
   resolvedDescription,
   shouldRequestCompanyProfileTranslation,
@@ -127,5 +129,69 @@ describe('Thai description handover', () => {
     expect(awaitsThaiDescription({
       language: 'th', sourceText: '   ', translationSettled: false,
     })).toBe(false);
+  });
+});
+
+/**
+ * The company-profile providers answer for the LEGAL ENTITY behind a symbol.
+ * That entity is the business for a common stock, the issuer for an ETF, and
+ * nothing at all for a spot crypto pair — so what may be shown differs.
+ */
+describe('asset presentation policy', () => {
+  it('shows the full company profile for an equity', () => {
+    const policy = resolveAssetPresentationPolicy('Stock');
+    expect(policy.kind).toBe('company');
+    expect(policy.showEmployees).toBe(true);
+    expect(policy.showFiscalYearEnd).toBe(true);
+    expect(policy.showSectorAndIndustry).toBe(true);
+    expect(policy.showMarketCapitalization).toBe(true);
+    expect(policy.showFinancials).toBe(true);
+  });
+
+  it('withholds issuer metadata, and issuer market cap, from an ETF', () => {
+    const policy = resolveAssetPresentationPolicy('ETF');
+    expect(policy.kind).toBe('fund');
+    expect(policy.showEmployees).toBe(false);
+    expect(policy.showFiscalYearEnd).toBe(false);
+    // State Street's "Asset Management" is not SPY's sector exposure.
+    expect(policy.showSectorAndIndustry).toBe(false);
+    // Net assets/AUM is not in this contract, and the issuer's market cap is
+    // not a substitute for it.
+    expect(policy.showMarketCapitalization).toBe(false);
+    // A fund still trades, still has options and still has price analytics.
+    expect(policy.showFinancials).toBe(true);
+    expect(policy.showOptionsAnalysis).toBe(true);
+  });
+
+  it('withholds every corporate field, and both equity-only tabs, from crypto', () => {
+    const policy = resolveAssetPresentationPolicy('crypto');
+    expect(policy.kind).toBe('crypto');
+    expect(policy.showEmployees).toBe(false);
+    expect(policy.showFiscalYearEnd).toBe(false);
+    expect(policy.showCountry).toBe(false);
+    expect(policy.showSectorAndIndustry).toBe(false);
+    expect(policy.showMarketCapitalization).toBe(false);
+    expect(policy.showFinancials).toBe(false);
+    expect(policy.showOptionsAnalysis).toBe(false);
+  });
+
+  it('treats an unknown asset type as a company rather than guessing', () => {
+    expect(resolveAssetPresentationPolicy(null).kind).toBe('company');
+    expect(resolveAssetPresentationPolicy('').showSectorAndIndustry).toBe(true);
+  });
+});
+
+describe('profile source labels', () => {
+  it('names the source a reader can recognise instead of a routing id', () => {
+    expect(profileSourceLabel('alpha-vantage')).toBe('Alpha Vantage');
+    expect(profileSourceLabel('continuous-market')).toBe('Yahoo Finance');
+    expect(profileSourceLabel('financial-modeling-prep+alpha-vantage'))
+      .toBe('Financial Modeling Prep · Alpha Vantage');
+  });
+
+  it('passes an unmapped provider through untouched, and null stays null', () => {
+    expect(profileSourceLabel('some-new-provider')).toBe('some-new-provider');
+    expect(profileSourceLabel(null)).toBeNull();
+    expect(profileSourceLabel('  ')).toBeNull();
   });
 });

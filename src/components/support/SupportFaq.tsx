@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { billingPlans, formatBillingBaht } from '@/src/lib/billing/billing-plans';
+import { TRIAL_ELIGIBILITY_SHORT } from '@/src/lib/subscription/trial';
 
 /**
  * The questions that would otherwise become tickets.
@@ -18,7 +19,9 @@ const FAQ: readonly { question: string; answer: React.ReactNode }[] = [
       <>
         บัญชีที่ยืนยันอีเมลแล้วกดเริ่มทดลอง Elite ฟรี 7 วันได้จากหน้า{' '}
         <FaqLink href="/settings/subscription">แพ็กเกจของคุณ</FaqLink> โดยไม่ต้องผูกบัตร
-        ใช้สิทธิ์ได้หนึ่งครั้งต่อหนึ่งบัญชี และเมื่อครบ 7 วันจะกลับไปใช้ Basic เองโดยไม่มีการเรียกเก็บเงิน
+        {' '}{TRIAL_ELIGIBILITY_SHORT} และเมื่อครบ 7 วันจะกลับไปใช้ Basic เองโดยไม่มีการเรียกเก็บเงิน
+        {' '}เปรียบเทียบสิ่งที่แต่ละแพ็กเกจให้ได้ที่{' '}
+        <FaqLink href="/pricing">แพ็กเกจและราคา</FaqLink>
       </>
     ),
   },

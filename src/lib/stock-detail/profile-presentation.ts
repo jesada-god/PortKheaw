@@ -125,6 +125,109 @@ export function companyProfileKind(assetType: string | null | undefined): Compan
   return 'company';
 }
 
+/**
+ * Which profile facts Stock Detail may show for an instrument, decided once from
+ * the instrument master's own asset type.
+ *
+ * The company-profile providers answer for the LEGAL ENTITY behind a symbol. For
+ * a common stock that entity is the business the reader came to look at. For an
+ * ETF it is the issuer: SPY's "sector" is State Street's (Financial Services),
+ * its "employees" are State Street's, its fiscal year is State Street's, and its
+ * market capitalisation describes the issuer, not the fund. Rendering any of
+ * those beside a fund's price states something false about the fund, so this
+ * withholds them. A fund's own size is net assets/AUM — a metric this profile
+ * contract does not carry — so the field is hidden rather than filled with the
+ * issuer's number under a new name.
+ *
+ * A 24/7 digital asset has no filings, no headcount and no sector at all.
+ *
+ * Built on {@link companyProfileKind} so there is exactly one classification.
+ */
+export interface AssetPresentationPolicy {
+  kind: CompanyProfileKind;
+  showEmployees: boolean;
+  showFiscalYearEnd: boolean;
+  showCountry: boolean;
+  /** Issuer classification is not a fund's exposure, and a currency has none. */
+  showSectorAndIndustry: boolean;
+  /** Corporate market capitalisation. Never reused as a fund's size. */
+  showMarketCapitalization: boolean;
+  /** Analyst targets, key statistics and market signal are equity fundamentals. */
+  showFinancials: boolean;
+  /** US-listed options analytics. Nothing lists options on a spot crypto pair. */
+  showOptionsAnalysis: boolean;
+}
+
+export function resolveAssetPresentationPolicy(
+  assetType: string | null | undefined,
+): AssetPresentationPolicy {
+  const kind = companyProfileKind(assetType);
+  if (kind === 'crypto') {
+    return {
+      kind,
+      showEmployees: false,
+      showFiscalYearEnd: false,
+      showCountry: false,
+      showSectorAndIndustry: false,
+      showMarketCapitalization: false,
+      showFinancials: false,
+      showOptionsAnalysis: false,
+    };
+  }
+  if (kind === 'fund') {
+    return {
+      kind,
+      showEmployees: false,
+      showFiscalYearEnd: false,
+      showCountry: true,
+      showSectorAndIndustry: false,
+      showMarketCapitalization: false,
+      showFinancials: true,
+      showOptionsAnalysis: true,
+    };
+  }
+  return {
+    kind,
+    showEmployees: true,
+    showFiscalYearEnd: true,
+    showCountry: true,
+    showSectorAndIndustry: true,
+    showMarketCapitalization: true,
+    showFinancials: true,
+    showOptionsAnalysis: true,
+  };
+}
+
+/**
+ * Reader-facing names for the provider ids the profile pipeline reports.
+ *
+ * The card showed the raw id ("Cached · continuous-market"), which is a routing
+ * detail, not a source a reader can evaluate. The provenance itself is kept —
+ * transparency about where a number came from is the point — but it is stated in
+ * the name the source actually goes by, with the raw id still carried in the
+ * element's tooltip for support and debugging.
+ */
+const PROFILE_SOURCE_NAMES: Record<string, string> = {
+  'continuous-market': 'Yahoo Finance',
+  'yahoo-finance-chart': 'Yahoo Finance',
+  'financial-modeling-prep': 'Financial Modeling Prep',
+  'alpha-vantage': 'Alpha Vantage',
+  finnhub: 'Finnhub',
+  polygon: 'Polygon.io',
+  'market-data-gateway': 'PortKheaw Market Gateway',
+};
+
+export function profileSourceLabel(provider: string | null | undefined): string | null {
+  const raw = provider?.trim();
+  if (!raw) return null;
+  return raw
+    .split(/[+>]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => PROFILE_SOURCE_NAMES[part] ?? part)
+    .join(' · ');
+}
+
 export type CompanyProfileLabels = Record<
   keyof typeof companyProfileLabels['th'],
   string

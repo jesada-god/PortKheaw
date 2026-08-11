@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { billingPlans, formatBillingBaht } from '@/src/lib/billing/billing-plans';
+import { TRIAL_ELIGIBILITY_STATEMENT } from '@/src/lib/subscription/trial';
 import {
   SUPPORT_CONTACTS,
   legalDocumentSlugs,
@@ -184,6 +185,37 @@ describe('what the copy must not do', () => {
   });
 });
 
+/**
+ * The trial promise and the trial behaviour, held together.
+ *
+ * The system records a trial against the account's verified identities and that
+ * record outlives the account, so "หนึ่งครั้งต่อบัญชี" promised a reset that a
+ * deleted-and-recreated account never gets. Every trust page reads the same
+ * sentence from `TRIAL_ELIGIBILITY_STATEMENT`, so the two cannot drift again.
+ */
+describe('trial eligibility wording', () => {
+  it('states the identity rule on the pages a buyer reads', () => {
+    for (const slug of ['terms', 'subscription-policy'] as const) {
+      expect(allText(slug)).toContain(TRIAL_ELIGIBILITY_STATEMENT);
+    }
+  });
+
+  it('never promises a fresh trial per account', () => {
+    for (const slug of legalDocumentSlugs) {
+      expect(allText(slug)).not.toContain('ทดลอง Elite ฟรีได้หนึ่งครั้งต่อบัญชี');
+      expect(allText(slug)).not.toContain('หนึ่งครั้งต่อบัญชี');
+    }
+  });
+
+  it('says a deleted account does not reset the trial, on Privacy too', () => {
+    expect(allText('privacy')).toContain('จะไม่ได้รับสิทธิทดลองฟรีอีก');
+  });
+
+  it('keeps the security mechanism out of the buyer-facing sentence', () => {
+    expect(TRIAL_ELIGIBILITY_STATEMENT).not.toMatch(/HMAC|hash|แฮช/i);
+  });
+});
+
 describe('support contacts', () => {
   const supportCard = () =>
     readFileSync(resolve(process.cwd(), 'src/components/support/SupportContactCard.tsx'), 'utf8');
@@ -210,6 +242,19 @@ describe('support contacts', () => {
     expect(card).toContain("target=\"_blank\"");
     expect(card).toContain('rel="noopener noreferrer"');
     expect(card).toContain('aria-label');
+  });
+
+  /*
+   * A channel becomes clickable because it HAS a verified URL, not because of
+   * which channel it is. Facebook has none in code or configuration, and a
+   * profile URL guessed from a person's name may open somebody else entirely.
+   */
+  it('renders a contact as a link only when a real URL exists for it', () => {
+    expect(SUPPORT_CONTACTS.facebook.href).toBeUndefined();
+    const card = supportCard();
+    expect(card).toContain('SUPPORT_CONTACTS.facebook.href');
+    expect(card).toContain('if (!href) return');
+    expect(card).not.toMatch(/facebook\.com|fb\.me|m\.me/i);
   });
 
   it('carries no personal phone number in the contact surface', () => {

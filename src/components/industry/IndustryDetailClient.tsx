@@ -293,10 +293,10 @@ export function IndustryDetailClient({
               </p>
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  ['Average', signed(industry.averageChange, '%'), tone(industry.averageChange)],
-                  ['Median', signed(industry.medianChange, '%'), tone(industry.medianChange)],
-                  ['Up / Down', industry.upDownRatio === null ? 'คำนวณไม่ได้' : number(industry.upDownRatio), 'text-[var(--text)]'],
-                  ['Coverage', `${industry.validCount}/${industry.totalCount}`, 'text-[var(--text)]'],
+                  ['ค่าเฉลี่ย', signed(industry.averageChange, '%'), tone(industry.averageChange)],
+                  ['ค่ากลาง', signed(industry.medianChange, '%'), tone(industry.medianChange)],
+                  ['ขึ้น / ลง', industry.upDownRatio === null ? 'คำนวณไม่ได้' : number(industry.upDownRatio), 'text-[var(--text)]'],
+                  ['ความครอบคลุมของข้อมูล', `${industry.validCount}/${industry.totalCount}`, 'text-[var(--text)]'],
                 ].map(([label, value, color]) => (
                   <div key={String(label)} className="rounded-xl bg-[var(--surface-elevated)] p-2 text-center">
                     <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>

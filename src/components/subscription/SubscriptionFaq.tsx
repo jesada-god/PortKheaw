@@ -1,5 +1,8 @@
 import { ChevronDown } from 'lucide-react';
-import { TRIAL_DURATION_DAYS } from '@/src/lib/subscription/trial';
+import {
+  TRIAL_DURATION_DAYS,
+  TRIAL_ELIGIBILITY_STATEMENT,
+} from '@/src/lib/subscription/trial';
 
 /**
  * Built on `<details>` rather than a disclosure widget in React: the answers are
@@ -22,11 +25,11 @@ function faqEntries(billingEnabled: boolean) {
   return [
     {
       question: 'ทดลอง Elite ได้กี่ครั้ง',
-      answer: `สิทธิ์ทดลองใช้ได้ครั้งเดียวต่อบัญชี เมื่อกดเริ่มแล้วจะนับ ${TRIAL_DURATION_DAYS} วันทันที และเริ่มใหม่อีกรอบไม่ได้`,
+      answer: `${TRIAL_ELIGIBILITY_STATEMENT} เมื่อกดเริ่มแล้วจะนับ ${TRIAL_DURATION_DAYS} วันทันที และเริ่มใหม่อีกรอบไม่ได้`,
     },
     {
       question: 'ทำไมต้องยืนยันอีเมลก่อน',
-      answer: 'การยืนยันอีเมลช่วยให้แน่ใจว่าบัญชีเป็นของคุณจริง และทำให้สิทธิ์ทดลองหนึ่งครั้งผูกกับหนึ่งบัญชีได้อย่างถูกต้อง',
+      answer: 'การยืนยันอีเมลช่วยให้แน่ใจว่าบัญชีเป็นของคุณจริง และทำให้สิทธิทดลองหนึ่งครั้งผูกกับข้อมูลยืนยันตัวตนของคุณได้อย่างถูกต้อง',
     },
     {
       question: 'ทดลอง Elite ต้องผูกบัตรหรือจ่ายเงินไหม',

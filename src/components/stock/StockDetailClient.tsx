@@ -30,8 +30,13 @@ import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/
 import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
 import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
-import { formatMarketCapitalization } from '@/src/lib/stock-detail/profile-presentation';
+import {
+  formatMarketCapitalization,
+  profileSourceLabel,
+  resolveAssetPresentationPolicy,
+} from '@/src/lib/stock-detail/profile-presentation';
 import type { CompanyProfileLanguage } from '@/src/lib/stock-detail/profile-presentation';
+import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import { resolveCompanyIdentity } from '@/src/lib/stock-detail/identity';
 import type {
   InitialHistoryResponse,
@@ -89,7 +94,23 @@ const OptionsSignalSection = dynamic(
   },
 );
 
-const tabs = ['Overview', 'Chart', 'Financials', 'News', 'Analysis'];
+/**
+ * The tab strip an instrument actually has content for.
+ *
+ * Financials is analyst targets, key statistics and a fundamentals-driven market
+ * signal; Analysis is the US-listed options chain and its analytics. Neither
+ * exists for a spot crypto pair, so both used to open on a permanently empty
+ * panel. The presentation policy — not this component — decides that.
+ */
+function tabsFor(policy: { showFinancials: boolean; showOptionsAnalysis: boolean }): string[] {
+  return [
+    'Overview',
+    'Chart',
+    ...(policy.showFinancials ? ['Financials'] : []),
+    'News',
+    ...(policy.showOptionsAnalysis ? ['Analysis'] : []),
+  ];
+}
 
 interface StockDetailClientProps {
   symbol: string;
@@ -127,14 +148,20 @@ function MetricCard({
   label,
   value,
   tooltip,
+  footnote,
 }: {
   label: string;
   value: string | null;
   tooltip?: string;
+  /**
+   * Secondary provenance for a metric that does NOT share the live quote's
+   * timestamp — see the market-capitalisation card below.
+   */
+  footnote?: string | null;
 }) {
   return (
-    <div className="min-h-20 rounded-xl border border-slate-800 bg-[#151B28] p-3">
-      <p className="flex items-center gap-1 text-[10px] uppercase text-slate-500">
+    <div data-metric={label} className="min-h-20 rounded-xl border border-slate-800 bg-[#151B28] p-3">
+      <p className="flex items-center gap-1 text-[10px] text-slate-500">
         {label}
         {tooltip && (
           <span
@@ -148,6 +175,9 @@ function MetricCard({
       <p className="mt-2 break-words font-mono text-sm text-white">
         {value ?? 'ไม่พบข้อมูล'}
       </p>
+      {footnote && (
+        <p className="mt-1 break-words text-[10px] leading-4 text-slate-500">{footnote}</p>
+      )}
     </div>
   );
 }
@@ -193,9 +223,12 @@ export function StockDetailClient({
       ?? 0;
     return seconds > 0 ? Date.parse(evaluatedAt) + seconds * 1_000 : 0;
   });
-  const [profileLanguage, setProfileLanguage] = useState<CompanyProfileLanguage>(
-    initialProfileResource.data?.description ? 'th' : 'en',
-  );
+  // Thai is the reader's language for the card's own wording. The DESCRIPTION
+  // still falls back to English when there is no Thai version of it, which the
+  // card resolves separately.
+  const [profileLanguage, setProfileLanguage] = useState<CompanyProfileLanguage>('th');
+  const presentation = resolveAssetPresentationPolicy(instrumentAssetType);
+  const tabs = tabsFor(presentation);
   const [lastKnownExtended, setLastKnownExtended] = useState<{
     symbol: string;
     quote: PriceHeaderExtendedQuote | null;
@@ -670,29 +703,62 @@ function Overview({
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
+  const policy = resolveAssetPresentationPolicy(instrumentAssetType);
   const priceMetrics = [
-    { label: 'Open', value: numberValue(quote?.open) },
-    { label: 'High', value: numberValue(quote?.high) },
-    { label: 'Low', value: numberValue(quote?.low) },
     {
-      label: 'Prev Close',
+      label: 'ราคาเปิด',
+      value: numberValue(quote?.open),
+      tooltip: continuousMarket
+        ? 'ราคาแรกของวัน (Open) ตามวันสากล UTC ของสินทรัพย์ที่ซื้อขายตลอด 24 ชั่วโมง'
+        : 'ราคาแรกที่ซื้อขายเมื่อเปิดตลาดของวันนี้ (Open)',
+    },
+    {
+      label: 'สูงสุดวันนี้',
+      value: numberValue(quote?.high),
+      tooltip: 'ราคาสูงสุดที่ซื้อขายกันในวันนี้ (High)',
+    },
+    {
+      label: 'ต่ำสุดวันนี้',
+      value: numberValue(quote?.low),
+      tooltip: 'ราคาต่ำสุดที่ซื้อขายกันในวันนี้ (Low)',
+    },
+    {
+      label: 'ราคาปิดก่อนหน้า',
       value: numberValue(quote?.previousClose) ?? '—',
-      tooltip: 'ราคาปิดของวันซื้อขายก่อนหน้า ใช้เป็นฐานเปรียบเทียบว่าราคาวันนี้เพิ่มขึ้นหรือลดลงเท่าไร',
+      tooltip: 'ราคาปิดของวันซื้อขายก่อนหน้า (Prev Close) ใช้เป็นฐานเปรียบเทียบว่าราคาวันนี้เพิ่มขึ้นหรือลดลงเท่าไร',
     },
   ];
+  /*
+   * Market capitalisation is a FUNDAMENTAL, loaded from the company-profile
+   * provider on its own (day-long) cache — not from the quote pipeline. Sitting
+   * unannotated beside a live volume it read as being just as current, so it
+   * carries its own source and as-of. It is withheld entirely for an instrument
+   * whose profile describes something other than the traded asset (see
+   * `resolveAssetPresentationPolicy`).
+   */
+  const marketCapitalizationValue = formatMarketCapitalization(
+    profile?.marketCapitalization ?? null,
+    marketCapitalizationCurrency,
+  );
+  const profileAsOf = profileResource.freshness.cachedAt ?? profileResource.freshness.asOf;
   const profileMetrics = [
-    { label: 'Volume', value: numberValue(quote?.volume) },
     {
-      label: 'Market cap',
-      value: formatMarketCapitalization(
-        profile?.marketCapitalization ?? null,
-        marketCapitalizationCurrency,
-      ),
+      label: 'ปริมาณซื้อขาย',
+      value: numberValue(quote?.volume),
+      tooltip: 'จำนวนหุ้น/หน่วยที่ซื้อขายกันในวันนี้ (Volume)',
     },
-    ...(continuousMarket ? [] : [
-      { label: 'Sector', value: profile?.sector ?? null },
-      { label: 'Industry', value: profile?.industry ?? null },
-    ]),
+    ...(policy.showMarketCapitalization ? [{
+      label: 'มูลค่าตลาด',
+      value: marketCapitalizationValue,
+      tooltip: 'มูลค่าตลาดรวมของบริษัท (Market Cap) = ราคาหุ้น × จำนวนหุ้นทั้งหมด เป็นข้อมูลพื้นฐาน ไม่ได้อัปเดตแบบเรียลไทม์พร้อมราคา',
+      footnote: marketCapitalizationValue && profileAsOf
+        ? `ข้อมูลพื้นฐาน · ${profileSourceLabel(profileResource.provider) ?? 'ไม่ทราบแหล่งข้อมูล'} · ${formatMarketDataAsOf(profileAsOf)}`
+        : null,
+    }] : []),
+    ...(policy.showSectorAndIndustry ? [
+      { label: 'กลุ่มธุรกิจ', value: profile?.sector ?? null, tooltip: 'หมวดธุรกิจหลักของบริษัท (Sector)' },
+      { label: 'อุตสาหกรรม', value: profile?.industry ?? null, tooltip: 'อุตสาหกรรมย่อยของบริษัท (Industry)' },
+    ] : []),
   ];
 
   return (
@@ -700,9 +766,17 @@ function Overview({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
-      <div className={`grid grid-cols-2 gap-3 ${continuousMarket ? 'md:grid-cols-2' : 'md:grid-cols-4'}`}>
+      <div className={`grid gap-3 ${profileMetrics.length > 2 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'}`}>
         {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
+      {policy.kind === 'fund' && (
+        <p className="text-xs leading-6 text-slate-500">
+          กองทุน ETF ถือสินทรัพย์หลายรายการแทนการเป็นบริษัทเดียว
+          ข้อมูลบริษัทผู้ออกกองทุน เช่น กลุ่มธุรกิจ จำนวนพนักงาน หรือมูลค่าตลาดของผู้ออก
+          จึงไม่ได้อธิบายสิ่งที่กองทุนนี้ลงทุน และ PortKheaw ยังไม่มีข้อมูลขนาดกองทุน (สินทรัพย์สุทธิ)
+          จากแหล่งข้อมูลที่เชื่อถือได้ จึงไม่แสดงตัวเลขเหล่านั้น
+        </p>
+      )}
       <CompanyProfileCard
         symbol={symbol}
         profile={profile}

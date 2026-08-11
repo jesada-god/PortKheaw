@@ -115,6 +115,87 @@ describe('Yahoo Chart candle provider', () => {
     });
   });
 
+  /**
+   * Yahoo's chart `meta` carries the day's high, low and volume but NOT
+   * `regularMarketOpen` — production responses for SPY, QQQ and BTC-USD all omit
+   * it. The session open still exists in the payload, as the daily candle for the
+   * price's own trading date, and that is the only place it may come from.
+   */
+  describe('session open', () => {
+    function chartPayload(meta: Record<string, unknown>) {
+      return {
+        chart: {
+          result: [{
+            meta: {
+              symbol: 'SPY',
+              currency: 'USD',
+              exchangeTimezoneName: 'America/New_York',
+              marketState: 'REGULAR',
+              regularMarketPrice: 772.19,
+              regularMarketTime: Date.parse('2026-07-24T18:00:00.000Z') / 1_000,
+              regularMarketDayHigh: 774.61,
+              regularMarketDayLow: 771.75,
+              regularMarketVolume: 13_090_372,
+              ...meta,
+            },
+            timestamp: [
+              Date.parse('2026-07-23T13:30:00.000Z') / 1_000,
+              Date.parse('2026-07-24T13:30:00.000Z') / 1_000,
+            ],
+            indicators: {
+              quote: [{
+                open: [770.1, 772.6],
+                high: [773, 774.61],
+                low: [769, 771.75],
+                close: [772.5, 772.19],
+                volume: [1_000, 2_000],
+              }],
+            },
+          }],
+          error: null,
+        },
+      };
+    }
+
+    function provider(payload: unknown) {
+      return new YahooCandleProvider(
+        new ProviderHttpClient({
+          fetcher: vi.fn<typeof fetch>(async () => new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })),
+          logger: () => undefined,
+          sleep: async () => undefined,
+        }),
+        () => new Date('2026-07-24T18:00:00.000Z'),
+      );
+    }
+
+    it("reads the open from the price's own daily candle when meta omits it", async () => {
+      const result = await provider(chartPayload({})).getQuote('SPY');
+      expect(result.data.open).toBe(772.6);
+      expect(result.data.high).toBe(774.61);
+      expect(result.data.low).toBe(771.75);
+    });
+
+    it('still prefers an explicit provider open when Yahoo supplies one', async () => {
+      const result = await provider(chartPayload({ regularMarketOpen: 772.55 })).getQuote('SPY');
+      expect(result.data.open).toBe(772.55);
+    });
+
+    it('leaves the open unavailable rather than borrowing another session or the price', async () => {
+      const payload = chartPayload({});
+      // Only the PREVIOUS session has a candle; nothing describes the priced day.
+      payload.chart.result[0].timestamp = [Date.parse('2026-07-23T13:30:00.000Z') / 1_000];
+      payload.chart.result[0].indicators.quote[0] = {
+        open: [770.1], high: [773], low: [769], close: [772.5], volume: [1_000],
+      };
+      const result = await provider(payload).getQuote('SPY');
+      expect(result.data.open).toBeNull();
+      expect(result.data.price).toBe(772.19);
+    });
+  });
+
   it('normalizes real Yahoo JSON into ordered, deduplicated canonical OHLCV and drops bad rows', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       chart: {

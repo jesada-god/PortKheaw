@@ -144,6 +144,40 @@ describe('loadStockDetailGatewaySnapshot for a continuous asset', () => {
     expect(snapshot.quote.error).toBeNull();
   });
 
+  /**
+   * A 24/7 asset's "today" is its UTC day. The snapshot used to publish the last
+   * five-minute bucket's own open/high/low as the day's, which is the wrong number
+   * under a ราคาเปิด / สูงสุดวันนี้ label.
+   */
+  it("reports the UTC day's own open, range and volume, not the last bucket's", async () => {
+    mocks.getQuote.mockRejectedValue(new Error('yahoo unavailable'));
+    const dayStart = Date.parse('2026-08-05T00:00:00.000Z') / 1_000;
+    const candles = yahooCandles();
+    candles.data.candles = [
+      { timestamp: dayStart, open: 63_000, high: 63_400, low: 62_800, close: 63_300, volume: 4 },
+      { timestamp: dayStart + 300, open: 63_300, high: 65_000, low: 63_100, close: 64_100, volume: 6 },
+      { timestamp: dayStart + 600, open: 64_100, high: 64_500, low: 64_000, close: 64_400, volume: 2 },
+    ];
+    mocks.getCandles.mockResolvedValue(candles);
+
+    const snapshot = await loadStockDetailGatewaySnapshot('BTC-USD');
+
+    expect(snapshot.quote.data?.open).toBe(63_000);
+    expect(snapshot.quote.data?.high).toBe(65_000);
+    expect(snapshot.quote.data?.low).toBe(62_800);
+    expect(snapshot.quote.data?.volume).toBe(12);
+  });
+
+  it('leaves the open unavailable when no bar proves where the day started', async () => {
+    mocks.getQuote.mockRejectedValue(new Error('yahoo unavailable'));
+
+    // The default fixture's earliest bar is 20:50 UTC — mid-day, not the open.
+    const snapshot = await loadStockDetailGatewaySnapshot('BTC-USD');
+
+    expect(snapshot.quote.data?.open).toBeNull();
+    expect(snapshot.quote.data?.high).toBe(64_500);
+  });
+
   it('degrades to a retryable failure only when quote and candles both fail', async () => {
     mocks.getQuote.mockRejectedValue(new Error('yahoo quote unavailable'));
     mocks.getCandles.mockRejectedValue(new Error('yahoo candles unavailable'));

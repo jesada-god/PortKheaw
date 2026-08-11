@@ -134,19 +134,52 @@ export function continuousAcceptedQuoteResource(
     marketKind: 'continuous',
     comparisonBase: resolved.comparisonBase,
   });
-  const latest = resolved.candles.at(-1);
-  return latest && resource.data
-    ? {
-        ...resource,
-        data: {
-          ...resource.data,
-          open: latest.open,
-          high: latest.high,
-          low: latest.low,
-          volume: Math.round(latest.volume),
-        },
-      }
-    : resource;
+  if (!resource.data) return resource;
+  const day = continuousDayStatistics(resolved.candles, resolved.accepted.exchangeTimestamp);
+  if (!day) return resource;
+  return {
+    ...resource,
+    data: {
+      ...resource.data,
+      // A 24/7 asset's "today" is its UTC day. The last five-minute bucket's own
+      // open/high/low is NOT that day's range, and presenting it as ราคาเปิด /
+      // สูงสุดวันนี้ was simply the wrong number — so each field is taken from the
+      // day's own bars, and `open` only from a bar that provably starts the day.
+      open: day.open ?? resource.data.open,
+      high: day.high ?? resource.data.high,
+      low: day.low ?? resource.data.low,
+      volume: day.volume ?? resource.data.volume,
+    },
+  };
+}
+
+/**
+ * The accepted price's own UTC-day open/high/low/volume, aggregated from the
+ * canonical five-minute bars the same snapshot already loaded.
+ *
+ * `open` is reported only when the first bar in hand genuinely opens that UTC day
+ * (the request window is 24h wide, so a day whose first bucket fell outside it
+ * cannot be described). Nothing is interpolated, forward-filled or derived from
+ * the current price: an unprovable open stays unavailable.
+ */
+function continuousDayStatistics(
+  candles: ContinuousAcceptedMarketData['candles'],
+  acceptedAt: string | null,
+): { open: number | null; high: number | null; low: number | null; volume: number | null } | null {
+  if (!acceptedAt) return null;
+  const dayStartSeconds = Date.parse(`${acceptedAt.slice(0, 10)}T00:00:00.000Z`) / 1_000;
+  if (!Number.isFinite(dayStartSeconds)) return null;
+  const sameDay = candles.filter((candle) => (
+    candle.timestamp >= dayStartSeconds && candle.timestamp < dayStartSeconds + 86_400
+  ));
+  const first = sameDay[0];
+  if (!first) return null;
+  return {
+    open: first.timestamp < dayStartSeconds + 300 ? first.open : null,
+    high: Math.max(...sameDay.map((candle) => candle.high)),
+    low: Math.min(...sameDay.map((candle) => candle.low)),
+    volume: Math.round(sameDay.reduce((total, candle) => total + candle.volume, 0)),
+  };
 }
 
 export function continuousProfile(

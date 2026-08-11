@@ -190,10 +190,28 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
           session: 'regular',
         });
       })).candles;
-      const priceDate = quoteDate(timestamp, result.meta.exchangeTimezoneName ?? 'UTC');
+      const quoteTimeZone = result.meta.exchangeTimezoneName ?? 'UTC';
+      const priceDate = quoteDate(timestamp, quoteTimeZone);
       const comparisonDate = comparisonForTradingDay ?? priceDate;
       const completedBeforePrice = normalizedRows.filter((row) =>
-        quoteDate(row.timestamp, result.meta.exchangeTimezoneName ?? 'UTC') < comparisonDate);
+        quoteDate(row.timestamp, quoteTimeZone) < comparisonDate);
+      /*
+       * THE session open.
+       *
+       * Yahoo's chart `meta` carries `regularMarketDayHigh`, `regularMarketDayLow`
+       * and `regularMarketVolume` but has NO `regularMarketOpen` — that field only
+       * exists on the separate `/v7/finance/quote` endpoint this provider
+       * deliberately does not call. Reading it from `meta` therefore resolved to
+       * `undefined` for every symbol served by this fallback, which is what left
+       * "Open" unavailable on Stock Detail while High/Low/Prev Close were fine.
+       *
+       * The open is nevertheless present in the very same validated payload: it is
+       * the `open` of the daily candle belonging to the price's own trading date.
+       * That is the canonical session open, not a value derived from the current
+       * price — when no daily row matches the price's date, `open` stays null.
+       */
+      const priceDayRow = normalizedRows.find((row) =>
+        quoteDate(row.timestamp, quoteTimeZone) === priceDate);
       const candlePreviousClose = completedBeforePrice.at(-1)?.close ?? null;
       const comparisonMatchesYahooPrice = comparisonDate === priceDate;
       const providerPreviousClose = comparisonMatchesYahooPrice
@@ -225,7 +243,8 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         symbol: symbol.trim().toUpperCase(),
         currency: result.meta.currency ?? null,
         price,
-        open: positiveNumber(result.meta.regularMarketOpen),
+        open: positiveNumber(result.meta.regularMarketOpen)
+          ?? positiveNumber(priceDayRow?.open),
         high: positiveNumber(result.meta.regularMarketDayHigh),
         low: positiveNumber(result.meta.regularMarketDayLow),
         previousClose: previousRegularClose,

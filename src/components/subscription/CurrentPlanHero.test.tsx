@@ -59,7 +59,10 @@ describe('CurrentPlanHero', () => {
     expect(ctaCount(markup)).toBe(0);
     expect(markup).toContain('ฟรีตลอดชีพ');
     expect(markup).toContain('ข้อมูลทั้งหมดยังอยู่ครบ');
-    expect(markup).toContain('ครั้งเดียวต่อบัญชี');
+    // The rule the system actually enforces: one trial per verified identity,
+    // which a deleted-and-recreated account does not reset.
+    expect(markup).toContain('ครั้งเดียวต่อข้อมูลยืนยันตัวตนที่มีสิทธิ์');
+    expect(markup).toContain('ลบบัญชีแล้วสมัครใหม่ด้วยข้อมูลเดิมก็ไม่ได้สิทธิใหม่');
   });
 
   it.each(['pro', 'elite'] as const)('names an active paid %s plan and hides the trial', (tier) => {
