@@ -15,11 +15,29 @@
 import { requiredTierFor, type SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
-export type ToolCategory = 'ทดลองสถานการณ์' | 'วิเคราะห์ความเสี่ยง';
+export type ToolCategory = 'ทดลองสถานการณ์' | 'วิเคราะห์ความเสี่ยง' | 'วางแผนการเทรด';
+
+/**
+ * Which instrument a tool is actually for.
+ *
+ * A beginner opening เครื่องมือ cannot tell from "ทดลองสถานการณ์" that the tool
+ * behind it expects an option contract, so they pick it while holding shares and
+ * meet a form asking for a strike. The scope is a field rather than a sentence
+ * inside each description so the index can print it in one consistent place, and
+ * so a stock tool can never quietly ship describing itself as an options one.
+ */
+export type ToolAssetScope = 'options' | 'stock';
+
+export const TOOL_ASSET_SCOPE_LABEL: Readonly<Record<ToolAssetScope, string>> = {
+  options: 'สำหรับสัญญาออปชัน',
+  stock: 'สำหรับหุ้นรายตัว',
+};
 
 export interface ToolCatalogEntry {
   id: string;
   title: string;
+  /** The instrument the tool works on, shown on the card before it is opened. */
+  assetScope: ToolAssetScope;
   description: string;
   /** The one capability that decides the badge, the locked state and the route guard. */
   capability: SubscriptionCapability;
@@ -48,7 +66,8 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
     id: 'what-if',
     title: 'ทดลองสถานการณ์ (What-If)',
-    description: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน แล้วดูว่ากำไรหรือขาดทุนของคุณจะเปลี่ยนไปเท่าไร',
+    assetScope: 'options',
+    description: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน เพื่อดูว่ามูลค่าสัญญาออปชันอาจเปลี่ยนไปอย่างไร',
     capability: 'simulator.what_if',
     category: 'ทดลองสถานการณ์',
     route: '/tools/what-if',
@@ -62,7 +81,8 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
     id: 'monte-carlo',
     title: 'จำลองความเป็นไปได้ (Monte Carlo)',
-    description: 'จำลองราคาหุ้นหลายพันสถานการณ์ เพื่อดูโอกาสได้กำไรและระดับความเสี่ยงของสถานะ',
+    assetScope: 'options',
+    description: 'จำลองราคาหุ้นหลายพันสถานการณ์ เพื่อดูโอกาสกำไรและความเสี่ยงของสัญญาออปชัน',
     capability: 'simulator.monte_carlo',
     category: 'วิเคราะห์ความเสี่ยง',
     route: '/tools/monte-carlo',
@@ -73,9 +93,24 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     ],
     sampleOutcome: 'เช่น จากการจำลองหลายพันเส้นทาง ผลลัพธ์ส่วนใหญ่ตกอยู่ในกรอบกว้างเท่าไร และมีโอกาสได้กำไรกี่เปอร์เซ็นต์',
   },
+  {
+    id: 'stock-planner',
+    title: 'วางแผนหุ้นรายตัว (Stock Planner)',
+    assetScope: 'stock',
+    description: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย เพื่อดูความเสี่ยงและผลตอบแทนแบบเข้าใจง่าย',
+    capability: 'planner.stock',
+    category: 'วางแผนการเทรด',
+    route: '/tools/stock-planner',
+    valuePreview: [
+      'ตอบว่า “ถ้าหุ้นตัวนี้ลงถึงจุดตัดขาดทุน คุณเสี่ยงกี่เปอร์เซ็นต์จากจุดเข้า”',
+      'เทียบความเสี่ยงที่ยอมรับกับผลตอบแทนที่หวัง เป็นสัดส่วน Risk/Reward ที่อ่านง่าย',
+      'ใส่เงินที่ตั้งใจลงทุน แล้วเห็นจำนวนหุ้นโดยประมาณ กำไรและขาดทุนที่จะเกิดขึ้นจริง',
+    ],
+    sampleOutcome: 'เช่น แผนนี้ยอมเสี่ยงกี่ส่วน เพื่อหวังผลตอบแทนกี่ส่วน และคิดเป็นเงินเท่าไรจากขนาดที่คุณตั้งไว้',
+  },
 ];
 
-export const TOOL_CATEGORIES: readonly ToolCategory[] = ['ทดลองสถานการณ์', 'วิเคราะห์ความเสี่ยง'];
+export const TOOL_CATEGORIES: readonly ToolCategory[] = ['ทดลองสถานการณ์', 'วิเคราะห์ความเสี่ยง', 'วางแผนการเทรด'];
 
 /**
  * The plan a tool's badge names. `null` would mean a capability no tier carries,

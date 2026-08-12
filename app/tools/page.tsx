@@ -1,17 +1,18 @@
 'use client';
 import { useState } from 'react';
 import Header from '@/src/components/layout/Header';
-import { Shuffle, TrendingUp, ChevronRight, Lock } from 'lucide-react';
+import { Shuffle, TrendingUp, Target, ChevronRight, Lock } from 'lucide-react';
 import { Tabs } from '@/src/components/ui/Tabs';
 import { useRouter } from 'next/navigation';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { PLAN_DISPLAY_NAME, upgradeCopy } from '@/src/lib/subscription/upgrade-copy';
-import { TOOL_CATALOG, TOOL_CATEGORIES, toolRequiredTier, type ToolCatalogEntry } from '@/src/lib/tools/catalog';
+import { TOOL_ASSET_SCOPE_LABEL, TOOL_CATALOG, TOOL_CATEGORIES, toolRequiredTier, type ToolCatalogEntry } from '@/src/lib/tools/catalog';
 
 /** Presentation only — which tool wears which glyph. Never a tier. */
 const toolIcons: Record<string, typeof Shuffle> = {
   'what-if': Shuffle,
   'monte-carlo': TrendingUp,
+  'stock-planner': Target,
 };
 
 const ALL = 'ทั้งหมด';
@@ -87,7 +88,16 @@ export default function ToolsPage() {
                       </span>
                     )}
                   </div>
-                  <h3 className="mb-2 break-words text-lg font-bold text-white transition-colors group-hover:text-[#D4FF00]">{tool.title}</h3>
+                  <h3 className="mb-1 break-words text-lg font-bold text-white transition-colors group-hover:text-[#D4FF00]">{tool.title}</h3>
+                  {/*
+                    Which instrument the tool is for, said before the reader
+                    opens it. Secondary weight on purpose: it must be readable at
+                    a glance without competing with the plan badge, and it adds
+                    one short line rather than a second block to the card.
+                  */}
+                  <p data-testid={`tool-scope-${tool.id}`} className="mb-2 break-words text-xs font-medium text-slate-500">
+                    {TOOL_ASSET_SCOPE_LABEL[tool.assetScope]}
+                  </p>
                   <p className="break-words text-sm leading-relaxed text-slate-400">{tool.description}</p>
                   {!unlocked && (
                     <>

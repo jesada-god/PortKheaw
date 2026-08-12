@@ -32,7 +32,8 @@
     "trial:qa-cleanup": "node --import=tsx --env-file-if-exists=.env.local scripts/trial-qa-cleanup.ts",
     "account:reconcile": "node --import=tsx --env-file-if-exists=.env.local scripts/reconcile-account-deletions.ts",
     "instruments:backfill-logos": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-instrument-logos.ts",
-    "qa:tools-simulator-mobile": "node --env-file-if-exists=.env.local scripts/qa/tools-simulator-mobile-qa.mjs"
+    "qa:tools-simulator-mobile": "node --env-file-if-exists=.env.local scripts/qa/tools-simulator-mobile-qa.mjs",
+    "qa:stock-planner-mobile": "node --env-file-if-exists=.env.local scripts/qa/stock-planner-mobile-qa.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

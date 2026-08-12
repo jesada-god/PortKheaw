@@ -50,6 +50,11 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
     benefit: 'จำลองราคาหุ้นหลายพันเส้นทาง เพื่อดูโอกาสได้กำไร ระดับความเสี่ยง VaR และ Expected Shortfall',
     lockedLabel: 'เริ่มจำลอง Monte Carlo ได้ใน Elite',
   },
+  'planner.stock': {
+    title: 'วางแผนหุ้นรายตัว (Stock Planner)',
+    benefit: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมายของหุ้นรายตัว แล้วดูความเสี่ยง ผลตอบแทนคาดหวัง สัดส่วน Risk/Reward และเงินที่ใช้จริงตามขนาดที่ตั้งไว้',
+    lockedLabel: 'วางแผนหุ้นรายตัวได้ใน Pro',
+  },
   'options.analytics.walls': {
     title: 'Options Walls (Call Wall, Put Wall, Max Pain)',
     benefit: 'เห็นราคาจริงของจุดที่ Open Interest กระจุกตัว และ Max Pain ของวันหมดอายุที่เลือก',

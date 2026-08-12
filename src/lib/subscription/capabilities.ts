@@ -11,6 +11,14 @@ export interface SubscriptionCapabilities {
   'chart.vpvr': boolean;
   'simulator.what_if': boolean;
   'simulator.monte_carlo': boolean;
+  /**
+   * วางแผนหุ้นรายตัว (Stock Planner): entry, stop loss, target, the risk and
+   * reward they imply, and the position the reader's money buys. A stock
+   * capability, deliberately its own row rather than a second reader of
+   * `simulator.what_if` — the two tools are priced together today, and nothing
+   * about that should make moving one move the other.
+   */
+  'planner.stock': boolean;
   'options.analytics.walls': boolean;
   /** The readable contract ledger: strike, expiry, bid/ask, volume, open interest. */
   'options.chain.basic': boolean;
@@ -58,6 +66,7 @@ const LOCKED: Readonly<SubscriptionCapabilities> = {
   'chart.vpvr': false,
   'simulator.what_if': false,
   'simulator.monte_carlo': false,
+  'planner.stock': false,
   'options.analytics.walls': false,
   'options.chain.basic': false,
   'options.chain.advanced': false,
@@ -102,6 +111,7 @@ const TIER_GRANTS: Readonly<Record<SubscriptionTier, TierGrant>> = {
       'chart.sr.context',
       'chart.vpvr',
       'simulator.what_if',
+      'planner.stock',
       'options.chain.basic',
       'options.signal.summary',
       'theme.premium',

@@ -142,6 +142,7 @@ export const planFeatureGroups: readonly PlanFeatureGroup[] = [
     rows: [
       fromCapability('what-if', 'What-If จำลองสถานการณ์', 'simulator.what_if'),
       fromCapability('monte-carlo', 'Monte Carlo จำลองหลายเส้นทาง', 'simulator.monte_carlo'),
+      fromCapability('stock-planner', 'วางแผนหุ้นรายตัว (Stock Planner)', 'planner.stock'),
     ],
   },
 ] as const;

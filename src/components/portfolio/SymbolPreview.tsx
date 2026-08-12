@@ -20,10 +20,23 @@ export function symbolKeyDecision(key: string, open: boolean, activeIndex: numbe
   return { action: 'ignore' };
 }
 
-interface Props { value: string; onChange: (value: string) => void; error?: string; label?: string; placeholder?: string }
+interface Props {
+  value: string;
+  onChange: (value: string) => void;
+  /**
+   * The whole instrument the reader picked, not just its symbol. A caller that
+   * also needs the company name, the exchange or the asset type reads them from
+   * here instead of asking search a second time — `onChange` still fires, so a
+   * caller that only wants the symbol is unaffected.
+   */
+  onSelect?: (result: SymbolSearchResult) => void;
+  error?: string;
+  label?: string;
+  placeholder?: string;
+}
 
 export const SymbolPreview = forwardRef<HTMLInputElement, Props>(function SymbolPreview({
-  value, onChange, error, label = 'Symbol', placeholder = 'เช่น NVDA',
+  value, onChange, onSelect, error, label = 'Symbol', placeholder = 'เช่น NVDA',
 }, forwardedRef) {
   const listId = useId();
   const [results, setResults] = useState<SymbolSearchResult[]>([]);
@@ -57,7 +70,7 @@ export const SymbolPreview = forwardRef<HTMLInputElement, Props>(function Symbol
   function choose(result: SymbolSearchResult) {
     if (result.status === 'delisted') { setWarning('Symbol นี้ถูก delisted แล้ว จึงไม่สามารถเพิ่มรายการใหม่ได้'); return; }
     setWarning('');
-    onChange(result.symbol.toUpperCase()); setOpen(false); setResults([]); setActiveIndex(-1);
+    onChange(result.symbol.toUpperCase()); onSelect?.(result); setOpen(false); setResults([]); setActiveIndex(-1);
   }
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     const decision = symbolKeyDecision(event.key, open, activeIndex, results.length);
