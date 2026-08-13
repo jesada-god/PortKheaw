@@ -12,6 +12,7 @@ import {
   TICKET_STATUS_LABEL,
   ticketStatusTone,
 } from '@/src/lib/support/presentation';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,9 @@ function when(value: string | null): string {
  * the page does not hold a privileged client.
  */
 export default async function AdminTicketPage({ params }: { params: Promise<{ id: string }> }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const { id } = await params;
   const supabase = await createClient();
   if (!supabase) notFound();

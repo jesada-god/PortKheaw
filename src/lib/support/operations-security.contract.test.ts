@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isProtectedPath } from '@/src/lib/auth/paths';
@@ -41,13 +41,29 @@ describe('route protection', () => {
     expect(isProtectedPath('/admin/refunds/abc')).toBe(true);
   });
 
-  it('keeps the operator gate itself in the layout, not the middleware', () => {
-    // Middleware knows whether somebody is signed in; only the database knows
-    // whether they are an operator.
-    const layout = source('app/admin/layout.tsx');
-    expect(layout).toContain('resolveRequestAccountAccess');
-    expect(layout).toContain('access.isAdmin');
-    expect(layout).toContain('notFound()');
+  /*
+   * This used to read "keeps the operator gate itself in the layout, not the
+   * middleware", and the premise was wrong in a way that reached production. A
+   * layout and the page beneath it render concurrently: when the layout refused,
+   * the console had already rendered, and its tree shipped in the response
+   * beside the 404 marker under a 200.
+   *
+   * The gate is now inside each page, where it can actually stop one. Middleware
+   * refuses the URL first — it is a filter, so that no renderer runs for a caller
+   * who will be refused — and the database refuses the data last. What has not
+   * changed is the rule underneath: middleware knows whether somebody is signed
+   * in, and only the database knows whether they are an operator, so every layer
+   * asks the database and none of them may grant on its own.
+   */
+  it('gates the console inside the pages, with middleware as a filter in front', () => {
+    expect(source('app/admin/layout.tsx')).toContain('requireAdminPage()');
+    for (const page of globSync('app/admin/**/page.tsx', { cwd: root })) {
+      expect(`${page}: ${source(page).includes('requireAdminPage()')}`).toBe(`${page}: true`);
+    }
+    expect(source('middleware.ts')).toContain('isPlatformAdminForEdge(supabase)');
+    // Every layer resolves the role from the database, never from the request.
+    expect(source('src/lib/admin/admin-edge.ts')).toContain("client.rpc('get_my_account_access')");
+    expect(source('src/lib/admin/admin-guard.ts')).toContain('resolveRequestAccountAccess');
   });
 
   it('leaves help and the policy pages readable without a session', () => {

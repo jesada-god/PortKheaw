@@ -8,6 +8,7 @@ import { createClient } from '@/src/lib/supabase/server';
 import { listRefundRequestsForAdmin } from '@/src/lib/support/refund-repository';
 import { REFUND_STATUS_LABEL } from '@/src/lib/support/presentation';
 import type { RefundRequestStatus } from '@/src/types/database';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,9 @@ export default async function AdminRefundsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const params = await searchParams;
   const query = typeof params.q === 'string' ? params.q : '';
   const status = typeof params.status === 'string' && STATUSES.includes(params.status as RefundRequestStatus)

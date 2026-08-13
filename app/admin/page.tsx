@@ -27,6 +27,7 @@ import { maskAccountRef, maskEmail, maskIdentifier } from '@/src/lib/admin/maski
 import {
   stripeInvoiceUrl, supabaseAccountUrl, supabaseProjectRef,
 } from '@/src/lib/admin/console-links';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 /**
  * The operator dashboard.
@@ -112,6 +113,9 @@ export default async function AdminDashboardPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const params = await searchParams;
   const single = (key: string): string | undefined =>
     typeof params[key] === 'string' ? params[key] : undefined;

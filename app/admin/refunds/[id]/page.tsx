@@ -14,6 +14,7 @@ import {
   displayBaht,
   refundStatusTone,
 } from '@/src/lib/support/presentation';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,9 @@ function when(value: string | null): string {
  * that has to be kept sanitized separately.
  */
 export default async function AdminRefundDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const { id } = await params;
   const supabase = await createClient();
   if (!supabase) notFound();

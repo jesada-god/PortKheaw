@@ -10,6 +10,7 @@ import { maskEmail } from '@/src/lib/admin/masking';
 import { billingPlans } from '@/src/lib/billing/billing-plans';
 import { displayBaht } from '@/src/lib/support/presentation';
 import type { Database } from '@/src/types/database';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 type AccountRow = Database['public']['Functions']['admin_search_accounts']['Returns'][number];
 type IssueRow = Database['public']['Functions']['admin_open_billing_issues']['Returns'][number];
@@ -79,6 +80,9 @@ export default async function AdminBillingPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const params = await searchParams;
   const query = typeof params.q === 'string' ? params.q.trim() : '';
   const supabase = await createClient();

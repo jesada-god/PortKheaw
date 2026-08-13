@@ -1,7 +1,10 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { isSupabaseConfigured, clientEnv } from '@/src/config/env/client';
-import { getSafeReturnPath, isAuthFormPath, isProtectedPath } from '@/src/lib/auth/paths';
+import { isPlatformAdminForEdge } from '@/src/lib/admin/admin-edge';
+import {
+  getSafeReturnPath, isAdminConsolePath, isAuthFormPath, isProtectedPath,
+} from '@/src/lib/auth/paths';
 import { readMaintenanceForEdge } from '@/src/lib/maintenance/maintenance-edge';
 import {
   decideMaintenance, isMaintenanceExemptPath, MAINTENANCE_DENIAL_BODY,
@@ -68,6 +71,27 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   return response;
 }
+
+/**
+ * What a non-operator gets for an operator URL: the product's own not-found
+ * sentence and nothing else — no navigation, no shell, no hint that the path
+ * means anything. Written out here rather than rendered, because rendering is
+ * the thing this response exists to avoid.
+ */
+const ADMIN_DENIAL_BODY = `<!doctype html><html lang="th"><head><meta charset="utf-8">`
+  + `<meta name="viewport" content="width=device-width,initial-scale=1">`
+  + `<meta name="robots" content="noindex">`
+  + `<title>PortKheaw</title></head>`
+  + `<body style="margin:0;background:#0b0f14;color:#e5e7eb;font-family:system-ui,sans-serif">`
+  + `<main style="min-height:100dvh;display:flex;flex-direction:column;align-items:center;`
+  + `justify-content:center;gap:12px;padding:24px;text-align:center">`
+  + `<p style="color:#D4FF00;font-weight:600;margin:0">PortKheaw</p>`
+  + `<h1 style="margin:0;font-size:1.875rem">ไม่พบหน้าที่ต้องการ</h1>`
+  + `<p style="margin:0;color:#94a3b8">ลิงก์นี้อาจถูกย้ายหรือไม่มีอยู่แล้ว</p>`
+  + `<a href="/" style="margin-top:12px;display:inline-flex;align-items:center;min-height:44px;`
+  + `border-radius:8px;background:#D4FF00;color:#000;padding:0 20px;font-weight:600;`
+  + `text-decoration:none">กลับหน้าแรก</a>`
+  + `</main></body></html>`;
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -156,6 +180,33 @@ export async function middleware(request: NextRequest) {
     url.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
     if (hadSessionCookie) url.searchParams.set('reason', 'session_expired');
     return redirectCarryingSession(url);
+  }
+
+  /*
+   * The operator console, refused before anything renders it.
+   *
+   * This runs here rather than in a layout because of what the App Router does
+   * with a layout that refuses: the page beneath it renders *concurrently*, so
+   * by the time `notFound()` is thrown the console has already queried its
+   * projections and built its tree, and that tree is serialised into the
+   * response beside the 404 marker — under a 200, because the shell was flushed
+   * before either finished. A reader who never hydrates simply reads it. Refusing
+   * at the edge is the only place the request can be stopped before a renderer
+   * exists to leak from.
+   *
+   * The refusal is a bare 404 with no product chrome: not a redirect, which
+   * would confirm the URL is real and gettable, and not a 403, which would
+   * confirm the console exists and that this account is not on it.
+   *
+   * Signed-out visitors never reach this — the rule above has already sent them
+   * to sign-in — so this only ever answers for a caller with a session, and it
+   * answers false unless the database says otherwise.
+   */
+  if (isAdminConsolePath(pathname) && !(await isPlatformAdminForEdge(supabase))) {
+    return withSecurityHeaders(new NextResponse(ADMIN_DENIAL_BODY, {
+      status: 404,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store' },
+    }));
   }
 
   /*

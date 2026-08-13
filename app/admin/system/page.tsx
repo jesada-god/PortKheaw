@@ -12,6 +12,7 @@ import { resolvePagination, totalPages } from '@/src/lib/admin/dashboard-present
 import {
   normalizeReleaseImportance, parseReleaseBody, RELEASE_IMPORTANCE_LABEL,
 } from '@/src/lib/release-notes/release-notes';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 /**
  * The system console: the switch, and the announcement that follows it.
@@ -52,6 +53,9 @@ export default async function AdminSystemPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const params = await searchParams;
   const single = (key: string): string | undefined =>
     typeof params[key] === 'string' ? params[key] : undefined;

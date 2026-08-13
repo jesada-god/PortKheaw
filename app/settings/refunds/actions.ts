@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
+import { isAdminRequiredError, requireAdmin } from '@/src/lib/subscription/account-access';
 import {
   consumeRateLimit, rateLimitMessage, resolveClientAddress,
 } from '@/src/lib/security/rate-limit';
@@ -34,6 +35,8 @@ import type { RefundRequestReason, RefundRequestStatus } from '@/src/types/datab
 
 export type RefundFailureCode =
   | 'UNAUTHENTICATED'
+  /** Signed in, but not an operator. Only the two operator actions raise it. */
+  | 'FORBIDDEN'
   | 'UNAVAILABLE'
   | 'INVALID_REASON'
   | 'INVALID_CONTENT'
@@ -59,6 +62,7 @@ export type RefundActionResult =
 
 const MESSAGE: Readonly<Record<RefundFailureCode, string>> = {
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบก่อนส่งคำขอคืนเงิน',
+  FORBIDDEN: 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้',
   UNAVAILABLE: 'ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง',
   INVALID_REASON: 'กรุณาเลือกเหตุผลของการขอคืนเงิน',
   INVALID_CONTENT: 'กรุณากรอกรายละเอียดอย่างน้อย 10 ตัวอักษร',
@@ -245,9 +249,25 @@ export async function replyToRefundRequestAction(formData: FormData): Promise<Re
  * Operator
  * ---------------------------------------------------------------------- */
 
+/**
+ * An operator answering a refund thread.
+ *
+ * `requireAdmin()` runs before anything is read from the form. A server action
+ * is reachable by its identifier alone — it does not run under the layout of the
+ * page that renders its form, and this file lives outside `/admin`, so neither
+ * the console's gate nor the middleware filter is between a caller and this
+ * function. Without this line the database would be the only thing standing
+ * between any signed-in reader and a reply written in an operator's name.
+ */
 export async function adminReplyToRefundRequestAction(formData: FormData): Promise<RefundActionResult> {
   const client = await createClient();
   if (!client) return refusal('UNAVAILABLE');
+
+  try {
+    await requireAdmin();
+  } catch (cause) {
+    return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
+  }
 
   const requestId = String(formData.get('requestId') ?? '');
   const body = String(formData.get('body') ?? '');
@@ -301,6 +321,18 @@ export async function adminReplyToRefundRequestAction(formData: FormData): Promi
 export async function adminSetRefundStatusAction(formData: FormData): Promise<RefundActionResult> {
   const client = await createClient();
   if (!client) return refusal('UNAVAILABLE');
+
+  /*
+   * Authorization first, then the bound — in that order, so a non-operator's
+   * burst is refused rather than being allowed to spend an operator bucket. This
+   * is the action that claims money moved; it is the last one that should be
+   * reachable by anybody the database has not already called an operator.
+   */
+  try {
+    await requireAdmin();
+  } catch (cause) {
+    return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
+  }
 
   /*
    * Same bound as the ticket console, for the same reason: the routine below

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isProtectedPath } from '@/src/lib/auth/paths';
@@ -25,26 +25,122 @@ function source(relativePath: string): string {
 
 const migration = source('supabase/migrations/202608050007_admin_beta_and_production_safety.sql');
 
-const ADMIN_PAGES = [
-  'app/admin/page.tsx',
-  'app/admin/billing/page.tsx',
-  'app/admin/support/page.tsx',
-  'app/admin/refunds/page.tsx',
-  'app/admin/beta/page.tsx',
-];
+/**
+ * Every page under `/admin`. The glob is deliberate rather than a hand-kept
+ * list: a page added tomorrow joins this set by existing, and fails the guard
+ * assertion below until somebody gates it.
+ */
+const ADMIN_PAGES = globSync('app/admin/**/page.tsx', { cwd: root })
+  .map((path) => path.replace(/\\/g, '/'))
+  .sort();
+
+/** Operator mutations that live outside `/admin`, where no console gate reaches. */
+const OFFSITE_ADMIN_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  'app/support/actions.ts': ['adminReplyToTicketAction', 'adminSetTicketStatusAction'],
+  'app/settings/refunds/actions.ts': [
+    'adminReplyToRefundRequestAction', 'adminSetRefundStatusAction',
+  ],
+};
 
 describe('every operator route is gated on the server', () => {
-  it('keeps one gate in the layout that covers the whole console', () => {
+  it('finds every operator page, so none can be added unguarded', () => {
+    expect(ADMIN_PAGES).toEqual([
+      'app/admin/beta/page.tsx',
+      'app/admin/billing/page.tsx',
+      'app/admin/page.tsx',
+      'app/admin/refunds/[id]/page.tsx',
+      'app/admin/refunds/page.tsx',
+      'app/admin/support/[id]/page.tsx',
+      'app/admin/support/page.tsx',
+      'app/admin/system/page.tsx',
+    ]);
+  });
+
+  it('keeps the gate in the layout that covers the whole console', () => {
     const layout = source('app/admin/layout.tsx');
-    expect(layout).toContain('resolveRequestAccountAccess');
-    expect(layout).toContain('access.isAdmin');
-    // A 404 rather than a 403: a 403 confirms the console exists.
-    expect(layout).toContain('notFound()');
+    expect(layout).toContain('requireAdminPage()');
+  });
+
+  /*
+   * The incident this file now exists to prevent a repeat of.
+   *
+   * A layout and the page beneath it render *concurrently* in the App Router. A
+   * layout that calls `notFound()` therefore does not stop the page: by the time
+   * it refuses, the console has queried its projections and built its tree, and
+   * that tree ships in the response beside the 404 marker under a 200 — readable
+   * by anybody who fetches the URL without running the client runtime.
+   *
+   * The gate has to be inside the thing being guarded, and it has to run before
+   * the page reads anything. Both halves are asserted: the call is present, and
+   * it is the first statement in the component.
+   */
+  it('gates every operator page inside the page itself, before it reads anything', () => {
+    for (const page of ADMIN_PAGES) {
+      const code = source(page);
+      expect(`${page}: ${code.includes('requireAdminPage()')}`).toBe(`${page}: true`);
+
+      const gate = 'await requireAdminPage();';
+      const body = code.slice(code.indexOf('export default async function'));
+      const firstAwait = body.indexOf('await ');
+      expect(`${page}: ${body.slice(firstAwait, firstAwait + gate.length)}`)
+        .toBe(`${page}: ${gate}`);
+    }
+  });
+
+  /*
+   * A server action is reachable by its identifier alone. It does not run under
+   * the layout of the page whose form submits it, and these four live outside
+   * `/admin` entirely, so neither the console gate nor the middleware filter is
+   * between a caller and the function.
+   */
+  it('gates every operator action that lives outside the console', () => {
+    for (const [file, actions] of Object.entries(OFFSITE_ADMIN_ACTIONS)) {
+      const code = source(file);
+      for (const action of actions) {
+        const body = code.slice(code.indexOf(`export async function ${action}(`));
+        const declaration = body.slice(0, body.indexOf('\n}\n'));
+        expect(`${action}: ${declaration.includes('await requireAdmin();')}`)
+          .toBe(`${action}: true`);
+      }
+    }
+  });
+
+  it('refuses a non-operator action with a code of its own, never a success', () => {
+    for (const file of Object.keys(OFFSITE_ADMIN_ACTIONS)) {
+      expect(source(file)).toContain("refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE')");
+    }
   });
 
   it('bounces a signed-out visitor from every operator URL', () => {
     for (const path of ['/admin', '/admin/billing', '/admin/support', '/admin/refunds', '/admin/beta']) {
       expect(isProtectedPath(path)).toBe(true);
+    }
+  });
+
+  /*
+   * Middleware is a filter, not the boundary — but it is the only layer that can
+   * refuse before a renderer exists, which is what keeps console markup off the
+   * wire entirely. It must fail closed, and it must not cache an answer that is
+   * per-reader.
+   */
+  it('refuses the console at the edge, fail closed and uncached', () => {
+    expect(source('middleware.ts')).toContain('isAdminConsolePath(pathname) && !(await isPlatformAdminForEdge(supabase))');
+    const edge = source('src/lib/admin/admin-edge.ts');
+    expect(edge).toContain("client.rpc('get_my_account_access')");
+    expect(edge).toContain('if (error) return false;');
+    expect(edge).toContain('catch {\n    return false;\n  }');
+    // No module-scope memo: a shared positive would be one reader's role reused.
+    expect(edge).not.toMatch(/^let |^const cache/m);
+  });
+
+  it('never lets a client-supplied role, id or preview decide the answer', () => {
+    for (const file of [
+      'src/lib/admin/admin-guard.ts',
+      'src/lib/admin/admin-edge.ts',
+      'app/admin/layout.tsx',
+    ]) {
+      const code = source(file);
+      expect(code).not.toMatch(/searchParams|formData|headers\(\)|cookies\(\)|localStorage/);
     }
   });
 

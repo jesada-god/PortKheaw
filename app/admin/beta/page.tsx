@@ -14,6 +14,7 @@ import {
 import { formatCount, resolvePagination, totalPages } from '@/src/lib/admin/dashboard-presentation';
 import { maskEmail } from '@/src/lib/admin/masking';
 import { BETA_STAGE_LABEL, normalizeBetaStage, stageAcceptsCap } from '@/src/lib/beta/beta-stages';
+import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 
 /**
  * The rollout console.
@@ -64,6 +65,9 @@ export default async function AdminBetaPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The gate, before anything is read. See `admin-guard.ts`: a layout cannot
+  // stop this page from rendering, so the page stops itself.
+  await requireAdminPage();
   const params = await searchParams;
   const single = (key: string): string | undefined =>
     typeof params[key] === 'string' ? params[key] : undefined;

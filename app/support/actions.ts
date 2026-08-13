@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
+import { isAdminRequiredError, requireAdmin } from '@/src/lib/subscription/account-access';
 import {
   consumeRateLimit, rateLimitMessage, resolveClientAddress,
 } from '@/src/lib/security/rate-limit';
@@ -32,6 +33,8 @@ import type { SupportTicketCategory } from '@/src/types/database';
 
 export type SupportFailureCode =
   | 'UNAUTHENTICATED'
+  /** Signed in, but not an operator. Only the two operator actions raise it. */
+  | 'FORBIDDEN'
   | 'UNAVAILABLE'
   | 'INVALID_CATEGORY'
   | 'INVALID_CONTENT'
@@ -51,6 +54,7 @@ export type ReplyResult =
 
 const MESSAGE: Readonly<Record<SupportFailureCode, string>> = {
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบก่อนแจ้งเรื่อง',
+  FORBIDDEN: 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้',
   UNAVAILABLE: 'ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง',
   INVALID_CATEGORY: 'กรุณาเลือกหมวดหมู่ของเรื่องที่ต้องการแจ้ง',
   INVALID_CONTENT: 'กรุณากรอกหัวข้ออย่างน้อย 3 ตัวอักษร และรายละเอียดอย่างน้อย 10 ตัวอักษร',
@@ -210,6 +214,13 @@ export async function replyToTicketAction(formData: FormData): Promise<ReplyResu
  * and the routine refuses the whole call unless the caller's stored role is
  * `admin`. A note never notifies the reader and never moves the visible status —
  * that branch is in the routine, not here.
+ *
+ * The `requireAdmin()` on the first line is not the routine's check repeated for
+ * show. A server action is reachable by its identifier alone: it does not run
+ * under the layout of the page that renders its form, and this one lives outside
+ * `/admin` entirely, so neither the console's gate nor the middleware filter is
+ * between a caller and this function. Without it the database would be the only
+ * thing standing between any signed-in reader and an operator reply.
  */
 export async function adminReplyToTicketAction(formData: FormData): Promise<ReplyResult> {
   const client = await createClient();
@@ -217,6 +228,12 @@ export async function adminReplyToTicketAction(formData: FormData): Promise<Repl
 
   const { data: { user }, error: authError } = await client.auth.getUser();
   if (authError || !user) return refusal('UNAUTHENTICATED');
+
+  try {
+    await requireAdmin();
+  } catch (cause) {
+    return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
+  }
 
   const ticketId = String(formData.get('ticketId') ?? '');
   const body = String(formData.get('body') ?? '');
@@ -251,6 +268,16 @@ export async function adminReplyToTicketAction(formData: FormData): Promise<Repl
 export async function adminSetTicketStatusAction(formData: FormData): Promise<ReplyResult> {
   const client = await createClient();
   if (!client) return refusal('UNAVAILABLE');
+
+  /*
+   * Authorization first, then the bound — in that order, so a non-operator's
+   * burst is refused rather than being allowed to spend an operator bucket.
+   */
+  try {
+    await requireAdmin();
+  } catch (cause) {
+    return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
+  }
 
   /*
    * A bound on operator mutations. The routine below already refuses a

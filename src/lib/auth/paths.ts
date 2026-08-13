@@ -1,10 +1,13 @@
 /**
- * `/admin` is here for the cheap half of the guard only — it bounces a
- * signed-out visitor to the sign-in form instead of rendering a shell they
- * cannot use. The real boundary is `requireAdmin()` inside the admin layout and
- * the `is_platform_admin` check inside every operator routine, both of which
- * read the *stored* role from the database. Middleware never decides who is an
- * operator.
+ * `/admin` is here so a signed-out visitor is bounced to the sign-in form rather
+ * than being told the console exists. Middleware refuses a signed-in
+ * non-operator too — see {@link isAdminConsolePath} — but it is a filter, not
+ * the boundary: it is there so no renderer runs for a caller who will be
+ * refused. The boundary is `requireAdminPage()` inside every operator page and
+ * `requireAdmin()` inside every operator action, and beneath both, the
+ * `is_platform_admin` check inside every operator routine. All of them read the
+ * *stored* role from the database, and none of them trusts anything the request
+ * carries.
  *
  * `/support` is deliberately absent: the FAQ and the direct contact channels
  * must stay readable by somebody who cannot sign in, which is exactly the reader
@@ -53,6 +56,21 @@ export const AUTH_FORM_PATHS = [
 
 export function isProtectedPath(pathname: string): boolean {
   return PROTECTED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+/** The console's root, and everything under it. */
+export const ADMIN_CONSOLE_PATH = '/admin';
+
+/**
+ * Whether a URL belongs to the operator console.
+ *
+ * Prefix matching on a path segment, never a bare `startsWith`: `/administrators`
+ * is not an admin URL and must not be refused as one, and — the direction that
+ * matters — a would-be reader must not be able to dodge the check by asking for
+ * a path the guard does not recognise but the router does.
+ */
+export function isAdminConsolePath(pathname: string): boolean {
+  return pathname === ADMIN_CONSOLE_PATH || pathname.startsWith(`${ADMIN_CONSOLE_PATH}/`);
 }
 
 /**
