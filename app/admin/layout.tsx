@@ -25,6 +25,20 @@ import { requireAdminPage } from '@/src/lib/admin/admin-guard';
 export const dynamic = 'force-dynamic';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  await requireAdminPage();
+  /*
+   * The role, and only the role.
+   *
+   * The second-factor requirement is left to the pages, because one of them —
+   * `/admin/security` — is where the factor is presented and must render at
+   * `aal1`. A layout cannot tell which page is beneath it, so a layout that
+   * enforced assurance would redirect the operator away from the only page that
+   * can end the redirect.
+   *
+   * Nothing is lost by leaving it out here: `requireAdminPage()` defaults to
+   * requiring assurance, so every page except that one enforces it on its own
+   * first line, middleware refuses the URL before either runs, and the console's
+   * mutations refuse independently of all three.
+   */
+  await requireAdminPage({ assurance: 'exempt' });
   return <>{children}</>;
 }

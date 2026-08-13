@@ -2,7 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
-import { isAdminRequiredError, requireAdmin } from '@/src/lib/subscription/account-access';
+import { isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import {
+  ASSURANCE_DENIAL_MESSAGE, isAssuranceRequiredError, requireAdminMutation,
+} from '@/src/lib/security/admin-assurance-server';
 import {
   consumeRateLimit, rateLimitMessage, resolveClientAddress,
 } from '@/src/lib/security/rate-limit';
@@ -37,6 +40,13 @@ export type RefundFailureCode =
   | 'UNAUTHENTICATED'
   /** Signed in, but not an operator. Only the two operator actions raise it. */
   | 'FORBIDDEN'
+  /**
+   * An operator who has not presented a second factor in this session. Kept
+   * apart from `FORBIDDEN` on purpose: moving somebody's money is exactly the
+   * operation that should demand a factor, and the operator needs to be told
+   * which of the two things is missing.
+   */
+  | 'MFA_REQUIRED'
   | 'UNAVAILABLE'
   | 'INVALID_REASON'
   | 'INVALID_CONTENT'
@@ -63,6 +73,7 @@ export type RefundActionResult =
 const MESSAGE: Readonly<Record<RefundFailureCode, string>> = {
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบก่อนส่งคำขอคืนเงิน',
   FORBIDDEN: 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้',
+  MFA_REQUIRED: ASSURANCE_DENIAL_MESSAGE,
   UNAVAILABLE: 'ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง',
   INVALID_REASON: 'กรุณาเลือกเหตุผลของการขอคืนเงิน',
   INVALID_CONTENT: 'กรุณากรอกรายละเอียดอย่างน้อย 10 ตัวอักษร',
@@ -264,8 +275,9 @@ export async function adminReplyToRefundRequestAction(formData: FormData): Promi
   if (!client) return refusal('UNAVAILABLE');
 
   try {
-    await requireAdmin();
+    await requireAdminMutation();
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return refusal('MFA_REQUIRED');
     return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
   }
 
@@ -329,8 +341,9 @@ export async function adminSetRefundStatusAction(formData: FormData): Promise<Re
    * reachable by anybody the database has not already called an operator.
    */
   try {
-    await requireAdmin();
+    await requireAdminMutation();
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return refusal('MFA_REQUIRED');
     return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
   }
 

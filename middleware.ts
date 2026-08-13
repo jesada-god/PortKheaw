@@ -5,7 +5,16 @@ import { isPlatformAdminForEdge } from '@/src/lib/admin/admin-edge';
 import {
   getSafeReturnPath, isAdminConsolePath, isAuthFormPath, isProtectedPath,
 } from '@/src/lib/auth/paths';
-import { readMaintenanceForEdge } from '@/src/lib/maintenance/maintenance-edge';
+import {
+  ADMIN_SECURITY_PATH, ASSURANCE_DENIAL_MESSAGE, isAssuranceExemptAdminPath,
+} from '@/src/lib/security/admin-assurance';
+import { resolveAdminAssuranceForEdge } from '@/src/lib/security/admin-assurance-edge';
+import { guardEdgeAbuse } from '@/src/lib/security/edge-abuse';
+import {
+  decideLockdown, isPrivilegedSurfacePath, LOCKDOWN_DENIAL_BODY,
+} from '@/src/lib/security/lockdown';
+import { readRuntimePostureForEdge } from '@/src/lib/security/posture-edge';
+import { recordEdgeSecurityEvent } from '@/src/lib/security/security-audit-edge';
 import {
   decideMaintenance, isMaintenanceExemptPath, MAINTENANCE_DENIAL_BODY,
 } from '@/src/lib/maintenance/maintenance-gate';
@@ -68,7 +77,46 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
-  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  /*
+   * `Strict-Transport-Security` is deliberately **not** set here.
+   *
+   * The platform already sends it on every response — verified against paths
+   * this middleware's matcher explicitly excludes (`/icon.svg`, and a 404 under
+   * `/_next/static`, both of which carry HSTS and none of the headers below).
+   * Vercel's value is `max-age=63072000; includeSubDomains; preload`, which is
+   * strictly stronger than anything worth setting from here.
+   *
+   * Setting it in middleware as well would be actively worse, not merely
+   * redundant: middleware runs on a subset of paths, so the origin would answer
+   * with two different HSTS policies depending on the URL, and the one this file
+   * produced would be the weaker of the two — dropping `preload` on exactly the
+   * pages that carry a session. A security header with one owner is a header
+   * that cannot drift.
+   */
+  /*
+   * `same-origin-allow-popups`, not `same-origin`.
+   *
+   * This severs the `window.opener` relationship with cross-origin documents,
+   * which is what closes the cross-window scripting and XS-Leak class. The
+   * `-allow-popups` variant keeps working for a window this page opened itself.
+   *
+   * Google sign-in is a top-level redirect here (`signInWithOAuth` with
+   * `redirectTo`) and Stripe is hosted checkout with `success_url`, so neither
+   * relies on an opener at all — but the stricter value buys nothing over this
+   * one and would break the first provider that ever needs a popup.
+   */
+  response.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  /*
+   * Features this product does not use, refused for every frame including its
+   * own. `payment` is on the list precisely *because* the product takes money:
+   * checkout is a redirect to Stripe's own page, so the Payment Request API is
+   * never called here and an injected script asking for it is not a thing that
+   * should work.
+   */
+  response.headers.set(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()',
+  );
   return response;
 }
 
@@ -96,6 +144,21 @@ const ADMIN_DENIAL_BODY = `<!doctype html><html lang="th"><head><meta charset="u
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const protectedRoute = isProtectedPath(pathname);
+
+  /*
+   * Abuse control comes first — before the session lookup, before maintenance,
+   * before anything that costs a round trip.
+   *
+   * That ordering is the point. Everything below this line begins by asking
+   * Supabase who is calling, so without this gate a flood of anonymous requests
+   * at `/auth/sign-in` is a flood of auth-server round trips we pay for and do
+   * not control. Refusing here means an abusive caller costs one map lookup.
+   *
+   * It only ever answers for the guarded classes (auth forms, the console, the
+   * expensive APIs, the API surface); ordinary page requests are not touched.
+   */
+  const abuse = guardEdgeAbuse(request);
+  if (abuse.refusal) return withSecurityHeaders(abuse.refusal);
 
   if (!isSupabaseConfigured) {
     if (!protectedRoute) return withSecurityHeaders(NextResponse.next());
@@ -126,24 +189,52 @@ export async function middleware(request: NextRequest) {
 
   function redirectCarryingSession(url: URL): NextResponse {
     const redirectResponse = NextResponse.redirect(url);
-    // Carry any refreshed auth cookies onto the redirect, or the refresh is lost
-    // and the next request starts the same round trip again.
-    response.cookies.getAll().forEach(({ name, value }) => redirectResponse.cookies.set(name, value));
+    /*
+     * Carry any refreshed auth cookies onto the redirect, or the refresh is lost
+     * and the next request starts the same round trip again.
+     *
+     * **The whole cookie, not its name and value.** This used to re-set each one
+     * as `set(name, value)`, which silently dropped every attribute Supabase had
+     * attached — `httpOnly`, `secure`, `sameSite`, `path`, `maxAge`. The result
+     * was that on any middleware redirect that happened to coincide with a token
+     * refresh (sign-in, maintenance, the assurance gate), the session cookie was
+     * rewritten as a plain, script-readable cookie. `httpOnly` is the single
+     * control that keeps an XSS anywhere in the product from being a session
+     * theft, and it was being removed by the code carrying the session forward.
+     *
+     * Passing the `ResponseCookie` object keeps the attributes the auth library
+     * chose, which is the only correct answer: this function has no business
+     * having an opinion about how a session cookie is scoped.
+     */
+    response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie));
     return withSecurityHeaders(redirectResponse);
   }
 
   /*
-   * The maintenance gate.
+   * Both runtime switches, read together, once.
    *
-   * It runs here — after the session is resolved, before every other rule —
-   * because it is the only rule that can decide a request should not reach the
-   * product at all, and because the two facts it needs (is the switch on, is
+   * This runs here — after the session is resolved, before every other rule —
+   * because these are the only rules that can decide a request should not reach
+   * the product at all, and because the facts they need (are the switches on, is
    * this caller an operator) are only knowable once the session is.
    *
-   * Exempt paths skip the read entirely rather than reading it and ignoring the
-   * answer. That is not an optimisation: it is what guarantees a Stripe webhook
-   * delivery cannot be delayed, redirected or failed by a database that is
-   * having a bad minute during a maintenance window.
+   * One round trip answers all three. Adding the lockdown as a second RPC would
+   * have doubled the latency of the gate that runs on every request — at exactly
+   * the moment the product is fragile, which is when both switches are most
+   * likely to be on.
+   *
+   * The read is skipped entirely when neither gate could act on it, rather than
+   * performed and ignored. That is not an optimisation: it is what guarantees a
+   * Stripe webhook delivery cannot be delayed, redirected or failed by a database
+   * having a bad minute during a window or an incident.
+   */
+  const needsPosture = !isMaintenanceExemptPath(pathname) || isPrivilegedSurfacePath(pathname);
+  const posture = needsPosture
+    ? await readRuntimePostureForEdge(supabase)
+    : { maintenanceEnabled: false, lockdownEnabled: false, isAdmin: false };
+
+  /*
+   * The maintenance gate.
    *
    * Note what is *not* gated on the reader's side: a mutation is refused with a
    * 503, never a redirect. A tab left open before the switch was thrown posts a
@@ -152,12 +243,11 @@ export async function middleware(request: NextRequest) {
    * bypass a page-only guard leaves behind.
    */
   if (!isMaintenanceExemptPath(pathname)) {
-    const maintenance = await readMaintenanceForEdge(supabase);
     const decision = decideMaintenance({
       pathname,
       method: request.method,
-      maintenanceEnabled: maintenance.maintenanceEnabled,
-      isAdmin: maintenance.isAdmin,
+      maintenanceEnabled: posture.maintenanceEnabled,
+      isAdmin: posture.isAdmin,
     });
 
     if (decision.action === 'block') {
@@ -172,6 +262,33 @@ export async function middleware(request: NextRequest) {
       url.search = '';
       return redirectCarryingSession(url);
     }
+  }
+
+  /*
+   * The security lockdown, refused at the edge.
+   *
+   * Note what is *not* here: an operator exemption. Maintenance lets an operator
+   * through because they are the one who has to check the product before
+   * switching it back on; lockdown binds them hardest of all, because the
+   * incident it exists for is a compromised operator session, and a switch the
+   * attacker in that session can walk around is not a control.
+   *
+   * This layer is deliberately coarse — it sees a POST to a URL and nothing
+   * more, so it refuses privileged *surfaces* by path. The server gate below it
+   * knows which class of write is actually about to happen and refuses on that.
+   * Neither is trusted to be the only one, and `/admin/security` stays reachable
+   * through both so the switch can always be released.
+   */
+  const lockdown = decideLockdown({
+    pathname,
+    method: request.method,
+    lockdownEnabled: posture.lockdownEnabled,
+  });
+  if (lockdown.action === 'block') {
+    return withSecurityHeaders(NextResponse.json(LOCKDOWN_DENIAL_BODY, {
+      status: lockdown.status,
+      headers: { 'Cache-Control': 'private, no-store' },
+    }));
   }
 
   if (protectedRoute && !user) {
@@ -202,11 +319,80 @@ export async function middleware(request: NextRequest) {
    * to sign-in — so this only ever answers for a caller with a session, and it
    * answers false unless the database says otherwise.
    */
-  if (isAdminConsolePath(pathname) && !(await isPlatformAdminForEdge(supabase))) {
-    return withSecurityHeaders(new NextResponse(ADMIN_DENIAL_BODY, {
-      status: 404,
-      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store' },
-    }));
+  if (isAdminConsolePath(pathname)) {
+    if (!(await isPlatformAdminForEdge(supabase))) {
+      /*
+       * The event worth keeping, recorded where it is actually caught.
+       *
+       * `void`, not `await`: an audit write must not add a round trip to the
+       * latency of a refusal, and an attacker learning the console exists from a
+       * timing difference is exactly what the bare 404 above exists to prevent.
+       * The recorder bounds its own writes and swallows its own failures — see
+       * `security-audit-edge.ts` for why both are load-bearing.
+       *
+       * `targetRef` is the *class* of surface, never `pathname`: an
+       * attacker-chosen path written into an append-only table is an
+       * attacker-chosen string nobody can delete afterwards.
+       */
+      void recordEdgeSecurityEvent(supabase, {
+        event: 'admin.authorization.denied',
+        targetRef: 'admin-console',
+        outcome: 'denied',
+        headers: request.headers,
+        userId: user?.id ?? null,
+      });
+      return withSecurityHeaders(new NextResponse(ADMIN_DENIAL_BODY, {
+        status: 404,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store' },
+      }));
+    }
+
+    /*
+     * The second factor, required of operators and of nobody else.
+     *
+     * It runs only after the line above has established that this caller really
+     * is an operator, which is what keeps the requirement off every ordinary
+     * reader: a Basic account never reaches this branch, and a non-operator gets
+     * the 404 above rather than a security prompt that would confirm the console
+     * exists.
+     *
+     * `/admin/security` is exempt, because it is the page where the factor is
+     * enrolled and verified — a gate that refuses entry to the room containing
+     * its own key is not a gate, it is a lockout. The exemption is scoped to
+     * that one path and is still behind the operator check.
+     *
+     * A GET is redirected so the operator lands somewhere they can act. A
+     * mutation is refused with a 403 and never a redirect: a server action posts
+     * to its own page URL, and a 302 would let the browser follow it into a page
+     * render instead of failing the write — the same bypass a redirect-only
+     * maintenance gate leaves behind.
+     */
+    if (!isAssuranceExemptAdminPath(pathname)) {
+      const assurance = await resolveAdminAssuranceForEdge(supabase, user);
+      if (!assurance.satisfied) {
+        // An operator holding a session but not the device is the scenario
+        // `aal2` exists for, so the repetition of this is the signal, not the
+        // single occurrence. The recorder decides which ones are worth a row.
+        void recordEdgeSecurityEvent(supabase, {
+          event: 'admin.assurance.denied',
+          targetRef: 'admin-console',
+          outcome: 'denied',
+          headers: request.headers,
+          userId: user?.id ?? null,
+        });
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          return withSecurityHeaders(NextResponse.json(
+            { data: null, error: { code: 'mfa-required', message: ASSURANCE_DENIAL_MESSAGE, retryable: false } },
+            { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
+          ));
+        }
+        const url = request.nextUrl.clone();
+        url.pathname = ADMIN_SECURITY_PATH;
+        url.search = '';
+        url.searchParams.set('next', pathname);
+        return redirectCarryingSession(url);
+      }
+    }
   }
 
   /*

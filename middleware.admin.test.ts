@@ -25,10 +25,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 type Role = 'admin' | 'user' | 'error';
+type Assurance = 'aal1' | 'aal2';
 
-let currentUser: { id: string } | null = null;
+interface MockUser { id: string; factors?: Array<{ id: string; status: string }> }
+
+let currentUser: MockUser | null = null;
 let currentRole: Role = 'user';
+let currentAal: Assurance = 'aal2';
 let accountAccessCalls = 0;
+
+/**
+ * An access token carrying one claim: `aal`.
+ *
+ * Unsigned, because nothing under test verifies a signature —
+ * `assuranceLevelFromToken` only decodes, and it is allowed to only decode
+ * because the caller has already proved the token authentic through
+ * `auth.getUser()`. Forging one here exercises exactly the path production uses.
+ */
+function tokenWithAal(aal: Assurance): string {
+  const payload = Buffer.from(JSON.stringify({ aal, sub: 'reader-1' })).toString('base64url');
+  return `eyJhbGciOiJIUzI1NiJ9.${payload}.signature`;
+}
 
 vi.mock('@/src/config/env/client', () => ({
   isSupabaseConfigured: true,
@@ -40,7 +57,10 @@ vi.mock('@/src/config/env/client', () => ({
 
 vi.mock('@supabase/ssr', () => ({
   createServerClient: () => ({
-    auth: { getUser: async () => ({ data: { user: currentUser } }) },
+    auth: {
+      getUser: async () => ({ data: { user: currentUser } }),
+      getSession: async () => ({ data: { session: { access_token: tokenWithAal(currentAal) } } }),
+    },
     rpc: async (name: string) => {
       if (name === 'resolve_maintenance_state') {
         return { data: [{ maintenance_enabled: false, is_admin: currentRole === 'admin' }], error: null };
@@ -56,16 +76,17 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 let middleware: typeof import('./middleware').middleware;
-let resetMaintenanceEdgeCache: typeof import('./src/lib/maintenance/maintenance-edge').resetMaintenanceEdgeCache;
+let resetRuntimePostureCache: typeof import('./src/lib/security/posture-edge').resetRuntimePostureCache;
 
 beforeEach(async () => {
   vi.resetModules();
   currentUser = null;
   currentRole = 'user';
+  currentAal = 'aal2';
   accountAccessCalls = 0;
   ({ middleware } = await import('./middleware'));
-  ({ resetMaintenanceEdgeCache } = await import('./src/lib/maintenance/maintenance-edge'));
-  resetMaintenanceEdgeCache();
+  ({ resetRuntimePostureCache } = await import('./src/lib/security/posture-edge'));
+  resetRuntimePostureCache();
 });
 
 afterEach(() => {
@@ -83,9 +104,23 @@ const CONSOLE_PATHS = [
   '/admin/system',
 ] as const;
 
-function request(path: string, options: { role?: Role; signedIn?: boolean; method?: string } = {}) {
-  currentUser = options.signedIn === false ? null : { id: 'reader-1' };
+interface RequestOptions {
+  role?: Role;
+  signedIn?: boolean;
+  method?: string;
+  /** The assurance level of the session's token. Defaults to a verified one. */
+  aal?: Assurance;
+  /** Whether the account holds a verified second factor. */
+  enrolled?: boolean;
+}
+
+function request(path: string, options: RequestOptions = {}) {
+  const enrolled = options.enrolled ?? true;
+  currentUser = options.signedIn === false
+    ? null
+    : { id: 'reader-1', factors: enrolled ? [{ id: 'factor-1', status: 'verified' }] : [] };
   currentRole = options.role ?? 'user';
+  currentAal = options.aal ?? 'aal2';
   return middleware(new NextRequest(`https://portkheaw.app${path}`, { method: options.method ?? 'GET' }));
 }
 
@@ -168,11 +203,76 @@ describe('fail closed', () => {
 });
 
 describe('an operator', () => {
-  it('is passed through to every console URL untouched', async () => {
+  it('is passed through to every console URL untouched once a factor is presented', async () => {
     for (const path of CONSOLE_PATHS) {
-      const response = await request(path, { role: 'admin' });
+      const response = await request(path, { role: 'admin', aal: 'aal2' });
       expect(`${path} -> ${response.status}`).toBe(`${path} -> 200`);
       expect(response.headers.get('location')).toBeNull();
+    }
+  });
+});
+
+/*
+ * The second factor, at the edge.
+ *
+ * This is the layer that stops a *stolen ordinary session* from opening the
+ * console. Everything else in this product treats the session cookie as proof of
+ * who is asking, which for a reader is fine — the blast radius is their own
+ * portfolio. For an operator it is not, so the console additionally requires
+ * that a second factor was used in this session, which a stolen cookie cannot
+ * carry and cannot be upgraded to.
+ *
+ * What is asserted here is the shape of the requirement, including the two ways
+ * it must NOT behave: it must not reach ordinary readers, and it must not lock
+ * an operator out of the page where they would satisfy it.
+ */
+describe('an operator who has not presented a second factor', () => {
+  it('is sent to the security page instead of the console', async () => {
+    for (const path of CONSOLE_PATHS) {
+      const response = await request(path, { role: 'admin', aal: 'aal1' });
+      expect(`${path} -> ${response.status}`).toBe(`${path} -> 307`);
+      expect(response.headers.get('location')).toBe(
+        `https://portkheaw.app/admin/security?next=${encodeURIComponent(path)}`,
+      );
+    }
+  });
+
+  it('is sent there to enrol as well, when no factor exists yet', async () => {
+    const response = await request('/admin', { role: 'admin', aal: 'aal1', enrolled: false });
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/admin/security');
+  });
+
+  /*
+   * A mutation is refused, never redirected. A server action posts to its own
+   * page URL, and a 302 lets the browser follow it into a page render instead of
+   * failing the write — which is the bypass a redirect-only gate leaves behind.
+   */
+  it('has a console mutation refused with a 403 rather than redirected', async () => {
+    const response = await request('/admin/system', { role: 'admin', aal: 'aal1', method: 'POST' });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('location')).toBeNull();
+    expect(await bodyOf(response)).toContain('mfa-required');
+  });
+
+  it('can still reach the page that exists to satisfy the requirement', async () => {
+    const response = await request('/admin/security', { role: 'admin', aal: 'aal1', enrolled: false });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  /*
+   * The requirement is an operator's, and nobody else's. A non-operator still
+   * gets the bare 404 — they must never learn that a second factor is a thing
+   * this product asks for, because that confirms the console exists.
+   */
+  it('is never imposed on an ordinary reader', async () => {
+    const response = await request('/admin', { role: 'user', aal: 'aal1', enrolled: false });
+    expect(response.status).toBe(404);
+
+    for (const path of ['/portfolio', '/watchlist', '/settings', '/']) {
+      const ordinary = await request(path, { role: 'user', aal: 'aal1', enrolled: false });
+      expect(`${path} -> ${ordinary.status}`).toBe(`${path} -> 200`);
     }
   });
 });

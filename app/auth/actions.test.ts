@@ -202,8 +202,17 @@ describe('signUpAction', () => {
       password: 'PortKheaw#2026',
     }));
     expect(client!.countOf('updateUser')).toBe(0);
-    expect(client!.countOf('rpc')).toBe(0);
     expect(client!.countOf('signUp')).toBe(1);
+    /*
+     * The only routine sign-up is allowed to call is the rate limiter, which
+     * takes a bucket digest and nothing else. Asserting *which* routines ran is
+     * the point rather than asserting none did: an action that could link an
+     * identity, set a password or promote an account would show up here by name.
+     */
+    const routines = client!.calls
+      .filter((call) => call.method === 'rpc')
+      .map((call) => call.args[0]);
+    expect(new Set(routines)).toEqual(new Set(['consume_rate_limit']));
   });
 
   it('enforces the same password policy the checklist displays', async () => {

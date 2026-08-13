@@ -48,6 +48,78 @@ export const CONNECTION_RATE_WINDOW_MS = 60_000;
 export const SUBSCRIBE_RATE_LIMIT = 60;
 export const SUBSCRIBE_RATE_WINDOW_MS = 60_000;
 
+/**
+ * Concurrent connections one address may hold open.
+ *
+ * The rate guard above bounds how *fast* an address may connect; it says nothing
+ * about how many it may keep. Those are different attacks — 30 connections a
+ * minute, held forever, is a slow leak that exhausts the process without ever
+ * tripping a rate limit. A person with the product open in several tabs on a
+ * phone and a laptop is the case this has to admit, and that is a handful, not
+ * a hundred.
+ *
+ * A NAT puts many readers behind one address, so this is set well above one
+ * household. The global cap below is what protects the process from the case
+ * this one cannot see.
+ */
+export const MAX_CONNECTIONS_PER_IP = 12;
+
+/**
+ * Total concurrent connections this instance will hold.
+ *
+ * Backpressure, not capacity planning: past this point the instance refuses new
+ * connections with a 503 so the ones it already has keep receiving their feed.
+ * Degrading everybody's stream to accept one more subscriber is the failure mode
+ * this exists to prevent, and a refused upgrade is something the browser's
+ * bounded reconnect handles gracefully.
+ */
+export const MAX_TOTAL_CONNECTIONS = 2_000;
+
+/**
+ * Distinct `(symbol, channel)` pairs one client may hold.
+ *
+ * The registry already caps the instance's *total* symbol set — a provider quota
+ * protection — but a global cap alone lets one client take every slot and starve
+ * every other reader. This is the per-client share. The product's busiest screen
+ * watches one symbol on three channels; a watchlist page a few dozen.
+ */
+export const MAX_SUBSCRIPTIONS_PER_CLIENT = 60;
+
+/**
+ * Unparseable frames a client may send before it is disconnected.
+ *
+ * Not zero: a truncated frame during a flaky handover is a real thing that
+ * happens to real phones, and dropping that reader would be a bug. But a client
+ * that cannot form a valid frame ten times in a row is not speaking this
+ * protocol, and answering it forever is free bandwidth for whoever is probing.
+ */
+export const MAX_MALFORMED_FRAMES = 10;
+
+/**
+ * Silence after which the Gateway probes a peer, and silence after which it
+ * gives up on one.
+ *
+ * The browser client sends an application ping every 15 seconds, so 30 seconds
+ * of nothing means two were missed and the socket is worth probing; 90 seconds
+ * means six were, and whatever is on the other end is not the product. The
+ * probe is a protocol-level ping, which browsers answer in the transport without
+ * the page being involved — so this detects a dead *connection*, not a busy tab.
+ */
+export const CLIENT_PROBE_AFTER_MS = 30_000;
+export const CLIENT_IDLE_TIMEOUT_MS = 90_000;
+
+/** How often the watchdog sweeps the peer set. */
+export const WATCHDOG_INTERVAL_MS = 15_000;
+
+/**
+ * Close codes the Gateway uses on its own initiative, in the private 4000-4999
+ * range so they can never be confused with a protocol-level close. A browser
+ * logs the code, which is what makes "why did my socket drop" answerable from a
+ * user's console rather than only from the server's.
+ */
+export const CLOSE_IDLE = 4408;
+export const CLOSE_MALFORMED = 4400;
+
 /** True only for a genuine local development process (never in production). */
 export function isDevelopment(env: Record<string, string | undefined> = process.env): boolean {
   return env.NODE_ENV === 'development';
@@ -212,6 +284,62 @@ export class ConnectionRateGuard {
       this.perKey.set(key, limiter);
     }
     return limiter.tryAcquire();
+  }
+}
+
+/**
+ * Concurrent-connection accounting, per key and in total.
+ *
+ * Separate from {@link ConnectionRateGuard} because they answer different
+ * questions and a limiter that conflates them protects against neither: the rate
+ * guard bounds arrivals over time and forgets them, this one bounds what is
+ * currently held and only forgets on release.
+ *
+ * Every acquire must be paired with a release on close — including an errored
+ * close, which is why the caller registers the release on the socket's own close
+ * handler rather than at the end of a request. A leaked slot here is a slot the
+ * instance never gets back.
+ */
+export class ConnectionCapGuard {
+  private readonly perKey = new Map<string, number>();
+  private total = 0;
+
+  constructor(
+    private readonly perKeyLimit: number,
+    private readonly totalLimit: number,
+  ) {}
+
+  /**
+   * Reserve a slot. Returns why it was refused, so the caller can answer 503 for
+   * "this instance is full" and 429 for "you personally are holding too many" —
+   * a distinction that matters to a client deciding whether to back off or to
+   * stop opening tabs.
+   */
+  acquire(key: string): { ok: true } | { ok: false; reason: 'global' | 'per-key' } {
+    if (this.total >= this.totalLimit) return { ok: false, reason: 'global' };
+    const held = this.perKey.get(key) ?? 0;
+    if (held >= this.perKeyLimit) return { ok: false, reason: 'per-key' };
+    this.perKey.set(key, held + 1);
+    this.total += 1;
+    return { ok: true };
+  }
+
+  release(key: string): void {
+    const held = this.perKey.get(key);
+    if (held === undefined) return;
+    // The map entry is deleted at zero, not left at zero: an entry per address
+    // that ever connected is an unbounded map in a process that runs for weeks.
+    if (held <= 1) this.perKey.delete(key);
+    else this.perKey.set(key, held - 1);
+    this.total = Math.max(0, this.total - 1);
+  }
+
+  get openConnections(): number {
+    return this.total;
+  }
+
+  openFor(key: string): number {
+    return this.perKey.get(key) ?? 0;
   }
 }
 

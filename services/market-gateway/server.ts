@@ -9,9 +9,13 @@ import { GatewayLifecycle } from './lifecycle';
 import { MarketCache } from './cache';
 import { fetchFinnhubRestSnapshot } from './rest-snapshot';
 import { MarketCandleEngine } from './candle-engine';
+import { IdentityVerifier, MAX_CONNECTIONS_PER_USER } from './identity';
 import type { MarketSnapshot } from '@/src/lib/market-data/realtime';
 import {
   buildHealthReport,
+  CLIENT_IDLE_TIMEOUT_MS,
+  CLIENT_PROBE_AFTER_MS,
+  ConnectionCapGuard,
   ConnectionRateGuard,
   CONNECTION_RATE_LIMIT,
   CONNECTION_RATE_WINDOW_MS,
@@ -19,7 +23,11 @@ import {
   isDevelopment,
   isOriginAllowed,
   isUpstreamReady,
+  MAX_CONNECTIONS_PER_IP,
+  MAX_MALFORMED_FRAMES,
   MAX_MESSAGE_BYTES,
+  MAX_SUBSCRIPTIONS_PER_CLIENT,
+  MAX_TOTAL_CONNECTIONS,
   READY_PATH,
   resolveAllowedOrigins,
   resolveGatewayPort,
@@ -27,6 +35,7 @@ import {
   SlidingWindowRateLimiter,
   SUBSCRIBE_RATE_LIMIT,
   SUBSCRIBE_RATE_WINDOW_MS,
+  WATCHDOG_INTERVAL_MS,
   WS_PATH,
 } from './runtime';
 
@@ -68,6 +77,31 @@ function main(): void {
   const development = isDevelopment();
   const allowedOrigins = resolveAllowedOrigins();
   const connectionGuard = new ConnectionRateGuard(CONNECTION_RATE_LIMIT, CONNECTION_RATE_WINDOW_MS);
+  // How fast an address may connect, and how many it may hold — different
+  // limits for different attacks. See the notes on both in `runtime.ts`.
+  const capacityGuard = new ConnectionCapGuard(MAX_CONNECTIONS_PER_IP, MAX_TOTAL_CONNECTIONS);
+  /*
+   * The per-account cap. `MAX_TOTAL_CONNECTIONS` is reused as its total because
+   * the global ceiling is already enforced by `capacityGuard` at the upgrade —
+   * this guard exists only for its per-key half.
+   */
+  const identityGuard = new ConnectionCapGuard(MAX_CONNECTIONS_PER_USER, MAX_TOTAL_CONNECTIONS);
+
+  /*
+   * Identity is optional infrastructure. Stock pages are public, so a Gateway
+   * that could not verify anybody must keep serving everybody — without the
+   * Supabase configuration below, every connection stays anonymous and is
+   * bounded by address, exactly as it was before.
+   */
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
+  const identityVerifier = supabaseUrl && publishableKey
+    ? new IdentityVerifier({ supabaseUrl, publishableKey })
+    : null;
+  if (!identityVerifier) {
+    log('info', 'identity verification disabled: Supabase URL/publishable key not set — connections are bounded by address only');
+  }
+
   const startedAt = Date.now();
 
   // Shared end-to-end pipeline tracer. On by default (MARKET_TRACE=off silences
@@ -114,6 +148,14 @@ function main(): void {
     getSnapshot: (symbol) => cache.snapshotFor(symbol),
     bootstrapSnapshot,
     tracer,
+    maxSubscriptionsPerClient: MAX_SUBSCRIPTIONS_PER_CLIENT,
+    maxMalformedFrames: MAX_MALFORMED_FRAMES,
+    onClientClosed: (reason) => log('info', `peerClosed reason=${reason} open=${capacityGuard.openConnections}`),
+    verifyIdentity: identityVerifier
+      ? async (token) => (await identityVerifier.verify(token))?.userId ?? null
+      : undefined,
+    acquireIdentity: (userId) => identityGuard.acquire(userId).ok,
+    releaseIdentity: (userId) => identityGuard.release(userId),
   });
 
   const upstream = new UpstreamConnection({
@@ -203,11 +245,53 @@ function main(): void {
       return rejectUpgrade(socket, 429, 'Too Many Requests');
     }
 
+    /*
+     * The concurrency reservation, taken before the handshake completes.
+     *
+     * `503` for a full instance and `429` for one address holding too many are
+     * different answers on purpose: the first is "come back, this instance is
+     * saturated", which the browser's bounded backoff handles and a load
+     * balancer can act on; the second is "you are the problem", which no amount
+     * of retrying fixes.
+     */
+    const reservation = capacityGuard.acquire(ip);
+    if (!reservation.ok) {
+      log('error', `rejected upgrade: ${reservation.reason} connection cap reached (open=${capacityGuard.openConnections})`);
+      return reservation.reason === 'global'
+        ? rejectUpgrade(socket, 503, 'Service Unavailable')
+        : rejectUpgrade(socket, 429, 'Too Many Requests');
+    }
+
     wss.handleUpgrade(req, socket, head, (peer) => {
       peer.on('error', (error) => log('error', 'peer error', error));
+      /*
+       * The release is registered on the socket's own close event, before the
+       * hub is told about the peer, so every path out of this connection —
+       * clean close, error, watchdog reap, process teardown — gives the slot
+       * back. A reservation released only on the happy path is a slow leak that
+       * ends with a healthy instance refusing everybody.
+       */
+      peer.once('close', () => capacityGuard.release(ip));
       hub.addClient(fromWs(peer));
     });
   });
+
+  /*
+   * The liveness watchdog: one timer for every peer rather than one per peer.
+   *
+   * It probes sockets that have gone quiet and closes the ones that stay quiet,
+   * which is what stops a half-open connection — a phone that lost signal, a
+   * laptop that slept, a client that opened a socket and never spoke — from
+   * holding a slot and an upstream subscription indefinitely. `unref` so a
+   * pending sweep never keeps the process alive during shutdown.
+   */
+  const watchdog = setInterval(() => {
+    hub.sweepIdleClients({
+      probeAfterMs: CLIENT_PROBE_AFTER_MS,
+      idleAfterMs: CLIENT_IDLE_TIMEOUT_MS,
+    });
+  }, WATCHDOG_INTERVAL_MS);
+  watchdog.unref();
 
   // --- Ordered teardown for signals + fatal errors ---
   const lifecycle = new GatewayLifecycle({
@@ -224,7 +308,9 @@ function main(): void {
     closeWebSocketServer: (done) => wss.close(() => done()),
     closeHttpServer: (done) => httpServer.close(() => done()),
     clearTimers: () => {
-      /* upstream owns its own timers and is stopped above; nothing else here */
+      // The upstream owns its own timers and is stopped above; the peer watchdog
+      // is this file's, so this is where it is cleared.
+      clearInterval(watchdog);
     },
     exit: (code) => process.exit(code),
     log,

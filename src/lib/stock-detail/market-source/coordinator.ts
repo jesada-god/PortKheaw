@@ -46,6 +46,11 @@ export interface CoordinatedMarketSourceOptions {
   scheduler?: (callback: () => void, delayMs: number) => () => void;
   now?: () => number;
   random?: () => number;
+  /**
+   * Resolves the reader's Supabase access token for the Gateway `hello`. Passed
+   * straight through; see {@link WebSocketMarketSourceOptions.resolveAccessToken}.
+   */
+  resolveAccessToken?: () => Promise<string | null>;
   /** Test seams: inject fake sources instead of the real WS/REST implementations. */
   createWsSource?: () => MarketSource;
   createPollSource?: () => MarketSource;
@@ -96,6 +101,7 @@ export class CoordinatedMarketSource implements MarketSource {
       now: options.now,
       random: options.random,
       scheduler: options.scheduler,
+      resolveAccessToken: options.resolveAccessToken,
     });
     this.poll = options.createPollSource?.() ?? new PollingMarketSource({
       symbol: options.symbol,
@@ -283,6 +289,27 @@ export class CoordinatedMarketSource implements MarketSource {
  * coordinated WS+REST source when a Gateway URL is configured, otherwise the
  * existing REST-only {@link PollingMarketSource} (unchanged behaviour).
  */
+/**
+ * The reader's access token, read from the browser's own Supabase session.
+ *
+ * Imported lazily so this module — which is also loaded on paths that never open
+ * a socket — does not drag the auth client into their bundle, and so a Supabase
+ * that is not configured is a resolved `null` rather than an import-time throw.
+ * Every failure is `null`, which is a fully supported anonymous connection: the
+ * stock pages this runs on are public.
+ */
+async function browserAccessToken(): Promise<string | null> {
+  try {
+    const { createClient } = await import('@/src/lib/supabase/client');
+    const client = createClient();
+    if (!client) return null;
+    const { data } = await client.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function createMarketSource(options: {
   symbol: string;
   transport: MarketSourceTransport;
@@ -291,6 +318,8 @@ export function createMarketSource(options: {
   cadence: PollingCadence;
   wsUrl: string | null;
   createSocket?: RealtimeSocketFactory;
+  /** Test seam; production resolves the token from the browser session. */
+  resolveAccessToken?: () => Promise<string | null>;
 }): MarketSource {
   if (options.wsUrl) {
     return new CoordinatedMarketSource({
@@ -300,6 +329,7 @@ export function createMarketSource(options: {
       session: options.session,
       selection: options.selection,
       createSocket: options.createSocket,
+      resolveAccessToken: options.resolveAccessToken ?? browserAccessToken,
     });
   }
   return new PollingMarketSource({

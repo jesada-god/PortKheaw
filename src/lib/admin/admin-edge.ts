@@ -10,8 +10,8 @@ import { normalizeRole } from '@/src/lib/subscription/admin-access';
  * database and returns the *stored* role. No user id, role or preview is
  * accepted from the request; there is nothing here a client can send.
  *
- * Two deliberate differences from {@link readMaintenanceForEdge}, which reads a
- * switch a few paths away:
+ * Two deliberate differences from `readRuntimePostureForEdge`, which reads the
+ * maintenance and lockdown switches a few lines earlier in the same middleware:
  *
  *   * **Nothing is cached, in either direction.** That module caches "the
  *     product is up" because it is the same answer for everybody. This answer is

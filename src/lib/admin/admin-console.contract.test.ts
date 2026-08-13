@@ -50,6 +50,7 @@ describe('every operator route is gated on the server', () => {
       'app/admin/page.tsx',
       'app/admin/refunds/[id]/page.tsx',
       'app/admin/refunds/page.tsx',
+      'app/admin/security/page.tsx',
       'app/admin/support/[id]/page.tsx',
       'app/admin/support/page.tsx',
       'app/admin/system/page.tsx',
@@ -58,7 +59,7 @@ describe('every operator route is gated on the server', () => {
 
   it('keeps the gate in the layout that covers the whole console', () => {
     const layout = source('app/admin/layout.tsx');
-    expect(layout).toContain('requireAdminPage()');
+    expect(layout).toContain(`requireAdminPage({ assurance: 'exempt' })`);
   });
 
   /*
@@ -77,14 +78,37 @@ describe('every operator route is gated on the server', () => {
   it('gates every operator page inside the page itself, before it reads anything', () => {
     for (const page of ADMIN_PAGES) {
       const code = source(page);
-      expect(`${page}: ${code.includes('requireAdminPage()')}`).toBe(`${page}: true`);
+      expect(`${page}: ${code.includes('requireAdminPage(')}`).toBe(`${page}: true`);
 
-      const gate = 'await requireAdminPage();';
       const body = code.slice(code.indexOf('export default async function'));
       const firstAwait = body.indexOf('await ');
-      expect(`${page}: ${body.slice(firstAwait, firstAwait + gate.length)}`)
-        .toBe(`${page}: ${gate}`);
+      expect(`${page}: ${body.slice(firstAwait).startsWith('await requireAdminPage(')}`)
+        .toBe(`${page}: true`);
     }
+  });
+
+  /*
+   * The second factor, and the single hole in it.
+   *
+   * `requireAdminPage()` requires `aal2` by default, so a page added tomorrow is
+   * behind the requirement without anybody remembering to put it there. Exactly
+   * one page may opt out — `/admin/security`, where the factor is enrolled and
+   * presented — because a gate that refuses entry to the room containing its own
+   * key is a lockout rather than a gate.
+   *
+   * This asserts the hole is that one page and stays that size. A second
+   * `assurance: 'exempt'` anywhere under `/admin` fails here, which is the point:
+   * the cheapest way to "fix" a console page that redirects is to copy the
+   * exemption, and that would quietly undo the whole requirement.
+   */
+  it('lets exactly one operator page render without a second factor', () => {
+    const exempt = ADMIN_PAGES.filter((page) => source(page).includes("assurance: 'exempt'"));
+    expect(exempt).toEqual(['app/admin/security/page.tsx']);
+
+    const guard = source('src/lib/admin/admin-guard.ts');
+    // The default is the requirement; only an explicit opt-out skips it.
+    expect(guard).toContain("if (options.assurance !== 'exempt')");
+    expect(guard).toContain('if (!assurance.satisfied) redirect(ADMIN_SECURITY_PATH)');
   });
 
   /*
@@ -99,7 +123,13 @@ describe('every operator route is gated on the server', () => {
       for (const action of actions) {
         const body = code.slice(code.indexOf(`export async function ${action}(`));
         const declaration = body.slice(0, body.indexOf('\n}\n'));
-        expect(`${action}: ${declaration.includes('await requireAdmin();')}`)
+        /*
+         * `requireAdminMutation()` rather than `requireAdmin()`: these actions
+         * are posted from `/settings` and `/support` pages, so the middleware
+         * assurance gate — which only sees `/admin` URLs — never runs for them.
+         * The gate has to be in the action or it is not there at all.
+         */
+        expect(`${action}: ${declaration.includes('await requireAdminMutation();')}`)
           .toBe(`${action}: true`);
       }
     }
@@ -124,11 +154,29 @@ describe('every operator route is gated on the server', () => {
    * per-reader.
    */
   it('refuses the console at the edge, fail closed and uncached', () => {
-    expect(source('middleware.ts')).toContain('isAdminConsolePath(pathname) && !(await isPlatformAdminForEdge(supabase))');
+    const middleware = source('middleware.ts');
+    expect(middleware).toContain('if (isAdminConsolePath(pathname)) {');
+    expect(middleware).toContain('if (!(await isPlatformAdminForEdge(supabase))) {');
+    /*
+     * The role check comes first, so a non-operator is refused as a non-operator
+     * and never learns that a second factor is something this product asks for.
+     * Compared inside the console block rather than across the file, where the
+     * import statements would decide the answer.
+     */
+    const consoleBlock = middleware.slice(middleware.indexOf('if (isAdminConsolePath(pathname)) {'));
+    expect(consoleBlock.indexOf('isPlatformAdminForEdge(supabase)'))
+      .toBeLessThan(consoleBlock.indexOf('resolveAdminAssuranceForEdge('));
     const edge = source('src/lib/admin/admin-edge.ts');
     expect(edge).toContain("client.rpc('get_my_account_access')");
     expect(edge).toContain('if (error) return false;');
-    expect(edge).toContain('catch {\n    return false;\n  }');
+    /*
+     * Matched against the newline this file was checked out with, not against
+     * LF. `core.autocrlf` is on for Windows clones, so a literal '\n' here
+     * passes on the machine the file was written on and fails on every fresh
+     * checkout — a source-reading assertion has to be told which line ending it
+     * is reading.
+     */
+    expect(edge.replace(/\r\n/g, '\n')).toContain('catch {\n    return false;\n  }');
     // No module-scope memo: a shared positive would be one reader's role reused.
     expect(edge).not.toMatch(/^let |^const cache/m);
   });

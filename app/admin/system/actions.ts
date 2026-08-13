@@ -2,7 +2,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
-import { requireAdmin, isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import { isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import {
+  ASSURANCE_DENIAL_MESSAGE, isAssuranceRequiredError, requireAdminMutation,
+} from '@/src/lib/security/admin-assurance-server';
+import type { LockdownClass } from '@/src/lib/security/lockdown';
+import {
+  isSecurityLockdownError, LOCKDOWN_DENIAL_MESSAGE,
+} from '@/src/lib/security/lockdown-server';
 import { resolveRequestId } from '@/src/lib/monitoring/request-id';
 import { captureServerError } from '@/src/lib/monitoring/report';
 import {
@@ -64,13 +71,30 @@ const ALREADY_MESSAGE: Readonly<Record<'on' | 'off', string>> = {
   off: 'แอปเปิดใช้งานอยู่แล้ว ผู้ใช้เข้าใช้งานได้ตามปกติ',
 };
 
-async function authorizeAndBound(): Promise<
+/**
+ * The gate both actions here open with, taking the one thing they disagree
+ * about.
+ *
+ * The two mutations in this file are not the same kind of thing to a security
+ * lockdown, and passing the class explicitly is what keeps that visible:
+ *
+ *   * **The maintenance switch is exempt.** Taking the product offline is an
+ *     incident-response action — an operator who has just locked down must still
+ *     be able to put the notice up.
+ *   * **A release note is not.** It is content published to every reader in the
+ *     product, so an operator session somebody else is holding could use it to
+ *     say anything to everybody. That is precisely what a lockdown should stop,
+ *     and the announcement can wait until the incident is over.
+ */
+async function authorizeAndBound(lockdownClass: LockdownClass): Promise<
   | { ok: true; client: NonNullable<Awaited<ReturnType<typeof createClient>>>; requestId: string }
   | { ok: false; message: string }
 > {
   try {
-    await requireAdmin();
+    await requireAdminMutation({ lockdownClass });
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return { ok: false, message: ASSURANCE_DENIAL_MESSAGE };
+    if (isSecurityLockdownError(cause)) return { ok: false, message: LOCKDOWN_DENIAL_MESSAGE };
     return { ok: false, message: isAdminRequiredError(cause) ? FORBIDDEN : UNAVAILABLE };
   }
 
@@ -104,7 +128,7 @@ function parseBangkokLocal(value: string): string | null {
 
 /** Switch the product off for ordinary readers, or back on. */
 export async function setMaintenanceAction(formData: FormData): Promise<MaintenanceActionResult> {
-  const gate = await authorizeAndBound();
+  const gate = await authorizeAndBound('maintenance-toggle');
   if (!gate.ok) return gate;
 
   /*
@@ -164,7 +188,7 @@ export async function setMaintenanceAction(formData: FormData): Promise<Maintena
  * not silently publish a draft and "publish" must not be the only way to save.
  */
 export async function saveReleaseNoteAction(formData: FormData): Promise<SystemActionResult> {
-  const gate = await authorizeAndBound();
+  const gate = await authorizeAndBound('admin-mutation');
   if (!gate.ok) return gate;
 
   const rawId = String(formData.get('id') ?? '').trim();

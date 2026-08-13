@@ -49,6 +49,20 @@ export interface WebSocketMarketSourceOptions {
   staleMs?: number;
   /** End-to-end pipeline tracer. Defaults to a live, sampled console tracer. */
   tracer?: MarketTracer;
+  /**
+   * The signed-in reader's Supabase access token, if there is one.
+   *
+   * Sent to the Gateway as an opening `hello` so it can bound connections per
+   * *account* rather than only per address — an address is shared by everybody
+   * behind a NAT and free to rotate for anybody with a proxy pool.
+   *
+   * Resolved lazily, per connection, because a token expires and this source
+   * outlives several of them: capturing one at construction would send a stale
+   * token on every reconnect for the rest of the page's life. Returning `null`
+   * is the ordinary case — stock pages are public — and changes nothing about
+   * what the reader sees.
+   */
+  resolveAccessToken?: () => Promise<string | null>;
 }
 
 const DEFAULT_SELECTION: MarketSelection = { interval: '5m', session: 'regular', adjusted: false };
@@ -88,6 +102,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
   private readonly scheduler: (callback: () => void, delayMs: number) => () => void;
   private readonly heartbeatMs: number;
   private readonly staleMs: number;
+  private readonly resolveAccessToken: (() => Promise<string | null>) | null;
   private readonly tracer: MarketTracer;
 
   private selection: MarketSelection;
@@ -151,6 +166,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
     this.heartbeatMs = options.heartbeatMs ?? 15_000;
     this.staleMs = options.staleMs ?? 30_000;
     this.tracer = options.tracer ?? new MarketTracer();
+    this.resolveAccessToken = options.resolveAccessToken ?? null;
   }
 
   get connectionState(): 'idle' | 'connecting' | 'open' | 'closed' {
@@ -293,6 +309,7 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
         this.degraded = false;
         this.nextReconnectAt = 0;
         this.state = 'open';
+        this.sendIdentity();
         this.sendSubscribe();
         this.startHeartbeat();
         this.emit(false, 'lifecycle');
@@ -322,6 +339,32 @@ export class WebSocketMarketSourceImpl implements WebSocketMarketSource {
       case 'error':
         break;
     }
+  }
+
+  /**
+   * Tell the Gateway which account this connection belongs to, when there is
+   * one.
+   *
+   * Fire-and-forget, and deliberately *not* awaited before `sendSubscribe()`:
+   * the market feed must start flowing without waiting on an auth round trip,
+   * and an anonymous connection is a fully supported connection. Every failure —
+   * no session, an unreadable one, a Supabase that is not configured — resolves
+   * to sending nothing.
+   *
+   * The socket is re-checked after the await because a token read is
+   * asynchronous and the connection may have been torn down in the meantime.
+   */
+  private sendIdentity(): void {
+    const resolve = this.resolveAccessToken;
+    if (!resolve) return;
+    void resolve()
+      .then((token) => {
+        if (!token || this.state !== 'open') return;
+        this.socket?.send(JSON.stringify({ type: 'hello', token }));
+      })
+      .catch(() => {
+        // An unresolvable token is an anonymous connection, which is fine.
+      });
   }
 
   private sendSubscribe(): void {

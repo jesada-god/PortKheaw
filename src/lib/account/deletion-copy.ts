@@ -24,6 +24,13 @@ export type DeleteAccountFailure =
   | 'reauth-stale'
   | 'reauth-unavailable'
   | 'provider-failed'
+  /**
+   * The security lockdown is engaged. Named separately from `unavailable`
+   * because it is not a failure and will not clear by retrying — the reader
+   * should be told to come back later rather than press the button again
+   * against a control that is deliberately closed.
+   */
+  | 'locked-down'
   | 'unavailable';
 
 export interface DeleteAccountState {
@@ -51,6 +58,9 @@ export const DELETE_ACCOUNT_MESSAGE: Readonly<Record<DeleteAccountFailure, strin
   'reauth-stale': 'เพื่อความปลอดภัย กรุณาเข้าสู่ระบบใหม่อีกครั้งก่อนลบบัญชี',
   'reauth-unavailable': 'ยืนยันตัวตนไม่สำเร็จในขณะนี้ กรุณาลองใหม่อีกครั้งในอีกสักครู่',
   'provider-failed': 'ยังยกเลิกการเรียกเก็บเงินไม่สำเร็จ จึงยังไม่ลบบัญชี กรุณาลองใหม่อีกครั้ง',
+  // Says the operation is paused and does not say why. A reader learning that a
+  // security incident is in progress is an invitation, not an explanation.
+  'locked-down': 'ขณะนี้ระบบพักการลบบัญชีชั่วคราวเพื่อความปลอดภัย กรุณาลองใหม่ในภายหลัง',
   unavailable: 'ลบบัญชีไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
 };
 

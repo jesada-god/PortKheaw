@@ -3,10 +3,13 @@
 import { revalidatePath } from 'next/cache';
 import {
   isAdminRequiredError,
-  requireAdmin,
   setAdminAccessPreview,
 } from '@/src/lib/subscription/account-access';
 import { adminPreviewModes, type AdminPreviewMode } from '@/src/lib/subscription/admin-access';
+import {
+  ASSURANCE_DENIAL_MESSAGE, isAssuranceRequiredError, requireAdminMutation,
+} from '@/src/lib/security/admin-assurance-server';
+import { recordSecurityEvent } from '@/src/lib/security/security-audit';
 /*
  * Shared with the billing webhook on purpose. An access change and a paid-plan
  * change must invalidate exactly the same surfaces, and keeping one definition
@@ -110,7 +113,7 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
   }
 }
 
-export type AdminPreviewFailureCode = 'ADMIN_REQUIRED' | 'INVALID_MODE' | 'UNAVAILABLE';
+export type AdminPreviewFailureCode = 'ADMIN_REQUIRED' | 'MFA_REQUIRED' | 'INVALID_MODE' | 'UNAVAILABLE';
 
 export type AdminPreviewResult =
   | { ok: true; mode: AdminPreviewMode; expiresAt: string | null; message: string }
@@ -118,6 +121,7 @@ export type AdminPreviewResult =
 
 const ADMIN_PREVIEW_FAILURE_MESSAGE: Record<AdminPreviewFailureCode, string> = {
   ADMIN_REQUIRED: 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ จึงจำลองสิทธิ์ไม่ได้',
+  MFA_REQUIRED: ASSURANCE_DENIAL_MESSAGE,
   INVALID_MODE: 'โหมดทดสอบไม่ถูกต้อง กรุณาเลือกใหม่อีกครั้ง',
   UNAVAILABLE: 'เปลี่ยนโหมดทดสอบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
 };
@@ -149,9 +153,25 @@ export async function setAdminAccessPreviewAction(mode: AdminPreviewMode): Promi
   }
 
   try {
-    const before = await requireAdmin();
+    const before = await requireAdminMutation();
     const grant = await setAdminAccessPreview(mode);
     revalidateEveryEntitlementSurface();
+
+    /*
+     * A privileged override of what an account may open, recorded every time
+     * rather than summarised. It is low-frequency and individually consequential
+     * — an operator running as Elite is an operator whose subsequent reads look
+     * different — so the audit keeps each one, in order.
+     *
+     * `void`, so the operator's own control never waits on the audit write, and
+     * the recorder swallows its own failures.
+     */
+    void recordSecurityEvent({
+      event: 'security.subscription.override',
+      targetRef: `preview:${grant.mode}`,
+      outcome: 'allowed',
+      userId: before.userId,
+    });
 
     record(
       grant.mode === 'actual'
@@ -169,7 +189,9 @@ export async function setAdminAccessPreviewAction(mode: AdminPreviewMode): Promi
       message: ADMIN_PREVIEW_SUCCESS_MESSAGE[grant.mode],
     };
   } catch (error) {
-    const code: AdminPreviewFailureCode = isAdminRequiredError(error) ? 'ADMIN_REQUIRED' : 'UNAVAILABLE';
+    const code: AdminPreviewFailureCode = isAssuranceRequiredError(error)
+      ? 'MFA_REQUIRED'
+      : isAdminRequiredError(error) ? 'ADMIN_REQUIRED' : 'UNAVAILABLE';
     record('admin_access_preview_failed', code);
     return { ok: false, code, message: ADMIN_PREVIEW_FAILURE_MESSAGE[code] };
   }

@@ -131,8 +131,21 @@ describe('POST /api/option-simulations/compute/monte-carlo', () => {
     mocks.guardRouteEntitlement.mockResolvedValue({ denied: null, entitlement: { authenticated: true, tier: 'elite' } });
     mocks.computeMonteCarlo.mockImplementation(() => { throw new Error('Monte Carlo produced a non-finite result'); });
 
+    /*
+     * A seed of its own, so this case does not collide with the successful run
+     * above in the route's dedupe cache. The cache is keyed by the exact request
+     * body and only ever stores successes, so an identical body really would be
+     * answered from it — correctly, since the simulation is a pure function of
+     * its input. This case is about the failure path, so it needs an input the
+     * cache has never seen.
+     */
+    const input = calculationInput();
+    const raw = JSON.stringify({
+      input: { ...input, settings: { ...input.settings, seed: 987_654 } },
+    });
+
     const response = await POST(new Request('https://portkheaw.vercel.app/api/option-simulations/compute/monte-carlo', {
-      method: 'POST', body: JSON.stringify({ input: calculationInput() }),
+      method: 'POST', body: raw,
     }));
     const payload = await response.json();
 

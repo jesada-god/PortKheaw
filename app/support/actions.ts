@@ -2,7 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
-import { isAdminRequiredError, requireAdmin } from '@/src/lib/subscription/account-access';
+import { isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import {
+  ASSURANCE_DENIAL_MESSAGE, isAssuranceRequiredError, requireAdminMutation,
+} from '@/src/lib/security/admin-assurance-server';
 import {
   consumeRateLimit, rateLimitMessage, resolveClientAddress,
 } from '@/src/lib/security/rate-limit';
@@ -35,6 +38,14 @@ export type SupportFailureCode =
   | 'UNAUTHENTICATED'
   /** Signed in, but not an operator. Only the two operator actions raise it. */
   | 'FORBIDDEN'
+  /**
+   * An operator who has not presented a second factor in this session. Distinct
+   * from `FORBIDDEN` because the two need opposite responses: one is a refusal,
+   * the other is a step the person can complete in thirty seconds, and telling
+   * an operator "no permission" when they simply need to verify sends them to
+   * ask for access they already have.
+   */
+  | 'MFA_REQUIRED'
   | 'UNAVAILABLE'
   | 'INVALID_CATEGORY'
   | 'INVALID_CONTENT'
@@ -55,6 +66,7 @@ export type ReplyResult =
 const MESSAGE: Readonly<Record<SupportFailureCode, string>> = {
   UNAUTHENTICATED: 'กรุณาเข้าสู่ระบบก่อนแจ้งเรื่อง',
   FORBIDDEN: 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้',
+  MFA_REQUIRED: ASSURANCE_DENIAL_MESSAGE,
   UNAVAILABLE: 'ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่อีกครั้ง',
   INVALID_CATEGORY: 'กรุณาเลือกหมวดหมู่ของเรื่องที่ต้องการแจ้ง',
   INVALID_CONTENT: 'กรุณากรอกหัวข้ออย่างน้อย 3 ตัวอักษร และรายละเอียดอย่างน้อย 10 ตัวอักษร',
@@ -230,8 +242,9 @@ export async function adminReplyToTicketAction(formData: FormData): Promise<Repl
   if (authError || !user) return refusal('UNAUTHENTICATED');
 
   try {
-    await requireAdmin();
+    await requireAdminMutation();
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return refusal('MFA_REQUIRED');
     return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
   }
 
@@ -274,8 +287,9 @@ export async function adminSetTicketStatusAction(formData: FormData): Promise<Re
    * burst is refused rather than being allowed to spend an operator bucket.
    */
   try {
-    await requireAdmin();
+    await requireAdminMutation();
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return refusal('MFA_REQUIRED');
     return refusal(isAdminRequiredError(cause) ? 'FORBIDDEN' : 'UNAVAILABLE');
   }
 

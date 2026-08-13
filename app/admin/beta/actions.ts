@@ -2,7 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/src/lib/supabase/server';
-import { requireAdmin, isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import { isAdminRequiredError } from '@/src/lib/subscription/account-access';
+import {
+  ASSURANCE_DENIAL_MESSAGE, isAssuranceRequiredError, requireAdminMutation,
+} from '@/src/lib/security/admin-assurance-server';
 import { resolveRequestId } from '@/src/lib/monitoring/request-id';
 import { captureServerError } from '@/src/lib/monitoring/report';
 import {
@@ -54,8 +57,9 @@ async function authorizeAndBound(scope: 'admin.mutation'): Promise<
   | { ok: false; message: string }
 > {
   try {
-    await requireAdmin();
+    await requireAdminMutation();
   } catch (cause) {
+    if (isAssuranceRequiredError(cause)) return { ok: false, message: ASSURANCE_DENIAL_MESSAGE };
     return { ok: false, message: isAdminRequiredError(cause) ? FORBIDDEN : UNAVAILABLE };
   }
 

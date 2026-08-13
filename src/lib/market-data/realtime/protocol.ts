@@ -40,10 +40,37 @@ export const pingFrameSchema = z.object({
   t: z.number().int().nonnegative(),
 });
 
+/**
+ * An optional opening frame that tells the Gateway *who* is connected.
+ *
+ * Optional is the important word. Stock pages are public — a signed-out visitor
+ * reads live prices — so a Gateway that demanded authentication would break the
+ * product's front door. What this frame buys instead is an identity for the
+ * connections that have one, which is what lets the Gateway bound a *user*
+ * rather than only an address: an address is shared by everybody behind a NAT
+ * and is free to rotate for anybody with a proxy pool, so it is the wrong thing
+ * to be the only key.
+ *
+ * The token is a Supabase access token, verified by the Gateway against
+ * Supabase's own auth endpoint. It is never trusted as sent, never logged, and
+ * never echoed back. A token that fails verification does not close the socket:
+ * the connection simply stays anonymous and keeps the bounds anonymous
+ * connections get, because a browser holding a session that expired mid-connect
+ * is an ordinary event and not an attack.
+ *
+ * The 4 KiB bound is a parser guard, not a policy — it stops an oversized string
+ * from reaching the verifier at all.
+ */
+export const helloFrameSchema = z.object({
+  type: z.literal('hello'),
+  token: z.string().min(1).max(4_096),
+});
+
 export const clientFrameSchema = z.discriminatedUnion('type', [
   subscribeFrameSchema,
   unsubscribeFrameSchema,
   pingFrameSchema,
+  helloFrameSchema,
 ]);
 export type ClientFrame = z.infer<typeof clientFrameSchema>;
 

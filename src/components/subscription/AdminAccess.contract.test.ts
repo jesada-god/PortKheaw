@@ -73,7 +73,13 @@ describe('admin access vertical slice', () => {
     // The action takes a mode and nothing else — no user id, no tier, no expiry.
     expect(actions).toContain('setAdminAccessPreviewAction(mode: AdminPreviewMode)');
     expect(actions).toContain('adminPreviewModes.includes(mode)');
-    expect(actions).toContain('await requireAdmin()');
+    /*
+     * `requireAdminMutation()` is `requireAdmin()` plus the second-factor
+     * requirement. It matters here because this action lives under `/settings`,
+     * where the middleware assurance gate — which only sees `/admin` URLs —
+     * never runs: for this call site the action's own gate is the only one.
+     */
+    expect(actions).toContain('await requireAdminMutation()');
     expect(actions).not.toMatch(/setAdminAccessPreviewAction\([^)]*userId/);
     /*
      * The action reports the expiry the database chose; it must never compute

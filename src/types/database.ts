@@ -1860,6 +1860,76 @@ export interface Database {
           database_now: string;
         }>;
       };
+      /* ---------------------------------------------------------------------
+       * Runtime posture: the maintenance switch and the security lockdown, read
+       * together because middleware runs this on every request and a second
+       * switch must not mean a second round trip. Granted to `anon` for the same
+       * reason the maintenance read is; `is_admin` is false for them by
+       * construction.
+       * ------------------------------------------------------------------ */
+      resolve_runtime_posture: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          maintenance_enabled: boolean;
+          security_lockdown_enabled: boolean;
+          is_admin: boolean;
+          database_now: string;
+        }>;
+      };
+      admin_security_posture: {
+        Args: Record<PropertyKey, never>;
+        Returns: Array<{
+          maintenance_enabled: boolean;
+          security_lockdown_enabled: boolean;
+          security_lockdown_reason: string | null;
+          security_lockdown_started_at: string | null;
+          security_lockdown_started_by: string | null;
+          updated_at: string;
+          updated_by: string | null;
+          database_now: string;
+        }>;
+      };
+      admin_set_security_lockdown: {
+        Args: {
+          input_enabled: boolean;
+          input_reason: string | null;
+          input_request_id: string | null;
+        };
+        Returns: 'enabled' | 'disabled' | 'unchanged' | 'invalid_state' | 'not_found';
+      };
+      /**
+       * The security slice of the operator audit. Callable by any signed-in
+       * account — a non-operator's denied attempt is exactly the event worth
+       * keeping — and safe to be, because the actor is resolved from
+       * `auth.uid()` inside the routine, the event vocabulary is a closed
+       * allowlist, and the detail is assembled from two clamped scalars rather
+       * than from anything the caller supplies.
+       */
+      record_security_event: {
+        Args: {
+          input_event_key: string;
+          input_target_ref: string | null;
+          input_observed_count: number | null;
+          input_outcome: string | null;
+          input_request_id: string | null;
+        };
+        Returns: 'recorded' | 'invalid_event';
+      };
+      admin_security_audit: {
+        Args: { input_limit: number; input_offset: number };
+        Returns: Array<{
+          id: number;
+          action: string;
+          actor_user_id: string | null;
+          actor_role: 'admin' | 'system';
+          target_type: string;
+          target_ref: string | null;
+          after_summary: Json;
+          request_id: string | null;
+          created_at: string;
+          total_count: number;
+        }>;
+      };
       admin_maintenance_state: {
         Args: Record<PropertyKey, never>;
         Returns: Array<{
