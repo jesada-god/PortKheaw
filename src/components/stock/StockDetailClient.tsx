@@ -7,6 +7,7 @@ import { Activity, ArrowLeft, Bell, Share2, Star } from 'lucide-react';
 import { addWatchlistItemAction, removeWatchlistItemAction } from '@/app/watchlist/actions';
 import { BrandLockup } from '@/src/components/brand/BrandLockup';
 import { Tabs } from '@/src/components/ui/Tabs';
+import { DetailPopover } from '@/src/components/ui/DetailPopover';
 import { useToast } from '@/src/components/ui/Toast';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { useAppVisible } from '@/src/hooks/useAppVisible';
@@ -32,7 +33,6 @@ import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import {
   formatMarketCapitalization,
-  profileSourceLabel,
   resolveAssetPresentationPolicy,
 } from '@/src/lib/stock-detail/profile-presentation';
 import type { CompanyProfileLanguage } from '@/src/lib/stock-detail/profile-presentation';
@@ -161,17 +161,30 @@ function MetricCard({
 }) {
   return (
     <div data-metric={label} className="min-h-20 rounded-xl border border-slate-800 bg-[#151B28] p-3">
-      <p className="flex items-center gap-1 text-[10px] text-slate-500">
-        {label}
+      {/*
+        A div, not a <p>: the shared ⓘ affordance opens a <div role="dialog">
+        panel, which a paragraph may not contain — the browser would close the
+        <p> early and split the label row.
+      */}
+      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+        <span>{label}</span>
         {tooltip && (
-          <span
-            tabIndex={0}
-            title={tooltip}
-            aria-label={`${label}: ${tooltip}`}
-            className="cursor-help text-xs normal-case text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
-          >ⓘ</span>
+          /*
+            Was a hover-only `title` span: it explained nothing on touch, where
+            there is no hover, and nothing to a keyboard user either. The shared
+            popover is a real button — tap, click and Enter/Space all open it,
+            and a second press, Escape or a press outside closes it.
+          */
+          <DetailPopover
+            triggerLabel={`คำอธิบาย: ${label}`}
+            title={label}
+            align="start"
+            testId={`metric-hint-${label}`}
+          >
+            <p className="mt-2 text-xs leading-relaxed text-slate-300">{tooltip}</p>
+          </DetailPopover>
         )}
-      </p>
+      </div>
       <p className="mt-2 break-words font-mono text-sm text-white">
         {value ?? 'ไม่พบข้อมูล'}
       </p>
@@ -752,7 +765,10 @@ function Overview({
       value: marketCapitalizationValue,
       tooltip: 'มูลค่าตลาดรวมของบริษัท (Market Cap) = ราคาหุ้น × จำนวนหุ้นทั้งหมด เป็นข้อมูลพื้นฐาน ไม่ได้อัปเดตแบบเรียลไทม์พร้อมราคา',
       footnote: marketCapitalizationValue && profileAsOf
-        ? `ข้อมูลพื้นฐาน · ${profileSourceLabel(profileResource.provider) ?? 'ไม่ทราบแหล่งข้อมูล'} · ${formatMarketDataAsOf(profileAsOf)}`
+        // Provider names are deliberately absent: the footnote exists to say the
+        // number is a fundamental with its own as-of, not to credit a vendor.
+        // `profileResource.provider` is untouched and still flows to the card.
+        ? `ข้อมูลพื้นฐาน · ${formatMarketDataAsOf(profileAsOf)}`
         : null,
     }] : []),
     ...(policy.showSectorAndIndustry ? [

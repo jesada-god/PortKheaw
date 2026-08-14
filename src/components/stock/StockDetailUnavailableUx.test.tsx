@@ -127,10 +127,11 @@ describe('Stock Detail unavailable UX', () => {
     );
 
     expect(html).toContain('Rocket Lab provides launch services.');
-    // The reader sees the source's real name; the raw provider id stays available
-    // as the element's tooltip rather than as primary copy.
-    expect(html).toContain('Stale · Alpha Vantage');
-    expect(html).toContain('title="alpha-vantage"');
+    // Freshness and as-of are the reader's business; the vendor is not. The raw
+    // provider id stays in the DOM as a debugging attribute only.
+    expect(html).toContain('Stale');
+    expect(html).not.toContain('Alpha Vantage');
+    expect(html).toContain('data-profile-provider="alpha-vantage"');
     expect(html).toContain('19 ก.ค. 2569 15:30');
     expect(html).not.toContain('Company profile is temporarily unavailable');
   });

@@ -13,7 +13,6 @@ import {
   displayCountry,
   displayFiscalYearEnd,
   isCompanyProfileTranslationLoading,
-  profileSourceLabel,
   resolveAssetPresentationPolicy,
   resolveCompanyProfileLabels,
   resolvedDescription,
@@ -202,8 +201,11 @@ export function CompanyProfileCard({
         <div className="min-w-0">
           <h2 className="font-bold text-white">{labels.title}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-            <span className="break-words" title={provider ?? undefined}>
-              {status} · {profileSourceLabel(provider) ?? labels.unknownProvider}
+            {/* Freshness + as-of only. The provider stays in the resource (and in
+                the DOM as a debugging attribute) but is not written out for the
+                reader — see the market-capitalisation footnote for the same rule. */}
+            <span className="break-words" data-profile-provider={provider ?? undefined}>
+              {status}
               {profileTimestamp
                 ? ` · ${formatMarketDataAsOf(profileTimestamp, {
                     dateOnly: !freshness.cachedAt && profileTimestamp === freshness.asOf,

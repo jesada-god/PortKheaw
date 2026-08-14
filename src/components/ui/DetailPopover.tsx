@@ -32,6 +32,7 @@ export function DetailPopover({
   testId,
 }: DetailPopoverProps) {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -44,8 +45,20 @@ export function DetailPopover({
       setOpen(false);
       triggerRef.current?.focus();
     };
+    /*
+      Desktop has no scrim (the mobile sheet owns that), so a press anywhere
+      outside the trigger and its panel dismisses. Focus is NOT pulled back
+      here: the press has already moved it wherever the reader aimed.
+    */
+    const onPointerDown = (event: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    };
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
   }, [open]);
 
   const close = () => {
@@ -54,7 +67,7 @@ export function DetailPopover({
   };
 
   return (
-    <span className="relative inline-flex shrink-0 self-center align-middle">
+    <span ref={wrapRef} className="relative inline-flex shrink-0 self-center align-middle">
       <button
         ref={triggerRef}
         type="button"

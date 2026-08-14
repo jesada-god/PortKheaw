@@ -309,9 +309,8 @@ describe('Stock Detail hydration regression', () => {
     );
     const host = document.createElement('div');
     host.innerHTML = markup;
-    const label = [...host.querySelectorAll('p')]
-      .find((item) => item.textContent?.includes('ราคาปิดก่อนหน้า'));
-    expect(label?.parentElement?.textContent).toContain('—');
+    const card = host.querySelector('[data-metric="ราคาปิดก่อนหน้า"]');
+    expect(card?.textContent).toContain('—');
   });
 
   it('hydrates RKLB without a React mismatch and hides unavailable provider internals', async () => {
@@ -399,6 +398,69 @@ describe('Stock Detail hydration regression', () => {
     expect(dialog?.textContent).toContain('Median Target');
     expect(dialog?.textContent).toContain('Analyst Count');
     expect(dialog?.textContent).not.toContain('ชื่อสถาบันรายตัว');
+
+    await act(async () => root?.unmount());
+    container.remove();
+  });
+});
+
+/**
+ * The Overview tab tells the reader WHAT a number is and WHEN it was taken —
+ * never which vendor sold it, and never only on hover.
+ */
+describe('Stock Detail overview provenance and metric hints', () => {
+  it('dates the fundamental footnote without naming a provider', () => {
+    const markup = initialMarkup();
+
+    expect(markup).toContain('ข้อมูลพื้นฐาน · ');
+    // The profile resource is served by alpha-vantage; the reader is not told so.
+    expect(markup).not.toContain('Alpha Vantage');
+    expect(markup).not.toContain('Financial Modeling Prep');
+    expect(markup).not.toContain('ไม่ทราบแหล่งข้อมูล');
+    // The company card keeps its freshness word and as-of, minus the vendor.
+    expect(markup).toContain('ข้อมูลแคช');
+    expect(markup).not.toContain('ไม่ทราบผู้ให้บริการ');
+    // The provider itself is untouched in the data and still readable for support.
+    expect(markup).toContain('data-profile-provider="alpha-vantage"');
+  });
+
+  it('opens a metric explanation by click, by keyboard, and closes it again', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    container.innerHTML = initialMarkup();
+    let root: Root | undefined;
+    await act(async () => { root = hydrateRoot(container, stockDetailTree()); });
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-metric="สูงสุดวันนี้"] button[data-testid="metric-hint-สูงสุดวันนี้"]',
+    );
+    expect(trigger).not.toBeNull();
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+
+    // Tap/click — the only gesture available on a touch screen, where the old
+    // hover-only `title` said nothing at all.
+    await act(async () => trigger?.click());
+    expect(trigger?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('[role="dialog"]')?.textContent)
+      .toContain('ราคาสูงสุดที่ซื้อขายกันในวันนี้ (High)');
+
+    // Pressing the trigger again closes it.
+    await act(async () => trigger?.click());
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+
+    // Keyboard: a real <button> turns Enter/Space into the same click.
+    await act(async () => {
+      trigger?.focus();
+      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      trigger?.click();
+    });
+    expect(trigger?.getAttribute('aria-expanded')).toBe('true');
+
+    // A press outside the trigger and its panel dismisses.
+    await act(async () => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
 
     await act(async () => root?.unmount());
     container.remove();

@@ -333,7 +333,16 @@ describe('StockPriceHeader daily change display', () => {
     expect(row?.textContent).toContain('+1.00');
     expect(row?.querySelector('[data-session-icon]')).not.toBeNull();
     // A completed close is never "real-time", however healthy the socket is.
-    expect(container.textContent).not.toContain('Real-time · IEX');
+    expect(container.textContent).not.toContain('Real-time');
+  });
+
+  it('labels a genuine live regular price "Real-time" without naming the feed', () => {
+    render(baseProps(BASE_QUOTE, { realtime: true, feed: 'iex' }, { currentSession: 'REGULAR' }));
+    const line = container.querySelector('[data-testid="session-line"]');
+    expect(line?.textContent).toContain('Real-time');
+    // The provider still gates the badge internally; it is simply not printed.
+    expect(line?.textContent).not.toContain('IEX');
+    expect(container.innerHTML).not.toContain('ข้อมูลสดจาก');
   });
 
   it.each([

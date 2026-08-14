@@ -417,11 +417,15 @@ export function StockPriceHeader({
             {showRealtime && <>
               <span aria-hidden="true">·</span>
               <span
-                title={`ข้อมูลสดจาก ${feedLabel} ผ่าน Railway WebSocket Gateway`}
+                // The provider name stays out of the badge (and its tooltip) — the
+                // reader is told the feed is live, not who sells it. `feedLabel`
+                // still gates `showRealtime` above, so nothing about the truth of
+                // the badge changes.
+                title="ข้อมูลสดผ่าน Railway WebSocket Gateway"
                 className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-300"
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true"/>
-                Real-time · {feedLabel}
+                Real-time
               </span>
             </>}
             {symbolHalted && <>
