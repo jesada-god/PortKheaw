@@ -146,6 +146,49 @@ describe('Stock Planner workspace', () => {
     expect(position).toContain('$505.00');
   });
 
+  /*
+    Opened from a holding, the plan starts where the reader's own row left off:
+    the stock is chosen, the entry is the price that row showed, and the size is
+    the position they actually hold. What they still choose for themselves are
+    the three prices — this tool has never predicted one and does not start now.
+  */
+  it('opens straight onto a holding handed over from the portfolio', async () => {
+    window.history.replaceState({}, '', '/tools/stock-planner?from=portfolio&type=etf&symbol=AAPL'
+      + '&quantity=25&averageCost=180.25&price=210&marketValue=5250&unrealizedGain=743.75');
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await settle();
+
+    // No search, no second stock to pick: the asset arrived with the link.
+    expect(text('[data-testid="stock-planner-asset"]')).toContain('AAPL');
+    expect(text('[data-testid="stock-planner-asset"]')).toContain('ETF');
+    expect(field('stock-planner-entry').value).toBe('210');
+    expect(field('stock-planner-size').value).toBe('25');
+
+    const context = text('[data-testid="stock-planner-holding"]');
+    expect(context).toContain('25');
+    expect(context).toContain('$180.25');
+    expect(context).toContain('$5,250.00');
+    expect(context).toContain('$743.75');
+
+    // The prices are still empty — nothing was decided for the reader.
+    expect(field('stock-planner-stop').value).toBe('');
+    expect(field('stock-planner-target').value).toBe('');
+  });
+
+  it('ignores an option handed to it, rather than planning a strike as a share price', async () => {
+    window.history.replaceState({}, '', '/tools/stock-planner?from=portfolio&type=option&symbol=ASTS'
+      + '&optionKind=put&side=long&strike=73&expiration=2026-08-28&contracts=1&multiplier=100&premium=4.25');
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await settle();
+
+    expect(container.querySelector('[data-testid="stock-planner-asset"]')).toBeNull();
+    expect(container.querySelector('[data-testid="stock-planner-holding"]')).toBeNull();
+    expect(container.textContent).toContain('ยังไม่ได้เลือกหุ้น');
+    expect(container.textContent).not.toContain('73');
+  });
+
   it('refuses an impossible plan in place, and never prints a directive', async () => {
     await act(async () => { root.render(<StockPlannerWorkspace />); });
     await chooseAapl();

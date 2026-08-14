@@ -10,6 +10,7 @@ import { InfoHint } from '@/src/components/ui/InfoHint';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import { Tabs } from '@/src/components/ui/Tabs';
 import type { MarketDataEnvelope, Quote, SymbolSearchResult } from '@/src/lib/market-data/types';
+import { parseEquityToolHandoff, type EquityToolContext } from '@/src/lib/tools/handoff';
 import {
   entryMarkerPercent,
   evaluateStockPlan,
@@ -66,6 +67,8 @@ export function StockPlannerWorkspace() {
   const [targetDraft, setTargetDraft] = useState('');
   const [sizingMode, setSizingMode] = useState<StockPlanSizingMode>('budget');
   const [sizeDraft, setSizeDraft] = useState('');
+  /** The holding this plan was opened from, when it was opened from one. */
+  const [holding, setHolding] = useState<EquityToolContext | null>(null);
   const request = useRef(0);
 
   useEffect(() => () => { request.current += 1; }, []);
@@ -74,11 +77,16 @@ export function StockPlannerWorkspace() {
     A new stock is a new plan. Carrying the previous stock's entry, stop and
     target over would leave three prices from one company sitting under another
     company's name, and every figure on the page would be about neither.
+
+    `entryOverride` exists for the one case where the entry is not the live
+    price: a plan opened from a holding starts at the price that holding was
+    handed over with, so the three levels the reader sets are measured against
+    the same number their portfolio row showed them.
   */
-  async function selectAsset(result: SymbolSearchResult) {
+  async function selectAsset(result: SymbolSearchResult, entryOverride?: string) {
     const requestId = ++request.current;
     setAsset(result);
-    setEntryDraft(''); setStopDraft(''); setTargetDraft(''); setSizeDraft('');
+    setEntryDraft(entryOverride ?? ''); setStopDraft(''); setTargetDraft(''); setSizeDraft('');
     setQuoteState({ status: 'loading' });
     let payload: MarketDataEnvelope<Quote> | null = null;
     try {
@@ -94,8 +102,53 @@ export function StockPlannerWorkspace() {
       return;
     }
     setQuoteState({ status: 'ready', quote });
-    setEntryDraft(String(quote.price));
+    if (entryOverride === undefined) setEntryDraft(String(quote.price));
   }
+
+  /*
+    A plan opened from a holding in the portfolio.
+
+    The stock is already chosen, so the reader lands on step 2 with the symbol,
+    the price their row showed and their own position size already in place —
+    the three prices are still theirs to set, because the planner has never
+    predicted a price and does not start now.
+
+    Read from `window.location` in a mount effect rather than `useSearchParams`,
+    which is how this codebase's other handoff already reads its parameters, and
+    it keeps the first render free of anything the URL decided.
+    `parseEquityToolHandoff` refuses an option context outright, so a contract
+    can never arrive here and be planned as if its strike were a share price.
+  */
+  useEffect(() => {
+    // Deferred by a tick for the same reason the simulator defers its own
+    // handoff: the first paint must be the one the server rendered, and the URL
+    // is applied after it has committed rather than during it.
+    const timer = window.setTimeout(() => {
+      const context = parseEquityToolHandoff(new URLSearchParams(window.location.search));
+      if (!context) return;
+      setHolding(context);
+      setSymbolDraft(context.symbol);
+      setSizingMode('shares');
+      void selectAsset({
+        symbol: context.symbol,
+        name: context.symbol,
+        // The canonical asset type travels with the holding, so an ETF is
+        // labelled an ETF here without a second lookup and without guessing
+        // from letters.
+        assetType: context.type === 'etf' ? 'ETF' : 'Stock',
+        exchange: null,
+        status: 'active',
+        currency: 'USD',
+        marketOpen: null,
+        marketClose: null,
+        timezone: null,
+        matchScore: null,
+      }, context.price === null ? '' : String(context.price));
+      setSizeDraft(String(context.quantity));
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // One handoff, applied once, at mount. Later edits belong to the reader.
+  }, []);
 
   const currency = (quoteState.status === 'ready' ? quoteState.quote.currency : null) ?? asset?.currency ?? 'USD';
   const sizingAmount = parsePlanNumber(sizeDraft);
@@ -172,6 +225,25 @@ export function StockPlannerWorkspace() {
           )}
           {asset && quoteState.status === 'unavailable' && (
             <p className="mt-2 break-words text-xs text-amber-300">ยังดึงราคาล่าสุดของหุ้นตัวนี้ไม่ได้ คุณยังกรอกราคาที่สนใจเข้าเองเพื่อวางแผนต่อได้</p>
+          )}
+
+          {/*
+            What the reader already owns, when the plan was opened from their
+            portfolio. Read straight off the holding they came from — no figure
+            here is recomputed, and none of them feeds the plan's arithmetic;
+            they are context for the three prices the reader is about to choose.
+          */}
+          {holding && holding.symbol === asset?.symbol && (
+            <dl data-testid="stock-planner-holding" className="mt-4 grid min-w-0 grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-[#0A0E17] p-3 sm:grid-cols-4">
+              <HoldingFigure label="จำนวนที่ถืออยู่" value={`${formatPlanShares(holding.quantity)} หน่วย`} />
+              <HoldingFigure label="ต้นทุนเฉลี่ย" value={formatPlanMoney(holding.averageCost, currency)} />
+              <HoldingFigure label="มูลค่าปัจจุบัน" value={holding.marketValue === null ? '—' : formatPlanMoney(holding.marketValue, currency)} />
+              <HoldingFigure
+                label="กำไร/ขาดทุนที่ยังไม่รับรู้"
+                value={holding.unrealizedGain === null ? '—' : formatPlanMoney(holding.unrealizedGain, currency)}
+                tone={holding.unrealizedGain === null ? undefined : holding.unrealizedGain < 0 ? 'negative' : 'positive'}
+              />
+            </dl>
           )}
         </section>
 
@@ -321,6 +393,17 @@ export function StockPlannerWorkspace() {
           </p>
         </section>
       </div>
+    </div>
+  );
+}
+
+/** One fact about a holding the plan was opened from. Never part of the plan. */
+function HoldingFigure({ label, value, tone }: { label: string; value: string; tone?: 'positive' | 'negative' }) {
+  const toneClass = tone === 'positive' ? 'text-[var(--positive)]' : tone === 'negative' ? 'text-[var(--negative)]' : 'text-slate-200';
+  return (
+    <div className="min-w-0">
+      <dt className="break-words text-[11px] text-slate-500">{label}</dt>
+      <dd className={`mt-0.5 break-words font-mono text-sm font-semibold ${toneClass}`}>{value}</dd>
     </div>
   );
 }

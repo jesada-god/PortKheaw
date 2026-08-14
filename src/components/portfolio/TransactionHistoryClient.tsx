@@ -13,7 +13,7 @@ import {
 import { Button } from '@/src/components/ui/Button';
 import { Modal } from '@/src/components/ui/Modal';
 import { useToast } from '@/src/components/ui/Toast';
-import { TransactionFormModal, transactionLabels, type TransactionFormState } from './TransactionFormModal';
+import { TransactionFormModal, transactionDisplayLabel, transactionLabels, type TransactionFormState } from './TransactionFormModal';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { formatPortfolioMoney } from '@/src/lib/portfolio/presentation';
 import {
@@ -270,7 +270,7 @@ export function TransactionHistoryClient({
                 </span>
                 <span className="min-w-0 flex-1">
                   <strong className="block truncate text-sm font-semibold text-slate-100">
-                    {transactionLabels[entry.transaction.type]}
+                    {transactionDisplayLabel(entry.transaction)}
                     {entry.transaction.symbol
                       ? ` · ${entry.transaction.symbol}`
                       : entry.transaction.contractSymbol ? ` · ${entry.transaction.contractSymbol}` : ''}
@@ -302,7 +302,7 @@ export function TransactionHistoryClient({
     <Modal
       isOpen={Boolean(selected)}
       onClose={() => setSelected(null)}
-      title={selected ? transactionLabels[selected.transaction.type] : 'รายละเอียดรายการ'}
+      title={selected ? transactionDisplayLabel(selected.transaction) : 'รายละเอียดรายการ'}
     >
       {selected && <div className="space-y-4">
         <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -371,7 +371,7 @@ export function TransactionHistoryClient({
     <Modal
       isOpen={Boolean(deleting)}
       onClose={() => !pending && setDeleting(null)}
-      title={`ย้อนรายการ ${deleting ? transactionLabels[deleting.type] : ''} หรือไม่`}
+      title={`ย้อนรายการ ${deleting ? transactionDisplayLabel(deleting) : ''} หรือไม่`}
     >
       <p className="text-sm text-slate-300">
         ระบบจะคำนวณจำนวน ต้นทุน เงินสด และกำไร/ขาดทุนใหม่ทั้งหมดจากรายการที่เหลือ

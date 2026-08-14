@@ -18,6 +18,8 @@ import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import type { MarketDataEnvelope, Quote, SymbolSearchResult } from '@/src/lib/market-data/types';
 import { gatedOptionsChainSchema, normalizeGatedOptionsChain } from '@/src/lib/market-data/options/contracts';
 import { findChainContract, importOptionContract, providerContractGaps } from '@/src/lib/options-simulator/contract-import';
+import { applyPortfolioOptionHandoff } from '@/src/lib/options-simulator/portfolio-handoff';
+import { hasToolHandoff, parseOptionToolHandoff } from '@/src/lib/tools/handoff';
 import { detectStrategy } from '@/src/lib/options-simulator/portfolio-inputs';
 import type { MonteCarloDisplayResult, WhatIfDecomposition } from '@/src/lib/options-simulator/compute-dto';
 import type { CallPutScenarioScore } from '@/src/lib/options-simulator/scenario-score';
@@ -401,14 +403,43 @@ export default function SimulatorWorkspace({ initialType }: { initialType: Simul
     const timer = window.setTimeout(() => {
       const today = day();
       setToday(today);
-      const importing = new URLSearchParams(window.location.search).has('contract');
+      const search = window.location.search;
+      /*
+        A handoff always wins over the saved draft. Somebody who tapped
+        "จำลองสถานการณ์" on a position asked for THAT contract; restoring the
+        workspace they left behind last week would answer a different question
+        under the position's own name.
+      */
+      const importing = new URLSearchParams(search).has('contract') || hasToolHandoff(search);
       const draft = importing ? null : localStorage.getItem('nexora-options-simulator-draft-v1');
       let restored: SimulationWorkspace | null = null;
       if (draft) try {
         const parsed = normalizeUiWorkspace(JSON.parse(draft) as SimulationWorkspace, today);
         if (!calculationValidationMessages(parsed).length) restored = parsed;
       } catch { /* invalid drafts are ignored */ }
-      setWorkspace((current) => withCalendarDates(restored ?? current, today));
+      /*
+        The portfolio handoff, applied here and not over the network.
+
+        Every field it needs — strike, expiry, side, contracts, the reader's own
+        average premium, the IV and mark the quote pipeline already resolved — is
+        on the position summary the portfolio computed, so there is nothing to
+        fetch and nothing to wait for. `parseOptionToolHandoff` re-validates all
+        of it and returns null on anything malformed, and a null simply leaves
+        the reader in the empty workspace they would have got by opening the tool
+        directly. It cannot unlock anything: the compute routes decide
+        entitlement, and these parameters only fill inputs.
+      */
+      const handoff = parseOptionToolHandoff(new URLSearchParams(search));
+      setWorkspace((current) => {
+        const base = withCalendarDates(restored ?? current, today);
+        if (!handoff) return base;
+        const prefilled = applyPortfolioOptionHandoff(base, handoff, today);
+        return prefilled ? normalizeUiWorkspace(prefilled, today) : base;
+      });
+      if (handoff) {
+        setSelectedLegId('portfolio');
+        setTab('Inputs');
+      }
       hydrated.current = true;
     }, 0);
     return () => window.clearTimeout(timer);

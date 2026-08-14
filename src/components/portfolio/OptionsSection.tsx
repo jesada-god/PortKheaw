@@ -33,7 +33,22 @@ import {
 } from '@/src/lib/portfolio/transaction-datetime';
 import { DecimalInput, Field } from './FormControls';
 import { SymbolPreview } from './SymbolPreview';
-import { transactionLabels, type TransactionFormState } from './TransactionFormModal';
+import {
+  optionActionHelpers,
+  optionActionTerms,
+  transactionDisplayLabel,
+  transactionLabels,
+  type TransactionFormState,
+} from './TransactionFormModal';
+import { OptionSettlementDialog, type OptionSettlementSubmission } from './OptionSettlementDialog';
+import { PositionToolAction } from './PositionToolAction';
+import { settleOptionPositionAction } from '@/app/portfolio/option-settlement-actions';
+import {
+  OPTION_EXPIRY_LOCKED_HELPER,
+  isOptionExpiryReached,
+  type OptionSettlementAction,
+} from '@/src/lib/portfolio/options/settlement';
+import type { PortfolioToolContext } from '@/src/lib/tools/handoff';
 
 const optionActions: PortfolioTransactionType[] = [
   'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close', 'exercise', 'assignment', 'expired',
@@ -71,12 +86,27 @@ function editDateTime(value: string, timezone: string) {
 
 const displayTime = optionDisplayTime;
 
-export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, sectionHidden = false, actionRequest = null, onActionRequestHandled }: {
+export function OptionsSection({ portfolio, portfolios, positions, targets, cashByPortfolioId, sharesBySymbol, marketDate, currency, usdThbRate, showBalances, isOnline, timezone, readOnly = false, sectionHidden = false, actionRequest = null, onActionRequestHandled }: {
   portfolio: PortfolioRecord;
   portfolios: PortfolioRecord[];
   positions: OptionPositionSummary[];
   targets: OptionTarget[];
   cashByPortfolioId: Record<string, number>;
+  /**
+   * Shares of each underlying held in THIS portfolio, from the same ledger
+   * summary the page already computed. A Put exercise delivers shares, so the
+   * preview has to know whether they are there — and the server checks it again
+   * against fresh state before writing.
+   */
+  sharesBySymbol: Record<string, number>;
+  /**
+   * Today on the US exchange calendar, resolved on the server. An option expires
+   * at the close of its expiration day in New York, so New York is the only
+   * calendar that can say whether "หมดอายุ" is available yet — and passing it in
+   * rather than reading a clock during render keeps the disabled state identical
+   * on both sides of hydration.
+   */
+  marketDate: string;
   currency: SupportedCurrency;
   usdThbRate: string | null;
   showBalances: boolean;
@@ -110,6 +140,13 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
   const [targetValue, setTargetValue] = useState('');
   const [targetFee, setTargetFee] = useState('0');
   const [targetError, setTargetError] = useState('');
+  /*
+   * ใช้สิทธิ์ and หมดอายุ do not reopen the add-option form any more. They open a
+   * confirmation over the position that was clicked, so nothing about the
+   * contract is retyped and nothing about it can be mistyped.
+   */
+  const [settlement, setSettlement] = useState<{ action: OptionSettlementAction; position: OptionPositionSummary } | null>(null);
+  const [settlementError, setSettlementError] = useState('');
   const money = (value: number | null) => value === null ? '—' : formatPortfolioMoney(value, currency, usdThbRate, showBalances);
   const signed = (value: number | null) => value === null ? '—' : signedMoney(value, currency, usdThbRate, showBalances);
   const targetDeletingPosition = targetDeleting
@@ -235,6 +272,40 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
     });
   }
 
+  /**
+   * The settlement write. It sends which position and how many contracts — never
+   * a strike, a side or an expiry — because the server resolves the contract from
+   * the ledger itself and re-checks cash, shares and the expiry date there.
+   */
+  function submitSettlement(submission: OptionSettlementSubmission) {
+    if (!settlement || pending || !isOnline) return;
+    setSettlementError('');
+    startTransition(async () => {
+      const result = await settleOptionPositionAction({
+        portfolioId: portfolio.id,
+        positionKey: settlement.position.key,
+        action: submission.action,
+        contracts: submission.contracts,
+        occurredAt: submission.occurredAt,
+        timezone,
+        note: submission.note,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (!result.ok) {
+        setSettlementError(result.message);
+        addToast({ title: submission.action === 'exercise' ? 'ใช้สิทธิ์ไม่สำเร็จ' : 'บันทึกหมดอายุไม่สำเร็จ', message: result.message, type: 'error' });
+        return;
+      }
+      setSettlement(null);
+      addToast({
+        title: submission.action === 'exercise' ? 'บันทึกการใช้สิทธิ์แล้ว' : 'บันทึกสัญญาหมดอายุแล้ว',
+        message: 'เงินสด จำนวนหุ้น และจำนวนสัญญาคำนวณใหม่จาก Ledger',
+        type: 'success',
+      });
+      router.refresh();
+    });
+  }
+
   function openTarget(position: OptionPositionSummary) {
     const target = targets.find((item) => item.contractSymbol === position.contractSymbol);
     setTargetPosition(position);
@@ -332,9 +403,12 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
               position={position}
               target={targets.find((item) => item.contractSymbol === position.contractSymbol)}
               timezone={timezone}
+              marketDate={marketDate}
+              portfolioId={portfolio.id}
               money={money}
               signed={signed}
               onAction={(type) => openCreate(position, type)}
+              onSettle={(action) => { setSettlementError(''); setSettlement({ action, position }); }}
               onEdit={openEdit}
               onDelete={setDeleting}
               onTarget={() => openTarget(position)}
@@ -344,6 +418,18 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
         </div>}
     </section>
 
+    <OptionSettlementDialog
+      action={settlement?.action ?? null}
+      position={settlement?.position ?? null}
+      cashBalance={cashByPortfolioId[portfolio.id] ?? 0}
+      underlyingShares={settlement ? sharesBySymbol[settlement.position.underlyingSymbol] ?? 0 : 0}
+      timezone={timezone}
+      defaultOccurredAt={currentDateTimeLocal(timezone)}
+      pending={pending || !isOnline || readOnly}
+      serverError={settlementError}
+      onClose={() => { setSettlement(null); setSettlementError(''); }}
+      onSubmit={submitSettlement}
+    />
     <OptionTransactionModal
       open={formOpen}
       editing={Boolean(editing)}
@@ -357,7 +443,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
       onClose={() => !pending && closeForm()}
       onSubmit={submit}
     />
-    <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบ ${deleting ? transactionLabels[deleting.type] : 'รายการออปชัน'} หรือไม่`}>
+    <Modal isOpen={Boolean(deleting)} onClose={() => !pending && setDeleting(null)} title={`ลบ ${deleting ? transactionDisplayLabel(deleting) : 'รายการออปชัน'} หรือไม่`}>
       <p className="text-sm text-slate-300">การลบจะคำนวณเงินสด จำนวนสัญญา ต้นทุน และ P&amp;L ใหม่จาก Ledger ทั้งหมด และอาจถูกปฏิเสธหากทำให้รายการปิดภายหลังเกินจำนวนที่มี</p>
       <div className="mt-5 flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setDeleting(null)}>ยกเลิก</Button><Button className="flex-1 bg-red-500 text-white hover:bg-red-400" disabled={pending || !isOnline || readOnly} onClick={confirmDelete}>ยืนยันการลบ</Button></div>
     </Modal>
@@ -404,19 +490,50 @@ interface OptionDetailsProps {
   position: OptionPositionSummary;
   target?: OptionTarget;
   timezone: string;
+  marketDate: string;
+  portfolioId: string;
   money: (value: number | null) => string;
   signed: (value: number | null) => string;
   onAction: (type: PortfolioTransactionType) => void;
+  onSettle: (action: OptionSettlementAction) => void;
   onEdit: (transaction: PortfolioTransaction) => void;
   onDelete: (transaction: PortfolioTransaction) => void;
   onTarget: () => void;
   onDeleteTarget: (target: OptionTarget) => void;
 }
 
-function OptionDetails({ position, target, money, signed, timezone, onAction, onEdit, onDelete, onTarget, onDeleteTarget }: OptionDetailsProps) {
+/** The tool context for this contract, built from the position and nothing else. */
+function optionToolContext(position: OptionPositionSummary, portfolioId: string): PortfolioToolContext {
+  return {
+    type: 'option',
+    symbol: position.underlyingSymbol,
+    optionKind: position.optionKind,
+    side: position.side,
+    strike: position.strikePrice,
+    expiration: position.expirationDate,
+    contracts: position.contracts,
+    multiplier: position.multiplier,
+    premium: position.averagePremium,
+    mark: position.mark,
+    underlyingPrice: position.underlyingPrice,
+    impliedVolatility: position.impliedVolatility,
+    contractSymbol: optionPositionMarketSymbol(position) ?? position.contractSymbol,
+    portfolioId,
+  };
+}
+
+function OptionDetails({ position, target, money, signed, timezone, marketDate, portfolioId, onAction, onSettle, onEdit, onDelete, onTarget, onDeleteTarget }: OptionDetailsProps) {
+  /*
+   * The four transaction verbs a holder of this side can use, in the order a
+   * beginner meets them: add to the position, close it, use it, or let it lapse.
+   * `exercise`/`assignment` and `expired` no longer reopen the add-option form —
+   * they are settlements over this very contract, so they get their own
+   * confirmation instead.
+   */
   const actionTypes: PortfolioTransactionType[] = position.side === 'long'
     ? ['buy_to_open', 'sell_to_close', 'exercise', 'expired']
     : ['sell_to_open', 'buy_to_close', 'assignment', 'expired'];
+  const expiryReached = isOptionExpiryReached(position.expirationDate, marketDate);
   const targetCalculation = (() => {
     if (!target || position.contracts <= 0) return null;
     try {
@@ -426,8 +543,46 @@ function OptionDetails({ position, target, money, signed, timezone, onAction, on
     }
   })();
   return <div className="min-w-0 space-y-5">
-    {position.status === 'open' && <div className="flex flex-wrap gap-2">
-      {actionTypes.map((type) => <Button key={type} size="sm" variant={type === 'buy_to_open' || type === 'sell_to_open' ? 'default' : 'outline'} onClick={() => onAction(type)}>{transactionLabels[type]}</Button>)}
+    {position.status === 'open' && <div className="min-w-0 space-y-3" data-testid="option-action-row">
+      {/*
+        Transaction actions first, wrapping rather than scrolling: four short
+        Thai labels fit two per row at 320px and one row from about 430px up, so
+        nothing is ever hidden behind an overflow a thumb has to find.
+      */}
+      <div className="flex min-w-0 flex-wrap gap-2" data-testid="option-transaction-actions">
+        {actionTypes.map((type) => {
+          const settles = type === 'exercise' || type === 'expired';
+          const locked = type === 'expired' && !expiryReached;
+          return <Button
+            key={type}
+            size="sm"
+            variant={type === 'buy_to_open' || type === 'sell_to_open' ? 'default' : 'outline'}
+            data-testid={`option-action-${type}`}
+            disabled={locked}
+            /*
+              The disabled button is a courtesy, not the rule: `settleOptionPositionAction`
+              asks the exchange calendar again before it writes, so a submit that
+              gets past this attribute is still refused.
+            */
+            title={locked ? OPTION_EXPIRY_LOCKED_HELPER : `${optionActionHelpers[type] ?? ''} (${optionActionTerms[type] ?? ''})`}
+            onClick={() => settles ? onSettle(type as OptionSettlementAction) : onAction(type)}
+          >{transactionLabels[type]}</Button>;
+        })}
+      </div>
+      {!expiryReached && <p className="text-xs text-[var(--text-muted)]">หมดอายุ: {OPTION_EXPIRY_LOCKED_HELPER}</p>}
+      {/*
+        The tool sits on its own row, outlined and glyphed differently, because
+        it is the one control here that writes nothing. Mixing it into the row
+        above would put "จำลองสถานการณ์" a thumb-width from "ขายปิดสถานะ".
+      */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+        <PositionToolAction
+          context={optionToolContext(position, portfolioId)}
+          label="จำลองสถานการณ์"
+          source="portfolio.option-position"
+        />
+        <span className="min-w-0 break-words text-xs text-[var(--text-muted)]">คำนวณอย่างเดียว ไม่บันทึกรายการ</span>
+      </div>
     </div>}
     <details className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-400">
       <summary className="min-h-11 cursor-pointer py-3 font-semibold text-slate-300">Technical details / Copy</summary>
@@ -462,9 +617,9 @@ function OptionDetails({ position, target, money, signed, timezone, onAction, on
     <section>
       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Transaction history</h4>
       <div className="mt-2 divide-y divide-slate-800">{position.transactions.map((transaction) => <div key={transaction.id} className="flex min-w-0 items-center gap-2 py-2 text-xs">
-        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionLabels[transaction.type]}</strong><span className="block text-slate-500">{displayTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone)} · {Number(transaction.quantity).toLocaleString('th-TH', { maximumFractionDigits: 8 })} สัญญา × ${Number(transaction.normalizedPriceUsd ?? transaction.price ?? 0).toFixed(2)} · ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0))}</span></span>
-        <button type="button" aria-label={`แก้ไข ${transactionLabels[transaction.type]}`} onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"><Edit3 size={16} /></button>
-        <button type="button" aria-label={`ลบ ${transactionLabels[transaction.type]}`} onClick={() => onDelete(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
+        <span className="min-w-0 flex-1"><strong className="text-slate-200">{transactionDisplayLabel(transaction)}</strong><span className="block text-slate-500">{displayTime(transaction.occurredAtTime ?? transaction.occurredAt, timezone)} · {Number(transaction.quantity).toLocaleString('th-TH', { maximumFractionDigits: 8 })} สัญญา × ${Number(transaction.normalizedPriceUsd ?? transaction.price ?? 0).toFixed(2)} · ค่าธรรมเนียม {money(Number(transaction.normalizedFeeUsd ?? transaction.fee ?? 0))}</span></span>
+        <button type="button" aria-label={`แก้ไข ${transactionDisplayLabel(transaction)}`} onClick={() => onEdit(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"><Edit3 size={16} /></button>
+        <button type="button" aria-label={`ลบ ${transactionDisplayLabel(transaction)}`} onClick={() => onDelete(transaction)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-red-400"><Trash2 size={16} /></button>
       </div>)}</div>
     </section>
   </div>;
@@ -504,7 +659,7 @@ function OptionTransactionModal({ open, editing, form, errors, pending, portfoli
       <p className="rounded-lg bg-slate-950/50 p-3 text-xs text-slate-400">บันทึกรายการที่เกิดขึ้นแล้วเท่านั้น ไม่มีการส่งคำสั่งซื้อขายไปยังโบรกเกอร์</p>
       <div className="grid min-w-0 gap-4 sm:grid-cols-2">
         <div className={form.type === 'expired' ? undefined : 'sm:col-span-2'}>
-          <Field label="ประเภทรายการ (Action)" error={errors.type}><select className="form-input" value={form.type} onChange={(event) => onChange('type', event.target.value)}>{optionActions.map((type) => <option key={type} value={type}>{transactionLabels[type]}</option>)}</select></Field>
+          <Field label="ประเภทรายการ (Action)" error={errors.type} helper={optionActionHelpers[form.type]}><select className="form-input" value={form.type} onChange={(event) => onChange('type', event.target.value)}>{optionActions.map((type) => <option key={type} value={type}>{transactionLabels[type]} ({optionActionTerms[type]})</option>)}</select></Field>
         </div>
         {form.type === 'expired' && <Field label="ฝั่งสัญญา (Long / Short)" error={errors.optionSide}><select className="form-input" value={form.optionSide} onChange={(event) => onChange('optionSide', event.target.value)}><option value="long">Long</option><option value="short">Short</option></select></Field>}
         <SymbolPreview label="หุ้นแม่ (Underlying)" value={form.underlyingSymbol} onChange={(value) => onChange('underlyingSymbol', value)} error={errors.underlyingSymbol} />
@@ -515,7 +670,7 @@ function OptionTransactionModal({ open, editing, form, errors, pending, portfoli
         <Field
           label={form.originalCurrency === 'USD' ? 'Premium ต่อหุ้น (USD)' : 'Premium ต่อหุ้น (THB)'}
           error={errors.price}
-          helper={noPremium ? 'Exercise / Assignment / Expired ใช้ 0' : `$${helperPrice} × ${helperContracts} × ${helperMultiplier} = ${isCredit ? 'เครดิต' : 'ต้นทุน'} $${helperPremiumTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
+          helper={noPremium ? 'ใช้สิทธิ์ / ถูกใช้สิทธิ์ / หมดอายุ ใช้ 0' : `$${helperPrice} × ${helperContracts} × ${helperMultiplier} = ${isCredit ? 'เครดิต' : 'ต้นทุน'} $${helperPremiumTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
         ><DecimalInput value={form.price} onChange={(value) => onChange('price', value)} /></Field>
         <Field label="ตัวคูณต่อสัญญา (Multiplier)" error={errors.multiplier} helper="ค่าเริ่มต้น 100 และแก้ไขได้"><DecimalInput value={form.multiplier} onChange={(value) => onChange('multiplier', value)} /></Field>
         <Field label={`ค่าธรรมเนียม (Fee · ${form.originalCurrency})`} error={errors.fee}><DecimalInput value={form.fee} onChange={(value) => onChange('fee', value)} /></Field>

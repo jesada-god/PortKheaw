@@ -30,7 +30,13 @@ export type ToolAssetScope = 'options' | 'stock';
 
 export const TOOL_ASSET_SCOPE_LABEL: Readonly<Record<ToolAssetScope, string>> = {
   options: 'สำหรับสัญญาออปชัน',
-  stock: 'สำหรับหุ้นรายตัว',
+  /*
+   * ETFs are named here because the planner takes them and a reader holding SPY
+   * could not tell from "สำหรับหุ้นรายตัว" that it was meant for them. The scope
+   * itself stays `stock`: it is the two-way split between contracts and equities
+   * that decides routing, and an ETF is on the equity side of it.
+   */
+  stock: 'สำหรับหุ้นและ ETF รายตัว',
 };
 
 export interface ToolCatalogEntry {
@@ -97,7 +103,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     id: 'stock-planner',
     title: 'วางแผนหุ้นรายตัว (Stock Planner)',
     assetScope: 'stock',
-    description: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย เพื่อดูความเสี่ยงและผลตอบแทนแบบเข้าใจง่าย',
+    description: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมายของหุ้นหรือ ETF เพื่อดูความเสี่ยงและผลตอบแทนแบบเข้าใจง่าย',
     capability: 'planner.stock',
     category: 'วางแผนการเทรด',
     route: '/tools/stock-planner',

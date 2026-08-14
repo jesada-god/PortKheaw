@@ -63,7 +63,8 @@ vi.mock('@/src/components/ui/Toast', () => ({
 }));
 
 vi.mock('@/src/components/subscription/EntitlementProvider', () => ({
-  useEntitlement: () => ({ requestUpgrade }),
+  // `can` is read by the position tool action these screens now render.
+  useEntitlement: () => ({ can: () => true, requestUpgrade }),
 }));
 
 // The rate is a network read; the tracker's job here is to survive without one.
@@ -140,6 +141,7 @@ async function render() {
       recentlyDeleted={[]}
       fx={{ quote: null, unavailable: true }}
       timezone="Asia/Bangkok"
+      marketDate="2026-08-14"
       effectiveTier="elite"
       assetTypes={{ AAPL: 'Stock', VOO: 'ETF' }}
       companyNames={{ AAPL: 'Apple Inc.', VOO: 'Vanguard S&P 500 ETF' }}

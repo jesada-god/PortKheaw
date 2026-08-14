@@ -20,7 +20,7 @@ import { useToast } from '@/src/components/ui/Toast';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries, calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
 import { addAssetDestinationId, portfolioAcceptsAsset } from '@/src/lib/portfolio/add-asset';
-import { buildAssetCategories, type AssetCategoryKey } from '@/src/lib/portfolio/asset-categories';
+import { assetCategoryForSymbol, buildAssetCategories, type AssetCategoryKey } from '@/src/lib/portfolio/asset-categories';
 import { latestPortfolioPriceTime, portfolioAssetCount } from '@/src/lib/portfolio/goal-card';
 import { sortAssets, type HoldingSortKey } from '@/src/lib/portfolio/holdings-sort';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
@@ -52,6 +52,7 @@ import { AssetCategoryCard } from './tracker/AssetCategoryCard';
 import { FilterChips } from './tracker/FilterChips';
 import { HoldingCard } from './tracker/HoldingCard';
 import { OptionPositionCard } from './tracker/OptionPositionCard';
+import { PositionToolAction } from './PositionToolAction';
 import { PortfolioSummaryCard } from './tracker/PortfolioSummaryCard';
 import {
   AccountingDetails,
@@ -135,6 +136,7 @@ export function PortfolioClient({
   recentlyDeleted,
   fx,
   timezone,
+  marketDate,
   effectiveTier,
   assetTypes = {},
   companyNames = {},
@@ -147,6 +149,13 @@ export function PortfolioClient({
   recentlyDeleted: DeletedPortfolioSummary[];
   fx: FxResult;
   timezone: string;
+  /**
+   * Today on the US exchange calendar, resolved on the server. It decides one
+   * thing only: whether an option's "หมดอายุ" action is available yet. Resolved
+   * there rather than here so the server render and the hydrated one agree, and
+   * because the exchange's day — not the reader's — is when a contract expires.
+   */
+  marketDate: string;
   effectiveTier: SubscriptionTier;
   /**
    * `asset_type` and display name straight off the instrument master, for the
@@ -580,6 +589,14 @@ export function PortfolioClient({
     positions={summaries[optionsHost.id].optionPositions}
     targets={optionTargets.filter((target) => target.portfolioId === optionsHost.id)}
     cashByPortfolioId={Object.fromEntries(portfolios.map((item) => [item.id, summaries[item.id].cashBalance]))}
+    /*
+      The underlying shares this very portfolio holds, from the summary already
+      on screen. A Put exercise delivers them, so the confirmation can say
+      whether they are there — the server checks the same thing against fresh
+      ledger state before it writes anything.
+    */
+    sharesBySymbol={Object.fromEntries(summaries[optionsHost.id].holdings.map((holding) => [holding.symbol, holding.quantity]))}
+    marketDate={marketDate}
     currency={currency}
     usdThbRate={rate}
     showBalances={showBalances}
@@ -737,7 +754,35 @@ export function PortfolioClient({
                       signed={signed}
                       onToggle={() => setExpandedKey((current) => current === `${entry.portfolioId}-${entry.position.key}` ? null : `${entry.portfolioId}-${entry.position.key}`)}
                     >
-                      <Button size="sm" variant="outline" onClick={() => openPortfolio(entry.portfolioId)}>เปิดพอร์ต {entry.portfolioName}</Button>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => openPortfolio(entry.portfolioId)}>เปิดพอร์ต {entry.portfolioName}</Button>
+                        {/*
+                          The asset view can only read, so it carries no ledger
+                          action — but the simulators write nothing either, and a
+                          contract found here should not have to be found again
+                          inside its portfolio to be tried out.
+                        */}
+                        {entry.position.status === 'open' && <PositionToolAction
+                          context={{
+                            type: 'option',
+                            symbol: entry.position.underlyingSymbol,
+                            optionKind: entry.position.optionKind,
+                            side: entry.position.side,
+                            strike: entry.position.strikePrice,
+                            expiration: entry.position.expirationDate,
+                            contracts: entry.position.contracts,
+                            multiplier: entry.position.multiplier,
+                            premium: entry.position.averagePremium,
+                            mark: entry.position.mark,
+                            underlyingPrice: entry.position.underlyingPrice,
+                            impliedVolatility: entry.position.impliedVolatility,
+                            contractSymbol: entry.position.contractSymbol,
+                            portfolioId: entry.portfolioId,
+                          }}
+                          label="จำลองสถานการณ์"
+                          source="portfolio.asset-view.option"
+                        />}
+                      </div>
                     </OptionPositionCard>)
                     : sortAssets(group.holdings, sortKey, (entry) => ({
                       name: entry.holding.symbol,
@@ -757,6 +802,7 @@ export function PortfolioClient({
                       money={money}
                       signed={signed}
                       hidden={hidden}
+                      assetType={assetCategoryForSymbol(entry.holding.symbol, assetTypes)}
                       onToggle={() => setExpandedKey((current) => current === `${entry.portfolioId}-${entry.holding.symbol}` ? null : `${entry.portfolioId}-${entry.holding.symbol}`)}
                       onBuy={() => undefined}
                       onSell={() => undefined}
@@ -886,6 +932,7 @@ export function PortfolioClient({
                   showBalances={showBalances}
                   timezone={timezone}
                   portfolioId={detailPortfolio.id}
+                  assetType={assetCategoryForSymbol(holding.symbol, assetTypes)}
                   canWrite={detailCanWrite}
                   money={money}
                   signed={signed}

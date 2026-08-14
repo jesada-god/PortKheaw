@@ -10,6 +10,7 @@ import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations'
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { optionPositionTitle } from '@/src/lib/portfolio/options/presentation';
+import { optionMarketDate } from '@/src/lib/portfolio/options/settlement';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 
 export default async function PortfolioPage() {
@@ -122,6 +123,14 @@ export default async function PortfolioPage() {
         recentlyDeleted={recentlyDeleted}
         fx={fx}
         timezone={timezone}
+        /*
+          Resolved here, on the server, because it decides whether an option's
+          "หมดอายุ" button is available — and a contract expires on the exchange's
+          day, not the reader's. Reading a clock inside the client component
+          would also put a different answer into the hydrated render than the one
+          in the server HTML.
+        */
+        marketDate={optionMarketDate()}
         effectiveTier={effectiveTier}
         assetTypes={instrumentAssetTypes}
         companyNames={instrumentNames}

@@ -37,6 +37,18 @@ export interface TransactionFormState {
   idempotencyKey: string;
 }
 
+/**
+ * What each ledger row is called on screen — in Thai, for a beginner.
+ *
+ * The option rows used to keep their English trading verbs (`Buy to Open`,
+ * `Exercise`, `Expired`), which is the vocabulary of somebody who already knows
+ * what those do. A first-time holder reading their own position could not tell
+ * `Sell to Close` from `Exercise`, and the two move very different things.
+ *
+ * This is a DISPLAY map and nothing else: `PortfolioTransactionType` is the
+ * stored enum, unchanged, so every row already in the ledger keeps its meaning
+ * and its history keeps reading correctly — only the words above it changed.
+ */
 export const transactionLabels: Record<PortfolioTransactionType, string> = {
   acquisition: 'ซื้อหุ้น / ETF',
   disposal: 'ขายหุ้น / ETF',
@@ -48,6 +60,50 @@ export const transactionLabels: Record<PortfolioTransactionType, string> = {
   adjustment: 'ปรับยอดเงินสด',
   transfer_out: 'ย้ายเงินออก',
   transfer_in: 'รับเงินโอนระหว่างพอร์ต',
+  buy_to_open: 'ซื้อเพิ่ม',
+  sell_to_close: 'ขายปิดสถานะ',
+  sell_to_open: 'ขายเปิดสถานะ',
+  buy_to_close: 'ซื้อปิดสถานะ',
+  exercise: 'ใช้สิทธิ์',
+  assignment: 'ถูกใช้สิทธิ์',
+  expired: 'หมดอายุ',
+};
+
+/**
+ * One sentence saying what the action does, shown under the button that does it.
+ * Same map for the option action row and the option form's type selector, so the
+ * explanation a reader gets cannot depend on where they met the action.
+ */
+export const optionActionHelpers: Partial<Record<PortfolioTransactionType, string>> = {
+  buy_to_open: 'ซื้อสัญญาออปชันเพิ่ม',
+  sell_to_close: 'ขายสัญญาที่ถืออยู่เพื่อปิดสถานะ',
+  sell_to_open: 'ขายสัญญาเพื่อเปิดสถานะ Short',
+  buy_to_close: 'ซื้อสัญญาคืนเพื่อปิดสถานะ Short',
+  exercise: 'ใช้สิทธิ์ตามราคา Strike ของสัญญา',
+  assignment: 'บันทึกเมื่อถูกคู่สัญญาใช้สิทธิ์',
+  expired: 'บันทึกสัญญาเมื่อถึงวันหมดอายุ',
+};
+
+/**
+ * The label for one actual row, which for an option settlement names the kind of
+ * contract too: "ใช้สิทธิ์ Call" and "ใช้สิทธิ์ Put" move opposite things, and a
+ * history that called both "ใช้สิทธิ์" would leave a reader working out which
+ * from the cash column. Display only — the stored `transaction_type` is
+ * untouched, so history written before this reads exactly the same.
+ */
+export function transactionDisplayLabel(transaction: {
+  type: PortfolioTransactionType;
+  optionKind?: 'call' | 'put' | null;
+}): string {
+  const base = transactionLabels[transaction.type];
+  const settles = transaction.type === 'exercise' || transaction.type === 'assignment';
+  return settles && transaction.optionKind
+    ? `${base} ${transaction.optionKind === 'call' ? 'Call' : 'Put'}`
+    : base;
+}
+
+/** The English trading term, kept for readers who already know it. */
+export const optionActionTerms: Partial<Record<PortfolioTransactionType, string>> = {
   buy_to_open: 'Buy to Open',
   sell_to_close: 'Sell to Close',
   sell_to_open: 'Sell to Open',

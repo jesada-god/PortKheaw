@@ -69,7 +69,8 @@ vi.mock('@/src/components/ui/Toast', () => ({
 }));
 
 vi.mock('@/src/components/subscription/EntitlementProvider', () => ({
-  useEntitlement: () => ({ requestUpgrade }),
+  // `can` is read by the position tool action these screens now render.
+  useEntitlement: () => ({ can: () => true, requestUpgrade }),
 }));
 
 vi.mock('@/src/lib/market-data/fx/client', () => ({
@@ -188,6 +189,7 @@ async function render(records: PortfolioRecord[] = portfolios) {
       recentlyDeleted={[]}
       fx={{ quote: null, unavailable: true }}
       timezone="Asia/Bangkok"
+      marketDate="2026-08-14"
       effectiveTier="elite"
       assetTypes={{ AAPL: 'Stock', NVDA: 'Stock' }}
       companyNames={{ AAPL: 'Apple Inc.', NVDA: 'NVIDIA Corporation' }}

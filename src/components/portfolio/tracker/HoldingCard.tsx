@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { ChevronDown, ChevronUp, History } from 'lucide-react';
 import { Button } from '@/src/components/ui/Button';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { PositionToolAction } from '@/src/components/portfolio/PositionToolAction';
 import { gainColor, signedPercent } from '@/src/lib/portfolio/presentation';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import type { HoldingSummary } from '@/src/lib/portfolio/types';
+import type { PortfolioToolContext } from '@/src/lib/tools/handoff';
 
 function number(value: number, maximumFractionDigits = 8) {
   return new Intl.NumberFormat('th-TH', { maximumFractionDigits }).format(value);
@@ -44,6 +46,7 @@ export function HoldingCard({
   showBalances,
   timezone,
   portfolioId,
+  assetType,
   canWrite,
   money,
   signed,
@@ -61,6 +64,14 @@ export function HoldingCard({
   showBalances: boolean;
   timezone: string;
   portfolioId: string;
+  /**
+   * The instrument master's own classification, which is what decides the tool a
+   * holding can reach. Never inferred from the symbol: SPY and AAPL are both
+   * four plausible letters, and only the master knows one of them is an ETF.
+   * Both go to the Stock Planner — the distinction exists so neither can ever be
+   * routed into an option simulator.
+   */
+  assetType: 'stock' | 'etf';
   canWrite: boolean;
   money: (value: number | string | null) => string;
   signed: (value: number | null) => string;
@@ -109,11 +120,35 @@ export function HoldingCard({
         <Detail label="น้ำหนักในพอร์ต" value={showBalances ? `${holding.allocation.toFixed(2)}%` : SENSITIVE_VALUE_MASK} />
       </dl>
 
-      {canWrite && <div className="flex flex-wrap gap-2">
+      {canWrite && <div className="flex min-w-0 flex-wrap gap-2">
         <Button size="sm" onClick={onBuy}>เพิ่มซื้อ</Button>
         <Button size="sm" variant="outline" onClick={onSell}>ขายบางส่วน</Button>
         <Button size="sm" variant="outline" onClick={onCloseAll}>ปิดทั้งหมด</Button>
       </div>}
+
+      {/*
+        The planner, on its own row under a rule, because it is the one control
+        here that writes nothing. Shares and ETFs reach exactly one tool, so
+        there is nothing to choose between and it opens straight into it with
+        this holding already filled in.
+      */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+        <PositionToolAction
+          context={{
+            type: assetType,
+            symbol: holding.symbol,
+            quantity: holding.quantity,
+            averageCost: holding.averageCost,
+            price: holding.marketPrice,
+            marketValue: holding.marketValue,
+            unrealizedGain: holding.unrealizedGain,
+            portfolioId,
+          } satisfies PortfolioToolContext}
+          label="วางแผน"
+          source="portfolio.holding"
+        />
+        <span className="min-w-0 break-words text-xs text-[var(--text-muted)]">คำนวณอย่างเดียว ไม่บันทึกรายการ</span>
+      </div>
 
       <div>
         <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Lots ที่เหลือ</h4>

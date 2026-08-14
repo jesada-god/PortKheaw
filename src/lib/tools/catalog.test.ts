@@ -31,7 +31,9 @@ describe('tools catalog', () => {
     const scopes = Object.fromEntries(TOOL_CATALOG.map((tool) => [tool.id, tool.assetScope]));
     expect(scopes).toEqual({ 'what-if': 'options', 'monte-carlo': 'options', 'stock-planner': 'stock' });
     expect(TOOL_ASSET_SCOPE_LABEL.options).toBe('สำหรับสัญญาออปชัน');
-    expect(TOOL_ASSET_SCOPE_LABEL.stock).toBe('สำหรับหุ้นรายตัว');
+    // ETFs are named on the label because the planner takes them; the scope key
+    // stays `stock`, which is what the routing rule reads.
+    expect(TOOL_ASSET_SCOPE_LABEL.stock).toBe('สำหรับหุ้นและ ETF รายตัว');
     // Printed on the card itself, not only inside the tool.
     expect(toolsPageSource).toContain('TOOL_ASSET_SCOPE_LABEL[tool.assetScope]');
   });
