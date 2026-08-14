@@ -51,9 +51,61 @@ function marketWsConnectSources(): string[] {
   return process.env.NODE_ENV === 'development' ? ['ws://localhost:8081'] : [];
 }
 
-function withSecurityHeaders(response: NextResponse): NextResponse {
-  const scriptSources = [`'self'`, `'unsafe-inline'`, ...(process.env.NODE_ENV === 'development' ? [`'unsafe-eval'`] : [])];
-  const policy = [
+/**
+ * A fresh nonce per request.
+ *
+ * `crypto.randomUUID` is available in the edge runtime and is a CSPRNG. A nonce
+ * only has to be unguessable and unique per response — an attacker who can
+ * predict it can nonce their own injected script, which is the whole property
+ * being bought here.
+ */
+function createNonce(): string {
+  return btoa(crypto.randomUUID()).replace(/=+$/, '');
+}
+
+/**
+ * The policy, built around a nonce rather than around `'unsafe-inline'`.
+ *
+ * `script-src` was `'self' 'unsafe-inline'`, which is the same as having no
+ * script policy at all against the attack it exists to stop: `'unsafe-inline'`
+ * permits exactly the injected `<script>` that an XSS is. It was there because
+ * this app renders two inline scripts of its own and Next.js renders several of
+ * its own, and nothing distinguished those from an attacker's.
+ *
+ * A nonce distinguishes them. Three sources, and each is load-bearing:
+ *
+ *   * `'nonce-…'` — the two inline scripts in `app/layout.tsx` carry it
+ *     explicitly, and Next.js reads it off the request's own
+ *     `Content-Security-Policy` header and stamps it onto the framework scripts
+ *     it emits. That is why the header below is set on the *request* as well as
+ *     the response.
+ *   * `'strict-dynamic'` — the framework bootstrap injects the chunk `<script>`
+ *     tags for each route at runtime; this is what lets a trusted script load
+ *     more scripts without every chunk URL being in the policy.
+ *   * `'self'` — not redundant. A browser that understands nonces but not
+ *     `'strict-dynamic'` ignores the latter, and needs `'self'` to keep loading
+ *     the same-origin chunks. It is the CSP2 floor, and it still refuses the
+ *     inline injection that `'unsafe-inline'` used to allow.
+ *
+ * `'unsafe-inline'` is gone rather than kept as a fallback: a browser that
+ * honours nonces ignores it, and a browser that does not would be handed back
+ * the exact hole this closes.
+ *
+ * **`style-src` deliberately keeps `'unsafe-inline'`.** React sets element
+ * styles inline and the design system carries CSS custom properties on the
+ * elements themselves, so removing it would require a second nonce plumbed
+ * through every styled node for a far smaller prize — injected CSS cannot
+ * execute, and `object-src 'none'`, `base-uri 'self'` and `form-action 'self'`
+ * already close the exfiltration shapes that style injection is used for.
+ */
+function buildContentSecurityPolicy(nonce: string): string {
+  const scriptSources = [
+    `'self'`,
+    `'nonce-${nonce}'`,
+    `'strict-dynamic'`,
+    ...(process.env.NODE_ENV === 'development' ? [`'unsafe-eval'`] : []),
+  ];
+  return [
     `default-src 'self'`,
     `base-uri 'self'`,
     `frame-ancestors 'none'`,
@@ -73,7 +125,10 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
   ].join('; ');
-  response.headers.set('Content-Security-Policy', policy);
+}
+
+function withSecurityHeaders(response: NextResponse, nonce: string): NextResponse {
+  response.headers.set('Content-Security-Policy', buildContentSecurityPolicy(nonce));
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
@@ -146,6 +201,36 @@ export async function middleware(request: NextRequest) {
   const protectedRoute = isProtectedPath(pathname);
 
   /*
+   * One nonce per request, minted before anything can answer.
+   *
+   * It has to exist this early because every exit below carries the policy that
+   * names it, and a response that leaves without one would be a page whose own
+   * scripts the browser then refuses.
+   */
+  const nonce = createNonce();
+  const policy = buildContentSecurityPolicy(nonce);
+
+  /**
+   * A pass-through response that hands the nonce *forward* into rendering.
+   *
+   * Two consumers, and they read different headers: the root layout reads
+   * `x-nonce` to stamp its own inline scripts, and Next.js reads the
+   * `Content-Security-Policy` request header to stamp the scripts it generates
+   * itself. Both have to be on the request, not just the response.
+   *
+   * Rebuilt from `request.headers` at each call rather than captured once,
+   * because the auth library mutates `request.cookies` — which is to say the
+   * request's `cookie` header — when it refreshes a session, and a snapshot
+   * taken before that would carry the stale cookie forward and lose the refresh.
+   */
+  const passThrough = (): NextResponse => {
+    const headers = new Headers(request.headers);
+    headers.set('x-nonce', nonce);
+    headers.set('Content-Security-Policy', policy);
+    return NextResponse.next({ request: { headers } });
+  };
+
+  /*
    * Abuse control comes first — before the session lookup, before maintenance,
    * before anything that costs a round trip.
    *
@@ -158,17 +243,17 @@ export async function middleware(request: NextRequest) {
    * expensive APIs, the API surface); ordinary page requests are not touched.
    */
   const abuse = guardEdgeAbuse(request);
-  if (abuse.refusal) return withSecurityHeaders(abuse.refusal);
+  if (abuse.refusal) return withSecurityHeaders(abuse.refusal, nonce);
 
   if (!isSupabaseConfigured) {
-    if (!protectedRoute) return withSecurityHeaders(NextResponse.next());
+    if (!protectedRoute) return withSecurityHeaders(passThrough(), nonce);
     const url = request.nextUrl.clone();
     url.pathname = '/auth/configuration-required';
     url.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
-    return withSecurityHeaders(NextResponse.redirect(url));
+    return withSecurityHeaders(NextResponse.redirect(url), nonce);
   }
 
-  let response = NextResponse.next({ request });
+  let response = passThrough();
   const supabase = createServerClient<Database>(
     clientEnv.NEXT_PUBLIC_SUPABASE_URL as string,
     clientEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY as string,
@@ -177,7 +262,7 @@ export async function middleware(request: NextRequest) {
         getAll: () => request.cookies.getAll(),
         setAll: (cookiesToSet) => {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
+          response = passThrough();
           cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
         },
       },
@@ -207,7 +292,7 @@ export async function middleware(request: NextRequest) {
      * having an opinion about how a session cookie is scoped.
      */
     response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie));
-    return withSecurityHeaders(redirectResponse);
+    return withSecurityHeaders(redirectResponse, nonce);
   }
 
   /*
@@ -254,7 +339,7 @@ export async function middleware(request: NextRequest) {
       return withSecurityHeaders(NextResponse.json(MAINTENANCE_DENIAL_BODY, {
         status: decision.status,
         headers: { 'Cache-Control': 'private, no-store', 'Retry-After': '120' },
-      }));
+      }), nonce);
     }
     if (decision.action === 'redirect') {
       const url = request.nextUrl.clone();
@@ -288,7 +373,7 @@ export async function middleware(request: NextRequest) {
     return withSecurityHeaders(NextResponse.json(LOCKDOWN_DENIAL_BODY, {
       status: lockdown.status,
       headers: { 'Cache-Control': 'private, no-store' },
-    }));
+    }), nonce);
   }
 
   if (protectedRoute && !user) {
@@ -344,7 +429,7 @@ export async function middleware(request: NextRequest) {
       return withSecurityHeaders(new NextResponse(ADMIN_DENIAL_BODY, {
         status: 404,
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store' },
-      }));
+      }), nonce);
     }
 
     /*
@@ -384,7 +469,7 @@ export async function middleware(request: NextRequest) {
           return withSecurityHeaders(NextResponse.json(
             { data: null, error: { code: 'mfa-required', message: ASSURANCE_DENIAL_MESSAGE, retryable: false } },
             { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
-          ));
+          ), nonce);
         }
         const url = request.nextUrl.clone();
         url.pathname = ADMIN_SECURITY_PATH;
@@ -408,7 +493,7 @@ export async function middleware(request: NextRequest) {
     return redirectCarryingSession(new URL(target, request.url));
   }
 
-  return withSecurityHeaders(response);
+  return withSecurityHeaders(response, nonce);
 }
 
 /*

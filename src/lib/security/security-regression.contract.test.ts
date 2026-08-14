@@ -397,7 +397,15 @@ describe('the lockdown holds at every layer', () => {
     // After re-authentication, so a caller who cannot prove they are the account
     // holder learns nothing about the platform's state.
     expect(action.indexOf('reauthMethodFor(user)')).toBeLessThan(gateIndex);
-    expect(gateIndex).toBeLessThan(action.indexOf('await deleteAccount(user.id)'));
+    /*
+     * And a second gate the application cannot get wrong on its own: the same
+     * question asked of the database, on the reader's own client, immediately
+     * before the pipeline. The application check fails open by design; this one
+     * fails closed, and it is the layer that holds if the one above is skipped.
+     */
+    const dbGateIndex = action.indexOf("rpc('authorize_account_deletion')");
+    expect(dbGateIndex).toBeGreaterThan(gateIndex);
+    expect(dbGateIndex).toBeLessThan(action.indexOf('await deleteAccount(authorizedUserId)'));
   });
 });
 
@@ -514,8 +522,18 @@ describe('web security', () => {
 
   it('sets every header on every response the middleware returns', () => {
     // A refusal that skips the headers is a refusal served without a CSP.
-    const returns = middleware.match(/return (?!withSecurityHeaders|redirectCarryingSession)[^;]*Response[^;]*;/g) ?? [];
+    const returns = middleware.match(
+      /return (?!withSecurityHeaders|redirectCarryingSession|NextResponse\.next\(\{ request: \{ headers \} \}\))[^;]*Response[^;]*;/g,
+    ) ?? [];
     expect(returns).toEqual([]);
+    /*
+     * The one construction the pattern above excuses is the nonce pass-through
+     * helper, which exists to put the nonce on the *request* so the layout and
+     * the framework can read it. It is never itself an exit — every caller hands
+     * its result to `withSecurityHeaders` — so returning it bare would be a page
+     * served with no policy at all.
+     */
+    expect(middleware).not.toMatch(/return\s+passThrough\(\)\s*;/);
   });
 
   it('carries the headers this phase added', () => {

@@ -1,4 +1,5 @@
 import type {Metadata, Viewport} from 'next';
+import { headers } from 'next/headers';
 import './globals.css';
 import MainLayout from '@/src/components/layout/MainLayout';
 import { Toaster } from '@/src/components/ui/Toast';
@@ -93,6 +94,20 @@ const ZOD_JITLESS_BOOTSTRAP = '(globalThis.__zod_globalConfig=globalThis.__zod_g
 export default async function RootLayout({children}: {children: React.ReactNode}) {
   const entitlement = await resolvePageEntitlement();
   /*
+   * The per-request CSP nonce, minted in middleware.
+   *
+   * Both scripts below run before or alongside hydration and neither can be
+   * moved into a bundle: the theme bootstrap has to execute in `<head>` before
+   * the first paint or the reader sees a flash of the wrong theme, and the Zod
+   * bootstrap has to be set before any module that reads it loads. Inline is the
+   * requirement, so the nonce is what makes inline safe.
+   *
+   * Reading `headers()` costs nothing extra here — this layout already awaits
+   * the reader's entitlement, so every page in the product was already rendered
+   * per request. That is the fact that made a nonce policy affordable at all.
+   */
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
+  /*
    * The paid-theme gate, resolved once per request from the same effective
    * access tier every other gate reads — so a trial, an expiry and an
    * administrator preview all move it together. `data-theme` is still rendered
@@ -104,10 +119,10 @@ export default async function RootLayout({children}: {children: React.ReactNode}
   return (
     <html lang="th" data-theme="portkheaw" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap(premiumThemesAllowed) }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap(premiumThemesAllowed) }} />
       </head>
       <body className="bg-[var(--bg)] text-[var(--text)] antialiased selection:bg-[var(--accent-soft)]">
-        <script dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: ZOD_JITLESS_BOOTSTRAP }} />
         <ThemeProvider premiumThemesAllowed={premiumThemesAllowed}>
           <EntitlementProvider
             tier={entitlement.effectiveAccessTier}

@@ -1473,6 +1473,19 @@ export interface Database {
         };
         Returns: number;
       };
+      /**
+       * The database's own answer to "may this caller delete their account?",
+       * asked immediately before the service-role pipeline runs.
+       *
+       * Deliberately argument-less: the subject is `auth.uid()`, so no caller can
+       * name an account that is not theirs. Raises rather than returns on refusal
+       * — `SECURITY_LOCKDOWN` while the incident switch is on,
+       * `ACCOUNT_DELETION_UNAUTHENTICATED` for a session that resolves to nobody.
+       */
+      authorize_account_deletion: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
+      };
       begin_account_deletion: {
         Args: { input_user_id: string };
         Returns: Array<{

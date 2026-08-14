@@ -82,14 +82,25 @@ describe('the deletion action', () => {
     expect(body).toContain('formData: FormData');
     // The subject is read from the verified session and from nothing else.
     expect(body).toContain('await supabase.auth.getUser()');
-    expect(body).toContain('deleteAccount(user.id)');
+    /*
+     * And then re-derived by the database, on the reader's own client, through a
+     * routine that takes no account id at all. The pipeline runs on the subject
+     * the *database* returned, and only after it has been checked against the
+     * session — so naming somebody else would require both to agree on the lie.
+     */
+    expect(body).toContain("rpc('authorize_account_deletion')");
+    // On the reader's own client, never the service-role one — that is what makes
+    // `auth.uid()` the subject rather than an argument.
+    expect(body).toMatch(/supabase\s*\n?\s*\.rpc\('authorize_account_deletion'\)/);
+    expect(body).toContain('authorizedUserId !== user.id');
+    expect(body).toContain('deleteAccount(authorizedUserId)');
     expect(body).not.toMatch(/formData\.get\(['"](userId|user_id|id|email)['"]\)/);
   });
 
   it('requires the confirmation phrase and a fresh proof of identity before it calls anything', () => {
     const body = ACTIONS.slice(
       ACTIONS.indexOf('export async function deleteAccountAction'),
-      ACTIONS.indexOf('deleteAccount(user.id)'),
+      ACTIONS.indexOf('deleteAccount(authorizedUserId)'),
     );
     expect(body).toContain('DELETE_ACCOUNT_CONFIRMATION');
     expect(body).toContain('verifyPassword');

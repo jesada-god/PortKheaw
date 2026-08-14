@@ -1,10 +1,11 @@
 # Edge abuse protection
 
 **Status: the application-side layers in this document are deployed. The Vercel
-Firewall rules in §3 are *not* — they can only be created in the Vercel
-dashboard, and nobody has created them yet.** §3 is the exact configuration to
-enter, written so it can be applied without further decisions. Do not read it as
-a description of the running system.
+Firewall rules in §3 are _staged but not published_ — rules 1–3 exist as a draft
+on the `portkheaw` project and are waiting on `vercel firewall publish`; rules 4
+and 5 could not be created at all, because rate limiting is not available on this
+project's Vercel plan.** Read §3.1 as the intended configuration and §3.4 as what
+is actually in front of production today.
 
 ---
 
@@ -59,11 +60,12 @@ by construction.
 Every refusal answers `429` with `Retry-After` and `Cache-Control: private,
 no-store`.
 
-## 3. Vercel Firewall rules — NOT YET APPLIED
+## 3. Vercel Firewall rules — STAGED, NOT LIVE
 
-These require the Vercel dashboard (**Project → Firewall**) or the REST API; they
-cannot be expressed in `vercel.json`, which is why there is no firewall block in
-this repo's config. Apply them against project `portkheaw` (`bas-dev`).
+These require the Vercel dashboard (**Project → Firewall**), the REST API, or the
+`vercel firewall` CLI; they cannot be expressed in `vercel.json`, which is why
+there is no firewall block in this repo's config. They apply to project
+`portkheaw` (`bas-dev`).
 
 Persistent Actions run before any of our code, so they are the only layer that
 can shed load across the whole fleet rather than one isolate.
@@ -81,6 +83,49 @@ can shed load across the whole fleet rather than one isolate.
 Enable **Attack Challenge Mode** only during an active incident. It challenges
 every visitor, including signed-out readers on public stock pages, so it is an
 incident control and not a default.
+
+### 3.4 What is actually configured today
+
+Created with `vercel firewall rules add`, and verified with
+`vercel firewall rules list`:
+
+| # | Rule | State |
+|---|---|---|
+| 1 | `admin-console-challenge` | **staged** — draft, not published |
+| 2 | `admin-api-challenge` | **staged** — draft, not published |
+| 3 | `auth-forms-rate-limit` | **staged** — draft, not published |
+| 4 | `expensive-api-rate-limit` | **not created** — plan refuses it |
+| 5 | `api-flood-rate-limit` | **not created** — plan refuses it |
+
+Two separate facts, and they have different fixes:
+
+**The draft.** Rules 1–3 are staged on the project and go live with one command:
+
+```bash
+vercel firewall diff          # confirm the three rules, and only those three
+vercel firewall publish --yes
+```
+
+Until that runs, the firewall layer is protecting nothing, whatever the rule list
+shows.
+
+**The plan ceiling.** Rules 4 and 5 are rate-limit rules, and the API answers
+`Rate limiting is not available for this plan (401)` when creating them — the
+same reason `vercel firewall overview` reports `IP Bypass is unavailable for this
+plan`. Rule 3 staged before the ceiling was reached, so the presence of one
+rate-limit rule in the draft is not evidence the feature is available; it is not.
+These two need a Vercel plan that includes WAF rate limiting, and there is no
+configuration that substitutes for it.
+
+What still protects those surfaces meanwhile is the layer that was always meant
+to: the burst gate and the per-identity limits in §2, which are live. What is
+missing is only the fleet-wide shedding described in §1 — a flood spread across
+many isolates is still seen per-isolate rather than per-fleet.
+
+Note that rule 5 as specified would match `/api/billing/webhook`, `/api/cron/*`,
+`/api/health` and `/api/version`, all of which §3.2 says must never be blocked.
+Whoever creates it once the plan allows should add the four negated path
+conditions rather than shipping the row as written.
 
 ### 3.2 What must NOT be blocked
 
@@ -152,6 +197,12 @@ they are absent the Gateway logs `identity verification disabled` at startup and
 every connection is bounded by address alone — it does not fail, and realtime
 keeps working, but the per-account cap is inert. **Check that log line after
 deploying.**
+
+Both variables were set on the Railway service on 2026-08-14; the Gateway
+redeployed and its startup log no longer carries that line, so the per-account
+cap is live. They are public identifiers — the same pair the browser holds — and
+the service role key is deliberately **not** among them: the Gateway verifies a
+token by asking the auth server, and never needs to read a row.
 
 ## 5. Tuning
 

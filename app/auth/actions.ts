@@ -14,7 +14,7 @@ import {
   type RateLimitScope,
 } from '@/src/lib/security/rate-limit';
 import { deleteAccount } from '@/src/lib/account/account-deletion';
-import { assertMutationAllowed } from '@/src/lib/security/lockdown-server';
+import { assertMutationAllowed, isSecurityLockdownError } from '@/src/lib/security/lockdown-server';
 import { reauthMethodFor, signInIsFresh, verifyPassword } from '@/src/lib/account/reauthentication';
 import {
   DELETE_ACCOUNT_CONFIRMATION,
@@ -320,7 +320,27 @@ export async function deleteAccountAction(
     return fail('locked-down');
   }
 
-  const result = await deleteAccount(user.id);
+  /*
+   * The same question, asked again of the database, on the reader's own client.
+   *
+   * The gate above is an application check that fails *open* on a database error
+   * — correct for a control that only ever takes privileges away, and not enough
+   * on its own for the one path in the product that cannot be undone. This one
+   * takes no user id: the subject is `auth.uid()`, so the identity is the one in
+   * the verified session and there is no argument through which a caller could
+   * name somebody else's account. It fails closed.
+   *
+   * The subject the pipeline then runs on is the one the database returned, not
+   * the one this function read from the session, so the two must agree for
+   * anything to be destroyed.
+   */
+  const { data: authorizedUserId, error: authorizationError } = await supabase
+    .rpc('authorize_account_deletion');
+  if (authorizationError || typeof authorizedUserId !== 'string' || authorizedUserId !== user.id) {
+    return fail(isSecurityLockdownError(authorizationError) ? 'locked-down' : 'unavailable');
+  }
+
+  const result = await deleteAccount(authorizedUserId);
   if (!result.ok) {
     return fail(result.reason === 'provider-failed' ? 'provider-failed' : 'unavailable');
   }

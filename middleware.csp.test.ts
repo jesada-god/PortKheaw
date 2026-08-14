@@ -145,3 +145,62 @@ describe('middleware CSP script-src never allows unsafe-eval in production', () 
     expect(directive).toContain(`'unsafe-eval'`);
   });
 });
+
+/**
+ * The nonce policy.
+ *
+ * `'unsafe-inline'` in `script-src` permitted precisely the thing an XSS is: an
+ * injected inline `<script>`. These assertions are the regression guard on
+ * removing it — and on the two sources that had to arrive with the nonce for the
+ * product to keep rendering.
+ */
+describe('middleware CSP script-src is nonce-based, not unsafe-inline', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    setNodeEnv('production');
+  });
+
+  afterEach(() => {
+    setNodeEnv(ORIGINAL_NODE_ENV ?? 'test');
+  });
+
+  it('never allows unsafe-inline scripts', async () => {
+    expect(await scriptSrc()).not.toContain(`'unsafe-inline'`);
+  });
+
+  it('carries a nonce', async () => {
+    expect(await scriptSrc()).toMatch(/'nonce-[A-Za-z0-9+/_-]+'/);
+  });
+
+  /*
+   * The framework injects each route's chunk tags at runtime from an already
+   * trusted script. Without this, a nonce policy loads the first script and then
+   * nothing else, which fails as a blank page rather than as a visible error.
+   */
+  it('carries strict-dynamic so framework-injected chunks still load', async () => {
+    expect(await scriptSrc()).toContain(`'strict-dynamic'`);
+  });
+
+  /*
+   * The CSP2 floor. A browser that honours nonces but not `'strict-dynamic'`
+   * ignores the latter and still has to be able to fetch same-origin chunks.
+   */
+  it('keeps self as the fallback for browsers without strict-dynamic', async () => {
+    expect(await scriptSrc()).toContain(`'self'`);
+  });
+
+  it('mints a different nonce for every request', async () => {
+    const first = await scriptSrc();
+    vi.resetModules();
+    const second = await scriptSrc();
+    expect(first).not.toBe(second);
+  });
+
+  /*
+   * Style injection cannot execute, and plumbing a second nonce through every
+   * styled node would buy little. Asserted so the asymmetry stays deliberate.
+   */
+  it('still allows inline styles, which cannot execute', async () => {
+    expect(await directiveOf('style-src ')).toContain(`'unsafe-inline'`);
+  });
+});
