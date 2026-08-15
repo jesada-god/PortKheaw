@@ -148,6 +148,56 @@ describe('every planner route is gated on the server', () => {
   });
 });
 
+/*
+  Where the one road from a stock to a plan starts, asserted on the source
+  because placement is invisible to every behavioural test: a CTA rendered in the
+  wrong place routes perfectly and still reads as navigation.
+*/
+describe('the road in from Stock Detail', () => {
+  const detail = routeSource('src/components/stock/StockDetailClient.tsx');
+  const cta = routeSource('src/components/stock/PlanThisStockCta.tsx');
+
+  it('closes the Financials tab, and appears nowhere else on the page', () => {
+    expect(detail.match(/<PlanThisStockCta/g) ?? []).toHaveLength(1);
+
+    // Inside the Financials branch, and after the sections it already rendered.
+    const financials = detail.slice(
+      detail.indexOf("{tab === 'Financials' && ("),
+      detail.indexOf("{tab === 'Analysis' && ("),
+    );
+    expect(financials).toContain('<PlanThisStockCta');
+    expect(financials.indexOf('<AnalystTargetSection')).toBeLessThan(financials.indexOf('<PlanThisStockCta'));
+    expect(financials.indexOf('<KeyStatisticsSection')).toBeLessThan(financials.indexOf('<PlanThisStockCta'));
+
+    // And not in the header block, where it used to float above the tab bar.
+    const aboveTabs = detail.slice(detail.indexOf('<StockPriceHeader'), detail.indexOf('<Tabs tabs={tabs}'));
+    expect(aboveTabs).not.toContain('PlanThisStockCta');
+  });
+
+  it('carries the symbol and nothing else to the planner', () => {
+    expect(cta).toContain('router.push(`/tools/stock-planner?symbol=${encodeURIComponent(symbol)}`)');
+    // No price in the URL: the planner resolves its own baseline on arrival, and a
+    // second copy passed through here could already be stale when the form renders.
+    // Asserted on the code, not the prose that explains why.
+    const code = cta.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toContain('baseline');
+    expect(code).not.toContain('price');
+  });
+
+  it('shows itself only for instruments the planner will actually take', () => {
+    // The planner's own scope, not a second classification. Financials is hidden
+    // for crypto but NOT for an index, which is why this gate has to be here.
+    expect(cta).toContain('plannerAcceptsAsset');
+    expect(cta).toContain("(assetType ?? 'unknown')");
+    expect(detail).toContain('assetType={instrumentAssetType}');
+  });
+
+  it('keeps the entitlement path it already had, rather than linking a locked reader in', () => {
+    expect(cta).toContain("can('planner.stock')");
+    expect(cta).toContain("requestUpgrade({ capability: 'planner.stock', source: 'stock-detail.plan-cta' })");
+  });
+});
+
 describe('the tools index', () => {
   it('groups by instrument, with the planner under the stock heading', () => {
     expect(TOOL_CATEGORIES).toEqual(['วิเคราะห์หุ้น', 'วิเคราะห์ Options']);

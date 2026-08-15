@@ -482,9 +482,19 @@ async function run() {
       await page.locator('[data-testid="stock-last-price"]').waitFor({ timeout: 60_000 }).catch(() => undefined);
       const detailPrice = numeric(await page.locator('[data-testid="stock-last-price"]').first().textContent().catch(() => ''));
 
+      /*
+        The CTA closes the Financials tab rather than floating above the tab bar,
+        so reaching it is part of what this checks: it must NOT be on the page
+        before Financials is opened, and it must be there afterwards.
+      */
+      const ctaBeforeTab = await page.locator('[data-testid="stock-detail-plan-cta"]').count();
+      check(ctaBeforeTab === 0, `${symbol}: the CTA is on the page before Financials is opened`);
+      await page.getByRole('button', { name: 'Financials', exact: true }).click({ timeout: 30_000 }).catch(() => undefined);
+      await page.locator('[data-testid="stock-detail-plan-section"]').waitFor({ timeout: 30_000 }).catch(() => undefined);
+
       const ctaCount = await page.locator('[data-testid="stock-detail-plan-cta"]').count();
-      report.detailCta.push({ symbol, present: ctaCount > 0 });
-      check(ctaCount > 0, `${symbol}: the "วางแผนหุ้นนี้" CTA is missing from Stock Detail`);
+      report.detailCta.push({ symbol, present: ctaCount > 0, inFinancials: true });
+      check(ctaCount > 0, `${symbol}: the "วางแผนหุ้นนี้" CTA is missing from the Financials tab`);
       if (ctaCount > 0) {
         await page.locator('[data-testid="stock-detail-plan-cta"]').click();
         await page.waitForURL(/\/tools\/stock-planner/, { timeout: 30_000 }).catch(() => undefined);
@@ -575,6 +585,76 @@ async function run() {
     report.consoleNoise.push({ viewport: 'flow', environmental: errors.length - flowErrors.length });
     check(flowErrors.length === 0, `flow: ${flowErrors.length} console error(s)`, flowErrors);
     await context.close();
+
+    /*
+      7. Where the CTA lives, on the page it lives on.
+
+      The claim is placement, so it is measured rather than asserted: the plan
+      section must be BELOW the Financials content it closes, must not exist at
+      all until Financials is opened, and must not push anything past the
+      viewport edge in either appearance at either required width.
+    */
+    for (const viewport of [
+      { name: '1440x900', width: 1440, height: 900, mobile: false },
+      { name: '390x844', width: 390, height: 844, mobile: true },
+    ]) {
+      for (const appearance of ['light', 'dark']) {
+        const detailContext = await browser.newContext({
+          viewport: { width: viewport.width, height: viewport.height },
+          isMobile: viewport.mobile, hasTouch: viewport.mobile, deviceScaleFactor: viewport.mobile ? 2 : 1,
+        });
+        const detailPage = await detailContext.newPage();
+        const detailErrors = [];
+        detailPage.on('console', (message) => { if (message.type() === 'error') detailErrors.push(message.text().slice(0, 300)); });
+        detailPage.on('pageerror', (error) => detailErrors.push(`pageerror: ${String(error).slice(0, 300)}`));
+
+        await signIn(detailPage, users.pro, '/stock/AAPL');
+        await setAppearance(detailPage, appearance);
+        await detailPage.locator('[data-testid="stock-last-price"]').waitFor({ timeout: 60_000 }).catch(() => undefined);
+
+        const beforeTab = await detailPage.locator('[data-testid="stock-detail-plan-section"]').count();
+        await detailPage.getByRole('button', { name: 'Financials', exact: true }).click({ timeout: 30_000 }).catch(() => undefined);
+        await detailPage.locator('[data-testid="stock-detail-plan-section"]').waitFor({ timeout: 30_000 }).catch(() => undefined);
+
+        // Geometry, not markup: the section's top edge must sit below the bottom
+        // of the last piece of Financials content.
+        const geometry = await detailPage.evaluate(`(() => {
+          const section = document.querySelector('[data-testid="stock-detail-plan-section"]');
+          if (!section) return null;
+          const box = section.getBoundingClientRect();
+          const siblings = Array.from(section.parentElement.children).filter((node) => node !== section);
+          const contentBottom = Math.max(...siblings.map((node) => node.getBoundingClientRect().bottom));
+          return {
+            top: box.top + window.scrollY,
+            right: box.right,
+            contentBottom: contentBottom + window.scrollY,
+            siblingCount: siblings.length,
+          };
+        })()`);
+        const overflow = await detailPage.evaluate(OVERFLOW_PROBE);
+        const appearanceProbe = await detailPage.evaluate('document.documentElement.dataset.appearance');
+        const detailAppErrors = appErrors(detailErrors);
+
+        const row = {
+          viewport: viewport.name, appearance, appliedAppearance: appearanceProbe,
+          presentBeforeFinancials: beforeTab > 0, geometry,
+          offenders: overflow.offenderCount, consoleErrors: detailAppErrors.length,
+        };
+        report.detailCta.push(row);
+        check(appearanceProbe === appearance, `stock detail ${viewport.name}/${appearance}: the appearance did not apply`, row);
+        check(beforeTab === 0, `stock detail ${viewport.name}/${appearance}: the CTA is on the page before Financials is opened`, row);
+        check(geometry !== null, `stock detail ${viewport.name}/${appearance}: the plan section is missing from Financials`, row);
+        if (geometry) {
+          check(geometry.siblingCount >= 2, `stock detail ${viewport.name}/${appearance}: Financials content is missing above the CTA`, row);
+          check(geometry.top >= geometry.contentBottom - 1, `stock detail ${viewport.name}/${appearance}: the CTA is not below the Financials content`, row);
+          check(geometry.right <= viewport.width + 1, `stock detail ${viewport.name}/${appearance}: the CTA runs past the viewport`, row);
+        }
+        check(overflow.offenderCount === 0, `stock detail ${viewport.name}/${appearance}: ${overflow.offenderCount} element(s) run past the viewport`, overflow.offenders);
+        check(detailAppErrors.length === 0, `stock detail ${viewport.name}/${appearance}: ${detailAppErrors.length} console error(s)`, detailAppErrors);
+        await detailPage.screenshot({ path: `${OUT_DIR}/stock-detail-financials-${viewport.name}-${appearance}.png`, fullPage: true }).catch(() => undefined);
+        await detailContext.close();
+      }
+    }
   } finally {
     await browser.close();
     for (const user of Object.values(users)) {
@@ -592,6 +672,7 @@ async function run() {
     serverGate: report.serverGate,
     priceParity: report.priceParity,
     savedPlans: report.savedPlans,
+    detailCta: report.detailCta,
     themes: report.themes.map((row) => ({ appearance: row.appearance, background: row.background, offenders: row.offenderCount })),
   }, null, 2));
   if (!report.passed) process.exitCode = 1;

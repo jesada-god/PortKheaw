@@ -614,13 +614,6 @@ export function StockDetailClient({
           transientPriceSinkRef={transientPriceSinkRef}
         />
 
-        {/*
-          One line, under the price and above the tabs: the reader has just seen
-          what the stock is doing, and this is where "so what would my plan be"
-          belongs. It carries the symbol only — see PlanThisStockCta.
-        */}
-        <PlanThisStockCta symbol={symbol} />
-
         <div className="sticky top-16 z-30 -mx-4 border-y border-slate-800 bg-[#0A0E17]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
           <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />
         </div>
@@ -671,6 +664,14 @@ export function StockDetailClient({
               <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
               <MarketSignalSection result={marketSignal} />
               {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
+              {/*
+                Last in Financials, after the targets and the statistics: the
+                reader has just read what other people expect of this stock, and
+                this is where stating their own belongs. It carries the symbol
+                only, and it shows itself only for instruments the planner will
+                actually take — see PlanThisStockCta.
+              */}
+              <PlanThisStockCta symbol={symbol} assetType={instrumentAssetType} />
             </div>
           )}
           {tab === 'Analysis' && (
