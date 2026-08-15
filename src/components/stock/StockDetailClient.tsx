@@ -58,6 +58,7 @@ import {
 import { requestCompanyProfile } from './profile-retry';
 import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
+import { PlanThisStockCta } from '@/src/components/stock/PlanThisStockCta';
 import {
   isContinuousAssetType,
   resolveContinuousMarketSession,
@@ -612,6 +613,13 @@ export function StockDetailClient({
           connectionState={connectionState}
           transientPriceSinkRef={transientPriceSinkRef}
         />
+
+        {/*
+          One line, under the price and above the tabs: the reader has just seen
+          what the stock is doing, and this is where "so what would my plan be"
+          belongs. It carries the symbol only — see PlanThisStockCta.
+        */}
+        <PlanThisStockCta symbol={symbol} />
 
         <div className="sticky top-16 z-30 -mx-4 border-y border-slate-800 bg-[#0A0E17]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
           <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />

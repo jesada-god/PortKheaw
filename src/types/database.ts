@@ -875,6 +875,31 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['option_simulations']['Insert']>;
         Relationships: [];
       };
+      /**
+       * วางแผนหุ้นรายตัว — one saved plan per row.
+       *
+       * `baseline_price` is absent from `Update` on purpose. The database refuses
+       * to move it (a trigger raises `STOCK_PLAN_BASELINE_IMMUTABLE`), and leaving
+       * it out of the type means a patch that tries to is a compile error rather
+       * than a runtime one. `user_id` is out for the same reason.
+       */
+      stock_plans: {
+        Row: {
+          id: string; user_id: string; symbol: string;
+          baseline_price: number; target_price: number; invalidation_price: number;
+          horizon_date: string; archived_at: string | null; created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; user_id: string; symbol: string;
+          baseline_price: number; target_price: number; invalidation_price: number;
+          horizon_date: string; archived_at?: string | null; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Pick<
+          Database['public']['Tables']['stock_plans']['Insert'],
+          'symbol' | 'target_price' | 'invalidation_price' | 'horizon_date' | 'archived_at' | 'updated_at'
+        >>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

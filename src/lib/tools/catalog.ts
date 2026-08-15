@@ -15,7 +15,16 @@
 import { requiredTierFor, type SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
-export type ToolCategory = 'ทดลองสถานการณ์' | 'วิเคราะห์ความเสี่ยง' | 'วางแผนการเทรด';
+/**
+ * How the index is grouped, which is by the instrument a tool is for.
+ *
+ * The previous grouping named the *technique* — "ทดลองสถานการณ์",
+ * "วิเคราะห์ความเสี่ยง", "วางแผนการเทรด" — which put the one stock tool in a
+ * category of its own next to two options tools, and told a reader holding shares
+ * nothing about which of the three could read what they own. Grouping by
+ * instrument answers the question they actually arrive with.
+ */
+export type ToolCategory = 'วิเคราะห์หุ้น' | 'วิเคราะห์ Options';
 
 /**
  * Which instrument a tool is actually for.
@@ -75,7 +84,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     assetScope: 'options',
     description: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน เพื่อดูว่ามูลค่าสัญญาออปชันอาจเปลี่ยนไปอย่างไร',
     capability: 'simulator.what_if',
-    category: 'ทดลองสถานการณ์',
+    category: 'วิเคราะห์ Options',
     route: '/tools/what-if',
     valuePreview: [
       'ตอบว่า “ถ้าราคาหุ้นขึ้นหรือลงเท่านี้ สถานะออปชันของคุณจะกำไรหรือขาดทุนเท่าไร”',
@@ -90,7 +99,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     assetScope: 'options',
     description: 'จำลองราคาหุ้นหลายพันสถานการณ์ เพื่อดูโอกาสกำไรและความเสี่ยงของสัญญาออปชัน',
     capability: 'simulator.monte_carlo',
-    category: 'วิเคราะห์ความเสี่ยง',
+    category: 'วิเคราะห์ Options',
     route: '/tools/monte-carlo',
     valuePreview: [
       'ตอบว่า “ผลลัพธ์ที่เป็นไปได้ของสถานะนี้กว้างแค่ไหน” ไม่ใช่แค่ตัวเลขเดียว',
@@ -103,20 +112,20 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     id: 'stock-planner',
     title: 'วางแผนหุ้นรายตัว (Stock Planner)',
     assetScope: 'stock',
-    description: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมายของหุ้นหรือ ETF เพื่อดูความเสี่ยงและผลตอบแทนแบบเข้าใจง่าย',
+    description: 'กำหนดเป้าหมาย ระดับความเสี่ยง และดู Risk : Reward ของแผนก่อนตัดสินใจ',
     capability: 'planner.stock',
-    category: 'วางแผนการเทรด',
+    category: 'วิเคราะห์หุ้น',
     route: '/tools/stock-planner',
     valuePreview: [
-      'ตอบว่า “ถ้าหุ้นตัวนี้ลงถึงจุดตัดขาดทุน คุณเสี่ยงกี่เปอร์เซ็นต์จากจุดเข้า”',
-      'เทียบความเสี่ยงที่ยอมรับกับผลตอบแทนที่หวัง เป็นสัดส่วน Risk/Reward ที่อ่านง่าย',
-      'ใส่เงินที่ตั้งใจลงทุน แล้วเห็นจำนวนหุ้นโดยประมาณ กำไรและขาดทุนที่จะเกิดขึ้นจริง',
+      'ตอบว่า “จากราคาปัจจุบัน ถึงเป้าหมายที่ตั้งไว้ ห่างกันกี่เปอร์เซ็นต์”',
+      'เทียบระยะขึ้นกับระยะลงที่ยอมรับได้ เป็นสัดส่วน Risk : Reward ที่อ่านง่าย',
+      'บันทึกแผนไว้ แล้วติดตามว่าราคาล่าสุดห่างจากแผนเดิมแค่ไหน',
     ],
-    sampleOutcome: 'เช่น แผนนี้ยอมเสี่ยงกี่ส่วน เพื่อหวังผลตอบแทนกี่ส่วน และคิดเป็นเงินเท่าไรจากขนาดที่คุณตั้งไว้',
+    sampleOutcome: 'เช่น แผนนี้ยอมเสี่ยงกี่ส่วน เพื่อหวังผลตอบแทนกี่ส่วน และเหลือเวลาตามแผนอีกกี่วัน',
   },
 ];
 
-export const TOOL_CATEGORIES: readonly ToolCategory[] = ['ทดลองสถานการณ์', 'วิเคราะห์ความเสี่ยง', 'วางแผนการเทรด'];
+export const TOOL_CATEGORIES: readonly ToolCategory[] = ['วิเคราะห์หุ้น', 'วิเคราะห์ Options'];
 
 /**
  * The plan a tool's badge names. `null` would mean a capability no tier carries,

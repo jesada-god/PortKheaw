@@ -1,16 +1,20 @@
 /**
- * Tools index + วางแผนหุ้นรายตัว (Stock Planner) — mobile layout, entitlement and
- * arithmetic QA.
+ * Tools index + วางแผนหุ้นรายตัว (Stock Planner) — layout, entitlement, price
+ * parity and the whole save → edit → delete round trip.
  *
- * Three things this run proves that a unit test cannot:
+ * Five things this run proves that a unit test cannot:
  *
- *  - the asset-scope line and the plan badge share a card at 320px without
- *    either wrapping into the other or pushing the card off the viewport;
  *  - a Basic reader is refused by the SERVER — the check reads the HTML the
  *    server actually sent to their session, not what the browser chose to
  *    render, so a client-only gate would fail here;
- *  - the figures a Pro reader sees on screen are the ones the pure module
- *    computes, end to end through the real search and the real quote route.
+ *  - the read-only baseline the Planner shows is the SAME number the Stock
+ *    Detail header shows for that symbol, compared live, in the same session.
+ *    That is the one claim the whole tool rests on and the one no mock can make;
+ *  - the figures on screen are the ones the pure module computes, end to end
+ *    through the real search, the real price route and a real accepted price;
+ *  - a saved plan survives a reload, an edit keeps its baseline, and a delete
+ *    removes it — against the real database, as the reader's own session;
+ *  - none of it overflows at 320px, in light or in dark.
  *
  * The overflow probe measures every element against the viewport rather than
  * trusting `document.scrollWidth`: the app shell clips with `overflow-x-hidden`,
@@ -26,6 +30,7 @@ const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrom
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = '.qa/artifacts/stock-planner-mobile';
+const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
 mkdirSync(OUT_DIR, { recursive: true });
 
@@ -36,13 +41,14 @@ const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900, mobile: false },
 ];
 
-/* The plan the run types in, and exactly what the pure module says about it. */
-const PLAN = { entry: '100', stop: '95.8', target: '110.1', budget: '5000' };
-const EXPECTED_SUMMARY = [
-  'ถ้าราคาลงถึงจุดตัดขาดทุน คุณเสี่ยงประมาณ 4.2%',
-  'ถ้าราคาขึ้นถึงเป้าหมาย ผลตอบแทนจากจุดเข้าอยู่ที่ประมาณ 10.1%',
-  'แผนนี้ยอมเสี่ยง 1 ส่วน เพื่อหวังผลตอบแทนประมาณ 2.4 ส่วน',
-];
+/*
+  The plan is stated as multiples of whatever the canonical price is today, so
+  the expected figures are exact without the run depending on AAPL's price:
+  +10% up and −4% down is always 1 : 2.5.
+*/
+const TARGET_MULTIPLE = 1.1;
+const INVALIDATION_MULTIPLE = 0.96;
+const EXPECTED = { upside: '+10.0%', downside: '-4.0%', rewardRisk: '1 : 2.5' };
 
 const report = {
   baseUrl: BASE_URL,
@@ -50,7 +56,12 @@ const report = {
   toolsIndex: [],
   serverGate: [],
   planner: [],
+  priceParity: [],
+  savedPlans: [],
   infoHint: [],
+  themes: [],
+  detailCta: [],
+  consoleNoise: [],
   failures: [],
 };
 
@@ -58,6 +69,16 @@ function check(condition, message, details = null) {
   if (!condition) report.failures.push({ message, details });
   return Boolean(condition);
 }
+
+/*
+  The realtime market feed is a separate service (the Railway gateway) and is not
+  running for a local QA server, so Stock Detail's socket is refused on every
+  visit. It is recorded in the report but not counted as a failure: it is a
+  property of the QA environment, not of the page under test, and counting it
+  would leave this run permanently red for a reason nobody can fix here.
+*/
+const ENVIRONMENTAL_CONSOLE = /market-ws|ws:\/\/localhost:8081|ERR_CONNECTION_REFUSED/;
+const appErrors = (errors) => errors.filter((line) => !ENVIRONMENTAL_CONSOLE.test(line));
 
 async function supabase(path, init = {}) {
   const response = await fetch(`${SUPABASE_URL}${path}`, {
@@ -126,12 +147,6 @@ async function signIn(page, user, next, attempt = 0) {
   open, its backdrop swallows every click that follows.
 */
 async function dismissOverlays(page) {
-  /*
-    The announcement is server-rendered and only stops being rendered once the
-    acknowledgement lands, so a single close is not enough: it can reappear on
-    the next navigation while that round trip is still in flight. Two
-    consecutive clean checks is the signal that it is really gone.
-  */
   let clean = 0;
   for (let attempt = 0; attempt < 12 && clean < 2; attempt += 1) {
     if (await page.locator('[data-testid="modal-backdrop"]').count() === 0) {
@@ -169,7 +184,6 @@ const OVERFLOW_PROBE = `(() => {
       && ['visible', 'clip', 'hidden'].includes(style.overflowX);
     if (!spills && !clipped) continue;
     if (element.closest('.dock')) continue;
-    // Decoration: the tools card's oversized corner blob is clipped by design.
     if (style.pointerEvents === 'none' && !(element.textContent || '').trim() && style.position === 'absolute') continue;
     if (clipped && !spills) {
       const clientRight = rect.left + element.clientWidth;
@@ -209,13 +223,13 @@ const CARD_PROBE = `(() => {
       title: (title?.textContent || '').trim(),
       scope: (scope?.textContent || '').trim(),
       badge: (badge?.textContent || '').trim(),
-      cardBox: box(card),
-      // The badge sits above the title, so "collide" means their boxes overlap.
+      category: (card.querySelector('span.tracking-widest')?.textContent || '').trim(),
       badgeOverTitle: Boolean(titleBox && badgeBox) && badgeBox.bottom > titleBox.top && badgeBox.left < titleBox.right,
-      height: card ? Math.round(card.getBoundingClientRect().height) : null,
     };
   });
 })()`;
+
+const numeric = (value) => Number(String(value ?? '').replace(/[^0-9.]/g, ''));
 
 async function readPlanner(page) {
   return page.evaluate(`(() => {
@@ -223,22 +237,25 @@ async function readPlanner(page) {
       const node = document.querySelector(selector);
       return node ? (node.textContent || '').replace(/\\s+/g, ' ').trim() : null;
     };
-    const summary = [...document.querySelectorAll('[data-testid="stock-planner-summary"] li')]
-      .map((node) => (node.textContent || '').replace(/\\s+/g, ' ').trim());
-    const figures = [...document.querySelectorAll('[data-testid="stock-planner-result"] dt')]
-      .map((dt) => ({ label: (dt.textContent || '').replace(/\\s+/g, ' ').trim(), value: (dt.nextElementSibling?.textContent || '').trim() }));
-    const position = [...document.querySelectorAll('[data-testid="stock-planner-position"] dt')]
-      .map((dt) => ({ label: (dt.textContent || '').trim(), value: (dt.nextElementSibling?.textContent || '').trim() }));
+    const scenarios = ['invalidation', 'flat', 'target'].map((kind) => text('[data-testid="stock-planner-scenario-' + kind + '"]'));
     return {
       asset: text('[data-testid="stock-planner-asset"]'),
+      baseline: document.querySelector('[data-testid="stock-planner-baseline"]')?.value ?? null,
+      baselineReadOnly: document.querySelector('[data-testid="stock-planner-baseline"]')?.readOnly ?? null,
       hasResult: Boolean(document.querySelector('[data-testid="stock-planner-result"]')),
-      hasBar: Boolean(document.querySelector('[data-testid="stock-planner-bar"]')),
+      upside: text('[data-testid="stock-planner-upside"]'),
+      downside: text('[data-testid="stock-planner-downside"]'),
+      rewardRisk: text('[data-testid="stock-planner-reward-risk"]'),
+      notProbability: text('[data-testid="stock-planner-not-probability"]'),
+      scenarios,
+      detailsOpen: Boolean(document.querySelector('[data-testid="stock-planner-details"]')),
       disclaimer: text('[data-testid="stock-planner-disclaimer"]'),
-      summary, figures, position,
+      bodyText: (document.body.textContent || '').replace(/\\s+/g, ' '),
     };
   })()`);
 }
 
+/** Choose AAPL, wait for the canonical baseline, and state a plan against it. */
 async function fillPlan(page) {
   await dismissOverlays(page);
   const search = page.locator('input[role="combobox"]');
@@ -248,27 +265,25 @@ async function fillPlan(page) {
   const option = page.locator('[role="option"]').filter({ hasText: 'AAPL' }).first();
   await option.waitFor({ timeout: 30_000 });
   await option.click();
-  await page.locator('[data-testid="stock-planner-asset"]').waitFor({ timeout: 30_000 });
-  /*
-    The quote is what makes the chosen stock a real one on screen, so the run
-    waits for the price to land rather than screenshotting a skeleton and
-    calling it a pass.
-  */
-  const priced = await page.locator('[data-testid="stock-planner-asset"]')
-    .getByText(/\$\d/).first().waitFor({ timeout: 25_000 }).then(() => true).catch(() => false);
-  // The quote prefills Entry; the plan overwrites it with a round number so the
-  // expected sentences are exact rather than dependent on today's price.
-  await page.locator('[data-testid="stock-planner-entry"]').fill(PLAN.entry);
-  await page.locator('[data-testid="stock-planner-stop"]').fill(PLAN.stop);
-  await page.locator('[data-testid="stock-planner-target"]').fill(PLAN.target);
-  await page.locator('[data-testid="stock-planner-size"]').fill(PLAN.budget);
-  await page.locator('[data-testid="stock-planner-result"]').waitFor({ timeout: 15_000 });
-  return { priced };
+
+  const baselineField = page.locator('[data-testid="stock-planner-baseline"]');
+  await baselineField.waitFor({ timeout: 40_000 });
+  const baselineText = await baselineField.inputValue();
+  const baseline = numeric(baselineText);
+  if (!Number.isFinite(baseline) || baseline <= 0) return { priced: false, baseline: null };
+
+  await page.locator('[data-testid="stock-planner-target"]').fill((baseline * TARGET_MULTIPLE).toFixed(4));
+  await page.locator('[data-testid="stock-planner-invalidation"]').fill((baseline * INVALIDATION_MULTIPLE).toFixed(4));
+  await page.locator('[data-testid="stock-planner-analyze"]').click();
+  await page.locator('[data-testid="stock-planner-result"]').waitFor({ timeout: 20_000 });
+  return { priced: true, baseline };
 }
 
 /** A tapped ⓘ must open, be readable, and stay inside the viewport. */
 async function probeInfoHint(page, term) {
-  await page.locator(`[data-testid="info-hint-${term}"]`).click();
+  const trigger = page.locator(`[data-testid="info-hint-${term}"]`).first();
+  if (await trigger.count() === 0) return { open: false, missing: true };
+  await trigger.click();
   const probe = await page.evaluate(`(() => {
     const panel = document.querySelector('[data-testid="info-sheet-${term}"]') || document.querySelector('[data-testid="info-popover-${term}"]');
     if (!panel) return { open: false };
@@ -277,14 +292,20 @@ async function probeInfoHint(page, term) {
       open: true,
       kind: panel.getAttribute('data-testid'),
       left: Math.round(rect.left), right: Math.round(rect.right),
-      top: Math.round(rect.top), bottom: Math.round(rect.bottom),
       viewportWidth: document.documentElement.clientWidth,
-      viewportHeight: window.innerHeight,
       text: (panel.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
     };
   })()`);
   await page.keyboard.press('Escape').catch(() => undefined);
   return probe;
+}
+
+async function setAppearance(page, appearance) {
+  await page.evaluate(([key, value]) => {
+    window.localStorage.setItem(key, JSON.stringify({ theme: 'portkheaw', appearance: value }));
+  }, [THEME_STORAGE_KEY, appearance]);
+  await page.reload({ waitUntil: 'networkidle', timeout: 60_000 });
+  await dismissOverlays(page);
 }
 
 async function run() {
@@ -300,22 +321,41 @@ async function run() {
       await dismissOverlays(page);
       const response = await page.request.get(`${BASE_URL}/tools/stock-planner`);
       const html = await response.text();
+      /*
+        The write routes must refuse a Basic session too, not just the page.
+        The POST is fired ONLY for Basic: against a Pro session it would succeed,
+        which is correct behaviour and would leave a real plan behind for the
+        save/edit/delete stage below to trip over.
+      */
+      const listed = await page.request.get(`${BASE_URL}/api/stock-plans`);
+      const created = tier === 'basic'
+        ? await page.request.post(`${BASE_URL}/api/stock-plans`, {
+          data: { symbol: 'AAPL', baselinePrice: 100, targetPrice: 120, invalidationPrice: 90, horizonDate: '2027-12-31' },
+        })
+        : null;
+      const priced = await page.request.get(`${BASE_URL}/api/tools/planner-price/AAPL`);
       const row = {
         tier,
         status: response.status(),
         lockedInHtml: html.includes('stock-planner-locked'),
         // The workspace's own furniture, present from its first render. None of
-        // it may appear for Basic — not hidden, not blurred: absent from the
-        // payload entirely.
-        workspaceInHtml: html.includes('stock-planner-step-symbol') || html.includes('stock-planner-disclaimer'),
+        // it may appear for Basic — not hidden, not blurred: absent entirely.
+        workspaceInHtml: html.includes('stock-planner-plan') || html.includes('stock-planner-disclaimer'),
+        listStatus: listed.status(),
+        createStatus: created ? created.status() : null,
+        priceStatus: priced.status(),
       };
       report.serverGate.push(row);
       if (tier === 'basic') {
         check(row.lockedInHtml, 'basic: the planner page did not send the locked notice', row);
         check(!row.workspaceInHtml, 'basic: the workspace reached an unentitled reader in the server HTML', row);
+        check(row.listStatus >= 400, 'basic: GET /api/stock-plans was not refused', row);
+        check(row.createStatus >= 400, 'basic: POST /api/stock-plans was not refused', row);
+        check(row.priceStatus >= 400, 'basic: the planner price route was not refused', row);
       } else {
         check(!row.lockedInHtml, 'pro: the planner page sent a locked notice to an entitled reader', row);
         check(row.workspaceInHtml, 'pro: the workspace did not reach an entitled reader', row);
+        check(row.listStatus === 200, 'pro: GET /api/stock-plans was refused', row);
       }
       await context.close();
     }
@@ -328,12 +368,8 @@ async function run() {
       });
       const page = await context.newPage();
       const errors = [];
-      const quoteCalls = [];
       page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 300)); });
       page.on('pageerror', (error) => errors.push(`pageerror: ${String(error).slice(0, 300)}`));
-      page.on('response', (response) => {
-        if (response.url().includes('/api/market/quote/')) quoteCalls.push(`${response.status()} ${response.url().replace(/^https?:\/\/[^/]+/, '')}`);
-      });
 
       await signIn(page, users.pro, '/tools');
       await dismissOverlays(page);
@@ -344,50 +380,178 @@ async function run() {
       report.toolsIndex.push({ viewport: viewport.name, cards, overflow: toolsOverflow });
       check(cards.length === 3, `${viewport.name}: expected three tool cards`, cards.map((card) => card.id));
       for (const card of cards) {
-        const expected = card.id === 'tool-card-stock-planner' ? 'สำหรับหุ้นรายตัว' : 'สำหรับสัญญาออปชัน';
-        check(card.scope === expected, `${viewport.name} ${card.id}: scope line reads "${card.scope}"`, card);
+        const planner = card.id === 'tool-card-stock-planner';
+        check(card.scope === (planner ? 'สำหรับหุ้นและ ETF รายตัว' : 'สำหรับสัญญาออปชัน'),
+          `${viewport.name} ${card.id}: scope line reads "${card.scope}"`, card);
+        check(card.category === (planner ? 'วิเคราะห์หุ้น' : 'วิเคราะห์ Options'),
+          `${viewport.name} ${card.id}: category reads "${card.category}"`, card);
         check(Boolean(card.badge), `${viewport.name} ${card.id}: no plan badge`, card);
         check(!card.badgeOverTitle, `${viewport.name} ${card.id}: badge overlaps the title`, card);
       }
+      /* The options tools keep the tiers they already had. */
+      const byId = Object.fromEntries(cards.map((card) => [card.id, card]));
+      check(byId['tool-card-what-if']?.requiredTier === 'pro', `${viewport.name}: What-If is no longer Pro`, byId['tool-card-what-if']);
+      check(byId['tool-card-monte-carlo']?.requiredTier === 'elite', `${viewport.name}: Monte Carlo is no longer Elite`, byId['tool-card-monte-carlo']);
+      check(byId['tool-card-stock-planner']?.requiredTier === 'pro', `${viewport.name}: Stock Planner is not Pro`, byId['tool-card-stock-planner']);
       check(toolsOverflow.offenderCount === 0, `${viewport.name} /tools: ${toolsOverflow.offenderCount} element(s) run past the viewport`, toolsOverflow.offenders);
       await page.screenshot({ path: `${OUT_DIR}/${viewport.name}-tools.png`, fullPage: true }).catch(() => undefined);
 
+      /* 3. The planner itself. */
       await page.goto(`${BASE_URL}/tools/stock-planner`, { waitUntil: 'networkidle', timeout: 60_000 });
       await dismissOverlays(page);
       const filled = await fillPlan(page);
-      const planner = await readPlanner(page);
-      const plannerOverflow = await page.evaluate(OVERFLOW_PROBE);
-      report.planner.push({ viewport: viewport.name, ...filled, ...planner, quoteCalls: quoteCalls.slice(0, 40), overflow: plannerOverflow });
-      check(filled.priced, `${viewport.name}: the chosen stock never showed its price`, quoteCalls);
+      check(filled.priced, `${viewport.name}: the planner never showed a canonical baseline`);
+      if (filled.priced) {
+        await page.locator('[data-testid="stock-planner-details-toggle"]').click();
+        await page.locator('[data-testid="stock-planner-details"]').waitFor({ timeout: 15_000 }).catch(() => undefined);
+        const planner = await readPlanner(page);
+        const plannerOverflow = await page.evaluate(OVERFLOW_PROBE);
+        report.planner.push({ viewport: viewport.name, ...filled, ...planner, bodyText: undefined, overflow: plannerOverflow });
 
-      check(planner.summary.length === 3, `${viewport.name}: the plan summary is not three sentences`, planner.summary);
-      for (const [index, sentence] of EXPECTED_SUMMARY.entries()) {
-        check(planner.summary[index] === sentence, `${viewport.name}: summary line ${index + 1} reads "${planner.summary[index]}"`, planner.summary);
-      }
-      check(planner.figures.some((figure) => figure.value === '1 : 2.4'), `${viewport.name}: Risk/Reward is not 1 : 2.4`, planner.figures);
-      check(planner.figures.some((figure) => figure.value === '-4.2%'), `${viewport.name}: risk is not -4.2%`, planner.figures);
-      check(planner.figures.some((figure) => figure.value === '+10.1%'), `${viewport.name}: reward is not +10.1%`, planner.figures);
-      check(planner.position.some((figure) => figure.value === '50 หุ้น'), `${viewport.name}: position is not 50 shares`, planner.position);
-      check(planner.position.some((figure) => figure.value.includes('-$210.00')), `${viewport.name}: loss at stop is not -$210.00`, planner.position);
-      check(planner.hasBar, `${viewport.name}: the Stop–Entry–Target bar is missing`);
-      check(/ไม่ใช่คำแนะนำการลงทุน/.test(planner.disclaimer ?? ''), `${viewport.name}: the disclaimer is missing`, planner.disclaimer);
-      check(plannerOverflow.offenderCount === 0, `${viewport.name} planner: ${plannerOverflow.offenderCount} element(s) run past the viewport`, plannerOverflow.offenders);
+        check(planner.baselineReadOnly === true, `${viewport.name}: the baseline is editable`, planner);
+        check(planner.upside === EXPECTED.upside, `${viewport.name}: upside reads "${planner.upside}"`, planner);
+        check(planner.downside === EXPECTED.downside, `${viewport.name}: downside reads "${planner.downside}"`, planner);
+        check(planner.rewardRisk === EXPECTED.rewardRisk, `${viewport.name}: Risk : Reward reads "${planner.rewardRisk}"`, planner);
+        check(/ไม่ใช่ความน่าจะเป็น/.test(planner.notProbability ?? ''),
+          `${viewport.name}: the "not a probability" notice is missing`, planner.notProbability);
+        check(planner.scenarios.every(Boolean) && planner.scenarios.length === 3,
+          `${viewport.name}: the three scenarios are not all present`, planner.scenarios);
+        check(planner.detailsOpen, `${viewport.name}: ดูรายละเอียด did not open`);
+        check(/ไม่ใช่คำแนะนำการลงทุน/.test(planner.disclaimer ?? ''), `${viewport.name}: the disclaimer is missing`, planner.disclaimer);
+        check(!/(ควรซื้อ|ซื้อเลย|ควรขาย|ขายเลย|แนะนำให้ซื้อ|แนะนำให้ขาย)/.test(planner.bodyText ?? ''),
+          `${viewport.name}: the page printed a directive`);
+        check(plannerOverflow.offenderCount === 0,
+          `${viewport.name} planner: ${plannerOverflow.offenderCount} element(s) run past the viewport`, plannerOverflow.offenders);
 
-      for (const term of ['planEntry', 'planRiskReward']) {
-        const hint = await probeInfoHint(page, term);
-        report.infoHint.push({ viewport: viewport.name, term, ...hint });
-        check(hint.open, `${viewport.name} ${term}: the info panel did not open on tap`, hint);
-        if (hint.open) {
-          check(hint.left >= -1 && hint.right <= hint.viewportWidth + 1,
-            `${viewport.name} ${term}: the info panel runs past the viewport`, hint);
-          check(hint.text.length > 20, `${viewport.name} ${term}: the info panel is empty`, hint);
+        for (const term of ['planCurrentPrice', 'planTarget', 'planInvalidation', 'planUpside', 'planDownside', 'planRiskReward']) {
+          const hint = await probeInfoHint(page, term);
+          report.infoHint.push({ viewport: viewport.name, term, ...hint });
+          check(hint.open, `${viewport.name} ${term}: the info panel did not open on tap`, hint);
+          if (hint.open) {
+            check(hint.left >= -1 && hint.right <= hint.viewportWidth + 1,
+              `${viewport.name} ${term}: the info panel runs past the viewport`, hint);
+            check(hint.text.length > 20, `${viewport.name} ${term}: the info panel is empty`, hint);
+          }
         }
+        await page.screenshot({ path: `${OUT_DIR}/${viewport.name}-stock-planner.png`, fullPage: true }).catch(() => undefined);
       }
 
-      await page.screenshot({ path: `${OUT_DIR}/${viewport.name}-stock-planner.png`, fullPage: true }).catch(() => undefined);
-      check(errors.length === 0, `${viewport.name}: ${errors.length} console error(s)`, errors);
+      const viewportErrors = appErrors(errors);
+      report.consoleNoise.push({ viewport: viewport.name, environmental: errors.length - viewportErrors.length });
+      check(viewportErrors.length === 0, `${viewport.name}: ${viewportErrors.length} console error(s)`, viewportErrors);
       await context.close();
     }
+
+    /* 4. Price parity, the save round trip, the CTA and both appearances. */
+    const context = await browser.newContext({ viewport: { width: 430, height: 932 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 300)); });
+    page.on('pageerror', (error) => errors.push(`pageerror: ${String(error).slice(0, 300)}`));
+    await signIn(page, users.pro, '/tools');
+    await dismissOverlays(page);
+
+    for (const symbol of ['AAPL', 'SPY']) {
+      /*
+        The parity claim, made in one session against both surfaces: the number
+        the Stock Detail header renders, and the number the Planner puts in its
+        read-only box. They come from the same loader and the same canonical
+        resolver, and this is where that stops being an assertion about the code.
+      */
+      await page.goto(`${BASE_URL}/stock/${symbol}`, { waitUntil: 'networkidle', timeout: 90_000 });
+      await dismissOverlays(page);
+      await page.locator('[data-testid="stock-last-price"]').waitFor({ timeout: 60_000 }).catch(() => undefined);
+      const detailPrice = numeric(await page.locator('[data-testid="stock-last-price"]').first().textContent().catch(() => ''));
+
+      const ctaCount = await page.locator('[data-testid="stock-detail-plan-cta"]').count();
+      report.detailCta.push({ symbol, present: ctaCount > 0 });
+      check(ctaCount > 0, `${symbol}: the "วางแผนหุ้นนี้" CTA is missing from Stock Detail`);
+      if (ctaCount > 0) {
+        await page.locator('[data-testid="stock-detail-plan-cta"]').click();
+        await page.waitForURL(/\/tools\/stock-planner/, { timeout: 30_000 }).catch(() => undefined);
+      } else {
+        await page.goto(`${BASE_URL}/tools/stock-planner?symbol=${symbol}`, { waitUntil: 'networkidle', timeout: 60_000 });
+      }
+      await dismissOverlays(page);
+      const baselineField = page.locator('[data-testid="stock-planner-baseline"]');
+      await baselineField.waitFor({ timeout: 40_000 }).catch(() => undefined);
+      const plannerBaseline = numeric(await baselineField.inputValue().catch(() => ''));
+
+      const row = { symbol, detailPrice, plannerBaseline, url: page.url() };
+      report.priceParity.push(row);
+      check(page.url().includes(`symbol=${symbol}`), `${symbol}: the CTA did not carry the symbol to the planner`, row);
+      check(Number.isFinite(detailPrice) && detailPrice > 0, `${symbol}: Stock Detail showed no price`, row);
+      check(Number.isFinite(plannerBaseline) && plannerBaseline > 0, `${symbol}: the planner showed no baseline`, row);
+      if (detailPrice > 0 && plannerBaseline > 0) {
+        // Same resolver, same session: they must agree to the displayed cent.
+        check(Math.abs(detailPrice - plannerBaseline) <= 0.011,
+          `${symbol}: planner baseline ${plannerBaseline} does not match Stock Detail ${detailPrice}`, row);
+      }
+    }
+
+    /* 5. save → reload → edit → delete, against the real database. */
+    await page.goto(`${BASE_URL}/tools/stock-planner`, { waitUntil: 'networkidle', timeout: 60_000 });
+    const saveFlow = await fillPlan(page);
+    if (saveFlow.priced) {
+      await page.locator('[data-testid="stock-planner-save"]').click();
+      await page.locator('[data-testid="saved-plan-AAPL"]').waitFor({ timeout: 30_000 });
+
+      await page.reload({ waitUntil: 'networkidle', timeout: 60_000 });
+      await dismissOverlays(page);
+      const survived = await page.locator('[data-testid="saved-plan-AAPL"]').waitFor({ timeout: 30_000 })
+        .then(() => true).catch(() => false);
+      check(survived, 'the saved plan did not survive a reload');
+
+      const rows = await supabase(`/rest/v1/stock_plans?user_id=eq.${users.pro.userId}&select=id,baseline_price,target_price,archived_at`);
+      const beforeBaseline = rows[0]?.baseline_price;
+      check(rows.length === 1, 'the database does not hold exactly one plan', rows);
+
+      /* Edit: the target moves, the baseline must not. */
+      await page.locator('[data-testid="saved-plan-edit-AAPL"]').click();
+      const editedBaseline = numeric(await page.locator('[data-testid="stock-planner-baseline"]').inputValue());
+      await page.locator('[data-testid="stock-planner-target"]').fill((editedBaseline * 1.25).toFixed(4));
+      await page.locator('[data-testid="stock-planner-analyze"]').click();
+      await page.locator('[data-testid="stock-planner-save"]').click();
+      await page.waitForTimeout(2_500);
+
+      const afterRows = await supabase(`/rest/v1/stock_plans?user_id=eq.${users.pro.userId}&select=id,baseline_price,target_price,archived_at`);
+      const after = { beforeBaseline, afterBaseline: afterRows[0]?.baseline_price, afterTarget: afterRows[0]?.target_price };
+      report.savedPlans.push({ stage: 'edit', ...after });
+      check(Number(after.afterBaseline) === Number(beforeBaseline), 'the baseline moved on edit', after);
+      check(Number(after.afterTarget) !== Number(rows[0]?.target_price), 'the edit did not change the target', after);
+
+      /* Delete: archived, and gone from the reader's list. */
+      await page.locator('[data-testid="saved-plan-delete-AAPL"]').click();
+      await page.locator('[data-testid="saved-plan-confirm-delete-AAPL"]').click();
+      await page.waitForTimeout(2_500);
+      const deletedRows = await supabase(`/rest/v1/stock_plans?user_id=eq.${users.pro.userId}&select=id,archived_at`);
+      const gone = await page.locator('[data-testid="saved-plan-AAPL"]').count() === 0;
+      report.savedPlans.push({ stage: 'delete', rows: deletedRows, goneFromList: gone });
+      check(gone, 'the deleted plan is still listed');
+      check(deletedRows.every((plan) => plan.archived_at !== null), 'a deleted plan was not archived', deletedRows);
+    }
+
+    /* 6. Light and dark, on the planner. */
+    for (const appearance of ['light', 'dark']) {
+      await page.goto(`${BASE_URL}/tools/stock-planner?symbol=AAPL`, { waitUntil: 'networkidle', timeout: 60_000 });
+      await setAppearance(page, appearance);
+      await page.locator('[data-testid="stock-planner-baseline"]').waitFor({ timeout: 40_000 }).catch(() => undefined);
+      const themeProbe = await page.evaluate(`(() => {
+        const root = document.documentElement;
+        const body = getComputedStyle(document.body);
+        return { appearance: root.dataset.appearance, background: body.backgroundColor, color: body.color };
+      })()`);
+      const overflow = await page.evaluate(OVERFLOW_PROBE);
+      report.themes.push({ appearance, ...themeProbe, offenderCount: overflow.offenderCount, offenders: overflow.offenders });
+      check(themeProbe.appearance === appearance, `${appearance}: the appearance did not apply`, themeProbe);
+      check(overflow.offenderCount === 0, `${appearance}: ${overflow.offenderCount} element(s) run past the viewport`, overflow.offenders);
+      await page.screenshot({ path: `${OUT_DIR}/planner-${appearance}.png`, fullPage: true }).catch(() => undefined);
+    }
+
+    const flowErrors = appErrors(errors);
+    report.consoleNoise.push({ viewport: 'flow', environmental: errors.length - flowErrors.length });
+    check(flowErrors.length === 0, `flow: ${flowErrors.length} console error(s)`, flowErrors);
+    await context.close();
   } finally {
     await browser.close();
     for (const user of Object.values(users)) {
@@ -403,7 +567,9 @@ async function run() {
     failureCount: report.failures.length,
     failures: report.failures.slice(0, 30),
     serverGate: report.serverGate,
-    cards: report.toolsIndex.map((row) => ({ viewport: row.viewport, cards: row.cards.map((card) => `${card.title} · ${card.scope} · ${card.badge}`) })),
+    priceParity: report.priceParity,
+    savedPlans: report.savedPlans,
+    themes: report.themes.map((row) => ({ appearance: row.appearance, background: row.background, offenders: row.offenderCount })),
   }, null, 2));
   if (!report.passed) process.exitCode = 1;
 }
