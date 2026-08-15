@@ -335,6 +335,16 @@ export function StockPlannerWorkspace() {
       }
       if (editing?.id === plan.id) setEditing(null);
       addToast({ title: 'ลบแผนแล้ว', type: 'success' });
+      /*
+        Removed from the list the moment the server confirms it, rather than
+        after a second round trip to re-read the list. The delete has already
+        succeeded at this point, so waiting for the refetch only leaves the row
+        the reader just deleted sitting on screen for as long as the network
+        takes — which on a cold serverless function is long enough to look
+        broken, and did on the first production smoke run. The refresh still
+        follows, to pick up anything else that changed.
+      */
+      setPlans((current) => current.filter((saved) => saved.id !== plan.id));
       await refreshPlans();
     } catch {
       addToast({ title: 'ยังลบแผนไม่ได้', type: 'error' });

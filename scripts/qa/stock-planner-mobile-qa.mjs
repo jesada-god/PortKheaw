@@ -300,6 +300,25 @@ async function probeInfoHint(page, term) {
   return probe;
 }
 
+/**
+ * Poll the database until `predicate` holds, or give up.
+ *
+ * Fixed sleeps were what made the first production smoke run report a delete
+ * that had in fact succeeded: locally the round trip finished inside the sleep,
+ * on a cold serverless function it did not. Waiting for the condition removes
+ * the guess in both directions.
+ */
+async function untilPlans(userId, predicate, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let rows = [];
+  while (Date.now() < deadline) {
+    rows = await supabase(`/rest/v1/stock_plans?user_id=eq.${userId}&select=id,baseline_price,target_price,archived_at`);
+    if (predicate(rows)) return rows;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  return rows;
+}
+
 async function setAppearance(page, appearance) {
   await page.evaluate(([key, value]) => {
     window.localStorage.setItem(key, JSON.stringify({ theme: 'portkheaw', appearance: value }));
@@ -512,9 +531,10 @@ async function run() {
       await page.locator('[data-testid="stock-planner-target"]').fill((editedBaseline * 1.25).toFixed(4));
       await page.locator('[data-testid="stock-planner-analyze"]').click();
       await page.locator('[data-testid="stock-planner-save"]').click();
-      await page.waitForTimeout(2_500);
-
-      const afterRows = await supabase(`/rest/v1/stock_plans?user_id=eq.${users.pro.userId}&select=id,baseline_price,target_price,archived_at`);
+      const afterRows = await untilPlans(
+        users.pro.userId,
+        (plans) => Number(plans[0]?.target_price) !== Number(rows[0]?.target_price),
+      );
       const after = { beforeBaseline, afterBaseline: afterRows[0]?.baseline_price, afterTarget: afterRows[0]?.target_price };
       report.savedPlans.push({ stage: 'edit', ...after });
       check(Number(after.afterBaseline) === Number(beforeBaseline), 'the baseline moved on edit', after);
@@ -523,9 +543,12 @@ async function run() {
       /* Delete: archived, and gone from the reader's list. */
       await page.locator('[data-testid="saved-plan-delete-AAPL"]').click();
       await page.locator('[data-testid="saved-plan-confirm-delete-AAPL"]').click();
-      await page.waitForTimeout(2_500);
-      const deletedRows = await supabase(`/rest/v1/stock_plans?user_id=eq.${users.pro.userId}&select=id,archived_at`);
-      const gone = await page.locator('[data-testid="saved-plan-AAPL"]').count() === 0;
+      const deletedRows = await untilPlans(
+        users.pro.userId,
+        (plans) => plans.every((plan) => plan.archived_at !== null),
+      );
+      const gone = await page.locator('[data-testid="saved-plan-AAPL"]')
+        .waitFor({ state: 'detached', timeout: 20_000 }).then(() => true).catch(() => false);
       report.savedPlans.push({ stage: 'delete', rows: deletedRows, goneFromList: gone });
       check(gone, 'the deleted plan is still listed');
       check(deletedRows.every((plan) => plan.archived_at !== null), 'a deleted plan was not archived', deletedRows);
