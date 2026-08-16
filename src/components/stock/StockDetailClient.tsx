@@ -693,7 +693,7 @@ export function StockDetailClient({
                 only, and it shows itself only for instruments the planner will
                 actually take — see PlanThisStockCta.
               */}
-              <PlanThisStockCta symbol={symbol} assetType={instrumentAssetType} />
+              <PlanThisStockCta symbol={symbol} assetType={instrumentAssetType} currency={sourceCurrency} />
             </div>
           )}
           {tab === 'Analysis' && (
