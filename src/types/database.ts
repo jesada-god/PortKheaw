@@ -1821,9 +1821,11 @@ export interface Database {
       admin_dashboard_overview: {
         Args: { input_from_date: string | null; input_to_date: string | null };
         Returns: Array<{
+          /** Current effective tier, per existing account. A running trial is not here. */
           basic_members: number;
           pro_members: number;
           elite_members: number;
+          /** Accounts whose trial is running at read time. Never a historical count. */
           trial_members: number;
           promptpay_pending: number;
           past_due_members: number;
@@ -1846,6 +1848,10 @@ export interface Database {
           database_now: string;
           /** Accounts that exist right now. Never bounded by the selected period. */
           total_users: number;
+          /** Accounts whose trial began in the last seven Bangkok days, expired ones included. */
+          trial_starts_7d: number;
+          /** Accounts whose first settled invoice fell in the last seven Bangkok days. */
+          paid_conversions_7d: number;
         }>;
       };
       admin_recent_billing_activity: {

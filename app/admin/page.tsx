@@ -289,47 +289,95 @@ export default async function AdminDashboardPage({
           {stats && (
             <div className="flex min-w-0 flex-col gap-5">
               {/*
-                Three groups, in the order an operator asks the questions: who is
-                here, what did they pay, is anything broken. Every figure is the
-                same figure as before from the same single aggregate — the only
-                thing that changed is which heading it sits under, so a number
-                nobody could place ("PromptPay รอชำระ" beside the tier counts) is
-                now next to the money it belongs to.
+                Four groups, in the order an operator asks the questions: who is
+                here *now*, what moved in the last week, what did they pay, is
+                anything broken.
+
+                The split at the top is the point. "ตอนนี้" and "ช่วงที่ผ่านมา"
+                were previously one band called "ผู้ใช้", so a count of accounts
+                holding a tier sat beside a count of signups in a window and the
+                two read as the same kind of fact. They are not: one is a
+                statement about this instant, the other about seven days, and
+                only the second kind can be a movement.
 
                 Each group's column count is chosen so its last row is full.
                 Ragged tails are what made the old three-grid stack read as empty
                 space rather than as structure.
               */}
-              <StatGroup title="ผู้ใช้" featureFirst>
-                {/*
-                  The one card in the group that is not a slice of the others, and
-                  deliberately outside the period: every other figure here answers
-                  "in the selected window", this one answers "right now". The hint
-                  says so, because it sits under a date control that cannot move
-                  it.
-                */}
+              <StatGroup
+                title="ตอนนี้"
+                columns="sm:grid-cols-3 lg:grid-cols-3"
+                featureFirst
+                note="สถานะปัจจุบัน ณ เวลาที่เปิดหน้านี้ ไม่ขึ้นกับช่วงเวลาที่เลือก ผู้ที่อยู่ระหว่างทดลองใช้ถูกนับในช่อง “กำลังทดลองใช้” เท่านั้น ไม่ถูกนับซ้ำใน Elite ทั้งสี่ช่องล่างรวมกันเท่ากับผู้ใช้งานทั้งหมด"
+              >
                 <StatCard
                   label="ผู้ใช้งานทั้งหมด"
                   value={formatCount(stats.total_users)}
-                  hint="บัญชีที่มีอยู่ตอนนี้ ไม่ขึ้นกับช่วงเวลาที่เลือก"
+                  hint="บัญชีที่ยังมีอยู่ ณ ตอนนี้"
                   emphasis="hero"
                 />
-                <StatCard label="Basic" value={formatCount(stats.basic_members)} />
-                <StatCard label="Pro" value={formatCount(stats.pro_members)} />
-                <StatCard label="Elite" value={formatCount(stats.elite_members)} />
-                <StatCard label="กำลังทดลองใช้ (Trial)" value={formatCount(stats.trial_members)} />
-                <StatCard label="สมาชิกใหม่วันนี้" value={formatCount(stats.new_members_today)} />
+                {/*
+                  Decided by the database clock on every read: a trial whose end
+                  has passed is not counted here from that moment on, with no job
+                  to run and nothing deleted — the record that the free week was
+                  spent is kept for as long as the retention policy says.
+                */}
+                <StatCard
+                  label="กำลังทดลองใช้"
+                  value={formatCount(stats.trial_members)}
+                  hint="Trial ที่ยังไม่หมดอายุ ณ ตอนนี้"
+                />
+                <StatCard
+                  label="Basic"
+                  value={formatCount(stats.basic_members)}
+                  hint="สิทธิ์ที่ใช้ได้จริงตอนนี้"
+                />
+                <StatCard
+                  label="Pro"
+                  value={formatCount(stats.pro_members)}
+                  hint="สิทธิ์ที่ใช้ได้จริงตอนนี้"
+                />
+                <StatCard
+                  label="Elite"
+                  value={formatCount(stats.elite_members)}
+                  hint="แพ็กเกจเสียเงิน ไม่รวม Trial"
+                />
+              </StatGroup>
+
+              {/*
+                Movement, and only movement. The window is the trailing seven days
+                for all three, so they can be read against one another; it is not
+                the range control above, which governs the revenue figures and
+                says so there.
+              */}
+              <StatGroup
+                title="ช่วงที่ผ่านมา (7 วันล่าสุด)"
+                columns="sm:grid-cols-4 lg:grid-cols-4"
+                featureFirst
+                note="นับ 7 วันล่าสุดตามเวลาไทย ไม่ขึ้นกับช่วงเวลาที่เลือกด้านบน"
+              >
                 <StatCard
                   label="สมาชิกใหม่ 7 วัน"
                   value={formatCount(stats.new_members_7d)}
-                  hint={`30 วัน: ${formatCount(stats.new_members_30d)}`}
+                  hint={`วันนี้: ${formatCount(stats.new_members_today)} · 30 วัน: ${formatCount(stats.new_members_30d)}`}
+                  emphasis="hero"
+                />
+                <StatCard
+                  label="เริ่ม Trial 7 วัน"
+                  value={formatCount(stats.trial_starts_7d)}
+                  hint="รวมรายที่หมดอายุไปแล้ว"
+                />
+                <StatCard
+                  label="เปลี่ยนเป็นแพ็กเกจเสียเงิน 7 วัน"
+                  value={formatCount(stats.paid_conversions_7d)}
+                  hint="บัญชีที่ชำระเงินสำเร็จครั้งแรกในช่วงนี้"
                 />
               </StatGroup>
 
               <StatGroup
                 title="รายได้"
                 columns="sm:grid-cols-3 lg:grid-cols-3"
-                note="รายได้คำนวณจากใบแจ้งหนี้ที่ชำระแล้วเท่านั้น หักด้วยยอดที่คืนเงินแล้ว ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ"
+                note="ช่วงเวลาที่เลือกด้านบนมีผลกับตัวเลขรายได้กลุ่มนี้เท่านั้น รายได้คำนวณจากใบแจ้งหนี้ที่ชำระแล้วเท่านั้น หักด้วยยอดที่คืนเงินแล้ว ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ"
               >
                 <StatCard label="รายได้วันนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_today_minor)} />
                 <StatCard label="รายได้เดือนนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_month_minor)} />

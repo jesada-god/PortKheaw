@@ -70,8 +70,15 @@ export function StatCard({
         `--surface` those colours were chosen against. `--text` measures 15.5:1
         on it. The emphasis is the surface and the figure; the label just has to
         be readable.
+
+        It wraps rather than truncates, for the same reason: a label is the only
+        thing on the card that says what the figure counts, and an ellipsis in
+        the middle of one ("เปลี่ยนเป็นแพ็กเกจเสียเงิน…") leaves a number nobody
+        can name. The grid stretches every card in a row to the tallest, so a
+        second line costs alignment nothing; `break-words` is what keeps a long
+        unbroken token from widening the column instead.
       */}
-      <p className={`truncate text-xs ${hero ? 'font-medium text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
+      <p className={`text-xs break-words ${hero ? 'font-medium text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
         {label}
       </p>
       {/*
