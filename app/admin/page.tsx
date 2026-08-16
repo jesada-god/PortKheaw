@@ -287,7 +287,7 @@ export default async function AdminDashboardPage({
           )}
 
           {stats && (
-            <div className="flex min-w-0 flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-5 [&>section+section]:border-t [&>section+section]:border-[var(--border)] [&>section+section]:pt-5">
               {/*
                 Four groups, in the order an operator asks the questions: who is
                 here *now*, what moved in the last week, what did they pay, is
@@ -300,15 +300,26 @@ export default async function AdminDashboardPage({
                 statement about this instant, the other about seven days, and
                 only the second kind can be a movement.
 
-                Each group's column count is chosen so its last row is full.
-                Ragged tails are what made the old three-grid stack read as empty
-                space rather than as structure.
+                Each group is one headline figure across the full width and then
+                a full row of the figures that break it down, so the eye lands on
+                the answer before the detail. Everything that qualifies a number
+                rather than being one — how a trial is counted, what today's take
+                was — sits under the group's own disclosure, because a caveat
+                nobody is currently asking about costs the same reading time as a
+                figure and answers nothing.
               */}
               <StatGroup
                 title="ตอนนี้"
-                columns="sm:grid-cols-3 lg:grid-cols-3"
+                columns="sm:grid-cols-4"
                 featureFirst
-                note="สถานะปัจจุบัน ณ เวลาที่เปิดหน้านี้ ไม่ขึ้นกับช่วงเวลาที่เลือก ผู้ที่อยู่ระหว่างทดลองใช้ถูกนับในช่อง “กำลังทดลองใช้” เท่านั้น ไม่ถูกนับซ้ำใน Elite ทั้งสี่ช่องล่างรวมกันเท่ากับผู้ใช้งานทั้งหมด"
+                note="สถานะปัจจุบัน ไม่เปลี่ยนตามช่วงเวลาที่เลือก"
+                help={(
+                  <ul className="list-disc space-y-1 pl-4">
+                    <li>ผู้ที่อยู่ระหว่างทดลองใช้ถูกนับในช่อง “กำลังทดลองใช้” เท่านั้น ไม่ถูกนับซ้ำใน Elite</li>
+                    <li>Elite นับเฉพาะแพ็กเกจเสียเงิน</li>
+                    <li>Basic Pro Elite และกำลังทดลองใช้ รวมกันเท่ากับผู้ใช้งานทั้งหมด</li>
+                  </ul>
+                )}
               >
                 <StatCard
                   label="ผู้ใช้งานทั้งหมด"
@@ -352,15 +363,24 @@ export default async function AdminDashboardPage({
               */}
               <StatGroup
                 title="ช่วงที่ผ่านมา (7 วันล่าสุด)"
-                columns="sm:grid-cols-4 lg:grid-cols-4"
+                columns="sm:grid-cols-2"
                 featureFirst
                 note="นับ 7 วันล่าสุดตามเวลาไทย ไม่ขึ้นกับช่วงเวลาที่เลือกด้านบน"
+                helpSummary="ช่วงเวลาอื่นของสมาชิกใหม่"
+                help={(
+                  <Figures
+                    items={[
+                      { label: 'สมาชิกใหม่วันนี้', value: formatCount(stats.new_members_today) },
+                      { label: 'สมาชิกใหม่ 30 วัน', value: formatCount(stats.new_members_30d) },
+                    ]}
+                  />
+                )}
               >
                 <StatCard
                   label="สมาชิกใหม่ 7 วัน"
                   value={formatCount(stats.new_members_7d)}
-                  hint={`วันนี้: ${formatCount(stats.new_members_today)} · 30 วัน: ${formatCount(stats.new_members_30d)}`}
-                  emphasis="hero"
+                  hint="บัญชีที่สมัครใน 7 วันที่ผ่านมา"
+                  emphasis="lead"
                 />
                 <StatCard
                   label="เริ่ม Trial 7 วัน"
@@ -374,31 +394,59 @@ export default async function AdminDashboardPage({
                 />
               </StatGroup>
 
+              {/*
+                One figure, and the four that qualify it folded away — six cards
+                of money side by side made an operator read all six to find the
+                one they came for. The disclosure opens by itself when something
+                inside it wants a person: a past-due account or a PromptPay
+                invoice still waiting is the reason to look, and hiding it behind
+                a tap the operator has no reason to make would lose the signal
+                the coloured card used to carry.
+              */}
               <StatGroup
                 title="รายได้"
-                columns="sm:grid-cols-3 lg:grid-cols-3"
-                note="ช่วงเวลาที่เลือกด้านบนมีผลกับตัวเลขรายได้กลุ่มนี้เท่านั้น รายได้คำนวณจากใบแจ้งหนี้ที่ชำระแล้วเท่านั้น หักด้วยยอดที่คืนเงินแล้ว ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ"
+                columns="sm:grid-cols-2"
+                featureFirst
+                note="นับเฉพาะใบแจ้งหนี้ที่ชำระแล้ว ตามเวลาไทย"
+                helpSummary="ช่วงที่เลือก · คืนเงิน · ค้างชำระ · PromptPay"
+                helpOpen={stats.past_due_members > 0 || stats.promptpay_pending > 0}
+                help={(
+                  <>
+                    <Figures
+                      items={[
+                        {
+                          label: `รายได้ช่วงที่เลือก (${stats.period_from} → ${stats.period_to})`,
+                          value: `฿${formatMinorAsBaht(stats.revenue_period_minor)}`,
+                        },
+                        {
+                          label: 'คืนเงินช่วงที่เลือก',
+                          value: `฿${formatMinorAsBaht(stats.refunds_period_minor)}`,
+                        },
+                        {
+                          label: 'ค้างชำระ (Past due)',
+                          value: formatCount(stats.past_due_members),
+                          attention: stats.past_due_members > 0,
+                        },
+                        {
+                          label: 'PromptPay รอชำระ',
+                          value: formatCount(stats.promptpay_pending),
+                          attention: stats.promptpay_pending > 0,
+                        },
+                      ]}
+                    />
+                    <p className="mt-2">
+                      ช่วงเวลาที่เลือกด้านบนมีผลกับตัวเลขรายได้กลุ่มนี้เท่านั้น
+                      รายได้หักด้วยยอดที่คืนเงินแล้ว
+                      ใบแจ้งหนี้ที่ยังไม่ชำระและคำขอคืนเงินที่ยังไม่จ่ายจริงไม่ถูกนับ
+                    </p>
+                  </>
+                )}
               >
-                <StatCard label="รายได้วันนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_today_minor)} />
-                <StatCard label="รายได้เดือนนี้ (บาท)" value={formatMinorAsBaht(stats.revenue_month_minor)} />
                 <StatCard
-                  label="รายได้ช่วงที่เลือก (บาท)"
-                  value={formatMinorAsBaht(stats.revenue_period_minor)}
-                  hint={`${stats.period_from} → ${stats.period_to}`}
-                />
-                <StatCard
-                  label="คืนเงินช่วงที่เลือก (บาท)"
-                  value={formatMinorAsBaht(stats.refunds_period_minor)}
-                />
-                <StatCard
-                  label="ค้างชำระ (Past due)"
-                  value={formatCount(stats.past_due_members)}
-                  tone={stats.past_due_members > 0 ? 'attention' : 'neutral'}
-                />
-                <StatCard
-                  label="PromptPay รอชำระ"
-                  value={formatCount(stats.promptpay_pending)}
-                  tone={stats.promptpay_pending > 0 ? 'attention' : 'neutral'}
+                  label="รายได้"
+                  value={`฿${formatMinorAsBaht(stats.revenue_month_minor)}`}
+                  hint={`เดือนนี้ · วันนี้ ฿${formatMinorAsBaht(stats.revenue_today_minor)}`}
+                  emphasis="lead"
                 />
               </StatGroup>
 
@@ -625,16 +673,21 @@ export default async function AdminDashboardPage({
 /**
  * One labelled band of figures.
  *
- * The heading is what turns nineteen cards into three answers, and it is a real
+ * The heading is what turns nineteen cards into four answers, and it is a real
  * `h3` under the section's `h2` so the outline a screen reader announces matches
  * the one an eye follows.
  *
  * Two columns is the floor at every size, so a handset never shows a column of
  * full-width cards; `columns` sets the wider breakpoints per group so each one
- * lands on a full last row, which is what the old flat stack of three grids did
- * not. `featureFirst` widens the first card to two columns — the group's own
- * headline figure, sized to say so at every breakpoint, and on a 320px handset
- * that simply means the full width.
+ * lands on a full last row. `featureFirst` gives the first card the whole width
+ * at every breakpoint — the group's headline figure, above the row that breaks
+ * it down rather than beside one member of it.
+ *
+ * `note` is the one line that qualifies every figure in the band and has to be
+ * read; `help` is everything that only matters once somebody asks, kept in a
+ * `<details>` so the band is four numbers rather than four numbers and a
+ * paragraph. It opens without hydration, which is what this server-rendered page
+ * can offer and a scripted tooltip cannot.
  */
 function StatGroup({
   title,
@@ -642,25 +695,75 @@ function StatGroup({
   columns = 'sm:grid-cols-3 lg:grid-cols-4',
   featureFirst = false,
   note,
+  help,
+  helpSummary = 'รายละเอียด',
+  helpOpen = false,
 }: {
   title: string;
   children: ReactNode;
   columns?: string;
   featureFirst?: boolean;
   note?: string;
+  help?: ReactNode;
+  helpSummary?: string;
+  helpOpen?: boolean;
 }) {
   return (
     <section className="min-w-0 space-y-2">
-      <h3 className="text-sm font-semibold text-[var(--text-muted)]">{title}</h3>
+      <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>
       <div
         className={`grid min-w-0 grid-cols-2 gap-3 ${columns} ${
-          featureFirst ? '[&>*:first-child]:col-span-2' : ''
+          featureFirst ? '[&>*:first-child]:col-span-full' : ''
         }`}
       >
         {children}
       </div>
       {note && <p className="text-xs text-[var(--text-muted)]">{note}</p>}
+      {help && (
+        <details open={helpOpen} className="group min-w-0">
+          <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+            <ChevronRight
+              aria-hidden="true"
+              size={14}
+              className="shrink-0 transition-transform group-open:rotate-90"
+            />
+            <span className="min-w-0">{helpSummary}</span>
+          </summary>
+          <div className="min-w-0 text-xs leading-relaxed text-[var(--text-muted)]">{help}</div>
+        </details>
+      )}
     </section>
+  );
+}
+
+/**
+ * Figures that belong to a group without being one of its cards.
+ *
+ * A `dl` rather than more `StatCard`s: these are read one at a time when
+ * somebody goes looking, and giving them the same weight as the headline is the
+ * thing that made the revenue band unreadable. `attention` keeps the "go and
+ * look" colour the card used to carry.
+ */
+function Figures({
+  items,
+}: {
+  items: readonly { label: string; value: string; attention?: boolean }[];
+}) {
+  return (
+    <dl className="grid min-w-0 gap-1.5 sm:grid-cols-2 sm:gap-x-6">
+      {items.map((item) => (
+        <div key={item.label} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
+          <dt className="min-w-0">{item.label}</dt>
+          <dd
+            className={`shrink-0 font-medium tabular-nums ${
+              item.attention ? 'text-[var(--warning)]' : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            {item.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

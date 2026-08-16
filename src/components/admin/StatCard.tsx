@@ -15,13 +15,16 @@ import type { ReactNode } from 'react';
 export type StatTone = 'neutral' | 'attention' | 'critical';
 
 /**
- * `hero` is for the one figure a group is *about* — it earns its size by being
- * the only one, so there is at most one per group. It carries the accent surface
- * rather than a bigger shadow or a second border weight, because the two
- * coloured tones already mean "go and look" and a third emphasis in the same
- * language would compete with them.
+ * Two ways to be the figure a group is *about*, and they are not the same thing.
+ *
+ * `lead` is size only: a larger figure on the ordinary surface, for the number a
+ * band opens with. `hero` adds the accent surface on top of that, and there is
+ * exactly **one** on the page — "ผู้ใช้งานทั้งหมด". Spending the accent on every
+ * band's first card would have made four of them equally loud, which is the same
+ * as none of them being loud; and the accent has to stay distinguishable from
+ * the two tones that mean "go and look".
  */
-export type StatEmphasis = 'default' | 'hero';
+export type StatEmphasis = 'default' | 'lead' | 'hero';
 
 const TONE_CLASS: Readonly<Record<StatTone, string>> = {
   neutral: 'border-[var(--border)]',
@@ -49,6 +52,7 @@ export function StatCard({
   emphasis?: StatEmphasis;
 }) {
   const hero = emphasis === 'hero';
+  const large = hero || emphasis === 'lead';
   return (
     /*
       A column, so the hint can be pushed to the bottom edge: grid rows stretch
@@ -63,8 +67,10 @@ export function StatCard({
       }`}
     >
       {/*
-        The hero's label is the full text colour rather than the muted one every
-        other card uses. Measured on the deployed page: against the accent
+        A large card's label is the full text colour rather than the muted one
+        every small card uses — required on the hero, and kept on `lead` so a
+        band's headline reads as one thing at both sizes. Measured on the
+        deployed page for the case that forced it: against the accent
         surface in the light theme, both `--accent` and `--text-muted` come out
         at 4.34:1 — under AA for 12px — because that surface is darker than the
         `--surface` those colours were chosen against. `--text` measures 15.5:1
@@ -78,7 +84,7 @@ export function StatCard({
         second line costs alignment nothing; `break-words` is what keeps a long
         unbroken token from widening the column instead.
       */}
-      <p className={`text-xs break-words ${hero ? 'font-medium text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
+      <p className={`text-xs break-words ${large ? 'font-medium text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
         {label}
       </p>
       {/*
@@ -88,7 +94,7 @@ export function StatCard({
       */}
       <p
         className={`mt-1 font-semibold tabular-nums break-all ${
-          hero ? 'text-3xl sm:text-4xl' : 'text-xl sm:text-2xl'
+          large ? 'text-3xl sm:text-4xl' : 'text-xl sm:text-2xl'
         } ${VALUE_CLASS[tone]}`}
       >
         {value}
