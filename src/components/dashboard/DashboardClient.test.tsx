@@ -381,9 +381,13 @@ describe('market breadth data health', () => {
     };
   }
 
+  /*
+   * Named rather than matched by copy: the breadth run-detail disclosure now
+   * sits inside the page-level "ข้อมูลเชิงลึก" disclosure, so a text match finds
+   * the outer one first and asserts against the wrong summary.
+   */
   function disclosure(): HTMLDetailsElement | null {
-    return [...container.querySelectorAll('details')]
-      .find((item) => item.textContent?.includes('รายละเอียดข้อมูล')) as HTMLDetailsElement ?? null;
+    return container.querySelector('details[data-testid="breadth-data-health"]');
   }
 
   it('leads with coverage and freshness, in plain Thai', () => {

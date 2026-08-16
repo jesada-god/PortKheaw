@@ -16,8 +16,14 @@ import {
 } from '@/src/lib/presentation/datetime';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { rememberInstrumentLogo } from '@/src/components/instruments/InstrumentLogoProvider';
+import {
+  sortWatchlistRows,
+  watchlistContextLine,
+  WATCHLIST_SORT_LABELS,
+  type WatchlistSortKey,
+} from '@/src/lib/watchlist/context';
 
-type SortKey = 'newest' | 'symbol' | 'price' | 'change';
+type SortKey = WatchlistSortKey;
 type WatchlistInstrument = {
   companyName: string;
   logoUrl: string | null;
@@ -56,11 +62,18 @@ export function WatchlistClient({
   watchlist,
   initialQuotes,
   initialInstruments,
+  earningsDays = {},
   renderedAt,
 }: {
   watchlist: WatchlistRecord;
   initialQuotes: Record<string, WatchlistQuote>;
   initialInstruments: Record<string, WatchlistInstrument>;
+  /**
+   * Whole days to the next scheduled report, per symbol, from the shared
+   * earnings calendar service. A symbol the calendar did not answer for is
+   * simply absent — it never becomes a zero.
+   */
+  earningsDays?: Record<string, number>;
   renderedAt: string;
 }) {
   const router = useRouter();
@@ -79,12 +92,19 @@ export function WatchlistClient({
   const isOnline = useOnlineStatus();
 
   const existingSymbols = useMemo(() => new Set(items.map((item) => item.symbol)), [items]);
-  const sortedItems = useMemo(() => [...items].sort((a, b) => {
-    if (sort === 'symbol') return a.symbol.localeCompare(b.symbol);
-    if (sort === 'price') return (quotes[b.symbol]?.quote?.price ?? -Infinity) - (quotes[a.symbol]?.quote?.price ?? -Infinity);
-    if (sort === 'change') return (quotes[b.symbol]?.quote?.changePercent ?? -Infinity) - (quotes[a.symbol]?.quote?.changePercent ?? -Infinity);
-    return b.createdAt.localeCompare(a.createdAt);
-  }), [items, quotes, sort]);
+  /*
+   * Sorting lives in the watchlist library, not in this component: the same
+   * comparator is what the tests assert, and a row with no accepted quote sorts
+   * last on every price-driven order rather than being read as zero.
+   */
+  const sortedItems = useMemo(() => sortWatchlistRows(
+    items.map((item) => ({
+      ...item,
+      price: quotes[item.symbol]?.quote?.price ?? null,
+      changePercent: quotes[item.symbol]?.quote?.changePercent ?? null,
+    })),
+    sort,
+  ), [items, quotes, sort]);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -242,8 +262,9 @@ export function WatchlistClient({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
           <div className="min-w-0"><h2 className="truncate font-semibold text-white">{watchlist.name}</h2><p className="text-xs text-slate-500">{items.length} รายการ · ซิงก์กับบัญชีของคุณ</p></div>
           <label className="flex items-center gap-2 text-xs text-slate-400">เรียงตาม
-            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white">
-              <option value="newest">เพิ่มล่าสุด</option><option value="symbol">Symbol</option><option value="price">ราคา</option><option value="change">การเปลี่ยนแปลง</option>
+            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} aria-label="เรียงรายการติดตาม" data-testid="watchlist-sort" className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+              {(['change', 'symbol', 'newest', 'price'] as const).map((key) =>
+                <option key={key} value={key}>{WATCHLIST_SORT_LABELS[key]}</option>)}
             </select>
           </label>
         </div>
@@ -251,6 +272,10 @@ export function WatchlistClient({
           <div className="divide-y divide-slate-800/60">{sortedItems.map((item) => {
             const data = quotes[item.symbol]; const quote = data?.quote; const change = quote?.changePercent;
             const instrument = instruments[item.symbol];
+            const context = watchlistContextLine({
+              changePercent: change ?? null,
+              earningsDays: earningsDays[item.symbol] ?? null,
+            });
             return <article key={item.id} className="flex min-w-0 items-center gap-3 p-4 hover:bg-slate-800/30 sm:px-5">
               <InstrumentLogo
                 symbol={item.symbol}
@@ -261,6 +286,13 @@ export function WatchlistClient({
               />
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="min-w-0 flex-1 text-left">
                 <span className="block font-bold text-white hover:text-[#D4FF00]">{item.symbol}</span>
+                {/*
+                  One line of context, no new columns: today's accepted change,
+                  a plain note when that move was large, and the calendar's own
+                  day count when a report is close. Absent whenever none of the
+                  three has real data behind it.
+                */}
+                {context && <span className="block truncate text-xs text-[var(--text-secondary)]" data-testid={`watchlist-context-${item.symbol}`}>{context}</span>}
                 <span className={`block truncate text-xs ${quote ? 'text-slate-500' : 'text-amber-300'}`}>{freshnessLabel(data, renderedAt)}</span>
               </button>
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="shrink-0 text-right">

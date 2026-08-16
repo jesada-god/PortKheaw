@@ -81,6 +81,17 @@ export default async function PortfolioPage() {
     symbol,
     canonicalPrices.get(symbol)?.display.instrument.companyName ?? null,
   ]));
+  /*
+   * The instrument master's `sector`, read off the very same snapshot as the
+   * logo, the asset type and the company name above. It is a label, never an
+   * input to a valuation: the daily insight uses it only to group today's
+   * already-calculated per-holding change, and a symbol with no sector simply
+   * takes no part in that grouping.
+   */
+  const instrumentSectors = Object.fromEntries(stockSymbols.map((symbol) => [
+    symbol,
+    canonicalPrices.get(symbol)?.display.instrument.sector ?? null,
+  ]));
   const quotes = stockSymbols.map((symbol) => {
     const item = canonicalPrices.get(symbol)?.display;
     if (!item || item.price === null) return [symbol, null] as const;
@@ -134,6 +145,7 @@ export default async function PortfolioPage() {
         effectiveTier={effectiveTier}
         assetTypes={instrumentAssetTypes}
         companyNames={instrumentNames}
+        sectors={instrumentSectors}
       />
     </InstrumentLogoProvider>
   </div>;

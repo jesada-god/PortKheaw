@@ -5,6 +5,7 @@ import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { StockDetailClient } from '@/src/components/stock/StockDetailClient';
 import { loadEntitledMarketSignal } from '@/src/lib/analytics/market-signal/entitled-service';
+import { loadEarningsSchedule } from '@/src/lib/analytics/earnings/service';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
@@ -46,12 +47,20 @@ export default async function StockDetailPage({
     watchResult,
     signalResult,
     instrumentMetadataResult,
+    earningsResult,
   ] = await Promise.allSettled([
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
     loadEntitledMarketSignal(symbol, entitlement.effectiveAccessTier),
     getInstrumentPresentationMetadata([symbol]),
+    /*
+     * The same calendar service the Options Signal engine reads, on the same
+     * twelve-hour cache — one symbol, resolved beside everything else this page
+     * already loads. A refusal or an outage resolves to the service's own typed
+     * unavailable state, which the summary card renders as no row at all.
+     */
+    loadEarningsSchedule(symbol),
   ]);
 
   if (marketResult.status === 'rejected') {
@@ -89,6 +98,7 @@ export default async function StockDetailPage({
       keyStatisticsEnabled={keyStatisticsEnabled()}
       analystConsensusEnabled={analystConsensusEnabled()}
       marketSignal={signalResult.status === 'fulfilled' ? signalResult.value : null}
+      earnings={earningsResult.status === 'fulfilled' ? earningsResult.value : null}
     />
   );
 }

@@ -32,14 +32,16 @@ describe('instrument logo wiring', () => {
 
   it('carries a persisted logo into search results', () => {
     expect(read('src/lib/instruments/search.ts')).toContain('readPersistedLogos');
-    expect(read('app/search/page.tsx')).toContain('result.logoUrl');
+    // The search UI moved into a client component so the page could resolve
+    // which symbols are already followed; the logo wiring itself is unchanged.
+    expect(read('src/components/search/SearchClient.tsx')).toContain('result.logoUrl');
     expect(read('src/components/portfolio/SymbolPreview.tsx')).toContain('result.logoUrl');
   });
 
   it('leaves no page passing a hardcoded null logo', () => {
     for (const file of [
       'src/components/portfolio/PortfolioClient.tsx',
-      'app/search/page.tsx',
+      'src/components/search/SearchClient.tsx',
       'src/components/portfolio/SymbolPreview.tsx',
     ]) {
       expect(read(file)).not.toContain('logoUrl={null}');

@@ -30,6 +30,9 @@ import { KeyStatisticsSection } from '@/src/components/analytics/key-statistics/
 import { AnalystTargetSection } from '@/src/components/analytics/analyst-target/AnalystTargetSection';
 import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
 import type { MarketSignalResult } from '@/src/lib/analytics/market-signal/types';
+import type { EarningsSchedule } from '@/src/lib/analytics/earnings/types';
+import { buildStockSummary } from '@/src/lib/stock-detail/summary';
+import { StockSummaryCard } from './StockSummaryCard';
 import type { FxQuote } from '@/src/lib/market-data/fx/types';
 import {
   formatMarketCapitalization,
@@ -143,6 +146,8 @@ interface StockDetailClientProps {
   keyStatisticsEnabled: boolean;
   analystConsensusEnabled: boolean;
   marketSignal?: MarketSignalResult | null;
+  /** Next scheduled report, from the shared earnings calendar service. */
+  earnings?: EarningsSchedule | null;
 }
 
 function MetricCard({
@@ -223,6 +228,7 @@ export function StockDetailClient({
   keyStatisticsEnabled,
   analystConsensusEnabled,
   marketSignal = null,
+  earnings = null,
 }: StockDetailClientProps) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -450,6 +456,20 @@ export function StockDetailClient({
     ? marketSnapshot.mainPrice
     : marketSnapshot.extendedPrice ?? marketSnapshot.mainPrice;
 
+  /*
+   * The compact summary, built from the canonical values this page already
+   * resolved: the accepted marking price, the market-signal engine's own
+   * nearest support/resistance, and the earnings calendar's report date. Rows
+   * whose destination tab does not exist for this instrument are dropped —
+   * a crypto pair has no Financials tab to send anybody to.
+   */
+  const summaryItems = buildStockSummary({
+    price: analyticalSpotPrice,
+    currency: sourceCurrency,
+    marketSignal,
+    earnings,
+  }).filter((item) => tabs.includes(item.target));
+
   const toggleWatch = () => {
     if (!isOnline) {
       addToast({ title: 'แก้ไขรายการติดตามไม่ได้ขณะออฟไลน์', type: 'error' });
@@ -613,6 +633,8 @@ export function StockDetailClient({
           connectionState={connectionState}
           transientPriceSinkRef={transientPriceSinkRef}
         />
+
+        <StockSummaryCard items={summaryItems} onOpenSection={setTab} />
 
         <div className="sticky top-16 z-30 -mx-4 border-y border-slate-800 bg-[#0A0E17]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
           <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />

@@ -19,6 +19,9 @@ import {
 } from '@/src/lib/overview/market-breadth';
 import { buildOverviewPortfolio } from '@/src/lib/overview/portfolio-summary';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
+import { AlertsRepository } from '@/src/lib/alerts/repository';
+import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
+import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
 import type { PortfolioGoal, PortfolioRecord } from '@/src/lib/portfolio/types';
 import { after } from 'next/server';
 
@@ -130,6 +133,47 @@ export default async function Home() {
     optionQuotes,
     evaluatedAt: generatedAt,
   });
+  /*
+   * "สิ่งที่ควรรู้เร็ว ๆ นี้" — assembled from state this render already has.
+   *
+   * The contracts come from the option ledger that was just replayed above, the
+   * prices from the two quote maps already loaded, and only the earnings
+   * calendar costs anything new — capped, deadlined and cached inside its own
+   * service. A signed-out visitor has none of these, so nothing is asked for.
+   */
+  const alerts = client && user
+    ? await new AlertsRepository(client, user.id).list().catch(() => [])
+    : [];
+  const quoteBySymbol = new Map<string, { price: number | null; changePercent: number | null }>([
+    ...[...portfolioPriceMap].map(([symbol, loaded]) => [
+      symbol,
+      { price: loaded.display.price, changePercent: loaded.display.changePercent },
+    ] as const),
+    ...watchlist.map((item) => [
+      item.symbol,
+      { price: item.price, changePercent: item.changePercent },
+    ] as const),
+  ]);
+  const alertInputs: UpcomingAlertInput[] = alerts.map((alert) => ({
+    id: alert.id,
+    symbol: alert.symbol,
+    condition: alert.condition,
+    targetValue: alert.targetValue,
+    enabled: alert.enabled,
+    price: quoteBySymbol.get(alert.symbol)?.price ?? null,
+    changePercent: quoteBySymbol.get(alert.symbol)?.changePercent ?? null,
+  }));
+  const openOptionPositions = portfolioOverview.summary?.optionPositions ?? [];
+  const earnings = user
+    ? await loadUpcomingEarnings(upcomingEarningsSymbols(portfolioSymbols, watchlistSymbols))
+    : [];
+  const upcoming = buildUpcomingFeed({
+    earnings,
+    positions: openOptionPositions,
+    alerts: alertInputs,
+    limit: UPCOMING_CARD_LIMIT,
+  });
+
   const serviceStatus = buildServiceStatus({
     checkedAt: generatedAt,
     indices,
@@ -165,6 +209,7 @@ export default async function Home() {
           deadlineReached: industryResult.deadlineReached,
         },
         newsContext: { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
+        upcoming,
         limitations,
       }}
     />

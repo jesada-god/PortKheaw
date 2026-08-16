@@ -13,7 +13,7 @@
  * must stay readable by somebody who cannot sign in, which is exactly the reader
  * most likely to need them.
  */
-export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/admin'] as const;
+export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/upcoming', '/admin'] as const;
 
 /**
  * Sending someone back to a page that starts an authentication attempt is how

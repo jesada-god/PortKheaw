@@ -5,6 +5,7 @@ import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import type { WatchlistQuote } from '@/src/lib/watchlist/types';
 import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { loadOverviewPrice, mapWithConcurrency } from '@/src/lib/overview/service';
+import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
 
 const unavailable: WatchlistQuote = {
   quote: null,
@@ -46,6 +47,18 @@ export default async function WatchlistPage() {
     }] as const;
   });
 
+  /*
+   * The same capped, deadlined, twelve-hour-cached calendar loader Home uses.
+   * A reader arriving from Home usually pays nothing for it, and a symbol the
+   * calendar cannot answer for simply carries no earnings note.
+   */
+  const schedules = await loadUpcomingEarnings(
+    upcomingEarningsSymbols([], watchlist.items.map((item) => item.symbol)),
+  );
+  const earningsDays = Object.fromEntries(schedules
+    .filter((schedule) => schedule.status === 'available')
+    .map((schedule) => [schedule.symbol, schedule.daysToEarnings]));
+
   return (
     <div className="min-w-0">
       <Header title="รายการติดตาม" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและสถานะข้อมูลล่าสุด" />
@@ -62,6 +75,7 @@ export default async function WatchlistPage() {
               },
             ]),
           )}
+          earningsDays={earningsDays}
           renderedAt={new Date().toISOString()}
         />
       </div>

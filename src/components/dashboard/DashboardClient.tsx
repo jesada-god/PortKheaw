@@ -41,6 +41,7 @@ import {
   type OverviewSectionValue,
   type RetriableOverviewSection,
 } from '@/src/lib/overview/client-state';
+import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -860,7 +861,10 @@ function BreadthSection({
             so they moved one tap away into the same disclosure pattern the service
             status above already uses. Nothing about the health CALCULATION changed.
           */}
-          <details className="group mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)]">
+          <details
+            data-testid="breadth-data-health"
+            className="group mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)]"
+          >
             <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-xs sm:flex sm:items-center sm:justify-between sm:gap-3">
               <span className="text-[var(--text-secondary)]">
                 ข้อมูลพร้อมใช้ {data.coveragePercent.toFixed(1)}%
@@ -963,13 +967,27 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
       <main className="mx-auto w-full max-w-[1440px] space-y-5 p-3 sm:p-5 lg:p-6">
         <p className="sr-only" role="status" aria-live="polite">{retryNotice}</p>
         {!view.portfolio.authenticated && <PublicValueProposition />}
-        <ServiceStatus data={view.serviceStatus} />
+
+        {/*
+          The reading order is the order the questions are asked in: what is
+          mine, what am I watching, what is the market doing, what is coming up,
+          and what is being said about it. Nothing was removed to get here —
+          breadth, the industry ranking and the service status are all still on
+          this page, one disclosure below, because they answer a question a
+          reader asks occasionally rather than every time they open the app.
+        */}
         <PortfolioCard data={view.portfolio} usdThbRate={view.usdThbRate} />
+
+        <WatchlistSection
+          items={view.watchlist}
+          retrying={Boolean(retrying.watchlist)}
+          onRetry={retry}
+        />
 
         <section id="market-overview" className="scroll-mt-24">
           <SectionTitle
             icon={TrendingUp}
-            title="ภาพรวมตลาด"
+            title="ตลาดวันนี้"
             action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
           />
           <div className="-mx-3 flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
@@ -977,28 +995,7 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
           </div>
         </section>
 
-        <IndustryRanking
-          industries={view.industries}
-          industryData={view.industryData}
-          limitations={view.limitations}
-          retrying={Boolean(retrying.industries)}
-          loading={Boolean(retrying.industries)
-            || (view.industryData.state === 'refreshing' && !industriesAttempted)}
-          onRetry={retry}
-        />
-
-        <div className="grid min-w-0 gap-5 xl:grid-cols-[1.4fr_0.8fr]">
-          <WatchlistSection
-            items={view.watchlist}
-            retrying={Boolean(retrying.watchlist)}
-            onRetry={retry}
-          />
-          <BreadthSection
-            data={view.breadth}
-            retrying={Boolean(retrying.breadth)}
-            onRetry={retry}
-          />
-        </div>
+        {view.upcoming && <UpcomingSection feed={view.upcoming} />}
 
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
           <SectionTitle
@@ -1007,6 +1004,35 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
           />
           <NewsFeed marketWide />
         </section>
+
+        <details className="group min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+          <summary className="grid min-h-14 cursor-pointer list-none gap-1 px-4 py-3 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
+            <span className="flex min-w-0 items-center gap-2 font-bold text-[var(--text)]">
+              <Gauge size={18} aria-hidden="true" className="shrink-0 text-[var(--accent)]" />
+              ข้อมูลเชิงลึกของตลาดและสถานะระบบ
+            </span>
+            <span className="pl-6 text-xs text-[var(--text-muted)] sm:shrink-0 sm:pl-0">
+              อุตสาหกรรมเด่น · แรงซื้อแรงขาย · สถานะข้อมูล
+            </span>
+          </summary>
+          <div className="grid min-w-0 gap-5 border-t border-[var(--border)] p-4 sm:p-5">
+            <ServiceStatus data={view.serviceStatus} />
+            <IndustryRanking
+              industries={view.industries}
+              industryData={view.industryData}
+              limitations={view.limitations}
+              retrying={Boolean(retrying.industries)}
+              loading={Boolean(retrying.industries)
+                || (view.industryData.state === 'refreshing' && !industriesAttempted)}
+              onRetry={retry}
+            />
+            <BreadthSection
+              data={view.breadth}
+              retrying={Boolean(retrying.breadth)}
+              onRetry={retry}
+            />
+          </div>
+        </details>
       </main>
     </div>
   );

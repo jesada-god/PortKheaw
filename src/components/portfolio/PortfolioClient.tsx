@@ -21,6 +21,7 @@ import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries, calculateGoalProgress } from '@/src/lib/portfolio/aggregate';
 import { addAssetDestinationId, portfolioAcceptsAsset } from '@/src/lib/portfolio/add-asset';
 import { assetCategoryForSymbol, buildAssetCategories, type AssetCategoryKey } from '@/src/lib/portfolio/asset-categories';
+import { buildPortfolioDailyInsight } from '@/src/lib/portfolio/daily-insight';
 import { latestPortfolioPriceTime, portfolioAssetCount } from '@/src/lib/portfolio/goal-card';
 import { sortAssets, type HoldingSortKey } from '@/src/lib/portfolio/holdings-sort';
 import type { OptionQuoteInput, OptionTarget } from '@/src/lib/portfolio/options/types';
@@ -49,6 +50,7 @@ import { PortfolioManager, type PortfolioManagerRequest } from './PortfolioManag
 import { PortfolioValueSheet, type PortfolioValueSubmission } from './PortfolioValueSheet';
 import { TransactionFormModal, type TransactionFormState } from './TransactionFormModal';
 import { AssetCategoryCard } from './tracker/AssetCategoryCard';
+import { DailyInsightCard } from './tracker/DailyInsightCard';
 import { FilterChips } from './tracker/FilterChips';
 import { HoldingCard } from './tracker/HoldingCard';
 import { OptionPositionCard } from './tracker/OptionPositionCard';
@@ -140,6 +142,7 @@ export function PortfolioClient({
   effectiveTier,
   assetTypes = {},
   companyNames = {},
+  sectors = {},
 }: {
   portfolios: PortfolioRecord[];
   aggregateGoal: PortfolioGoal;
@@ -164,6 +167,8 @@ export function PortfolioClient({
    */
   assetTypes?: Record<string, string | null>;
   companyNames?: Record<string, string | null>;
+  /** Instrument-master `sector`, used only to group today's change by group. */
+  sectors?: Record<string, string | null>;
 }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -198,6 +203,7 @@ export function PortfolioClient({
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [sortKey, setSortKey] = useState<HoldingSortKey>('value');
   const [accountingOpen, setAccountingOpen] = useState(false);
+  const [insightOpen, setInsightOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
   const prices = useMemo(
@@ -224,6 +230,17 @@ export function PortfolioClient({
     [portfolios, summaries],
   );
   const activePortfolios = useMemo(() => portfolios.filter((item) => item.archivedAt === null), [portfolios]);
+
+  /*
+   * Today, read off the aggregate summary that is already on screen. Nothing is
+   * recalculated: `calculatePortfolio` produced every per-holding and
+   * per-contract figure this reads, so the card can never disagree with the
+   * hero above it or the holdings below it.
+   */
+  const dailyInsight = useMemo(
+    () => buildPortfolioDailyInsight({ summary: aggregateSummary, sectorBySymbol: sectors }),
+    [aggregateSummary, sectors],
+  );
 
   /*
    * The asset view, grouped from the very same summaries the portfolio view
@@ -635,6 +652,20 @@ export function PortfolioClient({
         allocation,
         () => { if (requestPortfolioWrite()) openValueSheet(); },
       )}
+
+      {/*
+        Directly under the total, because it explains the one number above it.
+        Summary first, decomposition on request — the same progressive
+        disclosure the accounting panel below already uses.
+      */}
+      <DailyInsightCard
+        insight={dailyInsight}
+        open={insightOpen}
+        onToggle={() => setInsightOpen((current) => !current)}
+        signed={signed}
+        percent={percent}
+        showBalances={showBalances}
+      />
 
       {view === 'assets'
         ? <section className="min-w-0 space-y-3" data-testid="asset-category-list">

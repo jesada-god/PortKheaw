@@ -198,5 +198,11 @@ export interface OverviewDashboardData {
     watchlistSymbols: string[];
     industryNames: string[];
   };
+  /**
+   * Earnings, expiries and alert proximity, already ordered and truncated to
+   * what the Home card shows. Built on the server from state the page loaded
+   * anyway; no section retry touches it, so it is not a retriable section.
+   */
+  upcoming?: import('@/src/lib/upcoming/types').UpcomingFeed;
   limitations: string[];
 }

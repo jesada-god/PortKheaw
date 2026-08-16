@@ -56,6 +56,43 @@ describe('Overview dashboard contracts', () => {
     );
   });
 
+  /*
+    Home answers, in order: what is mine, what am I watching, what is the market
+    doing, what is coming up, what is being said. The technical readouts are all
+    still on the page — nothing was deleted — but one disclosure below, because
+    they answer a question a reader asks occasionally rather than every visit.
+  */
+  it('orders Home by what the reader came to find out', () => {
+    const dashboard = read('src/components/dashboard/DashboardClient.tsx');
+    const body = dashboard.slice(dashboard.indexOf('<main className="mx-auto w-full max-w-[1440px]'));
+    const order = [
+      '<PortfolioCard',
+      '<WatchlistSection',
+      'id="market-overview"',
+      '<UpcomingSection',
+      'title="ข่าวสำคัญต่อตลาดหุ้น"',
+    ].map((marker) => body.indexOf(marker));
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+  });
+
+  it('keeps breadth, the industry ranking and the service status reachable behind one disclosure', () => {
+    const dashboard = read('src/components/dashboard/DashboardClient.tsx');
+    const disclosure = dashboard.slice(dashboard.indexOf('ข้อมูลเชิงลึกของตลาดและสถานะระบบ'));
+    for (const section of ['<ServiceStatus', '<IndustryRanking', '<BreadthSection']) {
+      expect(disclosure).toContain(section);
+    }
+  });
+
+  it('builds the Upcoming feed on the server from sources the page already loaded', () => {
+    const page = read('app/page.tsx');
+    expect(page).toContain('buildUpcomingFeed');
+    expect(page).toContain('loadUpcomingEarnings');
+    // The option rows come from the ledger replay, not a second option pipeline.
+    expect(page).toContain('portfolioOverview.summary?.optionPositions');
+    expect(page).not.toMatch(/loadPortfolioOptionQuotes\([^)]*upcoming/);
+  });
+
   it('provides a shareable Industry Detail route', () => {
     expect(read('app/industry/[slug]/page.tsx')).toContain('loadIndustryDetail');
     expect(read('src/components/dashboard/DashboardClient.tsx')).toContain('/industry/');
