@@ -75,19 +75,19 @@ export function TrackerHero({
   testId?: string;
 }) {
   return <section
-    className="overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow)]"
+    className="panel-hero overflow-hidden"
     data-testid={testId}
   >
     <div className="p-4 sm:p-6">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">{label}</p>
-        {onCurrencyChange && <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] p-0.5" aria-label="สกุลเงินที่แสดง">
+        <p className="section-eyebrow mb-0">{label}</p>
+        {onCurrencyChange && <div className="inline-flex rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-elevated)] p-0.5" aria-label="สกุลเงินที่แสดง">
           {(['USD', 'THB'] as const).map((item) => <button
             key={item}
             type="button"
             disabled={currencyDisabled || (item === 'THB' && thbDisabled)}
             onClick={() => onCurrencyChange(item)}
-            className={`min-h-9 rounded-md px-3 text-xs font-bold transition-colors ${currency === item
+            className={`min-h-9 rounded-[var(--radius-mark)] px-3 text-xs font-bold transition-colors ${currency === item
               ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40'}`}
           >{item}</button>)}
@@ -95,7 +95,7 @@ export function TrackerHero({
       </div>
 
       <div className="mt-2 flex min-w-0 items-center gap-1">
-        <h2 className="min-w-0 break-all font-mono text-[2rem] font-black leading-tight tracking-tight text-[var(--text)] sm:text-5xl">{value}</h2>
+        <h2 className="figure-hero min-w-0 break-all">{value}</h2>
         {onEditValue && <button
           type="button"
           className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)] disabled:opacity-40"
@@ -160,7 +160,12 @@ export function TrackerHero({
 
 function HeroFigure({ label, value, tone }: { label: string; value: string; tone: string }) {
   return <div className="min-w-0">
-    <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-    <dd className={`mt-1 break-words font-mono text-sm font-bold sm:text-base ${tone}`}>{value}</dd>
+    <dt className="figure-label">{label}</dt>
+    {/*
+      One rank under the portfolio total, matching the overview's treatment of
+      the same two figures. They were `text-sm` — the size of a caption — which
+      left the card's headline value with nothing beneath it to rank against.
+    */}
+    <dd className={`figure-lead mt-1 break-words ${tone}`}>{value}</dd>
   </div>;
 }

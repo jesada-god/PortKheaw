@@ -303,6 +303,35 @@ html {
   }
 
   /* ======================================================================
+   * Page rhythm
+   *
+   * `space-y-5` down a whole page gives every block the same amount of air,
+   * which is the spacing equivalent of giving every block the same border: it
+   * declines to say what ranks above what. `.page-stack` is the same idea with
+   * one exception built in — whatever the page is actually about is followed by
+   * noticeably more room than the sections supporting it.
+   * ====================================================================== */
+  .page-stack > * + * { margin-block-start: var(--stack-section); }
+  .page-stack > .stack-lead + * { margin-block-start: var(--stack-hero); }
+
+  /*
+   * Full width on a handset, inset from `sm`.
+   *
+   * A chart is the one element that is worth more the wider it is, and on a
+   * 320px screen the page gutter is costing it a fifth of its plot area. This
+   * lets it reach both edges there and settle back into the page's own margins
+   * as soon as there is width to spare. Written as a class because the negative
+   * margin has to match `--page-gutter`, which is itself responsive.
+   */
+  .bleed-mobile {
+    margin-inline: calc(var(--page-gutter) * -1);
+  }
+
+  @media (min-width: 640px) {
+    .bleed-mobile { margin-inline: 0; }
+  }
+
+  /* ======================================================================
    * Rules
    *
    * A horizontal rule is the cheapest way to separate two things, and the app

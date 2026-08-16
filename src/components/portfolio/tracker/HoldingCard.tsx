@@ -82,12 +82,12 @@ export function HoldingCard({
   onCloseAll: () => void;
 }) {
   const percent = totalPnlPercent(holding);
-  return <article className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]" data-testid="holding-card">
+  return <article className="panel min-w-0" data-testid="holding-card">
     <button
       type="button"
       aria-expanded={expanded}
       onClick={onToggle}
-      className="flex min-h-[4.5rem] w-full min-w-0 items-center gap-3 rounded-2xl p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+      className="flex min-h-[4.5rem] w-full min-w-0 items-center gap-3 rounded-[var(--radius-panel)] p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
     >
       <InstrumentLogo symbol={holding.symbol} companyName={companyName ?? holding.symbol} size={40} />
       <span className="min-w-0 flex-1">
@@ -99,11 +99,11 @@ export function HoldingCard({
         </span>
       </span>
       <span className="min-w-0 shrink-0 text-right">
-        <span className="block break-all font-mono text-base font-bold text-[var(--text)]">{money(holding.marketValue)}</span>
-        <span className={`mt-0.5 block break-all font-mono text-xs font-semibold ${holding.todayChange === null ? 'text-[var(--text-muted)]' : gainColor(holding.todayChange)}`}>
+        <span className="figure block break-all text-base font-bold text-[var(--text)]">{money(holding.marketValue)}</span>
+        <span className={`figure mt-0.5 block break-all text-xs font-semibold ${holding.todayChange === null ? 'text-[var(--text-muted)]' : gainColor(holding.todayChange)}`}>
           {holding.todayChange === null ? '— วันนี้' : `${signed(holding.todayChange)} วันนี้`}
         </span>
-        <span className={`mt-0.5 block break-all font-mono text-[11px] ${holding.unrealizedGain === null ? 'text-[var(--text-muted)]' : gainColor(holding.unrealizedGain)}`}>
+        <span className={`figure mt-0.5 block break-all text-[11px] ${holding.unrealizedGain === null ? 'text-[var(--text-muted)]' : gainColor(holding.unrealizedGain)}`}>
           รวม {signed(holding.unrealizedGain)}{percent === null ? '' : ` · ${signedPercent(percent, showBalances)}`}
         </span>
       </span>
@@ -151,10 +151,10 @@ export function HoldingCard({
       </div>
 
       <div>
-        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Lots ที่เหลือ</h4>
+        <h4 className="section-eyebrow">Lots ที่เหลือ</h4>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          {holding.lots.map((lot) => <div key={lot.transactionId} className="rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-xs">
-            <p className="font-mono text-[var(--text)]">{hidden(number(lot.remainingQuantity))} / {hidden(number(lot.originalQuantity))} หน่วย</p>
+          {holding.lots.map((lot) => <div key={lot.transactionId} className="inset p-3 text-xs">
+            <p className="figure text-[var(--text)]">{hidden(number(lot.remainingQuantity))} / {hidden(number(lot.originalQuantity))} หน่วย</p>
             <p className="mt-1 text-[var(--text-muted)]">{displayTime(lot.occurredAt, timezone)} · ต้นทุนคงเหลือ {money(lot.remainingCost)}</p>
             {lot.broker && <p className="text-[var(--text-muted)]">{lot.broker}</p>}
           </div>)}
@@ -168,7 +168,7 @@ export function HoldingCard({
       */}
       <Link
         href={`/portfolio/transactions?portfolio=${portfolioId}`}
-        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border-strong)] px-3 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+        className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--border-strong)] px-3 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
       >
         <History aria-hidden="true" size={14} /> ดูประวัติของ {holding.symbol}
       </Link>
@@ -188,8 +188,8 @@ function QuoteMeta({ holding, timezone }: { holding: HoldingSummary; timezone: s
 
 function Detail({ label, value, extra }: { label: string; value: string; extra?: React.ReactNode }) {
   return <div className="min-w-0">
-    <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-    <dd className="mt-1 break-words font-mono text-sm font-semibold text-[var(--text)]">{value}</dd>
+    <dt className="figure-label">{label}</dt>
+    <dd className="figure-data mt-1 break-words text-[var(--text)]">{value}</dd>
     {extra}
   </div>;
 }

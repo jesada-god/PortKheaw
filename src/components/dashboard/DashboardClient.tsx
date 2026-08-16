@@ -1148,7 +1148,7 @@ export function DashboardClient({
   return (
     <div className="min-w-0">
       <Header title="ภาพรวม" subtitle="พอร์ต ตลาด อุตสาหกรรม และข่าวสำคัญ" />
-      <main className="mx-auto w-full max-w-[1440px] space-y-5 p-3 sm:p-5 lg:p-6">
+      <main className="mx-auto w-full max-w-[1440px] page-stack px-[var(--page-gutter)] py-4 sm:py-6">
         <p className="sr-only" role="status" aria-live="polite">{retryNotice}</p>
         {!view.portfolio.authenticated && <><LandingFunnel /><PublicValueProposition /></>}
 
@@ -1167,7 +1167,15 @@ export function DashboardClient({
           this page, one disclosure below, because they answer a question a
           reader asks occasionally rather than every time they open the app.
         */}
-        <PortfolioCard data={view.portfolio} usdThbRate={view.usdThbRate} />
+        {/*
+          `stack-lead` marks this as what the page is about, which buys it
+          more room underneath than the sections that follow get between
+          themselves. It is the only block on the overview carrying either
+          that mark or an elevation.
+        */}
+        <div className="stack-lead">
+          <PortfolioCard data={view.portfolio} usdThbRate={view.usdThbRate} />
+        </div>
 
         <WatchlistSection
           items={view.watchlist}
@@ -1180,7 +1188,7 @@ export function DashboardClient({
             title="ตลาดวันนี้"
             action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
           />
-          <div className="-mx-3 flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
+          <div className="bleed-mobile flex snap-x snap-mandatory gap-3 overflow-x-auto px-[var(--page-gutter)] pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
             {view.indices.map((item) => <MarketCard key={item.symbol} item={item} />)}
           </div>
         </section>

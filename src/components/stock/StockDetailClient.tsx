@@ -624,7 +624,7 @@ export function StockDetailClient({
         </div>
       </header>
 
-      <main className="space-y-6 p-4 md:p-8">
+      <main className="page-stack px-[var(--page-gutter)] py-4 md:py-8">
         <StockPriceHeader
           symbol={symbol}
           exchange={exchange}
@@ -645,9 +645,11 @@ export function StockDetailClient({
           transientPriceSinkRef={transientPriceSinkRef}
         />
 
-        <StockSummaryCard items={summaryItems} onOpenSection={setTab} />
+        <div className="stack-lead">
+          <StockSummaryCard items={summaryItems} onOpenSection={setTab} />
+        </div>
 
-        <div className="sticky top-16 z-30 -mx-4 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] px-4 pt-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
+        <div className="bleed-mobile sticky top-16 z-30 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] px-[var(--page-gutter)] pt-3 backdrop-blur md:static md:border-0 md:bg-transparent md:px-0">
           <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />
         </div>
 

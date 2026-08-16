@@ -40,10 +40,10 @@ export function PortfolioSummaryCard({
     type="button"
     onClick={onOpen}
     data-testid={`portfolio-card-${portfolio.id}`}
-    className="flex w-full min-w-0 flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+    className="panel flex w-full min-w-0 flex-col gap-3 p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
   >
     <span className="flex min-w-0 items-start gap-3">
-      <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
+      <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-control)] bg-[var(--accent-soft)] text-[var(--accent)]">
         <Briefcase size={19} />
       </span>
       <span className="min-w-0 flex-1">
@@ -59,18 +59,18 @@ export function PortfolioSummaryCard({
       <ChevronRight aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--text-muted)]" size={18} />
     </span>
 
-    <span className="block break-all font-mono text-2xl font-black tracking-tight text-[var(--text)]">{valueText}</span>
+    <span className="figure block break-all text-2xl font-extrabold tracking-tight text-[var(--text)]">{valueText}</span>
 
     <span className="grid min-w-0 grid-cols-2 gap-3">
       <span className="min-w-0">
-        <span className="block text-xs text-[var(--text-muted)]">วันนี้</span>
-        <span className={`mt-0.5 block break-all font-mono text-sm font-bold ${portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-[var(--text-secondary)]')}`}>
+        <span className="figure-label">วันนี้</span>
+        <span className={`figure-data mt-0.5 block break-all ${portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-[var(--text-secondary)]')}`}>
           {todayText}
         </span>
       </span>
       <span className="min-w-0">
-        <span className="block text-xs text-[var(--text-muted)]">กำไร/ขาดทุนรวม</span>
-        <span className={`mt-0.5 block break-all font-mono text-sm font-bold ${portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-[var(--text-secondary)]')}`}>
+        <span className="figure-label">กำไร/ขาดทุนรวม</span>
+        <span className={`figure-data mt-0.5 block break-all ${portfolioReturnToneClass(showBalances ? summary.totalGain : null, 'text-[var(--text-secondary)]')}`}>
           {totalGainText}
         </span>
       </span>
@@ -79,11 +79,11 @@ export function PortfolioSummaryCard({
     {goalPercent !== null && showBalances && <span className="block">
       <span className="flex items-center justify-between text-xs text-[var(--text-muted)]">
         <span>ความคืบหน้าเป้าหมาย</span>
-        <span className="font-mono font-semibold text-[var(--text-secondary)]">{goalPercent.toFixed(1)}%</span>
+        <span className="figure font-semibold text-[var(--text-secondary)]">{goalPercent.toFixed(1)}%</span>
       </span>
-      <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-hover)]">
+      <span className="mt-1.5 block h-1.5 overflow-hidden rounded-[var(--radius-mark)] bg-[var(--surface-hover)]">
         <span
-          className="block h-full rounded-full bg-[var(--accent)]"
+          className="block h-full rounded-[var(--radius-mark)] bg-[var(--accent)]"
           style={{ width: `${Math.min(100, Math.max(0, goalPercent))}%` }}
         />
       </span>
