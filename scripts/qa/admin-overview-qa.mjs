@@ -8,10 +8,21 @@
  * to a shorter page. Every number that used to have a card still has to be
  * reachable, which is checked by opening each band's disclosure and reading it.
  *
- * Run against production after a deploy:
+ * Point it at an origin that serves the commit under test:
  *
- *   QA_BASE_URL=https://portkheaw.vercel.app node --env-file-if-exists=.env.local \
- *     scripts/qa/admin-overview-qa.mjs
+ *   QA_BASE_URL=http://127.0.0.1:3210 npm run qa:admin-overview
+ *
+ * Not at production. `admin-console-challenge` is published on the project —
+ * every `/admin` request is answered with a Vercel challenge, and an automated
+ * browser cannot solve one: the console never renders and the run would report
+ * nothing about the page. That rule is the point of the rule, so the way to
+ * exercise the console is `npm run build && npm run start` on the same commit
+ * and this run against that. What production itself proves after a deploy is
+ * `/api/version` matching HEAD and `/admin` still answering a challenge rather
+ * than a page.
+ *
+ * `QA_HEADED=1` launches a visible Chrome, for a desktop session where somebody
+ * wants to watch it.
  */
 import { chromium } from 'playwright-core';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -87,6 +98,25 @@ async function createOperator() {
     if (Array.isArray(rows) && rows.length === 1) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  /*
+   * A settled paid subscription, so nothing about *billing* stands between the
+   * operator and the console. The overview is an operator surface, not a plan
+   * feature; a QA account still sitting on the free tier would be answering a
+   * question this run is not asking.
+   */
+  const now = Date.now();
+  await supabase(`/rest/v1/user_subscriptions?user_id=eq.${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      tier: 'elite', status: 'active',
+      billing_provider: 'stripe', billing_provider_mode: 'test',
+      trial_started_at: null, trial_ends_at: null, trial_used_at: null,
+      current_period_start: new Date(now - 60_000).toISOString(),
+      current_period_end: new Date(now + 30 * 86_400_000).toISOString(),
+      cancel_at_period_end: false,
+    }),
+  });
   await supabase('/rest/v1/user_roles', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -168,7 +198,14 @@ async function dismissOverlays(page) {
 async function enrolSecondFactor(page) {
   await page.goto(`${BASE_URL}/admin/security`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
   await dismissOverlays(page);
-  await page.getByRole('button', { name: 'เริ่มตั้งค่า' }).click({ timeout: 30_000 });
+  try {
+    await page.getByRole('button', { name: 'เริ่มตั้งค่า' }).click({ timeout: 45_000 });
+  } catch (error) {
+    // Whatever stood in the way is worth seeing, not guessing at.
+    await page.screenshot({ path: `${OUT_DIR}/enrolment-blocked.png`, fullPage: true });
+    console.error(`enrolment blocked at ${page.url()}`);
+    throw error;
+  }
   const secret = (await page.locator('code').first().textContent({ timeout: 30_000 }) ?? '').trim();
   if (!secret) throw new Error('The enrolment screen showed no transcribable secret');
   const msIntoStep = Date.now() % 30_000;
@@ -209,10 +246,14 @@ const OVERFLOW_PROBE = `(() => {
   return offenders;
 })()`;
 
-/** A band, located by its own heading rather than by a hook added for the test. */
-const band = (page, title) => page.locator('section').filter({
-  has: page.locator(`h3:text-is(${JSON.stringify(title)})`),
-}).first();
+/**
+ * A band, located by its own heading rather than by a hook added for the test.
+ *
+ * The `>` matters: every band is nested inside the "ภาพรวม" section, so a
+ * descendant match resolves to that wrapper and reports the whole page's cards
+ * as one band's.
+ */
+const band = (page, title) => page.locator(`section:has(> h3:text-is(${JSON.stringify(title)}))`);
 
 async function auditOverview(page, viewport, appearance) {
   const at = (message) => `[${viewport.name}/${appearance}] ${message}`;
@@ -287,7 +328,9 @@ async function auditOverview(page, viewport, appearance) {
   // 7 — nothing was deleted. Open everything and read the page.
   await page.locator('main details').evaluateAll((nodes) => nodes.forEach((node) => { node.open = true; }));
   await page.waitForTimeout(200);
-  const openText = (await page.locator('main').textContent()) ?? '';
+  // `.first()`: the console layout wraps the page's own `<main>` in one of its
+  // own, which is a landmark question for another change, not this one.
+  const openText = (await page.locator('main').first().textContent()) ?? '';
   const missing = FIGURES_THAT_MUST_SURVIVE.filter((label) => !openText.includes(label));
   check(missing.length === 0, at('every figure that had a card is still on the page'), { missing });
   await page.locator('main details').evaluateAll((nodes) => nodes.forEach((node) => { node.open = false; }));
@@ -302,7 +345,10 @@ async function auditOverview(page, viewport, appearance) {
 async function run() {
   const operator = await createOperator();
   report.account = { userId: operator.userId };
-  const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
+  const browser = await chromium.launch({
+    executablePath: BROWSER,
+    headless: process.env.QA_HEADED !== '1',
+  });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const consoleErrors = [];
