@@ -21,7 +21,7 @@ import {
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { OverviewPortfolioGoalCard } from '@/src/components/dashboard/OverviewPortfolioGoalCard';
@@ -237,6 +237,153 @@ function RetryButton({
         className={loading ? 'animate-spin motion-reduce:animate-none' : ''}
       />
     </button>
+  );
+}
+
+/** Breathing room kept between an open Info panel and the edge of the screen. */
+const PANEL_VIEWPORT_MARGIN = 8;
+
+/**
+ * The single Info affordance the overview sections share.
+ *
+ * It replaces two different things that both failed the same way on a phone: a
+ * `title` attribute on a decorative icon (nothing happens on tap — a native
+ * tooltip is hover-only), and a panel that lived in the DOM permanently with
+ * `group-hover`/`group-focus-within` deciding its visibility (once a tap focused
+ * the trigger, the panel stayed up with no way to dismiss it).
+ *
+ * The behaviour contract, identical wherever this is used:
+ *  - closed on mount, and re-renders or a section refresh never open it;
+ *  - a real `<button>` toggles it, so one tap opens and the next closes;
+ *  - a pointer press outside the wrapper closes it, as does Escape, which then
+ *    hands focus back to the trigger;
+ *  - each instance owns its own state, so opening one leaves the other closed.
+ *
+ * Escape is claimed in the CAPTURE phase and stopped there for the same reason
+ * as {@link InfoHint}: an enclosing disclosure must not be torn down along with
+ * the explanation the reader opened.
+ *
+ * Presentation stays with the call site — `iconSize` and `triggerClassName` keep
+ * each header looking exactly as it did — while the panel is deliberately shared
+ * so the two sections read as one pattern.
+ */
+function SectionInfo({
+  label,
+  testId,
+  iconSize,
+  triggerClassName,
+  children,
+}: {
+  /** Thai `aria-label` for the trigger, e.g. `ข้อมูลอุตสาหกรรมเด่นวันนี้`. */
+  label: string;
+  testId: string;
+  iconSize: number;
+  triggerClassName: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [shift, setShift] = useState(0);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLSpanElement>(null);
+  const panelId = useId();
+
+  /*
+   * Where the panel may sit is decided by flex-wrap, not by the markup. The
+   * breadth Info rides at the end of a wrapping badge row, so on a phone it
+   * lands near the left edge, where a right-anchored 288px panel hangs ~200px
+   * off the screen — and the anchor that would be correct at 390px is the wrong
+   * one at 430px, where the row no longer wraps. So the panel is measured once
+   * it is open and nudged back inside the viewport. When it already fits — every
+   * desktop case, and the industry header at any width — the shift is 0 and
+   * nothing moves, which is why the layout is unchanged everywhere it was fine.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const node = panelRef.current;
+    if (!node) return;
+    const clamp = () => {
+      /*
+       * The correction is read off the UNSHIFTED box: the transform is dropped
+       * for the measurement and restored immediately, within the same layout
+       * effect, so nothing is painted in between. Measuring the shifted box and
+       * subtracting instead would make the result depend on its own output, and
+       * anywhere `getBoundingClientRect` does not reflect the transform the two
+       * would chase each other forever.
+       */
+      const previous = node.style.transform;
+      node.style.transform = 'none';
+      const rect = node.getBoundingClientRect();
+      node.style.transform = previous;
+
+      const viewport = document.documentElement.clientWidth;
+      // No layout to measure (jsdom, or a hidden ancestor): leave it anchored.
+      if (!viewport || !rect.width) return;
+
+      const limit = viewport - PANEL_VIEWPORT_MARGIN;
+      const next = rect.left < PANEL_VIEWPORT_MARGIN ? PANEL_VIEWPORT_MARGIN - rect.left
+        : rect.right > limit ? limit - rect.right
+          : 0;
+      setShift((current) => (Math.abs(current - next) < 0.5 ? current : next));
+    };
+    clamp();
+    window.addEventListener('resize', clamp);
+    return () => window.removeEventListener('resize', clamp);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    /*
+     * The trigger sits inside the wrapper, so its own press is never treated as
+     * "outside" — the click that follows does the toggling, and the panel cannot
+     * be closed and reopened by the same gesture.
+     */
+    const onPointerDown = (event: Event) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [open]);
+
+  return (
+    <span ref={wrapRef} className="relative inline-flex">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-describedby={open ? panelId : undefined}
+        data-testid={`${testId}-trigger`}
+        onClick={() => setOpen((value) => !value)}
+        className={triggerClassName}
+      >
+        <Info size={iconSize} aria-hidden="true" />
+      </button>
+      {open && (
+        <span
+          ref={panelRef}
+          id={panelId}
+          role="dialog"
+          aria-label={label}
+          data-testid={`${testId}-panel`}
+          style={shift ? { transform: `translateX(${shift}px)` } : undefined}
+          className="absolute right-0 top-full z-20 block w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs leading-5 text-[var(--text-secondary)] shadow-xl"
+        >
+          {children}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -556,9 +703,19 @@ function IndustryRanking({
         title="อุตสาหกรรมเด่นวันนี้"
         action={(
           <span className="flex items-center gap-1">
-            <span title="เฉลี่ยแบบให้น้ำหนักเท่ากันจากหุ้นที่มีข้อมูลช่วงซื้อขายปกติถูกต้องอย่างน้อย 5 ตัวต่อกลุ่ม">
-              <Info size={18} className="text-[var(--text-muted)]" aria-label="วิธีคำนวณอุตสาหกรรมเด่น" />
-            </span>
+            {/*
+              The icon stays visually 18px and keeps its place in the header;
+              the ≥44px tap target is a transparent `::after` overlay that adds
+              no layout size, so the row is unchanged.
+            */}
+            <SectionInfo
+              label="ข้อมูลอุตสาหกรรมเด่นวันนี้"
+              testId="industry-info"
+              iconSize={18}
+              triggerClassName="relative inline-flex items-center justify-center text-[var(--text-muted)] outline-none after:absolute after:-inset-[13px] after:content-[''] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              เฉลี่ยแบบให้น้ำหนักเท่ากันจากหุ้นที่มีข้อมูลช่วงซื้อขายปกติถูกต้องอย่างน้อย 5 ตัวต่อกลุ่ม
+            </SectionInfo>
             <RetryButton section="industries" loading={retrying} onRetry={onRetry} />
           </span>
         )}
@@ -804,14 +961,14 @@ function BreadthSection({
             <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[var(--text-muted)]">
               Regular session · delayed SIP
             </span>
-            <span className="group relative inline-flex">
-              <button type="button" aria-label="อธิบายขอบเขตและวิธีคำนวณ market breadth" className="inline-flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)]">
-                <Info size={16} />
-              </button>
-              <span role="tooltip" className="invisible absolute right-0 top-full z-20 w-72 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs leading-5 text-[var(--text-secondary)] shadow-xl group-hover:visible group-focus-within:visible">
-                {data.universeDescription} เปรียบเทียบ regular close/price กับ previous regular close ของ trading date เดียวกันเท่านั้น
-              </span>
-            </span>
+            <SectionInfo
+              label="ข้อมูลภาพรวมแรงซื้อแรงขาย"
+              testId="breadth-info"
+              iconSize={16}
+              triggerClassName="inline-flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              {data.universeDescription} เปรียบเทียบ regular close/price กับ previous regular close ของ trading date เดียวกันเท่านั้น
+            </SectionInfo>
           </div>
           <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
             {[

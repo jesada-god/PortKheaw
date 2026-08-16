@@ -410,4 +410,107 @@ describe('market breadth data health', () => {
     expect(details?.textContent).toContain('550');
     expect(details?.textContent).toContain('578');
   });
+
+  /**
+   * Both section Info buttons used to be broken in opposite directions: the
+   * industry one was a `title` attribute on a decorative icon, so a tap on a
+   * phone did nothing at all, while this one was a permanently rendered panel
+   * shown by `group-hover`/`group-focus-within`, so it stuck open with no way
+   * to dismiss it. They now share one state-driven disclosure.
+   */
+  describe('section Info disclosures', () => {
+    const dataWithBreadth = () => ({ ...dashboardData('ready'), breadth: breadth() });
+    const infos = [
+      { testId: 'industry-info', label: 'ข้อมูลอุตสาหกรรมเด่นวันนี้' },
+      { testId: 'breadth-info', label: 'ข้อมูลภาพรวมแรงซื้อแรงขาย' },
+    ] as const;
+    const ids = infos.map((info) => info.testId);
+
+    const trigger = (testId: string) =>
+      container.querySelector<HTMLButtonElement>(`[data-testid="${testId}-trigger"]`)!;
+    const panel = (testId: string) =>
+      container.querySelector<HTMLElement>(`[data-testid="${testId}-panel"]`);
+    const click = (element: Element) => {
+      act(() => { element.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    };
+
+    it('renders each Info as a real button that starts closed', () => {
+      render(dataWithBreadth());
+      for (const { testId, label } of infos) {
+        const button = trigger(testId);
+        expect(button).toBeTruthy();
+        expect(button.tagName).toBe('BUTTON');
+        expect(button.getAttribute('type')).toBe('button');
+        expect(button.getAttribute('aria-label')).toBe(label);
+        expect(button.getAttribute('aria-expanded')).toBe('false');
+        expect(panel(testId)).toBeNull();
+      }
+      // The old hover-only affordances are gone: no `title` tooltip, and no
+      // panel parked in the DOM waiting for a CSS `:hover`.
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
+      expect(container.querySelector('[title*="เฉลี่ยแบบให้น้ำหนักเท่ากัน"]')).toBeNull();
+    });
+
+    it.each(ids)('opens %s on tap and closes it on a second tap', (testId) => {
+      render(dataWithBreadth());
+
+      click(trigger(testId));
+      expect(panel(testId)).not.toBeNull();
+      expect(trigger(testId).getAttribute('aria-expanded')).toBe('true');
+
+      click(trigger(testId));
+      expect(panel(testId)).toBeNull();
+      expect(trigger(testId).getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('explains each section in its own panel and keeps the two independent', () => {
+      render(dataWithBreadth());
+
+      click(trigger('industry-info'));
+      expect(panel('industry-info')!.textContent).toContain('อย่างน้อย 5 ตัวต่อกลุ่ม');
+      // Opening one must not open the other.
+      expect(panel('breadth-info')).toBeNull();
+
+      click(trigger('breadth-info'));
+      expect(panel('breadth-info')!.textContent).toContain('หุ้นสหรัฐที่ระบบติดตาม');
+    });
+
+    it.each(ids)('closes %s on an outside pointer press', (testId) => {
+      render(dataWithBreadth());
+      click(trigger(testId));
+      expect(panel(testId)).not.toBeNull();
+
+      act(() => {
+        document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      });
+      expect(panel(testId)).toBeNull();
+    });
+
+    it.each(ids)('keeps %s open when the press lands inside its own panel', (testId) => {
+      render(dataWithBreadth());
+      click(trigger(testId));
+
+      act(() => {
+        panel(testId)!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      });
+      expect(panel(testId)).not.toBeNull();
+    });
+
+    it.each(ids)('closes %s on Escape and returns focus to the trigger', (testId) => {
+      render(dataWithBreadth());
+      click(trigger(testId));
+      expect(panel(testId)).not.toBeNull();
+
+      act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+      expect(panel(testId)).toBeNull();
+      expect(document.activeElement).toBe(trigger(testId));
+    });
+
+    it('stays closed across a re-render of the same section', () => {
+      const data = dataWithBreadth();
+      render(data);
+      render(data);
+      for (const testId of ids) expect(panel(testId)).toBeNull();
+    });
+  });
 });
