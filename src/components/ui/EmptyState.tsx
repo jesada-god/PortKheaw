@@ -1,21 +1,36 @@
 import { LucideIcon } from "lucide-react"
+import { cn } from "@/src/utils/cn"
 
 interface EmptyStateProps {
   icon: LucideIcon
   title: string
   description: string
   action?: React.ReactNode
+  className?: string
 }
 
-export function EmptyState({ icon: Icon, title, description, action }: EmptyStateProps) {
+/**
+ * "There is nothing here yet", said once and quietly.
+ *
+ * It no longer draws its own card. Three of its four call sites already placed
+ * it inside a panel, so the bordered box it used to carry produced a card
+ * nested inside a card — the single clearest tell of a layout assembled from a
+ * template rather than composed. The container is now the caller's decision,
+ * which is the only place that knows whether one is needed.
+ *
+ * The glyph lost its filled disc for the same reason: a circle behind an icon
+ * is a third container in a block whose whole job is to be unobtrusive. It
+ * stays at muted weight so the sentence, not the picture, is what the reader
+ * lands on. Hardcoded slate gave way to semantic tokens, so this reads
+ * correctly in light as well as dark.
+ */
+export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center p-8 text-center bg-[#151B28] border border-slate-800 rounded-2xl">
-      <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 mb-4">
-        <Icon size={24} />
-      </div>
-      <h3 className="text-white font-semibold mb-2">{title}</h3>
-      <p className="text-sm text-slate-400 mb-6 max-w-sm">{description}</p>
-      {action}
+    <div className={cn("flex flex-col items-center justify-center px-6 py-10 text-center", className)}>
+      <Icon size={26} aria-hidden="true" className="text-[var(--text-muted)]" />
+      <h3 className="mt-3 text-base font-bold text-[var(--text)]">{title}</h3>
+      <p className="mt-1.5 max-w-sm text-sm leading-6 text-[var(--text-secondary)]">{description}</p>
+      {action && <div className="mt-5">{action}</div>}
     </div>
   )
 }

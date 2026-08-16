@@ -1,0 +1,314 @@
+/* ==========================================================================
+ * PortKheaw design foundation
+ *
+ * The shared design LANGUAGE, one level below the palettes. Every theme file
+ * publishes colour; this file publishes the decisions that are the same in all
+ * of them — how round a thing is, how much air sits between two things, how a
+ * number is set, and which of the three container weights a block earns.
+ *
+ * It exists because the app had exactly one answer to each of those questions.
+ * Every panel was `rounded-2xl border bg-surface p-4 shadow`, so a market
+ * headline, a service-status disclosure and a legal footnote all arrived on
+ * screen with identical weight, and the reader had to do the ranking the design
+ * should have done for them. Nothing here is decoration: there is no gradient,
+ * no glow, no blur and no new colour. It is radius, rhythm, rule and numeral.
+ *
+ * Theme-independent on purpose. Every value below reads a semantic token, so
+ * bitswap/dokturek/cosmic/orchid inherit the same structure in their own
+ * palette without a line of their own.
+ * ========================================================================== */
+
+html {
+  /* ------------------------------------------------------------------
+   * Radius — four steps with distinct jobs, not one radius applied to
+   * everything. What tells a reader that a chip is not a panel is that the
+   * chip's corner is visibly tighter, and a mechanical single radius throws
+   * that signal away.
+   * ------------------------------------------------------------------ */
+  /* Data marks: bars, meters, table chips. Nearly square, because a data mark
+     is a measurement and a measurement should not look soft. */
+  --radius-mark: 4px;
+  /* Anything you press or type into. */
+  --radius-control: 10px;
+  /* A panel that groups content. */
+  --radius-panel: 14px;
+  /* The single most important block on a page. One per page. */
+  --radius-hero: 22px;
+
+  /* ------------------------------------------------------------------
+   * Vertical rhythm — deliberately unequal. A primary block is followed by
+   * more air than a secondary one, which is most of what makes a page read
+   * as ranked rather than as a list of equals.
+   * ------------------------------------------------------------------ */
+  --stack-hero: 1.75rem;
+  --stack-section: 1.25rem;
+  --stack-tight: 0.625rem;
+
+  /* Horizontal page gutter, one value the shells agree on. */
+  --page-gutter: 0.875rem;
+}
+
+@media (min-width: 640px) {
+  html {
+    --stack-hero: 2.25rem;
+    --stack-section: 1.5rem;
+    --page-gutter: 1.25rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  html {
+    --stack-hero: 2.75rem;
+    --page-gutter: 1.5rem;
+  }
+}
+
+/*
+ * Soft status washes.
+ *
+ * `--warning-soft`, `--positive-soft` and `--negative-soft` were already being
+ * used by the overview's status chips and the notification error banner, and
+ * were defined by no theme — so `bg-[var(--warning-soft)]` resolved to nothing
+ * and those blocks rendered as bare text with padding around it. Derived here
+ * from the status token each one belongs to, so all five themes get them at
+ * once and a wash can never drift away from the colour it is washing.
+ *
+ * Two mixes per meaning: `-soft` is the fill, `-line` the hairline that goes
+ * with it. Both are `color-mix` against `transparent`, so they sit correctly on
+ * the light and the dark surface without a second definition.
+ */
+html {
+  --positive-soft: color-mix(in srgb, var(--positive) 12%, transparent);
+  --positive-line: color-mix(in srgb, var(--positive) 32%, transparent);
+  --negative-soft: color-mix(in srgb, var(--negative) 12%, transparent);
+  --negative-line: color-mix(in srgb, var(--negative) 32%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 14%, transparent);
+  --warning-line: color-mix(in srgb, var(--warning) 34%, transparent);
+  --info-soft: color-mix(in srgb, var(--info) 12%, transparent);
+  --info-line: color-mix(in srgb, var(--info) 32%, transparent);
+  /* A rule that is a hair lighter than --border: used inside a panel, where a
+     full-strength border reads as a second box rather than as a separation. */
+  --hairline: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+@layer components {
+  /* ======================================================================
+   * Containers — THREE weights, and most content earns none of them.
+   *
+   * The rule this file exists to enforce: a border is a claim that the things
+   * inside it belong together and the things outside it do not. A page where
+   * every block makes that claim has made none of them.
+   * ====================================================================== */
+
+  /*
+   * `.panel` — a real grouping. Border and surface, and deliberately NO
+   * shadow: shadow is elevation, elevation is rank, and a page cannot have
+   * eight things at the top rank.
+   */
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel);
+    background: var(--surface);
+  }
+
+  /*
+   * `.panel-hero` — the one block on a page the reader came for. This is the
+   * only class in the file that carries the theme shadow, and using it twice
+   * on one screen is the mistake it exists to prevent.
+   */
+  .panel-hero {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-hero);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  /*
+   * `.panel-quiet` — the anti-card. No border, no background, no radius: a
+   * heading, a rule under it, and content. This is what most of the sections
+   * that are currently panels actually want, and swapping one for the other is
+   * the single largest change in how the app reads.
+   */
+  .panel-quiet {
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  /*
+   * `.inset` — a sub-region INSIDE a panel. A tint only, never a second border,
+   * because a bordered box inside a bordered box is the "card in a card" that
+   * makes a layout look generated rather than composed.
+   */
+  .inset {
+    border-radius: var(--radius-control);
+    background: var(--surface-elevated);
+  }
+
+  /* ======================================================================
+   * Section heading
+   *
+   * Replaces "accent icon + bold title" repeated down the page. The name sits
+   * on a baseline with a hairline running to the right margin and any action
+   * parked at the end of it — a typographic device rather than another box, so
+   * a section can announce itself without becoming a card to do it.
+   * ====================================================================== */
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    margin-block-end: 0.875rem;
+  }
+
+  .section-head__name {
+    flex: none;
+    min-width: 0;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    color: var(--text);
+  }
+
+  /* The rule. `flex: 1` is what makes it fill whatever the name and the action
+     leave behind, at any width, with no measurement. */
+  .section-head__rule {
+    flex: 1 1 auto;
+    min-width: 0.5rem;
+    height: 1px;
+    background: var(--hairline);
+  }
+
+  .section-head__action {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  /* A section whose name is a whisper rather than a statement: used above
+     supporting groups, where a full-weight heading would out-rank the content
+     under it. */
+  .section-eyebrow {
+    display: block;
+    margin-block-end: 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* ======================================================================
+   * Financial numerals
+   *
+   * The other half of the hierarchy problem. A price and the label above it
+   * were separated by weight alone; these give the number its own typographic
+   * treatment — tabular figures so columns line up and a live price does not
+   * jitter as digits change, and negative tracking so a large figure reads as
+   * one quantity instead of as spaced-out characters.
+   *
+   * `.figure` is the base and is safe on any number. The sized variants are a
+   * RANK, not a size: hero for the one number a screen is about, lead for the
+   * two or three that support it, and data for everything in a row or a table.
+   * ====================================================================== */
+  .figure {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: -0.015em;
+  }
+
+  .figure-hero {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(1.875rem, 1.35rem + 2.6vw, 2.75rem);
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+    color: var(--text);
+  }
+
+  .figure-lead {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(1.25rem, 1.1rem + 0.7vw, 1.5rem);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+  }
+
+  .figure-data {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+  }
+
+  /* The caption over a figure. Small and quiet by design — it names the number,
+     it does not compete with it. */
+  .figure-label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+
+  /* ======================================================================
+   * Data strip
+   *
+   * Dense key/value information WITHOUT one box per value. Hairlines separate
+   * the cells, so four related metrics read as one object with four facets
+   * rather than as four independent cards that happen to sit in a row.
+   * ====================================================================== */
+  .data-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* The gaps ARE the rules: a 1px hairline background showing through a 1px
+       grid gap draws every divider, interior only, with no per-cell borders to
+       double up at the seams and no `:last-child` exceptions. */
+    gap: 1px;
+    background: var(--hairline);
+    border-block: 1px solid var(--hairline);
+    /* Bleeds the rules to the full width of a padded parent, so they read as
+       page rules rather than as the edges of yet another box. */
+    overflow: hidden;
+  }
+
+  @media (min-width: 640px) {
+    .data-strip--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .data-strip--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  .data-strip__cell {
+    min-width: 0;
+    padding: 0.625rem 0.75rem;
+    background: var(--surface);
+  }
+
+  /* The strip on the page background rather than inside a panel. */
+  .data-strip--bare .data-strip__cell { background: var(--bg); }
+
+  /* ======================================================================
+   * Rules
+   *
+   * A horizontal rule is the cheapest way to separate two things, and the app
+   * had almost none — every separation was a border around a box instead.
+   * ====================================================================== */
+  .rule {
+    border: 0;
+    border-block-start: 1px solid var(--hairline);
+    margin: 0;
+  }
+
+  /* Stretches a rule (or any child) past a padded parent's gutter to the panel
+     wall, so a divider inside a panel meets both edges. */
+  .rule-bleed {
+    margin-inline: calc(var(--panel-gutter, 1rem) * -1);
+  }
+}

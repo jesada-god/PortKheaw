@@ -112,9 +112,7 @@ export function NotificationsClient({ initialNotifications }: { initialNotificat
       </Button>}
     </div>
     {items.length === 0
-      ? <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-        <EmptyState icon={Bell} title="ยังไม่มีการแจ้งเตือน" description="สรุปพอร์ตรายวันและราคาที่ถึงเป้าหมายจะแสดงที่นี่" />
-      </div>
+      ? <EmptyState className="panel" icon={Bell} title="ยังไม่มีการแจ้งเตือน" description="สรุปพอร์ตรายวันและราคาที่ถึงเป้าหมายจะแสดงที่นี่" />
       : <div className="space-y-3">
         {visibleItems.map((item) => <article
           key={item.id}

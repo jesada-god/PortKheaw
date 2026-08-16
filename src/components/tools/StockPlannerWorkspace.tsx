@@ -616,6 +616,7 @@ export function StockPlannerWorkspace() {
 
         {!asset && priceState.status === 'idle' && (
           <EmptyState
+            className="panel"
             icon={Search}
             title="ยังไม่ได้เลือกหุ้น"
             description="เลือกหุ้นที่สนใจก่อน แล้วกำหนดราคาเป้าหมาย ระดับที่แผนไม่เป็นไปตามคาด และระยะเวลา เพื่อดู Risk : Reward ของแผน"
