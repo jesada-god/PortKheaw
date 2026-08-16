@@ -14,11 +14,15 @@ import type { SymbolSearchResult } from '@/src/lib/market-data/types';
 import { hasToolHandoff, parseEquityToolHandoff, type EquityToolContext } from '@/src/lib/tools/handoff';
 import { SavedStockPlans, type SavedPlanView } from './SavedStockPlans';
 import { PlanDetails } from './PlanDetails';
+import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import {
   evaluateStockPlan,
   formatPlanMoney,
   formatPlanPercent,
+  formatPlanShares,
+  formatRiskRewardRatio,
   parsePlanNumber,
+  type StockPlanEvaluation,
   type StockPlanSizingMode,
 } from '@/src/lib/tools/stock-plan';
 import {
@@ -56,6 +60,16 @@ import {
  * to size a position can still do that, and the portfolio handoff that fills it
  * in still works. It moved because the first screen answers a smaller question
  * and should look like it.
+ *
+ * ผลตอบแทนจำลอง adds one more optional answer to the form — how much money the
+ * reader would put in — and restates the plan they already stated as the money it
+ * would move. It is a simulation and only a simulation: nothing here writes a
+ * transaction, a position, a balance or a portfolio row, and the amount is not
+ * part of a saved plan, because a plan is three prices and a date and the size a
+ * reader is imagining today is not one of them. The arithmetic is
+ * `evaluateStockPlan` — the same module ดูรายละเอียด has always sized positions
+ * with — measured from the reader's own ราคาเข้า and never from the baseline,
+ * because money is committed at the price they intend to pay.
  *
  * The reader's entitlement is decided on the server before this component is ever
  * sent (see `app/tools/stock-planner/page.tsx`), and every write goes to a route
@@ -101,10 +115,20 @@ export function StockPlannerWorkspace() {
   const [analyzed, setAnalyzed] = useState(false);
   const [editing, setEditing] = useState<EditingPlan | null>(null);
 
-  /* The shipped entry/size planner, preserved inside ดูรายละเอียด. */
+  /*
+    The shipped entry/size planner. Its entry price is asked for on the form now,
+    because ผลตอบแทนจำลอง is measured from it and a number the simulation depends
+    on cannot live behind a collapsed section.
+
+    Budget and share count are two drafts rather than one box that changes
+    meaning, so the money the reader typed above is the same money ดูรายละเอียด
+    sizes with — never a second amount that disagrees with it — and switching the
+    mode down there cannot silently discard it.
+  */
   const [entryDraft, setEntryDraft] = useState('');
   const [sizingMode, setSizingMode] = useState<StockPlanSizingMode>('budget');
-  const [sizeDraft, setSizeDraft] = useState('');
+  const [investmentDraft, setInvestmentDraft] = useState('');
+  const [sharesDraft, setSharesDraft] = useState('');
   const [holding, setHolding] = useState<EquityToolContext | null>(null);
 
   const [plans, setPlans] = useState<SavedPlanView[]>([]);
@@ -128,7 +152,7 @@ export function StockPlannerWorkspace() {
     const requestId = ++request.current;
     setAsset(result);
     setTargetDraft(''); setInvalidationDraft(''); setAnalyzed(false); setEditing(null);
-    setEntryDraft(entryOverride ?? ''); setSizeDraft('');
+    setEntryDraft(entryOverride ?? ''); setInvestmentDraft(''); setSharesDraft('');
     setPriceState({ status: 'loading' });
     let payload: { data?: PlannerPricePayload } | null = null;
     try {
@@ -154,7 +178,7 @@ export function StockPlannerWorkspace() {
         setSymbolDraft(context.symbol);
         setSizingMode('shares');
         void selectAsset(plannerSearchResult(context.symbol, context.type), context.price === null ? '' : String(context.price));
-        setSizeDraft(String(context.quantity));
+        setSharesDraft(String(context.quantity));
         return;
       }
       /*
@@ -259,8 +283,28 @@ export function StockPlannerWorkspace() {
     entry: parsePlanNumber(entryDraft),
     stopLoss: parsePlanNumber(invalidationDraft),
     target: parsePlanNumber(targetDraft),
-    sizing: { mode: sizingMode, amount: parsePlanNumber(sizeDraft) },
-  }), [entryDraft, invalidationDraft, targetDraft, sizingMode, sizeDraft]);
+    sizing: {
+      mode: sizingMode,
+      amount: parsePlanNumber(sizingMode === 'budget' ? investmentDraft : sharesDraft),
+    },
+  }), [entryDraft, invalidationDraft, targetDraft, sizingMode, investmentDraft, sharesDraft]);
+
+  /*
+    ผลตอบแทนจำลอง. The same evaluation, pinned to money regardless of which mode
+    ดูรายละเอียด is on, so the simulation always answers the question the form
+    asked — "ลงเท่านี้แล้วเป็นเงินเท่าไร" — and never quietly becomes an answer
+    about a share count the reader typed somewhere else.
+
+    Pure arithmetic on values already in hand: changing the amount re-runs this
+    and nothing else. No request is made to compute it.
+  */
+  const investmentAmount = parsePlanNumber(investmentDraft);
+  const simulation = useMemo(() => evaluateStockPlan({
+    entry: parsePlanNumber(entryDraft),
+    stopLoss: parsePlanNumber(invalidationDraft),
+    target: parsePlanNumber(targetDraft),
+    sizing: { mode: 'budget', amount: parsePlanNumber(investmentDraft) },
+  }), [entryDraft, invalidationDraft, targetDraft, investmentDraft]);
 
   /*
     Messages are held back until the reader has asked for the analysis. An empty
@@ -276,8 +320,20 @@ export function StockPlannerWorkspace() {
     return issue.message;
   }
 
+  /*
+    The sizing module's own messages, each shown where the reader can act on it,
+    and the entry one held back while its box is untouched — an empty optional
+    field is not a mistake somebody has made.
+  */
+  const entryIssue = entryDraft.trim() === ''
+    ? null
+    : simulation.issues.find((item) => item.field === 'entry')?.message ?? null;
+  const investmentIssue = simulation.issues.find((item) => item.field === 'size')?.message ?? null;
+
   const { outlook, scenarios } = evaluation;
   const showResult = analyzed && outlook !== null && scenarios !== null;
+  /* Asked for, and only then answered — an empty amount means no section at all. */
+  const showSimulation = showResult && investmentDraft.trim() !== '';
 
   async function savePlan() {
     if (!asset || baselinePrice === null || !outlook || !horizonDate) return;
@@ -320,6 +376,14 @@ export function StockPlannerWorkspace() {
     setPreset('custom');
     setCustomDate(plan.horizonDate);
     setAnalyzed(true);
+    /*
+      The edited plan's own numbers, and nothing left over from the stock that
+      was on the form a moment ago: an entry price belonging to another company
+      would price a simulation of this plan from a price it never had. The
+      amount is cleared for the same reason — it was sized against that entry.
+    */
+    setEntryDraft(String(plan.baselinePrice));
+    setInvestmentDraft(''); setSharesDraft('');
     if (asset?.symbol !== plan.symbol) setAsset(plannerSearchResult(plan.symbol, 'stock'));
     // Guarded: jsdom and older embedded webviews do not implement it.
     if (typeof window.scrollTo === 'function') window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -446,18 +510,30 @@ export function StockPlannerWorkspace() {
                   </p>
                 </div>
 
+                {/*
+                  ราคาเข้า. Prefilled with the accepted price and the reader's to
+                  change: the plan's percentages are measured from the baseline,
+                  but money is committed at the price they intend to pay, so
+                  ผลตอบแทนจำลอง measures from this box and never from the one
+                  above it.
+                */}
                 <PriceField
-                  id="stock-planner-target" term="planTarget" label="ราคาเป้าหมาย"
-                  value={targetDraft} onChange={(value) => { setTargetDraft(value); setAnalyzed(false); }}
-                  error={issueFor('target')} currency={currency} align="end"
+                  id="stock-planner-entry" term="planEntry" label="ราคาเข้า"
+                  value={entryDraft} onChange={setEntryDraft}
+                  error={entryIssue} currency={currency} align="end"
                 />
               </div>
 
-              <div className="mt-4 min-w-0 sm:max-w-[calc(50%-0.5rem)]">
+              <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                <PriceField
+                  id="stock-planner-target" term="planTarget" label="ราคาเป้าหมาย"
+                  value={targetDraft} onChange={(value) => { setTargetDraft(value); setAnalyzed(false); }}
+                  error={issueFor('target')} currency={currency}
+                />
                 <PriceField
                   id="stock-planner-invalidation" term="planInvalidation" label="ระดับที่แผนไม่เป็นไปตามคาด"
                   value={invalidationDraft} onChange={(value) => { setInvalidationDraft(value); setAnalyzed(false); }}
-                  error={issueFor('invalidation')} currency={currency}
+                  error={issueFor('invalidation')} currency={currency} align="end"
                 />
               </div>
 
@@ -493,6 +569,36 @@ export function StockPlannerWorkspace() {
                 </p>
                 {issueFor('horizon') && (
                   <p role="alert" className="mt-1 break-words text-xs text-amber-300">{issueFor('horizon')}</p>
+                )}
+              </div>
+
+              {/*
+                The one optional answer on the form, and last because the plan is
+                complete without it. Typing here does not un-analyse the plan:
+                the amount is not one of the four things the analysis is about,
+                so changing it must not take the result off the screen.
+              */}
+              <div className="mt-5 min-w-0 sm:max-w-[calc(50%-0.5rem)]">
+                <label className="block min-w-0" htmlFor="stock-planner-investment">
+                  <span className={fieldLabel}>
+                    <span className="min-w-0 break-words">จำนวนเงินที่ต้องการลงทุน (ไม่บังคับ)</span>
+                  </span>
+                  <input
+                    id="stock-planner-investment" data-testid="stock-planner-investment"
+                    className="form-input mt-1.5" inputMode="decimal" autoComplete="off"
+                    placeholder={`เช่น 10,000 (${currency})`}
+                    value={investmentDraft} onChange={(event) => setInvestmentDraft(event.target.value)}
+                    aria-invalid={investmentIssue ? true : undefined}
+                    aria-describedby={investmentIssue ? 'stock-planner-investment-error' : 'stock-planner-investment-note'}
+                  />
+                </label>
+                <p id="stock-planner-investment-note" className="mt-1 break-words text-[11px] leading-5 text-slate-500">
+                  ใช้สำหรับคำนวณผลลัพธ์จำลองของแผนนี้ ไม่ได้บันทึกลงพอร์ตและไม่ได้ถูกเก็บไว้กับแผน
+                </p>
+                {investmentIssue && (
+                  <p id="stock-planner-investment-error" role="alert" className="mt-1 break-words text-xs text-amber-300">
+                    {investmentIssue}
+                  </p>
                 )}
               </div>
 
@@ -577,12 +683,10 @@ export function StockPlannerWorkspace() {
               symbol={asset?.symbol ?? ''}
               currency={currency}
               horizonDate={horizonDate}
-              entryDraft={entryDraft}
-              onEntryChange={setEntryDraft}
               sizingMode={sizingMode}
-              onSizingModeChange={(mode) => { setSizingMode(mode); setSizeDraft(''); }}
-              sizeDraft={sizeDraft}
-              onSizeChange={setSizeDraft}
+              onSizingModeChange={setSizingMode}
+              sizeDraft={sizingMode === 'budget' ? investmentDraft : sharesDraft}
+              onSizeChange={sizingMode === 'budget' ? setInvestmentDraft : setSharesDraft}
               evaluation={sizingEvaluation}
               holding={holding}
             />
@@ -606,6 +710,23 @@ export function StockPlannerWorkspace() {
               </button>
             )}
           </section>
+        )}
+
+        {showResult && investmentDraft.trim() === '' && (
+          <p data-testid="stock-planner-simulation-hint" className="min-w-0 break-words px-1 text-xs leading-5 text-slate-400">
+            กรอกจำนวนเงินที่ต้องการลงทุนในแบบฟอร์มด้านบน เพื่อดูผลลัพธ์จำลองเป็นจำนวนเงิน
+          </p>
+        )}
+
+        {showSimulation && (
+          <PlanSimulation
+            currency={currency}
+            investment={investmentAmount}
+            entry={parsePlanNumber(entryDraft)}
+            target={parsePlanNumber(targetDraft)}
+            invalidation={parsePlanNumber(invalidationDraft)}
+            evaluation={simulation}
+          />
         )}
 
         <section className={card} aria-labelledby="stock-planner-saved">
@@ -657,7 +778,7 @@ function PriceField({
   id, term, label, value, onChange, error, currency, align,
 }: {
   id: string;
-  term: 'planTarget' | 'planInvalidation';
+  term: 'planTarget' | 'planInvalidation' | 'planEntry';
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -687,11 +808,13 @@ function PriceField({
 
 /** One derived figure, with the glossary explanation attached to its label. */
 function Figure({
-  label, value, term, termAlign, tone, testId,
+  label, value, sub, term, termAlign, tone, testId,
 }: {
   label: string;
   value: string;
-  term: 'planUpside' | 'planDownside' | 'planRiskReward';
+  /** A second reading of the same figure — the percentage beside the money. */
+  sub?: string;
+  term: GlossaryTermId;
   termAlign?: 'start' | 'end';
   tone?: 'positive' | 'negative';
   testId: string;
@@ -705,7 +828,119 @@ function Figure({
         <span className="min-w-0 break-words">{label}</span>
         <InfoHint term={term} align={termAlign} />
       </dt>
-      <dd data-testid={testId} className={`mt-1 break-words font-mono text-lg font-bold ${toneClass}`}>{value}</dd>
+      <dd data-testid={testId} className={`mt-1 break-words font-mono text-lg font-bold ${toneClass}`}>
+        {value}
+        {/* A real space, so the figure reads as one phrase when it is copied or spoken. */}
+        {sub && <> <span className="break-words text-xs font-semibold opacity-80">{sub}</span></>}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * ผลตอบแทนจำลอง — the plan the reader already stated, restated as money.
+ *
+ * Every figure here comes from `evaluateStockPlan`, the module ดูรายละเอียด has
+ * always sized positions with. There is no second formula in this file: the
+ * percentages ARE the module's risk and reward per share as a share of the entry
+ * price, and the ratio is its own `rewardToRisk` — so the money, the percentages
+ * and the Risk / Reward can never tell three different stories about one plan.
+ *
+ * Two honesties the section is built around:
+ *
+ *  - **Whole shares.** A budget that buys 2.8 shares buys 2, and every figure is
+ *    quoted for the 2 the reader would actually own. เงินที่ใช้จริง is printed
+ *    next to เงินลงทุน rather than hidden, because the difference between them is
+ *    money that was never in the plan.
+ *  - **Nothing is forced.** When the amount cannot be turned into a position —
+ *    no entry price yet, or a budget short of one share — the figures are `—` and
+ *    the module's own sentence says why. A placeholder is not a number.
+ *
+ * It writes nothing. There is no transaction, no position, no balance and no
+ * saved field behind any of this.
+ */
+function PlanSimulation({
+  currency, investment, entry, target, invalidation, evaluation,
+}: {
+  currency: string;
+  investment: number | null;
+  entry: number | null;
+  target: number | null;
+  invalidation: number | null;
+  evaluation: StockPlanEvaluation;
+}) {
+  const { levels, position, issues } = evaluation;
+  /* The first thing standing in the way, in the module's own words. */
+  const blocked = position === null ? issues[0]?.message ?? null : null;
+  const money = (value: number | null) => (
+    value !== null && Number.isFinite(value) ? formatPlanMoney(value, currency) : '—'
+  );
+
+  return (
+    <section className={card} aria-labelledby="stock-planner-simulation-heading" data-testid="stock-planner-simulation">
+      <h2 id="stock-planner-simulation-heading" className={stepHeading}>ผลตอบแทนจำลอง</h2>
+      <p className="mt-1 break-words text-xs leading-5 text-slate-400">
+        คิดจากราคาเข้าที่คุณกรอก และซื้อเป็นจำนวนหุ้นเต็มจำนวน เงินส่วนที่ซื้อไม่ถึงหนึ่งหุ้นจึงไม่ถูกนำมาคำนวณ
+      </p>
+
+      <h3 className="mt-4 text-sm font-bold text-white">สรุปการลงทุนจำลอง</h3>
+      <dl className="mt-3 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3" data-testid="stock-planner-simulation-summary">
+        <SimulationStat label="เงินลงทุน" value={money(investment)} testId="stock-planner-sim-investment" />
+        <SimulationStat label="ราคาเข้า" value={money(entry)} testId="stock-planner-sim-entry" />
+        <SimulationStat
+          label="ซื้อได้"
+          value={position === null ? '—' : formatPlanShares(position.shares)}
+          testId="stock-planner-sim-shares"
+        />
+        <SimulationStat
+          label="เงินที่ใช้จริง"
+          value={position === null ? '—' : formatPlanMoney(position.cost, currency)}
+          testId="stock-planner-sim-cost"
+        />
+        <SimulationStat label="เป้าหมาย" value={money(target)} testId="stock-planner-sim-target" />
+        <SimulationStat label="จุดผิดแผน" value={money(invalidation)} testId="stock-planner-sim-invalidation" />
+      </dl>
+
+      <h3 className="mt-6 text-sm font-bold text-white">ผลลัพธ์จำลอง</h3>
+      <dl className="mt-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+        <Figure
+          label="กำไรหากถึงเป้า" term="planRewardPercent" tone="positive" testId="stock-planner-sim-profit"
+          value={position === null ? '—' : `+${formatPlanMoney(position.profitAtTarget, currency)}`}
+          sub={position === null || levels === null ? undefined : `+${formatPlanPercent(levels.rewardPercent)}`}
+        />
+        <Figure
+          label="ขาดทุนหากผิดแผน" term="planRiskPercent" tone="negative" testId="stock-planner-sim-loss"
+          value={position === null ? '—' : formatPlanMoney(position.lossAtStop, currency)}
+          sub={position === null || levels === null ? undefined : `-${formatPlanPercent(levels.riskPercent)}`}
+        />
+        <Figure
+          label="Risk / Reward" term="planRiskReward" termAlign="end" testId="stock-planner-sim-reward-risk"
+          value={levels === null ? '—' : formatRiskRewardRatio(levels.rewardToRisk)}
+        />
+      </dl>
+
+      {blocked && (
+        <p data-testid="stock-planner-sim-blocked" role="status" className="mt-3 min-w-0 break-words text-xs text-amber-300">
+          {blocked}
+        </p>
+      )}
+
+      <p data-testid="stock-planner-sim-note" className="mt-4 flex min-w-0 gap-2 rounded-xl border border-slate-800 bg-[#0A0E17] p-3 text-xs leading-5 text-slate-400">
+        <TriangleAlert aria-hidden="true" size={14} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">
+          ผลลัพธ์เป็นการจำลองจากราคาในแผน ไม่ใช่การรับประกันผลตอบแทน และไม่ได้สร้างรายการซื้อขายในพอร์ตของคุณ
+        </span>
+      </p>
+    </section>
+  );
+}
+
+/** One line of the simulation summary: a label, and the figure it names. */
+function SimulationStat({ label, value, testId }: { label: string; value: string; testId: string }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-800 bg-[#0A0E17] p-3">
+      <dt className="min-w-0 break-words text-[11px] leading-4 text-slate-500">{label}</dt>
+      <dd data-testid={testId} className="mt-1 break-words font-mono text-sm font-semibold text-slate-100">{value}</dd>
     </div>
   );
 }

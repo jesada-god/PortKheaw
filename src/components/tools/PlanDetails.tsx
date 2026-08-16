@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Tabs } from '@/src/components/ui/Tabs';
-import { InfoHint } from '@/src/components/ui/InfoHint';
 import type { EquityToolContext } from '@/src/lib/tools/handoff';
 import {
   formatPlanMoney,
@@ -33,11 +32,18 @@ import {
  * service to read one from, and the Planner is not allowed to invent a second
  * one — so the row is omitted rather than approximated from something adjacent.
  *
- * **The position sizing this tool shipped with.** Entry, budget-or-shares, and
- * the money the plan costs and pays at each exit. It is unchanged, still computed
- * by `evaluateStockPlan`, and still fed by the portfolio handoff. It moved down
- * here because it answers a different question from the four above — how big,
- * rather than whether — and a first screen that asked both asked too much.
+ * **The position sizing this tool shipped with.** Budget-or-shares, and the money
+ * the plan costs and pays at each exit. It is still computed by
+ * `evaluateStockPlan`, and still fed by the portfolio handoff. It stays down here
+ * because it answers a different question from the four above — how big, rather
+ * than whether — and a first screen that asked both asked too much.
+ *
+ * The entry price it sizes from is asked for on the form now rather than here:
+ * ผลตอบแทนจำลอง is measured from it too, and one number two screens depend on
+ * cannot live behind a disclosure. It is the same state, so the money below is
+ * still priced from the reader's own entry and never from the baseline. So is the
+ * budget: typing an amount here and typing it in จำนวนเงินที่ต้องการลงทุน above
+ * are the same act, and there is no second amount that can disagree with it.
  */
 
 interface PivotLevels {
@@ -56,14 +62,12 @@ const SIZING_LABEL: Readonly<Record<StockPlanSizingMode, string>> = {
 };
 
 export function PlanDetails({
-  symbol, currency, horizonDate, entryDraft, onEntryChange,
+  symbol, currency, horizonDate,
   sizingMode, onSizingModeChange, sizeDraft, onSizeChange, evaluation, holding,
 }: {
   symbol: string;
   currency: string;
   horizonDate: string | null;
-  entryDraft: string;
-  onEntryChange: (value: string) => void;
   sizingMode: StockPlanSizingMode;
   onSizingModeChange: (mode: StockPlanSizingMode) => void;
   sizeDraft: string;
@@ -154,31 +158,12 @@ export function PlanDetails({
           <div className="min-w-0">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">ขนาดเงินลงทุน</h4>
             <p className="mt-1 break-words text-[11px] leading-5 text-slate-500">
-              ถ้าอยากรู้ว่าแผนนี้คิดเป็นเงินเท่าไร ใส่จุดเข้าที่ตั้งใจและขนาดที่จะลง
-              ส่วนนี้คิดจากจุดเข้าที่คุณกรอกเอง ไม่ใช่ราคาปัจจุบัน
+              ขนาดของแผนนี้ คิดจากราคาเข้าที่คุณกรอกไว้ด้านบน ไม่ใช่ราคาปัจจุบัน
+              จะระบุเป็นเงินหรือเป็นจำนวนหุ้นก็ได้
             </p>
 
-            <div className="mt-3 min-w-0 sm:max-w-xs">
-              <label className="block min-w-0" htmlFor="stock-planner-entry">
-                <span className="flex items-center gap-1 text-sm font-medium text-slate-200">
-                  <span className="min-w-0 break-words">จุดเข้าที่ตั้งใจ (Entry)</span>
-                  <InfoHint term="planEntry" />
-                </span>
-                <input
-                  id="stock-planner-entry" data-testid="stock-planner-entry"
-                  className="form-input mt-1.5" inputMode="decimal" autoComplete="off"
-                  placeholder={`ราคาต่อหุ้น (${currency})`}
-                  value={entryDraft} onChange={(event) => onEntryChange(event.target.value)}
-                  aria-invalid={issueFor('entry') ? true : undefined}
-                />
-              </label>
-              {issueFor('entry') && (
-                <p role="alert" className="mt-1 break-words text-xs text-amber-300">{issueFor('entry')}</p>
-              )}
-            </div>
-
             <Tabs
-              className="mt-4"
+              className="mt-3"
               tabs={Object.keys(SIZING_TABS)}
               activeTab={SIZING_LABEL[sizingMode]}
               onChange={(tab) => onSizingModeChange(SIZING_TABS[tab] ?? 'budget')}

@@ -205,6 +205,130 @@ describe('Stock Planner workspace', () => {
     expect(container.querySelector('[data-testid="stock-planner-size"]')).not.toBeNull();
   });
 
+  /*
+    ผลตอบแทนจำลอง. The amount is optional, so the first thing that must be true
+    is that a reader who ignores it gets exactly the tool they had before.
+  */
+  it('plans without an amount, and only offers the simulation', async () => {
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await chooseAapl();
+    await statePlan();
+
+    // The plan itself is unaffected by an empty optional box.
+    expect(text('[data-testid="stock-planner-upside"]')).toBe('+10.0%');
+    expect(field('stock-planner-investment').value).toBe('');
+    expect(container.querySelector('[data-testid="stock-planner-simulation"]')).toBeNull();
+    expect(text('[data-testid="stock-planner-simulation-hint"]')).toContain('กรอกจำนวนเงินที่ต้องการลงทุน');
+  });
+
+  /*
+    The money, measured from the reader's own ราคาเข้า. The entry here is 105
+    against a current price of 100 on purpose: every figure below is wrong by a
+    visible amount if the simulation ever measures from the baseline instead.
+
+    $1,000 ÷ $105 = 9 whole shares, $945 committed.
+      profit = 9 × (110 − 105) = +$45.00, and 5/105 = +4.8%
+      loss   = 9 × (96 − 105)  = −$81.00, and 9/105 = −8.6%
+      R : R  = 5 ÷ 9 = 1 : 0.6
+  */
+  it('turns an amount into shares, profit and loss priced from the entry', async () => {
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await chooseAapl();
+    await statePlan();
+
+    await act(async () => {
+      type(field('stock-planner-entry'), '105');
+      type(field('stock-planner-investment'), '1000');
+    });
+    await settle();
+
+    expect(text('[data-testid="stock-planner-sim-investment"]')).toBe('$1,000.00');
+    expect(text('[data-testid="stock-planner-sim-entry"]')).toBe('$105.00');
+    expect(text('[data-testid="stock-planner-sim-shares"]')).toBe('9 หุ้น');
+    expect(text('[data-testid="stock-planner-sim-cost"]')).toBe('$945.00');
+    expect(text('[data-testid="stock-planner-sim-target"]')).toBe('$110.00');
+    expect(text('[data-testid="stock-planner-sim-invalidation"]')).toBe('$96.00');
+
+    // Profit positive, loss negative, each with its percentage of the money committed.
+    expect(text('[data-testid="stock-planner-sim-profit"]')).toBe('+$45.00 +4.8%');
+    expect(text('[data-testid="stock-planner-sim-loss"]')).toBe('-$81.00 -8.6%');
+    // The ratio the shipped planner already computes — entry-based, like the money.
+    expect(text('[data-testid="stock-planner-sim-reward-risk"]')).toBe('1 : 0.6');
+
+    // A simulation, and it says so.
+    expect(text('[data-testid="stock-planner-sim-note"]')).toContain('ไม่ใช่การรับประกันผลตอบแทน');
+    // Typing an amount is not a change to the plan, so the analysis stays on screen.
+    expect(container.querySelector('[data-testid="stock-planner-result"]')).not.toBeNull();
+  });
+
+  /* With the entry left as the price the tool filled in: $1,000 buys 10 at $100. */
+  it('prices the simulation from the entry the tool prefilled', async () => {
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await chooseAapl();
+    await statePlan();
+
+    await act(async () => { type(field('stock-planner-investment'), '1000'); });
+    await settle();
+
+    expect(field('stock-planner-entry').value).toBe('100');
+    expect(text('[data-testid="stock-planner-sim-shares"]')).toBe('10 หุ้น');
+    expect(text('[data-testid="stock-planner-sim-profit"]')).toBe('+$100.00 +10.0%');
+    expect(text('[data-testid="stock-planner-sim-loss"]')).toBe('-$40.00 -4.0%');
+  });
+
+  /*
+    An amount the plan cannot be built from is answered with a placeholder and a
+    reason, never with a number that had to be invented to fill the row.
+  */
+  it('refuses to force a figure when the plan cannot carry the amount', async () => {
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await chooseAapl();
+    await statePlan();
+
+    await act(async () => { type(field('stock-planner-investment'), '40'); });
+    await settle();
+
+    expect(text('[data-testid="stock-planner-sim-shares"]')).toBe('—');
+    expect(text('[data-testid="stock-planner-sim-profit"]')).toBe('—');
+    expect(text('[data-testid="stock-planner-sim-loss"]')).toBe('—');
+    expect(text('[data-testid="stock-planner-sim-blocked"]')).toContain('ยังซื้อได้ไม่ถึง 1 หุ้น');
+
+    // And with no entry price there is nothing to divide by, so nothing is shown.
+    await act(async () => {
+      type(field('stock-planner-entry'), '');
+      type(field('stock-planner-investment'), '1000');
+    });
+    await settle();
+    expect(text('[data-testid="stock-planner-sim-shares"]')).toBe('—');
+    expect(text('[data-testid="stock-planner-sim-cost"]')).toBe('—');
+    expect(text('[data-testid="stock-planner-sim-reward-risk"]')).toBe('—');
+  });
+
+  /*
+    The line this feature must not cross. The amount is a simulation input: it
+    reaches no portfolio, no ledger and no saved plan.
+  */
+  it('never sends the simulated amount anywhere', async () => {
+    await act(async () => { root.render(<StockPlannerWorkspace />); });
+    await chooseAapl();
+    await statePlan();
+
+    await act(async () => { type(field('stock-planner-investment'), '1000'); });
+    await settle();
+    await click('stock-planner-save');
+    await settle();
+
+    const create = posted.find((entry) => entry.url.endsWith('/api/stock-plans'));
+    expect(create!.body).toEqual({
+      symbol: 'AAPL', baselinePrice: 100, targetPrice: 110, invalidationPrice: 96,
+      horizonDate: '2026-11-14',
+    });
+    // Nothing was written anywhere else — no transaction, no position, no holding.
+    const writes = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls
+      .filter(([, init]) => (init?.method ?? 'GET') !== 'GET');
+    expect(writes.every(([url]) => String(url).includes('/api/stock-plans'))).toBe(true);
+  });
+
   it('saves a plan carrying the baseline exactly once, on create', async () => {
     await act(async () => { root.render(<StockPlannerWorkspace />); });
     await chooseAapl();
