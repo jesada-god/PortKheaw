@@ -6,6 +6,7 @@ import type { WatchlistQuote } from '@/src/lib/watchlist/types';
 import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { loadOverviewPrice, mapWithConcurrency } from '@/src/lib/overview/service';
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 
 const unavailable: WatchlistQuote = {
   quote: null,
@@ -16,6 +17,7 @@ export default async function WatchlistPage() {
   const client = await createClient();
   if (!client) return null;
   const watchlist = await new WatchlistRepository(client).getDefault();
+  void recordBetaFunnelEvent({ event: 'feature_used', featureKey: 'watchlist' }).catch(() => {});
   const metadata = await getInstrumentPresentationMetadata(
     watchlist.items.map((item) => item.symbol),
   );

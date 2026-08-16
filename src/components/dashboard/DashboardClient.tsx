@@ -41,7 +41,10 @@ import {
   type OverviewSectionValue,
   type RetriableOverviewSection,
 } from '@/src/lib/overview/client-state';
+import { LandingFunnel } from '@/src/components/analytics/LandingFunnel';
+import { OnboardingCard } from '@/src/components/onboarding/OnboardingCard';
 import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
+import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -892,7 +895,18 @@ function BreadthSection({
   );
 }
 
-export function DashboardClient({ data }: { data: OverviewDashboardData }) {
+export function DashboardClient({
+  data,
+  onboarding = { kind: 'none' },
+}: {
+  data: OverviewDashboardData;
+  /**
+   * Resolved on the server from the account's own preference row. A separate
+   * prop rather than a field on the dashboard payload, because it describes the
+   * reader rather than the market and no section retry ever refreshes it.
+   */
+  onboarding?: OnboardingView;
+}) {
   const [viewState, setViewState] = useState(() => ({ source: data, value: data }));
   const view = viewState.source === data ? viewState.value : data;
   const [retrying, setRetrying] = useState<Partial<Record<RetriableOverviewSection, boolean>>>({});
@@ -966,7 +980,14 @@ export function DashboardClient({ data }: { data: OverviewDashboardData }) {
       <Header title="ภาพรวม" subtitle="พอร์ต ตลาด อุตสาหกรรม และข่าวสำคัญ" />
       <main className="mx-auto w-full max-w-[1440px] space-y-5 p-3 sm:p-5 lg:p-6">
         <p className="sr-only" role="status" aria-live="polite">{retryNotice}</p>
-        {!view.portfolio.authenticated && <PublicValueProposition />}
+        {!view.portfolio.authenticated && <><LandingFunnel /><PublicValueProposition /></>}
+
+        {/*
+          Above the portfolio, and only ever once: a reader who has answered, or
+          waved it away, or finished the one hint, never sees it again on any
+          device — the answer lives on their account, not in this browser.
+        */}
+        <OnboardingCard view={onboarding} />
 
         {/*
           The reading order is the order the questions are asked in: what is

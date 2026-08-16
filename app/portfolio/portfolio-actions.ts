@@ -6,6 +6,7 @@ import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import type { PortfolioResetOutcome } from '@/src/lib/portfolio/types';
 import { createClient } from '@/src/lib/supabase/server';
 import { entitlementFailure } from '@/src/lib/subscription/entitlement-errors';
+import { recordBetaFunnelEventSafely } from '@/src/lib/beta/beta-server';
 import type { PortfolioActionResult } from './actions';
 import {
   DEFAULT_TRANSACTION_TIME_ZONE,
@@ -53,6 +54,12 @@ export async function createPortfolioAction(raw: unknown): Promise<PortfolioActi
   if (!repo) return { ok: false, code: 'unauthorized', message: 'กรุณาเข้าสู่ระบบอีกครั้ง' };
   try {
     await repo.createPortfolio(input.data.name, input.data.type);
+    /*
+      One telemetry row, after the portfolio exists and never instead of it. The
+      event carries the portfolio KIND and no name, no value and no identifier —
+      what is being measured is whether people build portfolios at all.
+    */
+    recordBetaFunnelEventSafely({ event: 'portfolio_created', featureKey: input.data.type.toLowerCase() });
     refreshPortfolio();
     return { ok: true };
   } catch (error) {

@@ -37,6 +37,13 @@ export async function recordClientFunnelEventAction(
   event: string,
   planKey?: string | null,
   featureKey?: string | null,
+  /**
+   * Distinguishes one signed-out browser's event from another's, since there is
+   * no account to key on. It is sanitized to a short opaque segment before it
+   * reaches the dedupe key and is never stored in a column of its own — it
+   * exists so a landing count is a count of visits rather than of days.
+   */
+  anonymousRef?: string | null,
 ): Promise<void> {
   if (!isClientRecordableEventKey(event)) return;
 
@@ -52,7 +59,7 @@ export async function recordClientFunnelEventAction(
     });
     if (!bound.allowed) return;
 
-    await recordBetaFunnelEvent({ event, planKey, featureKey });
+    await recordBetaFunnelEvent({ event, planKey, featureKey, anonymousRef });
   } catch {
     // Telemetry never reports its own failure to a browser.
   }

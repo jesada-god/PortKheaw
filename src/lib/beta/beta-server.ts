@@ -126,3 +126,23 @@ export async function recordBetaFunnelEvent(
     return 'skipped';
   }
 }
+
+/**
+ * Fire-and-forget telemetry, for callers on a path that must not fail.
+ *
+ * `recordBetaFunnelEvent` promises never to reject, but a promise-level promise
+ * is not enough for code inside a `try` that turns any throw into a refusal the
+ * reader sees: a synchronous fault — a module that did not load, a stubbed
+ * dependency that is not there — would arrive before there is a promise to
+ * attach a handler to. This swallows both, so recording that somebody started a
+ * trial can never be the reason they are told they could not.
+ */
+export function recordBetaFunnelEventSafely(
+  input: Omit<BetaFunnelEventInput, 'localDate'> & { localDate?: string },
+): void {
+  try {
+    void recordBetaFunnelEvent(input).catch(() => {});
+  } catch {
+    // Telemetry is never worth the request it rode in on.
+  }
+}

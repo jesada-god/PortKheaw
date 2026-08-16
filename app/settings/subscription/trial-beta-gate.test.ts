@@ -42,6 +42,9 @@ vi.mock('@/src/lib/subscription/revalidate-entitlements', () => ({
 }));
 vi.mock('@/src/lib/beta/beta-server', () => ({
   resolveBetaAccessForRequest: mocks.resolveBetaAccessForRequest,
+  // The action records one funnel row on success. Stubbed rather than left
+  // undefined, so this file asserts the trial rule and not the telemetry.
+  recordBetaFunnelEventSafely: vi.fn(),
 }));
 /*
  * Only the store is replaced, so the identity *rule* — which digests are

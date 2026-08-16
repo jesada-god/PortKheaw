@@ -50,6 +50,7 @@ describe('every operator route is gated on the server', () => {
       'app/admin/page.tsx',
       'app/admin/refunds/[id]/page.tsx',
       'app/admin/refunds/page.tsx',
+      'app/admin/reliability/page.tsx',
       'app/admin/security/page.tsx',
       'app/admin/support/[id]/page.tsx',
       'app/admin/support/page.tsx',
@@ -313,10 +314,20 @@ describe('the rollout never opens itself', () => {
 });
 
 describe('the funnel stores nothing personal', () => {
-  it('accepts exactly the ten approved keys, in the schema itself', () => {
-    const constraint = migration.slice(
-      migration.indexOf('beta_funnel_events_key_check'),
-      migration.indexOf('beta_funnel_events_stage_check'),
+  /*
+    The constraint moved to a later migration when product usage joined the
+    funnel, so this reads whichever migration currently defines it rather than
+    the one that first created the table — otherwise the assertion would quietly
+    describe a constraint the database no longer has.
+  */
+  it('accepts exactly the approved keys, in the schema itself', () => {
+    const productAnalytics = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/202608160002_product_analytics_and_onboarding.sql'),
+      'utf8',
+    );
+    const constraint = productAnalytics.slice(
+      productAnalytics.indexOf('beta_funnel_events_key_check check'),
+      productAnalytics.indexOf('-- The routine repeats the list'),
     );
     for (const key of betaFunnelEventKeys) {
       expect(constraint).toContain(`'${key}'`);

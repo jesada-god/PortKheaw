@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { recordBetaFunnelEventSafely } from '@/src/lib/beta/beta-server';
 import {
   isAdminRequiredError,
   setAdminAccessPreview,
@@ -101,6 +102,12 @@ export async function startEliteTrialAction(): Promise<StartTrialResult> {
     const grant = await claimAndStartEliteTrial(eligibility.userId, eligibility.identities);
     for (const path of ENTITLEMENT_PATHS) revalidatePath(path);
     record('trial_started');
+    /*
+      The same fact, in the funnel rather than the log: `record` writes a server
+      log line an operator reads during an incident, and this writes one deduped
+      row an operator counts. Neither carries the identities or the grant.
+    */
+    recordBetaFunnelEventSafely({ event: 'trial_started' });
     return {
       ok: true,
       trialEndsAt: grant.trialEndsAt ?? '',

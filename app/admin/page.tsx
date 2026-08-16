@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle, ChevronRight, ExternalLink, FlaskConical, LifeBuoy, ReceiptText, Search, Wallet,
-  Wrench,
+  Activity, AlertTriangle, ChevronRight, ExternalLink, FlaskConical, LifeBuoy, ReceiptText, Search,
+  Wallet, Wrench,
 } from 'lucide-react';
 import Header from '@/src/components/layout/Header';
 import { StatCard } from '@/src/components/admin/StatCard';
@@ -81,6 +81,13 @@ const DESTINATIONS = [
     icon: FlaskConical,
     title: 'การเปิดใช้งานแบบควบคุม',
     description: 'สถานะรอบทดลอง โควตา รายชื่อผู้ได้รับเชิญ และรายงาน Funnel',
+    countKey: 'none',
+  },
+  {
+    href: '/admin/reliability',
+    icon: Activity,
+    title: 'ความพร้อมของระบบ',
+    description: 'สถานะแอป ข้อมูลตลาด งานเบื้องหลัง การชำระเงิน และเวอร์ชันที่ deploy อยู่',
     countKey: 'none',
   },
   {

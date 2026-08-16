@@ -22,6 +22,7 @@ import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
+import { resolveOnboardingView, type OnboardingView } from '@/src/lib/onboarding/onboarding';
 import type { PortfolioGoal, PortfolioRecord } from '@/src/lib/portfolio/types';
 import { after } from 'next/server';
 
@@ -50,13 +51,24 @@ export default async function Home() {
   let portfolios: PortfolioRecord[] = [];
   let aggregateGoal: PortfolioGoal = { targetValueUsd: null, targetDate: null };
   let watchlistSymbols: string[] = [];
+  let onboarding: OnboardingView = { kind: 'none' };
 
   if (client && user) {
     const portfolioRepository = new PortfolioRepository(client);
-    const [portfolioResult, goalResult, watchlistResult] = await Promise.allSettled([
+    const [portfolioResult, goalResult, watchlistResult, onboardingResult] = await Promise.allSettled([
       portfolioRepository.getAll(),
       portfolioRepository.getAggregateGoal(),
       new WatchlistRepository(client).getDefault(),
+      /*
+       * Onboarding state lives on the preference row this account already has —
+       * four nullable columns, read here in one select. A read that fails leaves
+       * the view at `none`: nobody should meet a first-run question because a
+       * query blipped.
+       */
+      client.from('user_settings')
+        .select('onboarding_path, onboarding_chosen_at, onboarding_dismissed_at, onboarding_hint_done_at')
+        .eq('user_id', user.id)
+        .maybeSingle(),
     ]);
     portfolios = portfolioResult.status === 'fulfilled'
       ? portfolioResult.value
@@ -65,6 +77,41 @@ export default async function Home() {
     watchlistSymbols = watchlistResult.status === 'fulfilled'
       ? watchlistResult.value.items.map((item) => item.symbol)
       : [];
+
+    /*
+     * A read that FAILED and a row that does not exist are deliberately
+     * different answers here. No row means a genuinely new account, which is
+     * the one state that should meet the question; a failed read — a blipped
+     * query, or a deployment that landed ahead of its migration — means the
+     * product knows nothing, and the safe thing to know nothing about is
+     * whether somebody has already been onboarded. Collapsing the two would
+     * show every existing reader a first-run question they have already
+     * answered.
+     */
+    const readable = onboardingResult.status === 'fulfilled' && !onboardingResult.value.error;
+    const settings = readable ? onboardingResult.value.data : null;
+    const chosenPath = settings?.onboarding_path ?? null;
+    /*
+     * Whether the hint's job is already done, answered from state this render
+     * already holds. Only two of the four paths have an observable outcome; the
+     * other two are dismissed by the reader, which is why the hint carries its
+     * own dismiss control.
+     */
+    const achieved = chosenPath === 'watchlist'
+      ? watchlistSymbols.length > 0
+      : chosenPath === 'portfolio'
+        ? portfolios.some((portfolio) => portfolio.transactions.length > 0)
+        : undefined;
+    onboarding = !readable ? { kind: 'none' } : resolveOnboardingView({
+      state: settings === null ? null : {
+        path: settings.onboarding_path,
+        chosenAt: settings.onboarding_chosen_at,
+        dismissedAt: settings.onboarding_dismissed_at,
+        hintDoneAt: settings.onboarding_hint_done_at,
+      },
+      authenticated: true,
+      achieved,
+    });
   }
 
   const portfolioSymbols = [...new Set(portfolios.flatMap((portfolio) => portfolio.transactions)
@@ -191,6 +238,7 @@ export default async function Home() {
 
   return (
     <DashboardClient
+      onboarding={onboarding}
       data={{
         generatedAt,
         serviceStatus,

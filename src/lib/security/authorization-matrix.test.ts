@@ -81,7 +81,10 @@ describe('anonymous is not a user', () => {
      * of these renders something belonging to one account.
      */
     expect([...PROTECTED_PATHS]).toEqual([
-      '/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/admin',
+      '/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile',
+      // `/upcoming` reads the account's own expiries and price alerts, so it
+      // belongs to the same set as the pages those facts come from.
+      '/upcoming', '/admin',
     ]);
     for (const path of [...PROTECTED_PATHS, '/admin/security', '/portfolio/anything', '/settings/subscription']) {
       expect(`${path}: ${isProtectedPath(path)}`).toBe(`${path}: true`);

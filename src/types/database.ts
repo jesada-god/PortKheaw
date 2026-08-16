@@ -62,7 +62,11 @@ export type BetaAccessReason =
 export type BetaFunnelEventKey =
   | 'signup_completed' | 'subscription_viewed' | 'checkout_started' | 'checkout_returned'
   | 'checkout_canceled' | 'payment_succeeded' | 'paywall_blocked'
-  | 'promptpay_renewal_help_viewed' | 'promptpay_renewal_paid' | 'feature_used_before_purchase';
+  | 'promptpay_renewal_help_viewed' | 'promptpay_renewal_paid' | 'feature_used_before_purchase'
+  // Product usage, on the same table and under the same rules as the rollout
+  // funnel above it — see `beta_funnel_events_key_check`.
+  | 'landing_viewed' | 'trial_started' | 'portfolio_created' | 'stock_detail_viewed'
+  | 'tool_opened' | 'feature_used' | 'onboarding_path_chosen';
 export type SchedulerStatus = 'ok' | 'lagging' | 'stale' | 'unknown';
 /** The only image types an attachment may be. Nothing executable is storable. */
 export type SupportAttachmentMimeType =
@@ -118,6 +122,16 @@ export interface Database {
           timezone: string;
           aggregate_target_value_usd: string | null;
           aggregate_target_date: string | null;
+          /**
+           * Progressive onboarding, kept on the preference row rather than in a
+           * table of its own. A null path means "not asked yet", which is the
+           * only state a new account — or one that predates the feature — can be
+           * in. All four are cleared with the account, because the row is.
+           */
+          onboarding_path: string | null;
+          onboarding_chosen_at: string | null;
+          onboarding_dismissed_at: string | null;
+          onboarding_hint_done_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -137,6 +151,10 @@ export interface Database {
           timezone?: string;
           aggregate_target_value_usd?: string | null;
           aggregate_target_date?: string | null;
+          onboarding_path?: string | null;
+          onboarding_chosen_at?: string | null;
+          onboarding_dismissed_at?: string | null;
+          onboarding_hint_done_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -155,6 +173,10 @@ export interface Database {
           timezone?: string;
           aggregate_target_value_usd?: string | null;
           aggregate_target_date?: string | null;
+          onboarding_path?: string | null;
+          onboarding_chosen_at?: string | null;
+          onboarding_dismissed_at?: string | null;
+          onboarding_hint_done_at?: string | null;
           updated_at?: string;
         };
         Relationships: [];

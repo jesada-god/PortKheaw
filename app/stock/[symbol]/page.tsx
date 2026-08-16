@@ -6,6 +6,7 @@ import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import { StockDetailClient } from '@/src/components/stock/StockDetailClient';
 import { loadEntitledMarketSignal } from '@/src/lib/analytics/market-signal/entitled-service';
 import { loadEarningsSchedule } from '@/src/lib/analytics/earnings/service';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-snapshot';
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
@@ -68,6 +69,14 @@ export default async function StockDetailPage({
   }
   const snapshot = marketResult.value;
   const canonicalSymbol = snapshot.instrument.canonicalSymbol;
+
+  /*
+   * "Did anybody read about a stock today?" — and deliberately not "which one".
+   * The event carries no symbol: the product question is whether this surface is
+   * used, and recording what a reader is interested in would answer a question
+   * nobody asked with data nobody needs.
+   */
+  void recordBetaFunnelEvent({ event: 'stock_detail_viewed' }).catch(() => {});
 
   return (
     <StockDetailClient

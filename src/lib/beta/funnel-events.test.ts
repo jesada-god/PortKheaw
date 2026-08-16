@@ -10,8 +10,14 @@ import {
  */
 
 describe('the approved key list is closed', () => {
-  it('holds exactly the ten events the rollout measures', () => {
+  /*
+    The list grew when product usage joined the rollout funnel, and it is
+    asserted exactly rather than loosely for the same reason it always was: a key
+    added without a line here is a key nobody decided to collect.
+  */
+  it('holds exactly the events this product measures, and no others', () => {
     expect([...betaFunnelEventKeys]).toEqual([
+      // The rollout funnel: did somebody sign up, and did they pay?
       'signup_completed',
       'subscription_viewed',
       'checkout_started',
@@ -22,6 +28,14 @@ describe('the approved key list is closed', () => {
       'promptpay_renewal_help_viewed',
       'promptpay_renewal_paid',
       'feature_used_before_purchase',
+      // Product usage: which parts of the product does anybody actually use?
+      'landing_viewed',
+      'trial_started',
+      'portfolio_created',
+      'stock_detail_viewed',
+      'tool_opened',
+      'feature_used',
+      'onboarding_path_chosen',
     ]);
   });
 

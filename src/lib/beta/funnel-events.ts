@@ -23,6 +23,20 @@ export const betaFunnelEventKeys = [
   'promptpay_renewal_help_viewed',
   'promptpay_renewal_paid',
   'feature_used_before_purchase',
+  /*
+   * Product usage, added to the same funnel rather than beside it. The rollout
+   * funnel answered "did they pay?"; these answer "which parts of the product
+   * does anybody actually use?". Sharing the table means sharing its rules —
+   * closed key list, no free text, deduped by construction, cleared with the
+   * account — so there is no second telemetry system to keep honest.
+   */
+  'landing_viewed',
+  'trial_started',
+  'portfolio_created',
+  'stock_detail_viewed',
+  'tool_opened',
+  'feature_used',
+  'onboarding_path_chosen',
 ] as const;
 export type BetaFunnelEventKey = typeof betaFunnelEventKeys[number];
 
@@ -52,6 +66,12 @@ export const clientRecordableEventKeys: readonly BetaFunnelEventKey[] = [
   'paywall_blocked',
   'promptpay_renewal_help_viewed',
   'feature_used_before_purchase',
+  /*
+   * A landing view happens in a browser and nowhere else — nobody is signed in
+   * when it happens, so no server render can attribute it. It grants nothing:
+   * the routine behind it can only insert one telemetry row.
+   */
+  'landing_viewed',
 ];
 
 export function isClientRecordableEventKey(value: unknown): value is BetaFunnelEventKey {
@@ -81,6 +101,18 @@ export const BETA_FUNNEL_DEDUPE: Readonly<Record<BetaFunnelEventKey, BetaFunnelD
   promptpay_renewal_help_viewed: 'account_day',
   promptpay_renewal_paid: 'account_day',
   feature_used_before_purchase: 'account_subject_day',
+  landing_viewed: 'account_day',
+  trial_started: 'account',
+  portfolio_created: 'account_day',
+  /*
+   * Per day, not per symbol. "Did they read about a stock today?" is the whole
+   * question; recording which one would put a reader's interests in a telemetry
+   * table to answer a question nobody asked.
+   */
+  stock_detail_viewed: 'account_day',
+  tool_opened: 'account_subject_day',
+  feature_used: 'account_subject_day',
+  onboarding_path_chosen: 'account',
 };
 
 export type BetaPaymentRail = 'card' | 'promptpay';

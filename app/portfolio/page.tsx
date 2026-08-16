@@ -12,6 +12,7 @@ import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pip
 import { optionPositionTitle } from '@/src/lib/portfolio/options/presentation';
 import { optionMarketDate } from '@/src/lib/portfolio/options/settlement';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 
 export default async function PortfolioPage() {
   const client = await createClient();
@@ -39,6 +40,8 @@ export default async function PortfolioPage() {
     portfolioRepository.getRecentlyDeleted(),
   ]);
   const effectiveTier = entitlement.effectiveAccessTier;
+  // Which surfaces are genuinely used, once per account per day, per surface.
+  void recordBetaFunnelEvent({ event: 'feature_used', featureKey: 'portfolio' }).catch(() => {});
   const targetRepository = new OptionTargetRepository(client);
   const [targets, fx] = await Promise.all([
     targetRepository.getAll(),

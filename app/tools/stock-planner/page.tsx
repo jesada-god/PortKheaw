@@ -2,6 +2,7 @@ import { Target } from 'lucide-react';
 import Header from '@/src/components/layout/Header';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { StockPlannerWorkspace } from '@/src/components/tools/StockPlannerWorkspace';
+import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 import { hasCapability } from '@/src/lib/subscription/capabilities';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 import { upgradeCopy } from '@/src/lib/subscription/upgrade-copy';
@@ -26,6 +27,9 @@ const CAPABILITY = 'planner.stock' as const;
 export default async function StockPlannerPage() {
   const entitlement = await resolvePageEntitlement();
   if (hasCapability(entitlement.effectiveAccessTier, CAPABILITY)) {
+    // Recorded inside the entitled branch: a refused reader opened the paywall,
+    // not the tool, and the funnel already has `paywall_blocked` for that.
+    void recordBetaFunnelEvent({ event: 'tool_opened', featureKey: 'stock-planner' }).catch(() => {});
     return <StockPlannerWorkspace />;
   }
 
