@@ -145,7 +145,7 @@ function PublicValueProposition() {
   return (
     <section
       aria-labelledby="portkheaw-intro"
-      className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)] sm:p-5"
+      className="panel p-4 sm:p-5"
     >
       <h2 id="portkheaw-intro" className="text-lg font-bold leading-snug text-[var(--text)] sm:text-xl">
         ลงทุนให้เห็นภาพมากขึ้น ไม่ต้องเปิดหลายแอป
@@ -155,7 +155,7 @@ function PublicValueProposition() {
       </p>
       <ul className="mt-3 grid gap-1.5 sm:grid-cols-3 sm:gap-2">
         {PUBLIC_VALUE_POINTS.map(({ icon: Icon, title, detail }) => (
-          <li key={title} className="flex items-start gap-2.5 rounded-xl bg-[var(--surface-elevated)] p-2.5 sm:p-3">
+          <li key={title} className="inset flex items-start gap-2.5 p-2.5 sm:p-3">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] sm:h-8 sm:w-8">
               <Icon size={16} aria-hidden="true" />
             </span>
@@ -451,7 +451,7 @@ function PortfolioCard({ data, usdThbRate }: {
 
   if (!data.authenticated || !summary || !goalCard) {
     return (
-      <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow)] sm:p-5">
+      <section className="panel-hero p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
             <WalletCards aria-hidden="true" />

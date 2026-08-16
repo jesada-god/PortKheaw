@@ -73,7 +73,7 @@ export function AccountingDetails({ summary, open, onToggle, money, signed, note
       from one ledger belong to one object, and the rules say so while
       costing less vertical room than the gaps they replace.
     */}
-    {open && <dl className="data-strip data-strip--4 min-w-0 border-t-[var(--border)]">
+    {open && <dl className="data-strip data-strip--4 min-w-0">
       <Figure label="เงินสด" value={money(summary.cashBalance)} />
       <Figure label="เงินฝากสุทธิ (Net deposits)" value={money(summary.netDepositedCapital)} />
       <Figure label="มูลค่าหุ้น" value={money(summary.equityMarketValue)} />

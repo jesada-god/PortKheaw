@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export default async function ProfilePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  if (!supabase) return <><Header title="โปรไฟล์ (Profile)" /><div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div></>;
+  if (!supabase) return <><Header title="โปรไฟล์" /><div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div></>;
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/sign-in?next=/profile');
@@ -52,7 +52,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
 
   return (
     <div>
-      <Header title="โปรไฟล์ (Profile)" />
+      <Header title="โปรไฟล์" />
       <div className="mx-auto min-w-0 max-w-2xl space-y-6 p-4 md:p-8">
         <AuthMessage error={error} />
 

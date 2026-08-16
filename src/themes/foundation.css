@@ -162,8 +162,14 @@ html {
     margin-block-end: 0.875rem;
   }
 
+  /*
+   * `0 1 auto`, never `none`. The name must not GROW — the rule beside it is
+   * what fills spare width — but it does have to SHRINK, or a long Thai heading
+   * such as "ภาพรวมแรงซื้อแรงขาย" holds its max-content width at 320px and
+   * pushes the row off the screen with `truncate` never engaging.
+   */
   .section-head__name {
-    flex: none;
+    flex: 0 1 auto;
     min-width: 0;
     font-size: 0.9375rem;
     font-weight: 700;
@@ -266,15 +272,24 @@ html {
    * the cells, so four related metrics read as one object with four facets
    * rather than as four independent cards that happen to sit in a row.
    * ====================================================================== */
+  /*
+   * A hairline rectangle, deliberately square-cornered: a band of figures is a
+   * statement, and a statement is ruled, not rounded. This is also what keeps
+   * it from reading as one more card — the shape says table.
+   *
+   * The frame is load-bearing, not decoration. Each cell draws its own right
+   * and bottom divider (below), and the outermost of those land exactly on this
+   * border's 1px band in the same colour, so they merge into it instead of
+   * leaving a stray tick past the last column or a doubled rule under the last
+   * row. That is what lets this work with NO `overflow: hidden` — and it has to
+   * work without it, because the stock-detail metric cells contain an
+   * `ⓘ` popover that is `position: absolute` on desktop and would be clipped
+   * out of existence by a clipping ancestor.
+   */
   .data-strip {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    /* Top and bottom rules make the group read as one band of data. The
-       interior dividers are drawn by the cells (below), not here. */
-    border-block: 1px solid var(--hairline);
-    /* Load-bearing: this is what trims the outermost cell shadows, so the band
-       has no doubled rule along its right edge or under its last row. */
-    overflow: hidden;
+    border: 1px solid var(--hairline);
   }
 
   @media (min-width: 640px) {
@@ -317,11 +332,13 @@ html {
   /*
    * Full width on a handset, inset from `sm`.
    *
-   * A chart is the one element that is worth more the wider it is, and on a
-   * 320px screen the page gutter is costing it a fifth of its plot area. This
-   * lets it reach both edges there and settle back into the page's own margins
-   * as soon as there is width to spare. Written as a class because the negative
-   * margin has to match `--page-gutter`, which is itself responsive.
+   * For the two things that genuinely want the whole screen on a phone: a
+   * horizontally scrolled rail, which should run off the edge rather than stop
+   * short of it, and a sticky bar, whose tinted background has to reach both
+   * edges or it reads as a floating slab. Written as a class because the
+   * negative margin has to cancel `--page-gutter` exactly, and that gutter is
+   * itself responsive — the hardcoded `-mx-3` it replaces stopped matching the
+   * moment the gutter changed.
    */
   .bleed-mobile {
     margin-inline: calc(var(--page-gutter) * -1);

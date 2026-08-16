@@ -608,8 +608,8 @@ export function StockDetailClient({
             <Star size={20} fill={watched ? 'currentColor' : 'none'} />
           </button>
           <button
-            onClick={() => addToast({ title: 'Alert: Coming Soon', type: 'info' })}
-            aria-label="Alert Coming Soon"
+            onClick={() => addToast({ title: 'แจ้งเตือนราคา — กำลังจะมา', type: 'info' })}
+            aria-label="แจ้งเตือนราคา (ยังไม่เปิดใช้งาน)"
             className="flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)]"
           >
             <Bell size={20} />
@@ -723,7 +723,7 @@ export function StockDetailClient({
               <div className="flex items-start gap-3 rounded-[var(--radius-panel)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-4">
                 <Activity aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-[var(--warning)]" />
                 <div className="min-w-0">
-                <h2 className="text-sm font-bold text-[var(--text)]">AI analysis · Coming Soon</h2>
+                <h2 className="text-sm font-bold text-[var(--text)]">การวิเคราะห์ด้วย AI — กำลังจะมา</h2>
                 <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">ส่วน Options ด้านบนเป็น analytics ตามสูตรจากข้อมูลตลาดจริง ไม่ใช่คำสั่งหรือการรับประกันผลลัพธ์</p>
                 </div>
               </div>
@@ -869,7 +869,7 @@ function ComingSoon({ title }: { title: string }) {
       <div>
         <p className="font-bold text-[var(--text)]">{title}</p>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          Coming Soon · ไม่มีการแสดงข้อมูลจำลอง
+          กำลังจะมา · ไม่มีการแสดงข้อมูลจำลอง
         </p>
       </div>
     </div>
