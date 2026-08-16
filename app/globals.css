@@ -18,6 +18,14 @@
 @import "../src/themes/orchid/dark.css";
 @import "../src/themes/orchid/light.css";
 @import "../src/themes/portkheaw/auth.css";
+/*
+ * The shared design language — radius scale, vertical rhythm, container
+ * weights, section headings and the financial numeral scale. Imported AFTER
+ * every palette so its `color-mix` derivations (the soft status washes, the
+ * hairline) resolve against whichever theme is on the root, and before the
+ * compat layer below, which is still free to override any of it.
+ */
+@import "../src/themes/foundation.css";
 
 @theme inline {
   --color-primary: var(--accent);

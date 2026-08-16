@@ -15,9 +15,9 @@ function EventRow({ event }: { event: UpcomingEvent }) {
     <Link
       href={stockDetailHref(event.symbol)}
       data-testid={`upcoming-event-${event.kind}`}
-      className="flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] px-3 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+      className="inset flex min-h-14 min-w-0 items-center gap-3 px-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
     >
-      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-mark)] bg-[var(--accent-soft)] text-[var(--accent)]">
         <Icon size={17} />
       </span>
       <span className="min-w-0 flex-1 break-words text-sm leading-6 text-[var(--text-secondary)]">{event.text}</span>
@@ -44,14 +44,12 @@ export function UpcomingSection({
 }) {
   const remaining = feed.total - feed.events.length;
   return <section
-    className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5"
+    className="panel-quiet min-w-0"
     data-testid="upcoming-section"
   >
-    <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
-      <h2 className="flex min-w-0 items-center gap-2 text-base font-bold text-[var(--text)] sm:text-lg">
-        <CalendarClock aria-hidden="true" size={19} className="shrink-0 text-[var(--accent)]" />
-        สิ่งที่ควรรู้เร็ว ๆ นี้
-      </h2>
+    <div className="section-head">
+      <h2 className="section-head__name truncate">สิ่งที่ควรรู้เร็ว ๆ นี้</h2>
+      <span aria-hidden="true" className="section-head__rule" />
     </div>
     {feed.events.length === 0
       ? <p className="py-4 text-sm leading-6 text-[var(--text-secondary)]">

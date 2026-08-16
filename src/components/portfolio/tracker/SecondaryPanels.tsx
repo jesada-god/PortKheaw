@@ -31,7 +31,7 @@ export function NavRow({ icon, title, detail, href, onClick, testId }: {
     </span>
     <ChevronRight aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />
   </>;
-  const className = 'flex min-h-16 w-full min-w-0 items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3.5 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]';
+  const className = 'panel flex min-h-16 w-full min-w-0 items-center gap-3 p-3.5 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]';
   if (href) return <Link href={href} className={className} data-testid={testId}>{content}</Link>;
   return <button type="button" onClick={onClick} className={className} data-testid={testId}>{content}</button>;
 }
@@ -52,7 +52,7 @@ export function AccountingDetails({ summary, open, onToggle, money, signed, note
   signed: (value: number | null) => string;
   note?: ReactNode;
 }) {
-  return <section className="min-w-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]" data-testid="portfolio-accounting-details">
+  return <section className="panel min-w-0 overflow-hidden" data-testid="portfolio-accounting-details">
     <button
       type="button"
       aria-expanded={open}
@@ -67,7 +67,13 @@ export function AccountingDetails({ summary, open, onToggle, money, signed, note
         ? <ChevronUp aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />
         : <ChevronDown aria-hidden="true" className="shrink-0 text-[var(--text-muted)]" size={18} />}
     </button>
-    {open && <dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-4 border-t border-[var(--border)] p-3.5 sm:grid-cols-3 lg:grid-cols-4">
+    {/*
+      Accounting, so it is set as accounting: a band of hairline-separated
+      cells rather than a loose grid of label/value pairs. Seven figures
+      from one ledger belong to one object, and the rules say so while
+      costing less vertical room than the gaps they replace.
+    */}
+    {open && <dl className="data-strip data-strip--4 min-w-0">
       <Figure label="เงินสด" value={money(summary.cashBalance)} />
       <Figure label="เงินฝากสุทธิ (Net deposits)" value={money(summary.netDepositedCapital)} />
       <Figure label="มูลค่าหุ้น" value={money(summary.equityMarketValue)} />
@@ -79,15 +85,15 @@ export function AccountingDetails({ summary, open, onToggle, money, signed, note
         value={signed(summary.unrealizedGain)}
         tone={summary.unrealizedGain === null ? 'text-[var(--text-muted)]' : gainColor(summary.unrealizedGain)}
       />
-      {note && <div className="col-span-2 text-xs text-[var(--text-muted)] sm:col-span-3 lg:col-span-4">{note}</div>}
+      {note && <div className="data-strip__cell col-span-2 text-xs leading-5 text-[var(--text-muted)] sm:col-span-3 lg:col-span-4">{note}</div>}
     </dl>}
   </section>;
 }
 
 function Figure({ label, value, tone = 'text-[var(--text)]' }: { label: string; value: string; tone?: string }) {
-  return <div className="min-w-0">
-    <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-    <dd className={`mt-1 break-all font-mono text-sm font-semibold ${tone}`}>{value}</dd>
+  return <div className="data-strip__cell min-w-0">
+    <dt className="figure-label">{label}</dt>
+    <dd className={`figure-data mt-1 break-all ${tone}`}>{value}</dd>
   </div>;
 }
 
@@ -105,7 +111,7 @@ export function SortControl({ value, onChange, options, id }: {
       id={id}
       value={value}
       onChange={(event) => onChange(event.target.value as HoldingSortKey)}
-      className="min-h-10 min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm font-semibold text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+      className="min-h-10 min-w-0 rounded-[var(--radius-control)] border border-[var(--border-strong)] bg-[var(--input-bg)] px-2 text-sm font-semibold text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
     >
       {options.map((option) => <option key={option} value={option}>{HOLDING_SORT_LABELS[option]}</option>)}
     </select>
@@ -127,7 +133,7 @@ export function EmptyAssets({ title, description }: {
   description: string;
 }) {
   return <div
-    className="flex min-w-0 flex-col items-center rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 text-center"
+    className="flex min-w-0 flex-col items-center rounded-[var(--radius-panel)] border border-dashed border-[var(--border-strong)] p-8 text-center"
     data-testid="portfolio-empty-state"
   >
     <Image
@@ -145,8 +151,9 @@ export function EmptyAssets({ title, description }: {
 }
 
 export function SectionHeading({ title, action }: { title: string; action?: ReactNode }) {
-  return <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-    <h3 className="min-w-0 text-sm font-bold uppercase tracking-wider text-[var(--text-muted)]">{title}</h3>
-    {action}
+  return <div className="section-head">
+    <h3 className="section-head__name truncate">{title}</h3>
+    <span aria-hidden="true" className="section-head__rule" />
+    {action && <span className="section-head__action">{action}</span>}
   </div>;
 }
