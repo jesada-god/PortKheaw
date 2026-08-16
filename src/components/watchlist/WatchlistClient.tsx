@@ -281,7 +281,14 @@ export function WatchlistClient({
             </select>
           </label>
         </div>
-        {sortedItems.length === 0 ? <EmptyState icon={Star} title="รายการติดตามยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
+        {/*
+          The one Kheaw on this screen, and only in this state. An untouched
+          watchlist is a beginning — the reader has arrived somewhere they have
+          not used yet — which is exactly the moment the mascot is for. The
+          "no rows matched your filter" case a few lines down deliberately keeps
+          plain text: that is a blank, not a beginning.
+        */}
+        {sortedItems.length === 0 ? <EmptyState mascot icon={Star} title="รายการติดตามยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
           /*
             Denser than the overview's version of the same list, because this is
             the screen somebody opens to compare a dozen symbols rather than to
