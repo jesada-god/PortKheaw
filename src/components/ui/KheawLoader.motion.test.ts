@@ -16,7 +16,25 @@ import {
  * cover are the ones that break silently: a global `*` reset quietly cancelling
  * the grace, or an animation reaching for a property that reflows the page.
  */
-const CSS = readFileSync(resolve('app/globals.css'), 'utf8');
+/*
+ * Newlines normalised at the read, because three of the lookups below are
+ * anchored to a literal `\n`: `rule()` opens on "\n<selector> {", `keyframes()`
+ * closes on "\n}", and the reduced-motion block is sliced from a selector that
+ * spans two lines.
+ *
+ * This repository sets `core.autocrlf=true` and ships no `.gitattributes`, so
+ * git materialises `app/globals.css` with CRLF on a Windows checkout. Against
+ * those bytes each of those `indexOf` calls returns -1, `slice(-1, …)` yields
+ * an empty string, and the reduced-motion assertions fail with the distinctive
+ * "expected '' to contain …" — while the stylesheet itself is entirely correct.
+ * Pre-existing, and confirmed by experiment: `main` fails these same two tests
+ * once the file has been through a checkout, and passes with this one line.
+ *
+ * The stylesheet is not the thing to change here. What this file asserts is
+ * which declarations exist in which rule, and that is a fact about the CSS, not
+ * about the bytes a checkout happened to write between the lines.
+ */
+const CSS = readFileSync(resolve('app/globals.css'), 'utf8').replace(/\r\n/g, '\n');
 
 /** The declarations of a single rule, by exact selector. */
 function rule(selector: string): string {
