@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
-  Activity,
   ArrowDownRight,
   ArrowUpRight,
   Banknote,
@@ -12,8 +11,6 @@ import {
   EyeOff,
   Gauge,
   Info,
-  Landmark,
-  Newspaper,
   PieChart,
   Plus,
   RefreshCw,
@@ -194,22 +191,28 @@ function PublicValueProposition() {
   );
 }
 
+/**
+ * A section announces itself with its name, a hairline running to the right
+ * margin, and whatever control belongs to it parked at the end of that line.
+ *
+ * The accent icon that used to sit in front of every one of these is gone. Five
+ * sections each led by a lime glyph made all five look equally important, and
+ * made the page look assembled from a single part — the icons were decoration
+ * doing a heading's job. A rule is a typographic device rather than a sixth
+ * box, so a section can now announce itself without becoming a card to do it.
+ */
 function SectionTitle({
-  icon: Icon,
   title,
   action,
 }: {
-  icon: typeof Activity;
   title: string;
   action?: React.ReactNode;
 }) {
   return (
-    <div className="mb-4 flex min-w-0 items-center justify-between gap-3">
-      <div className="flex min-w-0 items-center gap-2">
-        <Icon size={19} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        <h2 className="truncate text-base font-bold text-[var(--text)] sm:text-lg">{title}</h2>
-      </div>
-      {action}
+    <div className="section-head">
+      <h2 className="section-head__name truncate">{title}</h2>
+      <span aria-hidden="true" className="section-head__rule" />
+      {action && <span className="section-head__action">{action}</span>}
     </div>
   );
 }
@@ -482,16 +485,16 @@ function PortfolioCard({ data, usdThbRate }: {
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow)]">
+    <section className="panel-hero overflow-hidden">
       <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1.2fr_1fr]">
         <div>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs font-medium text-[var(--text-muted)]">
+              <p className="figure-label">
                 {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
                 {portfolioName ? ` · ${portfolioName}` : ''}
               </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--text)] sm:text-3xl">
+              <p className="figure-hero mt-1.5 break-all">
                 {visible
                   ? formatMoney(
                     convert(summary.totalValue ?? coverage?.verifiedValueUsd ?? null),
@@ -526,35 +529,48 @@ function PortfolioCard({ data, usdThbRate }: {
               {visible ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-xs text-[var(--text-muted)]">วันนี้</p>
-              <p className={`mt-1 text-sm font-semibold tabular-nums ${tone(summary.todayChange)}`}>
+          {/*
+            The two figures that rank straight under the total. They were set
+            at `text-sm` — smaller than several captions elsewhere on this
+            card — so the two numbers a reader checks every single morning
+            were the ones the page said least about. They now sit one step
+            below the headline, with the percentage kept quiet underneath.
+          */}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <div className="min-w-0">
+              <p className="figure-label">วันนี้</p>
+              <p className={`figure-lead mt-1 break-all ${tone(summary.todayChange)}`}>
                 {visible ? signed(convert(summary.todayChange)) : SENSITIVE_VALUE_MASK}
               </p>
-              <p className={`text-xs tabular-nums ${tone(summary.todayChangePercent)}`}>
+              <p className={`figure mt-0.5 text-xs ${tone(summary.todayChangePercent)}`}>
                 {visible ? signed(summary.todayChangePercent, '%') : SENSITIVE_VALUE_MASK}
               </p>
             </div>
-            <div>
-              <p className="text-xs text-[var(--text-muted)]">กำไร / ขาดทุนรวม</p>
-              <p className={`mt-1 text-sm font-semibold tabular-nums ${tone(summary.totalGain)}`}>
+            <div className="min-w-0">
+              <p className="figure-label">กำไร / ขาดทุนรวม</p>
+              <p className={`figure-lead mt-1 break-all ${tone(summary.totalGain)}`}>
                 {visible ? signed(convert(summary.totalGain)) : SENSITIVE_VALUE_MASK}
               </p>
-              <p className={`text-xs tabular-nums ${tone(summary.totalGainPercent)}`}>
+              <p className={`figure mt-0.5 text-xs ${tone(summary.totalGainPercent)}`}>
                 {visible ? signed(summary.totalGainPercent, '%') : SENSITIVE_VALUE_MASK}
               </p>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
+          {/*
+            Cash, equities and options: one object with three facets, so they
+            are separated by hairlines rather than by three tinted boxes. The
+            tiles they replace gave a supporting breakdown a surface of its
+            own, which is weight this level of the hierarchy has not earned.
+          */}
+          <div className="data-strip data-strip--3 mt-5 min-[360px]:grid-cols-3">
             {[
               ['เงินสด', summary.cashBalance],
               ['หุ้น', summary.equityMarketValue],
               ['ออปชัน', summary.optionsMarketValue],
             ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-xl bg-[var(--surface-elevated)] p-2">
-                <p className="text-[10px] text-[var(--text-muted)]">{label}</p>
-                <p className="mt-1 text-xs font-semibold tabular-nums text-[var(--text)]">
+              <div key={String(label)} className="data-strip__cell">
+                <p className="figure-label">{label}</p>
+                <p className="figure mt-1 break-all text-xs font-semibold text-[var(--text)]">
                   {visible ? formatMoney(convert(value as number | null), baseCurrency) : SENSITIVE_VALUE_MASK}
                 </p>
               </div>
@@ -572,7 +588,7 @@ function PortfolioCard({ data, usdThbRate }: {
             showBalances={visible}
           />
           {summary.hasMissingPrices && (
-            <p className="mt-2 rounded-lg bg-[var(--warning-soft)] p-2.5 text-xs leading-5 text-[var(--warning)]">
+            <p className="mt-3 rounded-[var(--radius-control)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-2.5 text-xs leading-5 text-[var(--warning)]">
               คำนวณได้ {coverage?.pricedAssets ?? 0} จาก {coverage?.totalAssets ?? 0} สินทรัพย์
               {' '}โดยแสดงยอดที่ยืนยันได้และไม่ล้างค่าที่คำนวณสำเร็จแล้ว
             </p>
@@ -697,9 +713,8 @@ function IndustryRanking({
   ];
   const scale = Math.max(1, ...ranked.map((item) => Math.abs(item.returnPercent)));
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
+    <section className="panel-quiet min-w-0">
       <SectionTitle
-        icon={Landmark}
         title="อุตสาหกรรมเด่นวันนี้"
         action={(
           <span className="flex items-center gap-1">
@@ -821,9 +836,8 @@ function WatchlistSection({
   const visible = items.filter((item) =>
     filter === 'all' || (filter === 'up' ? (item.changePercent ?? 0) > 0 : (item.changePercent ?? 0) < 0));
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
+    <section className="panel-quiet min-w-0">
       <SectionTitle
-        icon={Star}
         title="หุ้นที่ติดตาม"
         action={(
           <span className="flex items-center gap-1">
@@ -923,9 +937,8 @@ function BreadthSection({
   const total = data?.validCount ?? 0;
   const width = (value: number) => total ? `${value / total * 100}%` : '0%';
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
+    <section className="panel-quiet min-w-0">
       <SectionTitle
-        icon={Activity}
         title="ภาพรวมแรงซื้อแรงขาย"
         action={<RetryButton section="breadth" loading={retrying} onRetry={onRetry} />}
       />
@@ -1164,7 +1177,6 @@ export function DashboardClient({
 
         <section id="market-overview" className="scroll-mt-24">
           <SectionTitle
-            icon={TrendingUp}
             title="ตลาดวันนี้"
             action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
           />
@@ -1175,15 +1187,12 @@ export function DashboardClient({
 
         {view.upcoming && <UpcomingSection feed={view.upcoming} />}
 
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
-          <SectionTitle
-            icon={Newspaper}
-            title="ข่าวสำคัญต่อตลาดหุ้น"
-          />
+        <section className="panel-quiet min-w-0">
+          <SectionTitle title="ข่าวสำคัญต่อตลาดหุ้น" />
           <NewsFeed marketWide />
         </section>
 
-        <details className="group min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+        <details className="panel group min-w-0">
           <summary className="grid min-h-14 cursor-pointer list-none gap-1 px-4 py-3 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
             <span className="flex min-w-0 items-center gap-2 font-bold text-[var(--text)]">
               <Gauge size={18} aria-hidden="true" className="shrink-0 text-[var(--accent)]" />

@@ -269,14 +269,11 @@ html {
   .data-strip {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    /* The gaps ARE the rules: a 1px hairline background showing through a 1px
-       grid gap draws every divider, interior only, with no per-cell borders to
-       double up at the seams and no `:last-child` exceptions. */
-    gap: 1px;
-    background: var(--hairline);
+    /* Top and bottom rules make the group read as one band of data. The
+       interior dividers are drawn by the cells (below), not here. */
     border-block: 1px solid var(--hairline);
-    /* Bleeds the rules to the full width of a padded parent, so they read as
-       page rules rather than as the edges of yet another box. */
+    /* Load-bearing: this is what trims the outermost cell shadows, so the band
+       has no doubled rule along its right edge or under its last row. */
     overflow: hidden;
   }
 
@@ -285,14 +282,25 @@ html {
     .data-strip--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
 
+  /* One column at every width, for a strip that has a single fact to state. */
+  .data-strip--1 { grid-template-columns: minmax(0, 1fr); }
+
+  /*
+   * The dividers are `box-shadow` on the CELL rather than a coloured gap behind
+   * the grid, and the difference matters whenever the cell count does not fill
+   * the last row: a gap-and-background strip paints the leftover track in the
+   * divider colour, which is how a metric band ends up with a stray block of
+   * tint beside its final value. A shadow is drawn by cells that exist and by
+   * nothing else, so a 3-into-2 or 5-into-4 layout is simply short a cell.
+   *
+   * Shadow, not border, because a border would change the cell's own box and
+   * pull the text off the baseline its neighbours sit on.
+   */
   .data-strip__cell {
     min-width: 0;
     padding: 0.625rem 0.75rem;
-    background: var(--surface);
+    box-shadow: 1px 0 0 0 var(--hairline), 0 1px 0 0 var(--hairline);
   }
-
-  /* The strip on the page background rather than inside a panel. */
-  .data-strip--bare .data-strip__cell { background: var(--bg); }
 
   /* ======================================================================
    * Rules

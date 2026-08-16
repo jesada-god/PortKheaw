@@ -72,21 +72,21 @@ const ChartPanel = dynamic(
   () => import('./ChartPanel').then((module) => module.ChartPanel),
   {
     ssr: false,
-    loading: () => <div className="h-[340px] animate-pulse rounded-xl bg-slate-800/50" />,
+    loading: () => <div className="h-[340px] animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
   },
 );
 const NewsFeed = dynamic(
   () => import('@/src/components/news/NewsFeed').then((module) => module.NewsFeed),
   {
     ssr: false,
-    loading: () => <div className="h-72 animate-pulse rounded-xl bg-slate-800/50" />,
+    loading: () => <div className="h-72 animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
   },
 );
 const OptionsChainPanel = dynamic(
   () => import('./OptionsChainPanel').then((module) => module.OptionsChainPanel),
   {
     ssr: false,
-    loading: () => <div className="h-72 animate-pulse rounded-xl bg-slate-800/50" />,
+    loading: () => <div className="h-72 animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
   },
 );
 const OptionsSignalSection = dynamic(
@@ -94,7 +94,7 @@ const OptionsSignalSection = dynamic(
     .then((module) => module.OptionsSignalSection),
   {
     ssr: false,
-    loading: () => <div className="h-96 animate-pulse rounded-2xl bg-slate-800/50" />,
+    loading: () => <div className="h-96 animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
   },
 );
 
@@ -166,13 +166,24 @@ function MetricCard({
   footnote?: string | null;
 }) {
   return (
-    <div data-metric={label} className="min-h-20 rounded-xl border border-slate-800 bg-[#151B28] p-3">
+    /*
+     * A cell in a band, not a card in a grid.
+     *
+     * Eight of these used to arrive on the Overview tab as eight bordered,
+     * filled boxes — open/high/low/prev-close, then volume/market-cap/sector/
+     * industry — which is a lot of container for eight short facts about ONE
+     * instrument. They are facets of a single object, so they now read as one
+     * band separated by hairlines. The element order is deliberately unchanged
+     * (label element, value <p>, optional footnote <p>): the stock-detail smoke
+     * script addresses the value positionally through `[data-metric]`.
+     */
+    <div data-metric={label} className="data-strip__cell">
       {/*
         A div, not a <p>: the shared ⓘ affordance opens a <div role="dialog">
         panel, which a paragraph may not contain — the browser would close the
         <p> early and split the label row.
       */}
-      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+      <div className="figure-label flex items-center gap-1">
         <span>{label}</span>
         {tooltip && (
           /*
@@ -187,15 +198,15 @@ function MetricCard({
             align="start"
             testId={`metric-hint-${label}`}
           >
-            <p className="mt-2 text-xs leading-relaxed text-slate-300">{tooltip}</p>
+            <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]">{tooltip}</p>
           </DetailPopover>
         )}
       </div>
-      <p className="mt-2 break-words font-mono text-sm text-white">
+      <p className="figure-data mt-1.5 break-words text-[var(--text)]">
         {value ?? 'ไม่พบข้อมูล'}
       </p>
       {footnote && (
-        <p className="mt-1 break-words text-[10px] leading-4 text-slate-500">{footnote}</p>
+        <p className="mt-1 break-words text-[10px] leading-4 text-[var(--text-muted)]">{footnote}</p>
       )}
     </div>
   );
@@ -545,7 +556,7 @@ export function StockDetailClient({
      * which is what made the dock look like it sat somewhere different here.
      */
     <div>
-      <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-slate-800 bg-[#0A0E17]/95 px-3 backdrop-blur-md">
+      <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] px-3 backdrop-blur-md">
         <div className="flex min-w-0 items-center gap-2">
           {/*
             This page owns its header rather than using the shared one, so the
@@ -557,7 +568,7 @@ export function StockDetailClient({
             320px, and it has never shown the brand.
           */}
           <BrandLockup className="brand-lockup--from-lg" />
-          <span aria-hidden="true" className="hidden h-7 w-px flex-none bg-slate-800 lg:block" />
+          <span aria-hidden="true" className="hidden h-7 w-px flex-none bg-[var(--border)] lg:block" />
           <button
             aria-label="กลับ"
             onClick={() => {
@@ -565,7 +576,7 @@ export function StockDetailClient({
               if (sameOriginReferrer && window.history.length > 1) router.back();
               else router.push('/search');
             }}
-            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-slate-400"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
           >
             <ArrowLeft size={20} />
           </button>
@@ -579,8 +590,8 @@ export function StockDetailClient({
             priority
           />
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-bold text-white">{symbol}</h1>
-            <p className="truncate text-xs text-slate-500">
+            <h1 className="truncate text-lg font-bold tracking-tight text-[var(--text)]">{symbol}</h1>
+            <p className="truncate text-xs text-[var(--text-muted)]">
               {identity.name}{exchange ? ` · ${exchange}` : ''}
             </p>
           </div>
@@ -591,22 +602,22 @@ export function StockDetailClient({
             aria-label={watched ? `นำ ${symbol} ออกจากรายการติดตาม` : `เพิ่ม ${symbol} ในรายการติดตาม`}
             onClick={toggleWatch}
             className={watched
-              ? 'flex min-h-11 min-w-11 items-center justify-center text-[#D4FF00]'
-              : 'flex min-h-11 min-w-11 items-center justify-center text-slate-400'}
+              ? 'flex min-h-11 min-w-11 items-center justify-center text-[var(--accent)]'
+              : 'flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)]'}
           >
             <Star size={20} fill={watched ? 'currentColor' : 'none'} />
           </button>
           <button
             onClick={() => addToast({ title: 'Alert: Coming Soon', type: 'info' })}
             aria-label="Alert Coming Soon"
-            className="flex min-h-11 min-w-11 items-center justify-center text-slate-400"
+            className="flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)]"
           >
             <Bell size={20} />
           </button>
           <button
             onClick={() => void share()}
             aria-label="แชร์"
-            className="flex min-h-11 min-w-11 items-center justify-center text-slate-400"
+            className="flex min-h-11 min-w-11 items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)]"
           >
             <Share2 size={20} />
           </button>
@@ -636,7 +647,7 @@ export function StockDetailClient({
 
         <StockSummaryCard items={summaryItems} onOpenSection={setTab} />
 
-        <div className="sticky top-16 z-30 -mx-4 border-y border-slate-800 bg-[#0A0E17]/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
+        <div className="sticky top-16 z-30 -mx-4 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] px-4 pt-3 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:px-0">
           <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />
         </div>
 
@@ -707,10 +718,12 @@ export function StockDetailClient({
                 acceptedPrice={analyticalSpotPrice}
                 underlyingLabel={dataLabel}
               />
-              <div className="rounded-2xl border border-amber-500/20 bg-[#151B28] p-5 text-center">
-                <Activity className="mx-auto mb-3 text-amber-300" />
-                <h2 className="font-bold text-white">AI analysis · Coming Soon</h2>
-                <p className="mt-2 text-sm text-slate-400">ส่วน Options ด้านบนเป็น analytics ตามสูตรจากข้อมูลตลาดจริง ไม่ใช่คำสั่งหรือการรับประกันผลลัพธ์</p>
+              <div className="flex items-start gap-3 rounded-[var(--radius-panel)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-4">
+                <Activity aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-[var(--warning)]" />
+                <div className="min-w-0">
+                <h2 className="text-sm font-bold text-[var(--text)]">AI analysis · Coming Soon</h2>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">ส่วน Options ด้านบนเป็น analytics ตามสูตรจากข้อมูลตลาดจริง ไม่ใช่คำสั่งหรือการรับประกันผลลัพธ์</p>
+                </div>
               </div>
             </div>
           )}
@@ -810,14 +823,20 @@ function Overview({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {/*
+        Two bands rather than two grids of boxes: today's trading range first,
+        then the fundamentals beside it. The column count follows the number of
+        facts each band actually has, and a band that comes up short in its last
+        row simply ends — the divider is drawn by cells, never by the grid.
+      */}
+      <div className="data-strip data-strip--4">
         {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
-      <div className={`grid gap-3 ${profileMetrics.length > 2 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'}`}>
+      <div className={`data-strip ${profileMetrics.length > 2 ? 'data-strip--4' : profileMetrics.length === 1 ? 'data-strip--1' : ''}`}>
         {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
       </div>
       {policy.kind === 'fund' && (
-        <p className="text-xs leading-6 text-slate-500">
+        <p className="text-xs leading-6 text-[var(--text-muted)]">
           กองทุน ETF ถือสินทรัพย์หลายรายการแทนการเป็นบริษัทเดียว
           ข้อมูลบริษัทผู้ออกกองทุน เช่น กลุ่มธุรกิจ จำนวนพนักงาน หรือมูลค่าตลาดของผู้ออก
           จึงไม่ได้อธิบายสิ่งที่กองทุนนี้ลงทุน และ PortKheaw ยังไม่มีข้อมูลขนาดกองทุน (สินทรัพย์สุทธิ)
@@ -844,10 +863,10 @@ function Overview({
 
 function ComingSoon({ title }: { title: string }) {
   return (
-    <div className="flex min-h-64 items-center justify-center rounded-2xl border border-slate-800 bg-[#151B28] p-6 text-center">
+    <div className="panel flex min-h-64 items-center justify-center p-6 text-center">
       <div>
-        <p className="font-bold text-white">{title}</p>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="font-bold text-[var(--text)]">{title}</p>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">
           Coming Soon · ไม่มีการแสดงข้อมูลจำลอง
         </p>
       </div>

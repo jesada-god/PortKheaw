@@ -224,31 +224,41 @@ export function WatchlistClient({
   }
 
   return (
-    <div className="space-y-5">
-      {!isOnline && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">โหมดอ่านอย่างเดียวขณะออฟไลน์ — ราคาอาจเก่า และการเพิ่มหรือลบรายการติดตามถูกปิดไว้</div>}
-      <section className="rounded-2xl border border-slate-800 bg-[#151B28] p-4 shadow-xl sm:p-5">
-        <label htmlFor="watchlist-search" className="mb-2 block text-sm font-semibold text-white">เพิ่ม Symbol</label>
+    <div className="space-y-4">
+      {!isOnline && <p className="rounded-[var(--radius-control)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-3 text-sm leading-6 text-[var(--warning)]">โหมดอ่านอย่างเดียวขณะออฟไลน์ — ราคาอาจเก่า และการเพิ่มหรือลบรายการติดตามถูกปิดไว้</p>}
+
+      {/*
+        The search is a field on the page, not a panel of its own.
+
+        It used to sit in a full card — border, surface, shadow, a bold label —
+        directly above a second card holding the list, so the screen opened as
+        two stacked boxes of equal weight before a single price was visible. A
+        watchlist is a place for watching, so the control that adds to it stays
+        one line tall and the list gets the room.
+      */}
+      <div>
+        <label htmlFor="watchlist-search" className="sr-only">เพิ่ม Symbol ในรายการติดตาม</label>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+          <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
           <input id="watchlist-search" value={query} onChange={(event) => updateQuery(event.target.value)}
-            placeholder="ค้นหา Symbol หรือชื่อบริษัท"
-            className="min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950/40 pl-10 pr-12 text-base text-white placeholder:text-slate-500 focus:border-[#D4FF00] focus:outline-none" />
-          {query && <button aria-label="ล้างคำค้น" onClick={() => updateQuery('')} className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center text-slate-400 hover:text-white"><X size={18} /></button>}
+            placeholder="ค้นหา Symbol หรือชื่อบริษัทเพื่อเพิ่ม"
+            className="min-h-12 w-full rounded-[var(--radius-control)] border border-[var(--border-strong)] bg-[var(--input-bg)] pl-10 pr-12 text-base text-[var(--text)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none" />
+          {query && <button aria-label="ล้างคำค้น" onClick={() => updateQuery('')} className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text)]"><X size={18} /></button>}
         </div>
         {query.trim() && (
-          <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40">
-            {searching && <p className="p-4 text-sm text-slate-400">กำลังค้นหา…</p>}
-            {!searching && searchError && <p className="p-4 text-sm text-amber-300">{searchError} — รายการติดตามที่บันทึกไว้ไม่ได้รับผลกระทบ</p>}
-            {!searching && !searchError && results.length === 0 && <p className="p-4 text-sm text-slate-400">ไม่พบผลลัพธ์</p>}
+          <div className="panel mt-2 max-h-72 overflow-y-auto">
+            {searching && <p className="p-4 text-sm text-[var(--text-muted)]">กำลังค้นหา…</p>}
+            {!searching && searchError && <p className="p-4 text-sm text-[var(--warning)]">{searchError} — รายการติดตามที่บันทึกไว้ไม่ได้รับผลกระทบ</p>}
+            {!searching && !searchError && results.length === 0 && <p className="p-4 text-sm text-[var(--text-muted)]">ไม่พบผลลัพธ์</p>}
             {!searching && results.map((result) => {
               const added = existingSymbols.has(result.symbol);
               const pending = pendingSymbols.has(result.symbol);
-              return <div key={result.symbol} className="flex min-w-0 items-center gap-3 border-b border-slate-800/70 p-3 last:border-0">
+              return <div key={result.symbol} className="flex min-w-0 items-center gap-3 border-b border-[var(--hairline)] p-3 last:border-0">
                 <button onClick={() => router.push(`/stock/${encodeURIComponent(result.symbol)}`)} className="min-w-0 flex-1 text-left">
-                  <span className="block font-bold text-white">{result.symbol}</span>
-                  <span className="block truncate text-xs text-slate-400">{result.name} · {result.exchange ?? 'ไม่ระบุตลาด'} · {result.assetType}</span>
+                  <span className="block font-bold text-[var(--text)]">{result.symbol}</span>
+                  <span className="block truncate text-xs text-[var(--text-muted)]">{result.name} · {result.exchange ?? 'ไม่ระบุตลาด'} · {result.assetType}</span>
                 </button>
-                {result.status === 'delisted' && <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-300">DELISTED</span>}
+                {result.status === 'delisted' && <span className="rounded-[var(--radius-mark)] bg-[var(--warning-soft)] px-2 py-1 text-[10px] font-bold text-[var(--warning)]">DELISTED</span>}
                 <Button size="sm" disabled={!isOnline || added || pending || result.status === 'delisted'} onClick={() => addSymbol(result.symbol, result.status, result)} className="min-w-24 shrink-0">
                   <Plus size={16} /> {result.status === 'delisted' ? 'เพิ่มไม่ได้' : added ? 'เพิ่มแล้ว' : pending ? 'กำลังเพิ่ม' : 'เพิ่ม'}
                 </Button>
@@ -256,36 +266,46 @@ export function WatchlistClient({
             })}
           </div>
         )}
-      </section>
+      </div>
 
-      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#151B28] shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:px-5">
-          <div className="min-w-0"><h2 className="truncate font-semibold text-white">{watchlist.name}</h2><p className="text-xs text-slate-500">{items.length} รายการ · ซิงก์กับบัญชีของคุณ</p></div>
-          <label className="flex items-center gap-2 text-xs text-slate-400">เรียงตาม
-            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} aria-label="เรียงรายการติดตาม" data-testid="watchlist-sort" className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+      <section className="panel min-w-0 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline)] px-3.5 py-3 sm:px-4">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-bold text-[var(--text)]">{watchlist.name}</h2>
+            <p className="text-xs text-[var(--text-muted)]">{items.length} รายการ · ซิงก์กับบัญชีของคุณ</p>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">เรียงตาม
+            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} aria-label="เรียงรายการติดตาม" data-testid="watchlist-sort" className="min-h-11 rounded-[var(--radius-control)] border border-[var(--border-strong)] bg-[var(--input-bg)] px-3 text-sm text-[var(--text)]">
               {(['change', 'symbol', 'newest', 'price'] as const).map((key) =>
                 <option key={key} value={key}>{WATCHLIST_SORT_LABELS[key]}</option>)}
             </select>
           </label>
         </div>
         {sortedItems.length === 0 ? <EmptyState icon={Star} title="รายการติดตามยังว่าง" description="ค้นหาและเพิ่มหุ้นที่คุณสนใจจากช่องด้านบน" /> :
-          <div className="divide-y divide-slate-800/60">{sortedItems.map((item) => {
+          /*
+            Denser than the overview's version of the same list, because this is
+            the screen somebody opens to compare a dozen symbols rather than to
+            glance at three. The price column is fixed-width and tabular, so the
+            decimal points line up down the page and a column of percentages can
+            be read as a column.
+          */
+          <ul className="divide-y divide-[var(--hairline)]">{sortedItems.map((item) => {
             const data = quotes[item.symbol]; const quote = data?.quote; const change = quote?.changePercent;
             const instrument = instruments[item.symbol];
             const context = watchlistContextLine({
               changePercent: change ?? null,
               earningsDays: earningsDays[item.symbol] ?? null,
             });
-            return <article key={item.id} className="flex min-w-0 items-center gap-3 p-4 hover:bg-slate-800/30 sm:px-5">
+            return <li key={item.id}><article className="flex min-w-0 items-center gap-3 px-3.5 py-2.5 hover:bg-[var(--surface-hover)] sm:px-4">
               <InstrumentLogo
                 symbol={item.symbol}
                 companyName={instrument?.companyName ?? item.symbol}
                 logoUrl={instrument?.logoUrl ?? null}
-                size={40}
+                size={36}
                 appearance="plain"
               />
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="min-w-0 flex-1 text-left">
-                <span className="block font-bold text-white hover:text-[#D4FF00]">{item.symbol}</span>
+                <span className="block truncate text-sm font-bold tracking-tight text-[var(--text)] hover:text-[var(--accent)]">{item.symbol}</span>
                 {/*
                   One line of context, no new columns: today's accepted change,
                   a plain note when that move was large, and the calendar's own
@@ -293,17 +313,17 @@ export function WatchlistClient({
                   three has real data behind it.
                 */}
                 {context && <span className="block truncate text-xs text-[var(--text-secondary)]" data-testid={`watchlist-context-${item.symbol}`}>{context}</span>}
-                <span className={`block truncate text-xs ${quote ? 'text-slate-500' : 'text-amber-300'}`}>{freshnessLabel(data, renderedAt)}</span>
+                <span className={`block truncate text-[11px] ${quote ? 'text-[var(--text-muted)]' : 'text-[var(--warning)]'}`}>{freshnessLabel(data, renderedAt)}</span>
               </button>
               <button onClick={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)} className="shrink-0 text-right">
-                <span className="block font-mono text-sm font-medium text-white">{quote ? `${quote.price.toLocaleString('th-TH', { maximumFractionDigits: 4 })}` : '—'}</span>
-                <span className={`flex items-center justify-end text-xs font-bold ${change == null ? 'text-slate-500' : change >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                <span className="figure-data block text-[var(--text)]">{quote ? `${quote.price.toLocaleString('th-TH', { maximumFractionDigits: 4 })}` : '—'}</span>
+                <span className={`figure flex items-center justify-end text-xs font-bold ${change == null ? 'text-[var(--text-muted)]' : change >= 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
                   {change != null && (change >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />)}{change == null ? 'ไม่มี quote' : `${Math.abs(change).toFixed(2)}%`}
                 </span>
               </button>
-              <button aria-label={`ลบ ${item.symbol}`} disabled={!isOnline || pendingSymbols.has(item.symbol)} onClick={() => removeSymbol(item)} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40"><Trash2 size={18} /></button>
-            </article>;
-          })}</div>}
+              <button aria-label={`ลบ ${item.symbol}`} disabled={!isOnline || pendingSymbols.has(item.symbol)} onClick={() => removeSymbol(item)} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--radius-control)] text-[var(--text-muted)] hover:bg-[var(--negative-soft)] hover:text-[var(--negative)] disabled:opacity-40"><Trash2 size={18} /></button>
+            </article></li>;
+          })}</ul>}
       </section>
     </div>
   );
