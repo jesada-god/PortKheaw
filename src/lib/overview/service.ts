@@ -25,8 +25,10 @@ import {
   mapWithConcurrencyDeadline,
 } from './industry-snapshot';
 import { loadContinuousMarketPrice } from './continuous-market';
+import { loadCommodityMarketPrice } from './commodity-market';
 import { overviewPriceStatus } from './presentation';
 import { equityMarketSymbols, MARKET_ASSETS } from './market-assets';
+import { commodityContract, type CommodityContract } from '@/src/lib/market-data/commodities';
 import {
   aggregateIndustryChartSeries,
   attachBenchmark,
@@ -259,6 +261,64 @@ class ContinuousPriceUnavailable extends Error {
   }
 }
 
+/**
+ * A commodity contract's overview price.
+ *
+ * Deliberately the same cache key, the same freshness policy and the same
+ * quote+candles pair as the continuous path — a commodity is not a slower or
+ * more expensive thing to load, it just belongs to a different market clock. The
+ * one thing it does NOT share is the session, which `loadCommodityMarketPrice`
+ * resolves against Globex.
+ */
+async function loadCommodityOverviewPrice(
+  instrument: InstrumentMetadata,
+  contract: CommodityContract,
+  now: Date,
+): Promise<LoadedPrice> {
+  try {
+    const resolution = await priceCache.resolve(
+      `overview-price:${instrument.symbol}`,
+      async () => {
+        const referenceSeconds = Math.floor(now.valueOf() / 1_000);
+        const display = await loadCommodityMarketPrice({
+          instrument,
+          contract,
+          now,
+          quote: getYahooChartProvider().getQuote(instrument.symbol),
+          candles: getCandleMarketDataService().getCandles({
+            symbol: instrument.symbol,
+            interval: '5m',
+            range: '1d',
+            period1: referenceSeconds - 86_400,
+            period2: referenceSeconds + 300,
+            adjusted: false,
+            session: 'regular',
+          }),
+        });
+        if (display.status === 'unavailable') throw new ContinuousPriceUnavailable(display);
+        return { display, validForRanking: false, volume: null } satisfies LoadedPrice;
+      },
+      { freshMs: 30_000, staleMs: 5 * 60_000, errorMs: 30_000 },
+    );
+    if (resolution.state !== 'stale') return resolution.value;
+    return {
+      ...resolution.value,
+      display: {
+        ...resolution.value.display,
+        status: 'saved',
+        freshness: resolution.value.display.freshness
+          ? { ...resolution.value.display.freshness, status: 'stale' }
+          : resolution.value.display.freshness,
+      },
+    };
+  } catch (cause) {
+    if (cause instanceof ContinuousPriceUnavailable) {
+      return { display: cause.display, validForRanking: false, volume: null };
+    }
+    return unavailablePrice(instrument);
+  }
+}
+
 async function loadContinuousOverviewPrice(
   instrument: InstrumentMetadata,
   now: Date,
@@ -404,6 +464,19 @@ async function sparkline(symbol: string): Promise<number[]> {
   }
 }
 
+/**
+ * The line under a card's name.
+ *
+ * An index proxy leads with its ticker because the ticker IS what is being
+ * quoted and a reader may be looking for "SPY" by name. A commodity contract's
+ * exchange code is not something the reader of this card needs or would
+ * recognise, so the contract says what it is instead.
+ */
+function cardSubtitle(proxy: (typeof MARKET_ASSETS)[number]): string {
+  if (proxy.marketKind === 'commodity') return proxy.proxyLabel;
+  return `${proxy.symbol} · ${proxy.proxyLabel}`;
+}
+
 export async function loadMarketIndices(
   now = new Date(),
   force = false,
@@ -416,19 +489,45 @@ export async function loadMarketIndices(
   const resolved = await getMarketDataGateway()
     .resolveInstruments(equitySymbols);
   return mapWithConcurrency(MARKET_ASSETS, 4, async (proxy) => {
+    const contract = proxy.marketKind === 'commodity'
+      ? commodityContract(proxy.symbol)
+      : null;
     const instrument = {
       ...metadata.get(proxy.symbol)!,
       logoUrl: proxy.logoUrl,
       ...(proxy.marketKind === 'continuous'
         ? { assetType: 'crypto', exchange: null }
         : {}),
+      /*
+       * A contract is described by its venue and its own name, not by whatever
+       * `market_instruments` would fall back to for an unknown symbol — which is
+       * the symbol itself, and would have printed "GC-F" as the company name.
+       */
+      ...(contract
+        ? {
+            assetType: 'commodity',
+            exchange: contract.exchange,
+            companyName: `${contract.nameTh} · ${contract.exchange} (${contract.unitTh})`,
+            currency: contract.currency,
+          }
+        : {}),
     };
+    if (contract) {
+      const loaded = await loadCommodityOverviewPrice(instrument, contract, now);
+      return {
+        ...loaded.display,
+        name: proxy.name,
+        proxyLabel: proxy.proxyLabel,
+        subtitle: cardSubtitle(proxy),
+      };
+    }
     if (proxy.marketKind === 'continuous') {
       const loaded = await loadContinuousOverviewPrice(instrument, now);
       return {
         ...loaded.display,
         name: proxy.name,
         proxyLabel: proxy.proxyLabel,
+        subtitle: cardSubtitle(proxy),
       };
     }
     const [loaded, points] = await Promise.all([
@@ -440,6 +539,7 @@ export async function loadMarketIndices(
       sparkline: points,
       name: proxy.name,
       proxyLabel: proxy.proxyLabel,
+      subtitle: cardSubtitle(proxy),
     };
   });
 }

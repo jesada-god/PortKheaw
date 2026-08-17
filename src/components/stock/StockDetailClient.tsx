@@ -63,7 +63,9 @@ import { StockPriceHeader, type TransientPriceSink } from './StockPriceHeader';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { PlanThisStockCta } from '@/src/components/stock/PlanThisStockCta';
 import {
+  isCommodityAssetType,
   isContinuousAssetType,
+  resolveCommodityMarketSession,
   resolveContinuousMarketSession,
   resolveContinuousMarketSnapshot,
 } from '@/src/lib/stock-detail/continuous-client';
@@ -304,6 +306,15 @@ export function StockDetailClient({
   const profile = profileResource.data;
   const overview = overviewResource.data;
   const continuousMarket = isContinuousAssetType(instrumentAssetType);
+  /*
+   * A futures market is neither of the two the page knew about. It is not the US
+   * equity session — treating it as one would report gold closed while COMEX is
+   * trading and invent a pre-market it does not have — and it is not 24/7, so it
+   * cannot borrow the crypto path either. It shares the crypto path's *plumbing*
+   * (no equity reconciliation, no WebSocket feed) and keeps its own schedule.
+   */
+  const commodityMarket = isCommodityAssetType(instrumentAssetType);
+  const nonEquityMarket = continuousMarket || commodityMarket;
   const market = overview?.markets.find((item) => (
     item.primaryExchanges.some((exchange) => (
       profile?.exchange?.toLowerCase().includes(exchange.toLowerCase())
@@ -316,7 +327,9 @@ export function StockDetailClient({
   // trading date is discarded inside the resolver, which then falls back to the
   // exchange calendar in America/New_York.
   const exchangeNow = useExchangeClock(evaluatedAt);
-  const resolvedSession = continuousMarket
+  const resolvedSession = commodityMarket
+    ? resolveCommodityMarketSession(exchangeNow)
+    : continuousMarket
     ? resolveContinuousMarketSession(exchangeNow)
     : resolveCurrentMarketSession({
         now: exchangeNow,
@@ -362,8 +375,10 @@ export function StockDetailClient({
     // the Railway Gateway owns canonical candle construction.
     // When the Gateway URL is absent, the coordinator safely falls back to REST.
     enabled: true,
-    allowWebSocket: !continuousMarket,
-    marketKind: continuousMarket ? 'continuous' : 'us-equity',
+    // The live trade stream is a US-equity feed. A commodity contract is not on
+    // it, so the page polls REST exactly as the crypto page does.
+    allowWebSocket: !nonEquityMarket,
+    marketKind: nonEquityMarket ? 'continuous' : 'us-equity',
     transientPriceSinkRef,
     liveUpdateSinkRef,
   });
@@ -419,7 +434,7 @@ export function StockDetailClient({
    * renders from. A symbol halt is applied first so the phase it resolves against
    * is the one the header actually shows.
    */
-  const marketSnapshot = continuousMarket
+  const marketSnapshot = nonEquityMarket
     ? resolveContinuousMarketSnapshot({ symbol, quote: quoteResource, evaluatedAt: exchangeNow })
     : resolveCanonicalMarketSnapshot({
         symbol,

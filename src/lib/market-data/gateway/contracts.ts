@@ -22,7 +22,12 @@ export const resolvedInstrumentSchema = z.object({
   // `crypto` is never produced by the instrument-master resolver — nothing in
   // `market_instruments` is one. It names the continuous assets the product
   // ships proxies for, so a 24/7 market is not described as an equity.
-  assetType: z.enum(['stock', 'etf', 'adr', 'reit', 'fund', 'otc', 'index', 'crypto', 'unknown']),
+  // 'commodity' is a futures contract on a physical good — see
+  // `market-data/commodities.ts`. Appended rather than mapped onto an existing
+  // member because every other value here describes a security, and calling a
+  // COMEX contract a 'stock' or an 'index' is what would make the page describe
+  // it wrongly. Existing values parse exactly as before.
+  assetType: z.enum(['stock', 'etf', 'adr', 'reit', 'fund', 'otc', 'index', 'crypto', 'commodity', 'unknown']),
   exchange: z.string().nullable(),
   mic: z.string().nullable(),
   currency: z.string().nullable(),

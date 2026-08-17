@@ -641,8 +641,15 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
             appearance="plain"
           />
           <div className="min-w-0">
-            <h3 className="truncate font-semibold text-[var(--text)]">{item.name}</h3>
-            <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{item.symbol} · {item.proxyLabel}</p>
+            {/*
+              The name wraps rather than truncates. On a 238px handset card the
+              status pill is `shrink-0` and takes its width first, which left
+              "น้ำมัน WTI" rendering as an ellipsis — and the name of the market
+              is the one thing on the card that cannot afford to be unreadable.
+              A short name is unaffected; a long one takes a second line.
+            */}
+            <h3 className="font-semibold leading-tight text-[var(--text)]">{item.name}</h3>
+            <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">{item.subtitle}</p>
           </div>
         </div>
         <span className="flex shrink-0 items-center gap-1">
@@ -675,11 +682,17 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
         <span>{OVERVIEW_STATUS_COPY[item.status]}</span>
         <span>{item.asOf ? formatBangkokDateTime(item.asOf) : 'ยังไม่มีเวลาอัปเดต'}</span>
       </div>
-      {item.source && (
-        <p className="mt-1 truncate text-[10px] text-[var(--text-muted)]" title={item.source}>
-          แหล่งข้อมูล {item.source}
-        </p>
-      )}
+      {/*
+        The vendor name is deliberately NOT printed here.
+
+        `item.source` still arrives on every card and nothing behind it changed —
+        the provider chain, its fallbacks and the freshness stamp above are
+        untouched, and the same field is still shown where a reader is actually
+        auditing a number (Stock Detail). On the overview it was a row of vendor
+        names under a row of prices, which is provenance answering a question
+        nobody asked at a glance: what these cards are for is "what is the market
+        doing", and the status and as-of already say how much to trust that.
+      */}
     </Link>
   );
 }

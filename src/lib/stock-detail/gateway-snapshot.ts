@@ -7,7 +7,19 @@ import { loadResilientQuote } from '@/src/lib/market-data/quote-service';
 import { extendedQuoteMatchesRegularSession, type ExtendedHoursQuoteData } from '@/src/lib/market-data/extended-hours';
 import type { NormalizedBarsResult, NormalizedMarketSession, NormalizedQuote, ResolvedInstrument } from '@/src/lib/market-data/gateway/contracts';
 import type { CompanyProfile, DataFreshness, MarketDataApiError, MarketOverview, ProviderResult, Quote } from '@/src/lib/market-data/types';
-import { continuousMarketAsset, type MarketAsset } from '@/src/lib/overview/market-assets';
+import {
+  commodityMarketAsset,
+  continuousMarketAsset,
+  type MarketAsset,
+} from '@/src/lib/overview/market-assets';
+import { commodityContract, type CommodityContract } from '@/src/lib/market-data/commodities';
+import {
+  commodityAcceptedQuoteResource,
+  commodityInstrument,
+  commodityMarketStatus,
+  commodityProfile,
+  loadCommodityAcceptedMarket,
+} from './commodity-snapshot';
 import {
   continuousInstrument,
   continuousMarketStatus,
@@ -184,9 +196,34 @@ async function continuousSnapshot(asset: MarketAsset): Promise<StockDetailGatewa
   };
 }
 
+async function commoditySnapshot(
+  asset: MarketAsset,
+  contract: CommodityContract,
+): Promise<StockDetailGatewaySnapshot> {
+  const now = new Date();
+  const quote = await loadCommodityAcceptedMarket(asset, contract, now)
+    .then((resolved) => commodityAcceptedQuoteResource(asset.symbol, resolved))
+    .catch(() => continuousQuoteUnavailable());
+  return {
+    instrument: commodityInstrument(asset, contract),
+    quote,
+    profile: commodityProfile(asset, contract),
+    overview: commodityMarketStatus(contract, now, quote.freshness.asOf ?? now.toISOString()),
+    // A Globex day has no pre-market and no after-hours print around it.
+    extendedQuote: null,
+    history: {
+      data: null,
+      meta: { provider: null, timestamp: now.toISOString(), freshness: unavailableFreshness },
+    },
+  };
+}
+
 export async function loadStockDetailGatewaySnapshot(symbol: string): Promise<StockDetailGatewaySnapshot> {
   const continuous = continuousMarketAsset(symbol);
   if (continuous) return continuousSnapshot(continuous);
+  const commodityAsset = commodityMarketAsset(symbol);
+  const contract = commodityAsset ? commodityContract(symbol) : null;
+  if (commodityAsset && contract) return commoditySnapshot(commodityAsset, contract);
   const gateway = getMarketDataGateway();
   const instrument = await gateway.resolveInstrument(symbol);
   const quotePromise = (async () => {

@@ -56,6 +56,7 @@ function marketCard(symbol: string, name: string): MarketIndexCard {
     symbol,
     name,
     proxyLabel: 'ETF อ้างอิง',
+    subtitle: `${symbol} · ETF อ้างอิง`,
     instrument: {
       symbol,
       companyName: name,

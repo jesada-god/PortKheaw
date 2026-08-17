@@ -7,7 +7,7 @@ export type CompanyProfileLanguage = 'th' | 'en';
  * calling its card "ข้อมูลบริษัท" is simply the wrong noun. Only the *labels*
  * split on this; every field, provider and request stays identical.
  */
-export type CompanyProfileKind = 'company' | 'fund' | 'crypto';
+export type CompanyProfileKind = 'company' | 'fund' | 'crypto' | 'commodity';
 
 const THAI_MONTHS: Record<string, string> = {
   January: 'มกราคม',
@@ -99,6 +99,19 @@ const FUND_LABELS = {
   },
 } as const;
 
+const COMMODITY_LABELS = {
+  th: {
+    title: 'ข้อมูลสัญญาสินค้าโภคภัณฑ์',
+    missingDescription: 'ยังไม่มีรายละเอียดสัญญาสำหรับแปล',
+    retryProfile: 'ลองโหลดข้อมูลสัญญาอีกครั้ง',
+  },
+  en: {
+    title: 'Commodity Contract Profile',
+    missingDescription: 'No contract description is available to translate.',
+    retryProfile: 'Retry contract profile',
+  },
+} as const;
+
 const CRYPTO_LABELS = {
   th: {
     title: 'ข้อมูลสินทรัพย์ดิจิทัล',
@@ -122,6 +135,7 @@ export function companyProfileKind(assetType: string | null | undefined): Compan
   const normalized = assetType?.trim().toLowerCase();
   if (normalized === 'etf') return 'fund';
   if (normalized === 'crypto') return 'crypto';
+  if (normalized === 'commodity') return 'commodity';
   return 'company';
 }
 
@@ -162,6 +176,25 @@ export function resolveAssetPresentationPolicy(
   assetType: string | null | undefined,
 ): AssetPresentationPolicy {
   const kind = companyProfileKind(assetType);
+  /*
+   * A futures contract has no legal entity behind it at all: no filings, no
+   * headcount, no sector, no market capitalisation, and no equity options chain.
+   * Everything an equity page is built to show is withheld, for the same reason
+   * it is withheld from a currency pair — the number would be about something
+   * other than the thing on screen.
+   */
+  if (kind === 'commodity') {
+    return {
+      kind,
+      showEmployees: false,
+      showFiscalYearEnd: false,
+      showCountry: false,
+      showSectorAndIndustry: false,
+      showMarketCapitalization: false,
+      showFinancials: false,
+      showOptionsAnalysis: false,
+    };
+  }
   if (kind === 'crypto') {
     return {
       kind,
@@ -239,6 +272,7 @@ export function resolveCompanyProfileLabels(
 ): CompanyProfileLabels {
   if (kind === 'fund') return { ...companyProfileLabels[language], ...FUND_LABELS[language] };
   if (kind === 'crypto') return { ...companyProfileLabels[language], ...CRYPTO_LABELS[language] };
+  if (kind === 'commodity') return { ...companyProfileLabels[language], ...COMMODITY_LABELS[language] };
   return companyProfileLabels[language];
 }
 

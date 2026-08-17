@@ -6,6 +6,7 @@ import { YAHOO_CANDLE_CAPABILITIES } from '../../candles/capabilities';
 import { applyAdjustment, normalizeCandles, validatedCandle } from '../../candles/normalize';
 import { candleRangeBounds } from '../../candles/range';
 import { classifyUsEquitySession, US_EQUITY_TIMEZONE } from '../../session';
+import { toProviderSymbol } from '../../commodities';
 import { selectExtendedHoursQuote, type ExtendedHoursQuoteData } from '../../extended-hours';
 import type { ProviderResult, Quote } from '../../types';
 import type { CandleInterval, CandleRequest, NormalizedCandleResult, NormalizedMarketDataProvider } from '../../candles/contracts';
@@ -146,7 +147,14 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
     comparisonForTradingDay?: string,
   ): Promise<YahooQuoteResult> {
     const bounds = candleRangeBounds('1m', this.now());
-    const url = new URL(`${BASE_URL}/${encodeURIComponent(symbol)}`);
+    /*
+     * The provider's spelling, which differs from the app's for a futures
+     * contract only (`GC-F` here is `GC=F` there — see `commodities.ts`). Every
+     * other symbol passes through unchanged, and what this method RETURNS is
+     * always the app's symbol, so nothing downstream sees the provider's.
+     */
+    const requested = toProviderSymbol(symbol);
+    const url = new URL(`${BASE_URL}/${encodeURIComponent(requested)}`);
     url.searchParams.set('interval', '1d');
     url.searchParams.set('period1', String(bounds.period1));
     url.searchParams.set('period2', String(bounds.period2));
@@ -169,7 +177,9 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
         throw new MarketDataError('not-found', `No Yahoo quote was returned for ${symbol}`);
       }
       const canonical = result.meta.symbol?.trim().toUpperCase();
-      if (canonical && canonical !== symbol.trim().toUpperCase()) {
+      // Compared against what was ASKED FOR, so the guard still catches a
+      // provider answering about a different instrument.
+      if (canonical && canonical !== requested.trim().toUpperCase()) {
         throw new MarketDataError('invalid-provider-response', 'Yahoo quote symbol did not match the request');
       }
       const price = positiveNumber(result.meta.regularMarketPrice);
@@ -302,7 +312,8 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
    */
   async getExtendedQuote(symbol: string): Promise<ExtendedHoursQuoteData | null> {
     const nowSeconds = Math.floor(this.now().valueOf() / 1_000);
-    const url = new URL(`${BASE_URL}/${encodeURIComponent(symbol)}`);
+    const requested = toProviderSymbol(symbol);
+    const url = new URL(`${BASE_URL}/${encodeURIComponent(requested)}`);
     url.searchParams.set('interval', '5m');
     // Four days always spans a weekend back to the previous trading session,
     // which is what allows Friday's after-hours print to be found on a Sunday.
@@ -324,7 +335,7 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
       const result = parsed.chart.result?.[0];
       if (!result || parsed.chart.error) return null;
       const canonical = result.meta.symbol?.trim().toUpperCase();
-      if (canonical && canonical !== symbol.trim().toUpperCase()) return null;
+      if (canonical && canonical !== requested.trim().toUpperCase()) return null;
       const regularMarketTime = result.meta.regularMarketTime;
       if (!regularMarketTime) return null;
       const closes = result.indicators.quote[0]?.close ?? [];
@@ -354,7 +365,7 @@ export class YahooCandleProvider implements NormalizedMarketDataProvider {
     const bounds = input.period1 && input.period2
       ? { period1: input.period1, period2: input.period2 }
       : candleRangeBounds(input.range, this.now());
-    const url = new URL(`${BASE_URL}/${encodeURIComponent(input.symbol)}`);
+    const url = new URL(`${BASE_URL}/${encodeURIComponent(toProviderSymbol(input.symbol))}`);
     url.searchParams.set('interval', providerInterval);
     url.searchParams.set('period1', String(bounds.period1));
     url.searchParams.set('period2', String(bounds.period2));

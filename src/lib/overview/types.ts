@@ -57,7 +57,23 @@ export interface OverviewPrice {
 
 export interface MarketIndexCard extends OverviewPrice {
   name: string;
-  proxyLabel: 'ETF อ้างอิง' | 'สินทรัพย์จริง';
+  /**
+   * What the card is actually quoting, so a proxy is never read as the thing
+   * itself. 'ETF อ้างอิง' is a fund standing in for an index, 'สินทรัพย์จริง' is
+   * the asset traded directly, and 'สัญญาล่วงหน้า' is a futures contract — the
+   * reference price for a commodity, which is neither of the other two.
+   */
+  proxyLabel: 'ETF อ้างอิง' | 'สินทรัพย์จริง' | 'สัญญาล่วงหน้า';
+  /**
+   * The line under the name, composed once on the server.
+   *
+   * An index proxy names its ticker because the ticker is the thing being
+   * quoted and a reader may well be looking for "SPY". A commodity contract's
+   * code — `GC-F`, `CL-F` — is an exchange identifier that means nothing to the
+   * person this card is for, and printing it cost the name the width it needed
+   * on a handset, so a contract states what it is and leaves the code out.
+   */
+  subtitle: string;
 }
 
 export interface IndustryMember {

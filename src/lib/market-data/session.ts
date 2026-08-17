@@ -27,7 +27,15 @@ function formatter(timeZone: string): Intl.DateTimeFormat {
   return created;
 }
 
-function zonedParts(date: Date, timeZone: string): ZonedParts {
+/**
+ * Wall-clock parts of an instant in a named zone.
+ *
+ * Exported so that a market on a different clock — the CME Globex commodity
+ * session, say — reads its own venue's local time through the same cached
+ * `Intl.DateTimeFormat` this module already maintains, rather than standing up a
+ * second formatter cache that could disagree with this one about a DST boundary.
+ */
+export function zonedParts(date: Date, timeZone: string): ZonedParts {
   const values = Object.fromEntries(
     formatter(timeZone).formatToParts(date).map((part) => [part.type, part.value]),
   );
