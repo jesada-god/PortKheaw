@@ -126,6 +126,33 @@ describe('component conflicts', () => {
   it('says nothing when momentum itself has no opinion', () => {
     expect(detectComponentConflicts(breakdown({ momentum: 0 }))).toEqual([]);
   });
+
+  /*
+   * The magnitude rule has to apply to BOTH pairs. Guarding only the EMA side
+   * would leave a price-structure component at a rounding-level reading still
+   * able to void a direction on its own.
+   */
+  it('applies the same magnitude rule to the structure pair', () => {
+    const floor = MARKET_SIGNAL_GATE.conflictMinimumMagnitude;
+    const belowFloor = Math.floor((floor * MARKET_SIGNAL_SCORE_WEIGHTS.priceStructure) - 1);
+    const aboveFloor = Math.ceil(floor * MARKET_SIGNAL_SCORE_WEIGHTS.priceStructure) + 1;
+
+    expect(detectComponentConflicts(breakdown({ emaTrend: 20, priceStructure: -belowFloor })))
+      .not.toContain('structure_vs_momentum');
+    expect(detectComponentConflicts(breakdown({ emaTrend: 20, priceStructure: -aboveFloor })))
+      .toContain('structure_vs_momentum');
+  });
+
+  /*
+   * Measured over the 108-instrument corpus in `scripts/signal-sensitivity.ts`:
+   * sweeping 0.10 -> 0.30 moves 29, 29, 27, 27, 25 labels, and no adjacent pair
+   * of thresholds differs by more than four symbols out of 108. The chosen value
+   * sits in the flat middle of that sweep rather than on an edge of it.
+   */
+  it('keeps the chosen threshold inside the range the sweep found stable', () => {
+    expect(MARKET_SIGNAL_GATE.conflictMinimumMagnitude).toBeGreaterThanOrEqual(0.15);
+    expect(MARKET_SIGNAL_GATE.conflictMinimumMagnitude).toBeLessThanOrEqual(0.25);
+  });
 });
 
 describe('agreement', () => {

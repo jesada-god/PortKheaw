@@ -207,6 +207,35 @@ describe('MarketSignalSection', () => {
   });
 
   /*
+   * A MACD row was reported from a screen as "-0.1121 / -0.1386 / +1.2741",
+   * which cannot be true of any three numbers: the histogram is the difference
+   * of the other two, and -0.1121 - (-0.1386) is 0.0265, not 1.2741. The
+   * reported signal is exactly the engine's value divided by ten, so the
+   * question was whether something between the engine and the screen was
+   * scaling it.
+   *
+   * This renders the real captured IREN metrics through the real component and
+   * reads the DOM. Nothing in that path does arithmetic, and this test is what
+   * keeps it that way: any future formatter that rescales a metric on its way to
+   * a reader fails here.
+   */
+  it('renders MACD, signal and histogram exactly as the engine computed them', async () => {
+    const captured = {
+      macd: -0.11205758719454195,
+      macdSignal: -1.3861779991116565,
+      macdHistogram: 1.2741204119171146,
+    };
+    await render({ ...result, metrics: { ...result.metrics, ...captured } });
+    await act(async () => buttonContaining('ทำไม?').click());
+
+    const row = [...document.querySelectorAll('dt')]
+      .find((term) => term.textContent === 'MACD / Signal / Histogram')!.nextElementSibling!;
+    expect(row.textContent).toBe('-0.1121 / -1.3862 / 1.2741');
+    // The identity the reported trio violated, restated against the rendered text.
+    expect(captured.macd - captured.macdSignal).toBeCloseTo(captured.macdHistogram, 12);
+  });
+
+  /*
    * P1 rendering is keyed off `result.gate`, which the engine only produces when
    * `SIGNAL_GATE` is on. Everything above this block is the flags-OFF card and
    * passes unchanged — that is the evidence that turning the flag off really

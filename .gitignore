@@ -16,3 +16,8 @@ supabase/.temp/
 .qa/
 
 .vercel
+
+# Measurement input for scripts/signal-sensitivity.ts: ~110 instruments of daily
+# bars, tens of megabytes, refetchable with `--refresh`. It is not a gate and
+# nothing is compared against it, so it does not belong in history.
+__golden__/corpus/
