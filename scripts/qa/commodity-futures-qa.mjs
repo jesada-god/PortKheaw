@@ -368,14 +368,41 @@ async function auditContract(page, contract, viewport, tier) {
   const financialsText = await pageText(page);
   const financialsLeaks = EQUITY_ONLY_TEXT.filter((term) => financialsText.includes(term));
   check(`${tag}: Financials shows no equity fundamentals`, financialsLeaks.length === 0, financialsLeaks.join(', '));
+  // The same two panels the equity control asserts are PRESENT, asserted absent
+  // here by the identity the control uses — so the pair cannot both be true of a
+  // page that simply failed to render.
+  const strayAnalyst = await page.locator('[aria-label="Target Price"]').count();
+  check(`${tag}: Financials has no analyst panel`, strayAnalyst === 0, `sections=${strayAnalyst}`);
+  const strayKeyStats = await page.locator('[aria-label="Key Statistics"], [data-testid="key-statistics"]').count();
+  check(`${tag}: Financials has no key statistics`, strayKeyStats === 0, `sections=${strayKeyStats}`);
   const signalPresent = await page.locator('[aria-label="Technical Outlook"]').count();
   check(`${tag}: Financials carries the technical signal`, signalPresent > 0, `sections=${signalPresent}`);
   const locked = await page.locator('[data-testid="technical-outlook-locked"]').count();
-  // Elite is entitled and must see a result; basic must see the paywall.
-  if (tier === 'elite') {
-    check(`${tag}: entitled reader sees the signal itself`, locked === 0, `locked=${locked}`);
+  /*
+   * A contract's signal is sold on the Pro step, so Pro and Elite both see the
+   * result itself and only Basic sees the padlock. The padlock is checked for
+   * the plan it NAMES as well as for its presence: a gate that opens at Pro
+   * while its own copy asks for Elite would send a paying reader to a plan that
+   * would not have helped them.
+   */
+  if (tier === 'basic') {
+    check(`${tag}: Basic sees the paywall`, locked > 0, `locked=${locked}`);
+    const notice = page.locator('[data-testid="locked-technical.outlook.commodity"]').first();
+    const noticeCount = await notice.count();
+    check(`${tag}: the paywall is the commodity gate, not the equity one`, noticeCount > 0, `count=${noticeCount}`);
+    if (noticeCount > 0) {
+      const requiredTier = await notice.getAttribute('data-required-tier');
+      const noticeText = ((await notice.innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim();
+      check(`${tag}: the paywall asks for Pro`, requiredTier === 'pro', `data-required-tier=${requiredTier}`);
+      check(`${tag}: the paywall says Pro in words`, noticeText.includes('Pro') && !noticeText.includes('Elite'), noticeText);
+    }
   } else {
-    check(`${tag}: unentitled reader sees the paywall`, locked > 0, `locked=${locked}`);
+    check(`${tag}: ${tier} sees the signal itself`, locked === 0, `locked=${locked}`);
+    // The engine really ran for this reader: the server returns null for an
+    // unentitled tier, and a null result renders "ยังโหลดข้อมูล…ไม่สำเร็จ"
+    // rather than a state. A rendered state is proof the gate opened.
+    const state = await page.locator('[aria-label="Technical Outlook"]').first().getAttribute('data-state');
+    check(`${tag}: ${tier} gets a computed signal state`, Boolean(state), `data-state=${state}`);
   }
   const financialsOverflow = await page.evaluate(OVERFLOW_PROBE);
   if (financialsOverflow.length) report.overflow.push({ where: `${tag}/financials`, offenders: financialsOverflow });
@@ -407,9 +434,86 @@ async function auditEquityControl(page, viewport, tier) {
   check(`${tag}: equity keeps the chart Options toggle`, toggle > 0, `count=${toggle}`);
 
   await openTab(page, 'Financials');
+  /*
+   * The analyst panel by its own identity, not by its words.
+   *
+   * `AnalystTargetSection` carries no entitlement gate — it is the same section
+   * on every plan — but its TEXT depends on whether the provider answered for
+   * this symbol just then: a resolved target reads "Target Price", an
+   * unavailable one reads "ยังไม่มีราคาเป้าหมายสำหรับหุ้นนี้". Matching on the
+   * copy made this check pass or fail on provider weather rather than on
+   * whether the panel is still on the page, which is the only thing the control
+   * is asking.
+   */
+  const analystPanel = await page.locator('[aria-label="Target Price"]').count();
+  check(`${tag}: equity keeps its analyst panel`, analystPanel > 0, `sections=${analystPanel}`);
   const text = await pageText(page);
-  check(`${tag}: equity keeps its analyst/valuation panels`, /Analyst|ราคาเป้าหมาย|มูลค่าตลาด|P\/E/.test(text), '');
+  report.notes.push({ where: `${tag}/financials`, analystPanel, sample: text.slice(0, 120).replace(/\s+/g, ' ') });
+
+  /*
+   * The regression that matters most about the entitlement split: an equity's
+   * Technical Outlook is still an ELITE value. Pro must still be refused here
+   * while it is admitted on a contract, and the padlock must still be the equity
+   * capability — if the commodity row had leaked onto this page, a Pro reader
+   * would silently have been given a value nobody paid for.
+   */
+  const locked = await page.locator('[data-testid="technical-outlook-locked"]').count();
+  if (tier === 'elite') {
+    check(`${tag}: Elite still sees the equity signal`, locked === 0, `locked=${locked}`);
+  } else {
+    check(`${tag}: ${tier} is still refused the equity signal`, locked > 0, `locked=${locked}`);
+    const notice = page.locator('[data-testid="locked-technical.outlook"]').first();
+    const noticeCount = await notice.count();
+    check(`${tag}: the equity paywall is unchanged`, noticeCount > 0, `count=${noticeCount}`);
+    if (noticeCount > 0) {
+      const requiredTier = await notice.getAttribute('data-required-tier');
+      check(`${tag}: the equity signal still asks for Elite`, requiredTier === 'elite', `data-required-tier=${requiredTier}`);
+    }
+    // And the commodity row must not appear on an equity page at all.
+    const strayCount = await page.locator('[data-testid="locked-technical.outlook.commodity"]').count();
+    check(`${tag}: the commodity gate never appears on an equity`, strayCount === 0, `count=${strayCount}`);
+  }
+
   await page.screenshot({ path: `${OUT_DIR}/AAPL-control-${viewport.name}-${tier}.png`, fullPage: true });
+}
+
+/**
+ * Options entitlement on an equity, which this change must leave exactly alone.
+ *
+ * Pro carries the chain, Elite adds the walls, Basic has neither — three
+ * different correct outcomes, so the check is per tier rather than a single
+ * "options exist" assertion that all three would pass.
+ */
+async function auditOptionsEntitlement(page, viewport, tier) {
+  const tag = `AAPL-options@${viewport.name}/${tier}`;
+  await page.goto(`${BASE_URL}/stock/AAPL`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForSelector('[data-testid="stock-last-price"]', { timeout: 45_000 }).catch(() => undefined);
+  await dismissOverlays(page);
+  await openTab(page, 'Analysis');
+  await page.waitForTimeout(3_500);
+
+  const signalLocked = await page.locator('[data-testid="options-signal-locked"]').count();
+  const breakdownLocked = await page.locator('[data-testid="options-signal-breakdown-locked"]').count();
+  const chainLocked = await page.locator('[data-testid="options-locked"]').count();
+  /*
+   * The summary gate is the one this environment can actually observe, and it
+   * discriminates: Basic is refused, Pro and Elite are admitted.
+   *
+   * The per-factor BREAKDOWN gate deliberately is not asserted. Its locked block
+   * only exists once the Options Signal reaches `ready`, and no options provider
+   * is configured for a local QA server — so the panel renders its "not ready"
+   * branch for every plan and the element is absent for Basic, Pro and Elite
+   * alike. Asserting on it here would not be testing an entitlement; it would be
+   * testing whether a provider answered, and it would read as a Pro regression
+   * every time one did not. It is recorded below instead.
+   */
+  if (tier === 'basic') {
+    check(`${tag}: Basic is refused the Options Signal`, signalLocked > 0, `locked=${signalLocked}`);
+  } else {
+    check(`${tag}: ${tier} keeps the Options Signal summary`, signalLocked === 0, `locked=${signalLocked}`);
+  }
+  report.notes.push({ where: tag, signalLocked, breakdownLocked, chainLocked });
+  await page.screenshot({ path: `${OUT_DIR}/AAPL-options-${viewport.name}-${tier}.png`, fullPage: true });
 }
 
 async function auditMarketToday(page, viewport, tier) {
@@ -445,17 +549,24 @@ async function auditMarketToday(page, viewport, tier) {
 }
 
 async function main() {
+  /*
+   * All three plans, because the commodity signal now has three different
+   * correct answers and only a run that holds all three can tell a working
+   * ladder from a gate that is simply always open or always shut.
+   */
   const elite = await createQaUser('elite');
+  const pro = await createQaUser('pro');
   const basic = await createQaUser('basic');
-  console.log(`QA users: ${elite.email} (elite), ${basic.email} (basic)`);
+  console.log(`QA users: ${elite.email} (elite), ${pro.email} (pro), ${basic.email} (basic)`);
 
   const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
   try {
-    for (const user of [elite, basic]) {
+    for (const user of [elite, pro, basic]) {
       for (const viewport of VIEWPORTS) {
-        // The unentitled pass exists to prove the paywall, which one width shows
-        // as well as three; the widths are what the entitled pass is for.
-        if (user.tier === 'basic' && viewport.name !== '390x844') continue;
+        // Every width for Elite, which is where the layout work is proved. The
+        // Pro and Basic passes exist to prove the ENTITLEMENT, and a gate does
+        // not change with the viewport, so one width each is the honest cost.
+        if (user.tier !== 'elite' && viewport.name !== '390x844') continue;
         const context = await browser.newContext({
           viewport: { width: viewport.width, height: viewport.height },
           isMobile: viewport.mobile,
@@ -477,7 +588,11 @@ async function main() {
         await signIn(page, user, '/');
         await auditMarketToday(page, viewport, user.tier);
         for (const contract of CONTRACTS) await auditContract(page, contract, viewport, user.tier);
-        if (user.tier === 'elite') await auditEquityControl(page, viewport, user.tier);
+        // The equity control runs on EVERY tier: "Pro is refused here" is only
+        // meaningful said beside "Pro is admitted on a contract", and both
+        // halves have to come from the same signed-in reader.
+        await auditEquityControl(page, viewport, user.tier);
+        await auditOptionsEntitlement(page, viewport, user.tier);
 
         await context.close();
       }
@@ -485,6 +600,7 @@ async function main() {
   } finally {
     await browser.close();
     await cleanup(elite.userId);
+    await cleanup(pro.userId);
     await cleanup(basic.userId);
   }
 

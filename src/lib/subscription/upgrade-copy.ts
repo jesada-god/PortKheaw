@@ -95,6 +95,11 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
     benefit: 'เห็นสถานะแนวโน้ม คะแนนทิศทาง ความมั่นใจ และตัวชี้วัดจริงที่ระบบใช้สรุป',
     lockedLabel: 'Technical Outlook ใช้ได้ใน Elite',
   },
+  'technical.outlook.commodity': {
+    title: 'Technical Outlook · สินค้าโภคภัณฑ์',
+    benefit: 'เห็นแนวโน้ม คะแนนทิศทาง และความมั่นใจของทองคำ เงิน และน้ำมัน WTI จากราคาจริงของสัญญาล่วงหน้า',
+    lockedLabel: 'Technical Outlook ของสินค้าโภคภัณฑ์ ใช้ได้ตั้งแต่ Pro',
+  },
   'theme.premium': {
     title: 'ธีมสีพิเศษ',
     benefit: 'เปลี่ยนโทนสีทั้งแอปเป็น Bitswap Cyan, Dokturek Violet, Cosmic Vanilla หรือ Jet Black Orchid ใช้ได้ทั้งโหมดสว่างและมืด',

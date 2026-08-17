@@ -731,7 +731,10 @@ export function StockDetailClient({
               {presentation.showAnalystTargets && (
                 <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
               )}
-              <MarketSignalSection result={marketSignal} />
+              <MarketSignalSection
+                result={marketSignal}
+                capability={presentation.technicalOutlookCapability}
+              />
               {presentation.showKeyStatistics && keyStatisticsEnabled && (
                 <KeyStatisticsSection symbol={symbol} />
               )}

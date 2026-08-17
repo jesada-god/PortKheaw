@@ -122,6 +122,7 @@ describe('subscription capability matrix', () => {
       'options.signal.summary': false,
       'options.signal.breakdown': false,
       'technical.outlook': false,
+      'technical.outlook.commodity': false,
       'theme.premium': false,
     });
     expect(subscriptionCapabilities.pro).toEqual({
@@ -144,6 +145,9 @@ describe('subscription capability matrix', () => {
       'options.signal.summary': true,
       'options.signal.breakdown': false,
       'technical.outlook': false,
+      // Sold on the Pro step: on a commodity page the signal is the whole
+      // Financials tab, not the top of a stack of paid equity analysis.
+      'technical.outlook.commodity': true,
       'theme.premium': true,
     });
     expect(subscriptionCapabilities.elite).toEqual({

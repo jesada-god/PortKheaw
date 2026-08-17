@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { hasCapability, requiredTierFor } from '@/src/lib/subscription/capabilities';
+import { upgradeCopy } from '@/src/lib/subscription/upgrade-copy';
 import {
   companyProfileKind,
   resolveAssetPresentationPolicy,
@@ -39,7 +41,43 @@ describe('commodity asset presentation', () => {
       showAnalystTargets: false,
       showKeyStatistics: false,
       showOptionsAnalysis: false,
+      technicalOutlookCapability: 'technical.outlook.commodity',
     });
+  });
+
+  /**
+   * The signal is the whole Financials tab on a contract, so it is sold on the
+   * Pro step rather than the Elite one — and it names a SEPARATE capability, so
+   * a future move of either row cannot drag the other with it.
+   */
+  it('opens the commodity signal at Pro without touching the equity row', () => {
+    expect(resolveAssetPresentationPolicy('commodity').technicalOutlookCapability)
+      .toBe('technical.outlook.commodity');
+    expect(requiredTierFor('technical.outlook.commodity')).toBe('pro');
+
+    for (const assetType of ['stock', 'etf', 'crypto', 'index', null]) {
+      expect(resolveAssetPresentationPolicy(assetType).technicalOutlookCapability, `${assetType}`)
+        .toBe('technical.outlook');
+    }
+    expect(requiredTierFor('technical.outlook')).toBe('elite');
+  });
+
+  /** Basic is refused on a contract, exactly as it is on a stock. */
+  it('keeps Basic locked out of the signal on every asset type', () => {
+    expect(hasCapability('basic', 'technical.outlook.commodity')).toBe(false);
+    expect(hasCapability('basic', 'technical.outlook')).toBe(false);
+    expect(hasCapability('pro', 'technical.outlook.commodity')).toBe(true);
+    expect(hasCapability('pro', 'technical.outlook')).toBe(false);
+    expect(hasCapability('elite', 'technical.outlook.commodity')).toBe(true);
+    expect(hasCapability('elite', 'technical.outlook')).toBe(true);
+  });
+
+  /** The paywall must name the plan that actually opens it. */
+  it('tells a locked reader the commodity signal starts at Pro', () => {
+    const copy = upgradeCopy('technical.outlook.commodity');
+    expect(copy.lockedLabel).toContain('Pro');
+    expect(copy.lockedLabel).not.toContain('Elite');
+    expect(upgradeCopy('technical.outlook').lockedLabel).toContain('Elite');
   });
 
   /**

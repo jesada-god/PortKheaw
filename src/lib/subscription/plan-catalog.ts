@@ -121,6 +121,11 @@ export const planFeatureGroups: readonly PlanFeatureGroup[] = [
       fromCapability('signal-summary', 'Options Signal สรุปทิศทางและคะแนนความมั่นใจ', 'options.signal.summary'),
       fromCapability('signal-breakdown', 'Signal Breakdown แยกรายปัจจัย', 'options.signal.breakdown'),
       fromCapability('technical-outlook', 'Technical Outlook · Market Signal', 'technical.outlook'),
+      fromCapability(
+        'technical-outlook-commodity',
+        'Technical Outlook · ทองคำ เงิน และน้ำมัน WTI',
+        'technical.outlook.commodity',
+      ),
     ],
   },
   {

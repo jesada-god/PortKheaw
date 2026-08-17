@@ -178,6 +178,10 @@ describe('capability inheritance', () => {
     const proOnly: SubscriptionCapability[] = [
       'portfolio.options.create', 'portfolio.multiple.create', 'chart.sr.context', 'chart.vpvr',
       'simulator.what_if', 'planner.stock', 'options.chain.basic', 'options.signal.summary',
+      // The commodity outlook is its own row and it is a Pro row. The equity
+      // outlook below is untouched and still Elite; the two must not move
+      // together, which is the whole reason they are separate keys.
+      'technical.outlook.commodity',
     ];
     const eliteOnly: SubscriptionCapability[] = [
       'simulator.monte_carlo', 'options.analytics.walls', 'options.chain.advanced',
@@ -270,6 +274,7 @@ describe('the specific escalations this phase had to close', () => {
     expect(hasCapability(tier, 'options.chain.basic')).toBe(true);
     expect(hasCapability(tier, 'simulator.what_if')).toBe(true);
     expect(hasCapability(tier, 'chart.sr.levels')).toBe(true);
+    expect(hasCapability(tier, 'technical.outlook.commodity')).toBe(true);
 
     expect(hasCapability(tier, 'simulator.monte_carlo')).toBe(false);
     expect(hasCapability(tier, 'options.analytics.walls')).toBe(false);

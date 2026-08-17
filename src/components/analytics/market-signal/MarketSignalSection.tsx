@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
 import type { MarketSignalBias, MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/market-signal/types';
+import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
@@ -69,13 +70,40 @@ const BREAKDOWN_COPY = {
   priceStructure: { label: 'Price Structure', helper: 'ดูโครงสร้างราคาและการยืนยันจากแนวรับ/แนวต้าน' },
 } as const;
 
-export function MarketSignalSection({ result }: { result: MarketSignalResult | null }) {
+/**
+ * @param capability Which row of the matrix opens the signal for the instrument
+ *   on screen. The panel is identical either way — this only decides which gate
+ *   is asked and, through it, which plan the padlock names. It is passed in from
+ *   `resolveAssetPresentationPolicy` so it is the SAME capability the server
+ *   already enforced when it decided whether to compute `result`: a client that
+ *   checked a different row would either paint a padlock over a result the
+ *   server had sent, or invite an upgrade to a plan that would not help.
+ *   Defaulted to the equity row, so every existing caller is unchanged.
+ */
+export function MarketSignalSection({
+  result,
+  capability = 'technical.outlook',
+}: {
+  result: MarketSignalResult | null;
+  capability?: SubscriptionCapability;
+}) {
   const { can } = useEntitlement();
-  const entitled = can('technical.outlook');
-  return <MarketSignalContent key={`${result?.symbol ?? 'none'}:${entitled ? 'full' : 'locked'}`} result={result} entitled={entitled} />;
+  const entitled = can(capability);
+  return (
+    <MarketSignalContent
+      key={`${result?.symbol ?? 'none'}:${capability}:${entitled ? 'full' : 'locked'}`}
+      result={result}
+      entitled={entitled}
+      capability={capability}
+    />
+  );
 }
 
-function MarketSignalContent({ result, entitled }: { result: MarketSignalResult | null; entitled: boolean }) {
+function MarketSignalContent({ result, entitled, capability }: {
+  result: MarketSignalResult | null;
+  entitled: boolean;
+  capability: SubscriptionCapability;
+}) {
   const [open, setOpen] = useState(false);
   if (!entitled) {
     return (
@@ -87,7 +115,10 @@ function MarketSignalContent({ result, entitled }: { result: MarketSignalResult 
         </div>
         <p className="mt-3 text-sm leading-6 text-slate-400">สรุปแนวโน้ม คะแนนทิศทาง และความมั่นใจจากข้อมูลทางเทคนิคจริง</p>
         <div className="mt-3">
-          <LockedNotice capability="technical.outlook" source="financials.technical-outlook" />
+          {/* The notice derives its own wording and its own required plan from
+              the capability, so a commodity page asks for Pro and a stock page
+              asks for Elite without either naming a tier here. */}
+          <LockedNotice capability={capability} source="financials.technical-outlook" />
         </div>
         <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
       </section>

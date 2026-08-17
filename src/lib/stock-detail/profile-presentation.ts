@@ -1,3 +1,5 @@
+import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
+
 export type CompanyProfileLanguage = 'th' | 'en';
 
 /**
@@ -194,6 +196,22 @@ export interface AssetPresentationPolicy {
   showKeyStatistics: boolean;
   /** US-listed options analytics. Nothing lists options on a spot crypto pair. */
   showOptionsAnalysis: boolean;
+  /**
+   * WHICH entitlement opens the technical signal for this instrument.
+   *
+   * The same engine, the same candles and the same panel throughout — this names
+   * the row in the matrix that pays for it, and nothing else. It lives here, on
+   * the one classification the page already resolves, so the server that decides
+   * whether to run the engine and the client that decides whether to draw a
+   * padlock read a single answer and cannot drift apart: a gate the server
+   * enforces and a gate the browser paints must never disagree about which
+   * capability is being asked for.
+   *
+   * A commodity contract answers `technical.outlook.commodity` (Pro) — see the
+   * capability's own note for why it is priced apart. Everything else answers
+   * `technical.outlook` (Elite), exactly as before.
+   */
+  technicalOutlookCapability: SubscriptionCapability;
 }
 
 export function resolveAssetPresentationPolicy(
@@ -214,6 +232,11 @@ export function resolveAssetPresentationPolicy(
    * statements about a price series, and a price series is exactly what a
    * futures contract has. Dropping the tab to withhold the fundamentals would
    * have withheld the one thing on it that is true here.
+   *
+   * And because the signal is the whole tab rather than the top of a stack of
+   * paid analysis, it is the one capability these three pages answer with a
+   * different row of the matrix — Pro rather than Elite. See
+   * `technical.outlook.commodity`.
    */
   if (kind === 'commodity') {
     return {
@@ -227,6 +250,7 @@ export function resolveAssetPresentationPolicy(
       showAnalystTargets: false,
       showKeyStatistics: false,
       showOptionsAnalysis: false,
+      technicalOutlookCapability: 'technical.outlook.commodity',
     };
   }
   if (kind === 'crypto') {
@@ -241,6 +265,9 @@ export function resolveAssetPresentationPolicy(
       showAnalystTargets: false,
       showKeyStatistics: false,
       showOptionsAnalysis: false,
+      // No Financials tab and no signal panel to open — the equity row is the
+      // inert default rather than a claim that a crypto signal is sold at Elite.
+      technicalOutlookCapability: 'technical.outlook',
     };
   }
   if (kind === 'fund') {
@@ -255,6 +282,7 @@ export function resolveAssetPresentationPolicy(
       showAnalystTargets: true,
       showKeyStatistics: true,
       showOptionsAnalysis: true,
+      technicalOutlookCapability: 'technical.outlook',
     };
   }
   return {
@@ -268,6 +296,7 @@ export function resolveAssetPresentationPolicy(
     showAnalystTargets: true,
     showKeyStatistics: true,
     showOptionsAnalysis: true,
+    technicalOutlookCapability: 'technical.outlook',
   };
 }
 

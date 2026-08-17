@@ -11,6 +11,8 @@ import { loadStockDetailGatewaySnapshot } from '@/src/lib/stock-detail/gateway-s
 import { marketDataGatewayConfigured } from '@/src/lib/market-data/gateway/service';
 import { getInstrumentPresentationMetadata } from '@/src/lib/instruments/presentation';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
+import { commodityMarketAsset } from '@/src/lib/overview/market-assets';
+import { resolveAssetPresentationPolicy } from '@/src/lib/stock-detail/profile-presentation';
 import {
   advancedChartTypesEnabled,
   analystConsensusEnabled,
@@ -42,6 +44,22 @@ export default async function StockDetailPage({
   const symbol = parsed.data;
   const entitlement = await resolvePageEntitlement();
 
+  /*
+   * Which capability pays for this page's technical signal, resolved BEFORE the
+   * loads so the signal can still be fetched in parallel with everything else.
+   *
+   * `commodityMarketAsset` is not a second classification: it is the very
+   * registry `loadStockDetailGatewaySnapshot` routes on a few lines below, and a
+   * contract is the only instrument whose signal is sold on a different row
+   * (Pro, not Elite). Everything else — resolved or not yet resolved — falls to
+   * the equity default, which is what it already was. Waiting for the snapshot's
+   * own `assetType` instead would serialise two round trips on every stock page
+   * to learn something a synchronous lookup already knows.
+   */
+  const signalCapability = resolveAssetPresentationPolicy(
+    commodityMarketAsset(symbol) ? 'commodity' : null,
+  ).technicalOutlookCapability;
+
   const [
     marketResult,
     fxResult,
@@ -53,7 +71,7 @@ export default async function StockDetailPage({
     loadStockDetailGatewaySnapshot(symbol),
     getFxRate('USD', 'THB'),
     isWatched(symbol),
-    loadEntitledMarketSignal(symbol, entitlement.effectiveAccessTier),
+    loadEntitledMarketSignal(symbol, entitlement.effectiveAccessTier, signalCapability),
     getInstrumentPresentationMetadata([symbol]),
     /*
      * The same calendar service the Options Signal engine reads, on the same

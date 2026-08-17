@@ -31,8 +31,29 @@ export interface SubscriptionCapabilities {
   'options.signal.summary': boolean;
   /** Per-factor scores, reasons, R:R, IV/earnings diagnostics and the trade setup. */
   'options.signal.breakdown': boolean;
-  /** Technical Outlook · Market Signal on the Financials tab. */
+  /** Technical Outlook · Market Signal on the Financials tab, for an equity. */
   'technical.outlook': boolean;
+  /**
+   * The same Technical Outlook, on a commodity futures contract.
+   *
+   * Its own row rather than a second reader of `technical.outlook`, because the
+   * two are priced differently and nothing should make moving one move the
+   * other. The engine, the candles and the panel are identical — what differs is
+   * what the reader is being sold.
+   *
+   * An equity's Financials tab is a whole floor of paid analysis: the analyst
+   * consensus, the key statistics and the signal, and the signal is the top of
+   * that stack. A contract has none of the rest — there is no issuer to publish
+   * targets or file accounts — so on those three pages the signal is not the top
+   * of a stack, it IS the tab. Pricing it at the same Elite step would have left
+   * Basic and Pro looking at a commodity page whose only analytical surface is a
+   * padlock, which is not a cheaper version of the equity page but an empty one.
+   *
+   * It sits at Pro, and it is deliberately not implied by `technical.outlook`:
+   * an Elite reader reaches it through the ordinary ladder (Elite includes Pro),
+   * and a future move of either row cannot silently drag the other with it.
+   */
+  'technical.outlook.commodity': boolean;
   /**
    * The paid colour themes in Settings. A presentation preference rather than a
    * data feature, but it is gated on the same ladder as everything else so a
@@ -75,6 +96,7 @@ const LOCKED: Readonly<SubscriptionCapabilities> = {
   'options.signal.summary': false,
   'options.signal.breakdown': false,
   'technical.outlook': false,
+  'technical.outlook.commodity': false,
   'theme.premium': false,
 };
 
@@ -114,6 +136,7 @@ const TIER_GRANTS: Readonly<Record<SubscriptionTier, TierGrant>> = {
       'planner.stock',
       'options.chain.basic',
       'options.signal.summary',
+      'technical.outlook.commodity',
       'theme.premium',
     ],
     raises: { 'portfolio.stock.max_count': 10, 'portfolio.options.max_count': 10 },
