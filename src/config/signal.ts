@@ -1,3 +1,11 @@
+/**
+ * The single home for every Market Signal threshold and weight.
+ *
+ * Nothing in the engine may hardcode a number that belongs here: a reader who
+ * wants to know why a signal says what it says has to be able to read one file,
+ * and a calibration pass (P4) has to be able to move one file.
+ */
+
 export const MARKET_SIGNAL_SCORE_WEIGHTS = {
   emaTrend: 30,
   momentum: 25,
@@ -46,6 +54,16 @@ export const MARKET_SIGNAL_THRESHOLDS = {
   structure: {
     pivotWindow: 3,
     breakoutBufferRatio: 0.001,
+    /*
+     * How far back a confirmed pivot may sit and still describe today's
+     * structure. Without this the engine searched five years of pivots for "the
+     * nearest support below the previous close" and could pick a level from
+     * nine months ago — then report that price had just broken it. 120 daily
+     * bars is roughly six months: long enough that a quiet instrument still
+     * finds levels, short enough that the level is one a reader would recognise
+     * on the chart in front of them.
+     */
+    pivotLookbackBars: 120,
   },
   squeeze: {
     keltnerPeriod: 20,

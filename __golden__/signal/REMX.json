@@ -1,0 +1,180 @@
+{
+  "bias": "neutral",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 62,
+  "confidenceBreakdown": {
+    "agreement": 97,
+    "completeness": 93,
+    "conflictPenalty": 25,
+    "evidenceStrength": 53,
+    "regimeClarity": 7,
+    "volumeConfirmation": 50
+  },
+  "confidenceLabel": "Medium",
+  "dataPoints": {
+    "finalized": 1254,
+    "received": 1255
+  },
+  "flags": [
+    "bullish_divergence",
+    "weak_confirmation"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T13:30:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "latestCandleAt": "2026-08-14",
+  "metrics": {
+    "adx14": 27.524842882363874,
+    "atr14": 2.555003066586891,
+    "atrNormalizedDistance": 1.4964382675304302,
+    "bollingerLower": 62.68115409707035,
+    "bollingerMiddle": 71.52849884033203,
+    "bollingerUpper": 80.37584358359372,
+    "close": 78.55000305175781,
+    "divergence": "bullish",
+    "ema20": 74.72659868925959,
+    "ema200": 81.34657337133099,
+    "ema200SlopePct": -2.5551,
+    "ema20DeviationPct": 5.116524008268235,
+    "ema20SlopePct": 2.3561,
+    "ema50": 79.68636930233966,
+    "ema50SlopePct": -2.6856,
+    "emaCompressionRatio": 0.084277,
+    "keltnerLower": 70.91179868164937,
+    "keltnerMiddle": 74.74430328152971,
+    "keltnerUpper": 78.57680788141005,
+    "macd": -0.6434248804331588,
+    "macdHistogram": 1.7365444156527312,
+    "macdSignal": -2.37996929608589,
+    "minusDi14": 29.766054219916498,
+    "nearestResistance": 78.691645,
+    "nearestSupport": 73.491189,
+    "obvTrend": "rising",
+    "plusDi14": 36.22495494081919,
+    "relativeVolume20": 0.7354239286611728,
+    "rsi14": 56.266517773544805,
+    "squeezeOn": false
+  },
+  "reasons": [
+    {
+      "id": "swing-structure",
+      "impact": 15,
+      "polarity": "negative",
+      "text": "Swing price ลดต่ำลง"
+    },
+    {
+      "id": "macd-signal",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD อยู่เหนือ Signal"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA20 ชันขึ้น 2.36%"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "EMA200 ชันลง -2.56%"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "EMA50 ชันลง -2.69%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "OBV มีแนวโน้มสูงขึ้น"
+    },
+    {
+      "id": "adx-dmi",
+      "impact": 5.64,
+      "polarity": "positive",
+      "text": "ADX 27.5 โดย +DI เหนือ -DI"
+    },
+    {
+      "id": "macd-histogram",
+      "impact": 4.17,
+      "polarity": "positive",
+      "text": "MACD Histogram เป็นบวกแต่หดตัว"
+    },
+    {
+      "id": "bullish-divergence",
+      "impact": 4,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 2.5,
+      "polarity": "negative",
+      "text": "ราคาและ EMA เรียงตัวเอนลง"
+    },
+    {
+      "id": "rsi14",
+      "impact": 2.09,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 56.3"
+    }
+  ],
+  "score": 4,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": -0.3333,
+      "points": -10
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": 0.5836,
+      "points": 15
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": -1,
+      "points": -15
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0.3762,
+      "points": 6
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": 0.5,
+      "points": 8
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "BULLISH",
+  "status": "available",
+  "symbol": "REMX",
+  "timeframe": "1D",
+  "warnings": [
+    "หลักฐานบางหมวดขัดแย้งกัน"
+  ]
+}

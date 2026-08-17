@@ -5,7 +5,7 @@ import {
   MARKET_SIGNAL_EXPECTED_FACTORS,
   MARKET_SIGNAL_SCORE_WEIGHTS,
   MARKET_SIGNAL_THRESHOLDS,
-} from './config';
+} from '@/src/config/signal';
 import type {
   MarketSignalBias,
   MarketSignalCandle,
@@ -495,7 +495,16 @@ export function calculateMarketSignal(
     volumeFactors.push({ id: 'obv-trend', score: obvTrend === 'rising' ? 1 : obvTrend === 'falling' ? -1 : 0, text: `OBV ${obvTrend === 'rising' ? 'มีแนวโน้มสูงขึ้น' : obvTrend === 'falling' ? 'มีแนวโน้มลดลง' : 'ทรงตัว'}` });
   }
 
-  const pivots = confirmedSwingPivots(finalized, MARKET_SIGNAL_THRESHOLDS.structure.pivotWindow);
+  /*
+   * Structure is read from RECENT pivots only. A confirmed swing keeps its place
+   * in the record forever, but it stops describing the market long before that:
+   * searching the whole history for "the nearest low below the previous close"
+   * once picked a level from nine months earlier and then announced that price
+   * had broken it, on a day price was above every EMA.
+   */
+  const structureHorizon = finalized.length - 1 - MARKET_SIGNAL_THRESHOLDS.structure.pivotLookbackBars;
+  const pivots = confirmedSwingPivots(finalized, MARKET_SIGNAL_THRESHOLDS.structure.pivotWindow)
+    .filter((pivot) => pivot.confirmedAtIndex >= structureHorizon);
   const highs = pivots.filter((pivot) => pivot.kind === 'high');
   const lows = pivots.filter((pivot) => pivot.kind === 'low');
   const resistance = highs.filter((pivot) => pivot.price >= previousClose).sort((left, right) => left.price - right.price)[0] ?? null;
@@ -505,8 +514,20 @@ export function calculateMarketSignal(
   const breakdown = structureBreak === -1;
   const structureFactors: Factor[] = [];
   const swingScores: number[] = [];
-  if (highs.length >= 2) swingScores.push(Math.sign(highs.at(-1)!.price - highs.at(-2)!.price));
-  if (lows.length >= 2) swingScores.push(Math.sign(lows.at(-1)!.price - lows.at(-2)!.price));
+  /*
+   * The latest close takes part in the swing sequence as a PROVISIONAL extreme.
+   *
+   * A pivot cannot be confirmed until its right-hand window has closed, so the
+   * confirmed set always lags price by `pivotWindow` bars. Comparing only the
+   * two newest confirmed highs therefore reports "lower highs" for several days
+   * after price has already traded clean through both of them — which is how a
+   * close at 44.06, above the last two confirmed highs of 42.24 and 43.72, was
+   * scored as a fully bearish structure. Folding the close in as the newest
+   * (unconfirmed) extreme costs nothing when price is inside the range and
+   * removes the lag when it is not.
+   */
+  if (highs.length >= 2) swingScores.push(Math.sign(Math.max(highs.at(-1)!.price, close) - highs.at(-2)!.price));
+  if (lows.length >= 2) swingScores.push(Math.sign(Math.min(lows.at(-1)!.price, close) - lows.at(-2)!.price));
   if (swingScores.length) {
     const score = swingScores.reduce((sum, value) => sum + value, 0) / swingScores.length;
     structureFactors.push({ id: 'swing-structure', score, text: score > 0 ? 'Swing price ยกสูงขึ้น' : score < 0 ? 'Swing price ลดต่ำลง' : 'Swing price ยังผสมกัน' });

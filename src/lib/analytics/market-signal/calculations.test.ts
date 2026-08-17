@@ -17,7 +17,7 @@ import {
   presentationState,
   relativeVolumeStrength,
 } from './calculations';
-import { MARKET_SIGNAL_SCORE_WEIGHTS, MARKET_SIGNAL_THRESHOLDS, MARKET_SIGNAL_TOTAL_WEIGHT } from './config';
+import { MARKET_SIGNAL_SCORE_WEIGHTS, MARKET_SIGNAL_THRESHOLDS, MARKET_SIGNAL_TOTAL_WEIGHT } from '@/src/config/signal';
 import type { MarketSignalCandle, MarketSignalMetrics, MarketSignalScoreBreakdown, MarketSignalScoreComponent } from './types';
 
 const freshness: DataFreshness = {

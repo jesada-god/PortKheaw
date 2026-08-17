@@ -23,6 +23,7 @@
     "probe:options-signal": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/probe-options-signal.ts",
     "probe:news": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-news.ts",
     "probe:header-price": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/probe-header-price.ts",
+    "snapshot:signal": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/snapshot-signal.ts",
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
     "clean": "next clean",
