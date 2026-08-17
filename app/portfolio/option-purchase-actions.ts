@@ -90,7 +90,7 @@ export async function purchaseOptionFromChainAction(raw: unknown): Promise<Optio
       now: Date.now,
       loadChain: async (symbol, expiration) => (await getOptionsMarketDataService().getChain(symbol, expiration)).data,
       loadPortfolio: (id) => resolved.repository!.getById(id),
-      create: (input, quote) => resolved.repository!.createOptionPurchase(input, quote),
+      create: (input, quote, feeTotal) => resolved.repository!.createOptionPurchase(input, quote, feeTotal),
     });
     if (result.ok) {
       revalidatePath('/portfolio');

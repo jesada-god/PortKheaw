@@ -676,7 +676,8 @@ export interface Database {
           id: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol: string | null; quantity: string | null; price: string | null; amount: string | null; occurred_at: string;
           original_amount: string | null; original_currency: Currency; fx_rate_at_transaction: string | null; normalized_amount_usd: string | null;
-          normalized_price_usd: string | null; fee: string | null; normalized_fee_usd: string | null; broker: string | null;
+          normalized_price_usd: string | null; fee: string | null; normalized_fee_usd: string | null;
+          fee_mode: 'total' | 'per_contract' | null; broker: string | null;
           occurred_at_time: string; underlying_symbol: string | null; contract_symbol: string | null;
           option_kind: 'call' | 'put' | null; option_side: 'long' | 'short' | null; strike_price: string | null;
           expiration_date: string | null; multiplier: string | null;
@@ -690,7 +691,8 @@ export interface Database {
           id?: string; portfolio_id: string; transaction_type: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
-          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
+          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null;
+          fee_mode?: 'total' | 'per_contract' | null; broker?: string | null;
           occurred_at_time: string; underlying_symbol?: string | null; contract_symbol?: string | null;
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
@@ -704,7 +706,8 @@ export interface Database {
           transaction_type?: 'acquisition' | 'disposal' | 'initial_position' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'adjustment' | 'transfer_out' | 'transfer_in' | 'buy_to_open' | 'sell_to_close' | 'sell_to_open' | 'buy_to_close' | 'exercise' | 'assignment' | 'expired';
           symbol?: string | null; quantity?: string | null; price?: string | null; amount?: string | null; occurred_at?: string;
           original_amount?: string | null; original_currency?: Currency; fx_rate_at_transaction?: string | null; normalized_amount_usd?: string | null;
-          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null; broker?: string | null;
+          normalized_price_usd?: string | null; fee?: string | null; normalized_fee_usd?: string | null;
+          fee_mode?: 'total' | 'per_contract' | null; broker?: string | null;
           occurred_at_time?: string; underlying_symbol?: string | null; contract_symbol?: string | null;
           option_kind?: 'call' | 'put' | null; option_side?: 'long' | 'short' | null; strike_price?: string | null;
           expiration_date?: string | null; multiplier?: string | null;
@@ -1648,6 +1651,8 @@ export interface Database {
           input_occurred_at: string;
           input_quote_timestamp: string;
           input_idempotency_key: string;
+          input_fee?: string;
+          input_fee_mode?: 'total' | 'per_contract';
         };
         Returns: string;
       };

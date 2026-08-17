@@ -19,6 +19,7 @@ export type OptionPurchaseServiceResult =
     transactionId: string;
     quote: OptionPurchaseQuoteSnapshot;
     cost: number;
+    fee: number;
     cashAfter: number;
   }
   | {
@@ -34,7 +35,11 @@ export interface OptionPurchaseServiceDependencies {
   now(): number;
   loadChain(symbol: string, expiration: string): Promise<OptionsChain>;
   loadPortfolio(id: string): Promise<PortfolioRecord | null>;
-  create(input: OptionPurchaseRequest, quote: OptionPurchaseQuoteSnapshot): Promise<string>;
+  /**
+   * `feeTotal` is the resolved whole-order fee in USD — the per-contract mode is
+   * already applied — so the writer stores one number and never re-derives it.
+   */
+  create(input: OptionPurchaseRequest, quote: OptionPurchaseQuoteSnapshot, feeTotal: number): Promise<string>;
 }
 
 export async function purchaseOptionFromChain(
@@ -75,8 +80,16 @@ export async function purchaseOptionFromChain(
     return { ok: false, code: 'portfolio-not-found', message: 'กรุณาเลือกพอร์ตออปชันที่ยังใช้งานอยู่' };
   }
   const cashBalance = calculatePortfolio(portfolio.transactions).cashBalance;
-  const preview = calculateOptionPurchasePreview(input.contracts, input.purchasePrice, cashBalance);
-  if (!preview) return { ok: false, code: 'invalid', message: 'จำนวนสัญญาหรือราคาซื้อไม่ถูกต้อง' };
+  /*
+   * Priced from the request's own fee and mode, never from a total the browser
+   * computed: the schema has already refused a negative or malformed fee, and
+   * the number resolved here is both what the cash check spends and what the
+   * ledger row is written with.
+   */
+  const preview = calculateOptionPurchasePreview(
+    input.contracts, input.purchasePrice, cashBalance, input.fee, input.feeMode,
+  );
+  if (!preview) return { ok: false, code: 'invalid', message: 'จำนวนสัญญา ราคาซื้อ หรือค่าธรรมเนียมไม่ถูกต้อง' };
   if (preview.cashAfter < 0) {
     return {
       ok: false,
@@ -85,6 +98,13 @@ export async function purchaseOptionFromChain(
     };
   }
 
-  const transactionId = await dependencies.create(input, quote);
-  return { ok: true, transactionId, quote, cost: preview.cost, cashAfter: preview.cashAfter };
+  const transactionId = await dependencies.create(input, quote, preview.feeTotal);
+  return {
+    ok: true,
+    transactionId,
+    quote,
+    cost: preview.cost,
+    fee: preview.feeTotal,
+    cashAfter: preview.cashAfter,
+  };
 }

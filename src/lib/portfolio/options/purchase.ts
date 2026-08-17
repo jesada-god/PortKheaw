@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { resolveCurrentMarketSession, sessionPresentation } from '@/src/lib/market-data/current-session';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
-import { fixed, fixedMultiply, fixedToNumber } from '@/src/lib/money/fixed';
+import { fixed, fixedDivide, fixedMultiply, fixedToNumber } from '@/src/lib/money/fixed';
 import {
   DEFAULT_TRANSACTION_TIME_ZONE,
   resolveTransactionTimeZone,
@@ -15,6 +15,25 @@ const positivePrice = z.string().trim()
   .regex(/^\d+(?:\.\d{1,8})?$/, 'ราคาซื้อต้องเป็นทศนิยมไม่เกิน 8 ตำแหน่ง')
   .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, 'ราคาซื้อต้องมากกว่า 0');
 
+/**
+ * Commission and exchange fees, as one non-negative decimal. The pattern admits
+ * neither a sign nor an exponent, so a negative fee — a rebate the ledger has no
+ * verb for — and `NaN` are both rejected by shape rather than by a later check.
+ */
+const feeAmount = z.string().trim()
+  .regex(/^\d+(?:\.\d{1,8})?$/, 'ค่าธรรมเนียมต้องเป็นตัวเลขไม่ติดลบ ทศนิยมไม่เกิน 8 ตำแหน่ง')
+  .refine((value) => Number.isFinite(Number(value)), 'ค่าธรรมเนียมไม่ถูกต้อง');
+
+/**
+ * How the number in the fee box is meant, and the *only* thing this distinction
+ * decides: `per_contract` multiplies it by the contract count to reach the one
+ * total the ledger stores. Every figure downstream — cost, max loss, cash after,
+ * breakeven, P&L — is computed from that total, so an order entered either way
+ * is the same position afterwards.
+ */
+export const OPTION_FEE_MODES = ['total', 'per_contract'] as const;
+export type OptionFeeMode = typeof OPTION_FEE_MODES[number];
+
 export const optionPurchaseRequestSchema = z.object({
   portfolioId: z.string().uuid('กรุณาเลือกพอร์ตออปชัน'),
   underlyingSymbol: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9.-]{0,19}$/),
@@ -22,6 +41,14 @@ export const optionPurchaseRequestSchema = z.object({
   contractSymbol: z.string().trim().toUpperCase().min(3).max(80),
   contracts: z.number().int().positive().max(1_000_000),
   purchasePrice: positivePrice,
+  /*
+   * Defaulted rather than required: a client that predates the fee box sends no
+   * fee, and the request it sends is still a correct zero-fee purchase. The
+   * server never trusts the client's arithmetic either way — it is handed the
+   * number as typed plus the mode, and computes the total itself.
+   */
+  fee: feeAmount.default('0'),
+  feeMode: z.enum(OPTION_FEE_MODES).default('total'),
   occurredAt: z.string().trim().min(1),
   timezone: z.string().trim().min(1).max(64).default(DEFAULT_TRANSACTION_TIME_ZONE)
     .transform(resolveTransactionTimeZone),
@@ -209,25 +236,66 @@ export function optionPurchaseQuoteFingerprint(quote: OptionPurchaseQuoteSnapsho
 }
 
 export interface OptionPurchasePreview {
+  /** Price x 100 x contracts — the contract premium alone, before any fee. */
   premium: number;
+  /** The order's whole fee in USD, after the per-contract mode is resolved. */
+  feeTotal: number;
+  /** Premium + fee: the cash this order takes, and the position's cost. */
   cost: number;
+  /** A long option cannot lose more than it cost, and the fee is part of it. */
   maxLoss: number;
   cashAfter: number;
+  /**
+   * What the underlying has to travel past the strike, per share, for the whole
+   * order to come out even — the premium per share plus the fee spread over the
+   * shares it controls. Added to the strike for a call, subtracted for a put.
+   */
+  breakevenOffset: number;
+}
+
+/**
+ * The one place a fee entered per contract becomes the order's total. Kept apart
+ * from the preview so the server can resolve the same number for the row it
+ * writes without recomputing a preview it does not need.
+ */
+export function resolveOptionFeeTotal(fee: string, feeMode: OptionFeeMode, contracts: number): number | null {
+  if (!Number.isInteger(contracts) || contracts <= 0 || !feeAmount.safeParse(fee).success) return null;
+  const parsed = fixed(fee.trim());
+  return fixedToNumber(feeMode === 'per_contract' ? fixedMultiply(parsed, fixed(String(contracts))) : parsed);
+}
+
+/** Strike plus the breakeven offset for a call, minus it for a put. */
+export function optionPurchaseBreakeven(
+  optionKind: 'call' | 'put',
+  strike: number,
+  breakevenOffset: number,
+): number {
+  return fixedToNumber(optionKind === 'call'
+    ? fixed(strike) + fixed(breakevenOffset)
+    : fixed(strike) - fixed(breakevenOffset));
 }
 
 export function calculateOptionPurchasePreview(
   contracts: number,
   purchasePrice: string,
   cashBalance: number,
+  fee: string = '0',
+  feeMode: OptionFeeMode = 'total',
 ): OptionPurchasePreview | null {
   if (!Number.isInteger(contracts) || contracts <= 0 || !positivePrice.safeParse(purchasePrice).success) return null;
-  const premium = fixedMultiply(fixed(String(contracts)), fixed(purchasePrice));
-  const cost = fixedMultiply(premium, fixed(String(OPTION_CONTRACT_MULTIPLIER)));
+  const feeTotalNumber = resolveOptionFeeTotal(fee, feeMode, contracts);
+  if (feeTotalNumber === null) return null;
+  const units = fixedMultiply(fixed(String(contracts)), fixed(String(OPTION_CONTRACT_MULTIPLIER)));
+  const premium = fixedMultiply(units, fixed(purchasePrice));
+  const feeTotal = fixed(feeTotalNumber);
+  const cost = premium + feeTotal;
   const numericCost = fixedToNumber(cost);
   return {
     premium: fixedToNumber(premium),
+    feeTotal: fixedToNumber(feeTotal),
     cost: numericCost,
     maxLoss: numericCost,
     cashAfter: fixedToNumber(fixed(cashBalance) - cost),
+    breakevenOffset: fixedToNumber(fixed(purchasePrice) + fixedDivide(feeTotal, units)),
   };
 }

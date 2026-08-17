@@ -66,6 +66,26 @@ describe('option transaction-ledger calculations', () => {
     expect(result).toMatchObject({ cashFlow: -251.5, remainingCost: 251.5, marketValue: 250, unrealizedGain: -1.5 });
   });
 
+  /*
+   * A position bought before the sheet had a fee box states no fee at all, and
+   * has to keep reading exactly as it did: zero commission, cost equal to the
+   * premium, P&L unmoved. The fee field arriving is not allowed to restate
+   * anybody's history.
+   */
+  it('reads a position carrying no fee at all as a zero-fee position', () => {
+    const withoutFee = option('buy_to_open', { quantity: '2', price: '1.25', normalizedPriceUsd: '1.25' });
+    delete withoutFee.fee;
+    delete withoutFee.normalizedFeeUsd;
+    delete withoutFee.feeMode;
+    const quotes = { AAPL260821C00200000: quote({ bid: 1.2, ask: 1.3, mark: 1.25 }) };
+    expect(calculateOptionLedger([withoutFee], quotes, '2026-07-30')).toMatchObject({
+      cashFlow: -250, remainingCost: 250, marketValue: 250, unrealizedGain: 0,
+    });
+    // And identical to the same row spelling its zero fee out.
+    expect(calculateOptionLedger([{ ...withoutFee, fee: '0', normalizedFeeUsd: '0', feeMode: 'total' }], quotes, '2026-07-30'))
+      .toMatchObject({ cashFlow: -250, remainingCost: 250, marketValue: 250, unrealizedGain: 0 });
+  });
+
   it('values the legacy NVTS ledger position from a real Mark without changing its identity', () => {
     const legacy = 'LEGACY-C307F481-B34C-4FE3-97';
     const result = calculateOptionLedger([

@@ -32,7 +32,15 @@ function mapTransaction(row: TransactionRow): PortfolioTransaction {
     originalAmount: numericString(row.original_amount), originalCurrency: row.original_currency,
     fxRateAtTransaction: numericString(row.fx_rate_at_transaction), normalizedAmountUsd: numericString(row.normalized_amount_usd),
     normalizedPriceUsd: numericString(row.normalized_price_usd), fee: numericString(row.fee),
-    normalizedFeeUsd: numericString(row.normalized_fee_usd), broker: row.broker, occurredAtTime: row.occurred_at_time,
+    normalizedFeeUsd: numericString(row.normalized_fee_usd),
+    /*
+     * A row written before the fee box existed states no mode, and 'total' is
+     * what it means: whatever fee it carries (usually none at all) was the whole
+     * order's. Nothing computes from this — the money is `fee` — so the default
+     * cannot move a number.
+     */
+    feeMode: row.fee_mode ?? 'total',
+    broker: row.broker, occurredAtTime: row.occurred_at_time,
     underlyingSymbol: row.underlying_symbol, contractSymbol: row.contract_symbol, optionKind: row.option_kind,
     optionSide: row.option_side, strikePrice: numericString(row.strike_price), expirationDate: row.expiration_date,
     multiplier: numericString(row.multiplier), transferId: row.transfer_id,
@@ -217,6 +225,7 @@ export class PortfolioRepository {
   async createOptionPurchase(
     input: OptionPurchaseRequest,
     quote: OptionPurchaseQuoteSnapshot,
+    feeTotal: number,
   ): Promise<string> {
     const { data, error } = await this.client.rpc('create_portfolio_option_purchase', {
       input_portfolio_id: input.portfolioId,
@@ -230,6 +239,10 @@ export class PortfolioRepository {
       input_occurred_at: transactionDateTimeToUtcIso(input.occurredAt, input.timezone),
       input_quote_timestamp: quote.quoteTimestamp,
       input_idempotency_key: input.idempotencyKey,
+      // The whole-order fee, and a note of how it was typed. Only the first is
+      // money; the mode is kept so the row can say where the number came from.
+      input_fee: feeTotal.toFixed(8),
+      input_fee_mode: input.feeMode,
     });
     if (error || !data) throw error ?? new Error('Option purchase was not created');
     return data;

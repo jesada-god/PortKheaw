@@ -40,6 +40,12 @@ export interface PortfolioTransaction {
   normalizedPriceUsd?: string | null;
   fee?: string | null;
   normalizedFeeUsd?: string | null;
+  /**
+   * How the fee on this row was entered, not a second fee. `fee` is always the
+   * whole order's, so every calculation reads that and this reads as 'total' on
+   * every row written before the fee box existed.
+   */
+  feeMode?: 'total' | 'per_contract';
   broker?: string | null;
   occurredAtTime?: string;
   underlyingSymbol?: string | null;

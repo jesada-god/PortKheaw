@@ -4,8 +4,10 @@ import type { PortfolioRecord, PortfolioTransaction } from '../types';
 import {
   buildOptionPurchaseQuote,
   calculateOptionPurchasePreview,
+  optionPurchaseBreakeven,
   optionPurchaseQuoteFingerprint,
   optionsMarketClosedMessage,
+  resolveOptionFeeTotal,
   validateOptionPurchaseQuote,
 } from './purchase';
 import { purchaseOptionFromChain, type OptionPurchaseServiceDependencies } from './purchase-service';
@@ -81,10 +83,72 @@ describe('Option Chain purchase preparation', () => {
 
   it('calculates premium, cost, long max loss and cash after with multiplier 100', () => {
     expect(calculateOptionPurchasePreview(2, '2.50', 1_000)).toEqual({
-      premium: 5,
+      premium: 500,
+      feeTotal: 0,
       cost: 500,
       maxLoss: 500,
       cashAfter: 500,
+      breakevenOffset: 2.5,
+    });
+  });
+
+  /*
+   * The fee is not a decoration on the summary — it is spent. Every figure the
+   * sheet shows a reader before they commit has to carry it, or the reader is
+   * told the order costs less than their broker will actually take, and the
+   * position they end up holding is behind from the first second.
+   */
+  it('adds a whole-order fee to cost, max loss, cash after and the breakeven', () => {
+    expect(calculateOptionPurchasePreview(2, '2.50', 1_000, '7.50', 'total')).toEqual({
+      premium: 500,
+      feeTotal: 7.5,
+      cost: 507.5,
+      maxLoss: 507.5,
+      cashAfter: 492.5,
+      // 7.50 spread over the 200 shares two contracts control.
+      breakevenOffset: 2.5375,
+    });
+  });
+
+  it('multiplies a per-contract fee by the contract count and nothing else', () => {
+    const perContract = calculateOptionPurchasePreview(3, '2.50', 1_000, '0.65', 'per_contract');
+    expect(perContract).toEqual({
+      premium: 750,
+      feeTotal: 1.95,
+      cost: 751.95,
+      maxLoss: 751.95,
+      cashAfter: 248.05,
+      breakevenOffset: 2.5065,
+    });
+    // The same money entered the other way is the same order.
+    expect(calculateOptionPurchasePreview(3, '2.50', 1_000, '1.95', 'total')).toEqual(perContract);
+    expect(resolveOptionFeeTotal('0.65', 'per_contract', 3)).toBe(1.95);
+    expect(resolveOptionFeeTotal('0.65', 'total', 3)).toBe(0.65);
+  });
+
+  it('puts the breakeven above the strike for a call and below it for a put', () => {
+    const preview = calculateOptionPurchasePreview(1, '2.50', 1_000, '5', 'total')!;
+    expect(preview.breakevenOffset).toBe(2.55);
+    expect(optionPurchaseBreakeven('call', 200, preview.breakevenOffset)).toBe(202.55);
+    expect(optionPurchaseBreakeven('put', 200, preview.breakevenOffset)).toBe(197.45);
+  });
+
+  /*
+   * A negative fee is a credit, and this path has no verb for one: it would let
+   * a purchase *add* cash through the column every balance subtracts. Rejected
+   * as a shape, alongside the nonsense a number input can still produce.
+   */
+  it.each(['-1', 'abc', '', '1.123456789', 'NaN', 'Infinity', '1e2'])(
+    'refuses the fee %j and returns no preview to buy on',
+    (badFee) => {
+      expect(resolveOptionFeeTotal(badFee, 'total', 1)).toBeNull();
+      expect(calculateOptionPurchasePreview(1, '2.50', 1_000, badFee, 'total')).toBeNull();
+    },
+  );
+
+  it('keeps a zero fee costing exactly the premium', () => {
+    expect(calculateOptionPurchasePreview(4, '1.10', 1_000, '0', 'per_contract')).toMatchObject({
+      premium: 440, feeTotal: 0, cost: 440, maxLoss: 440, cashAfter: 560, breakevenOffset: 1.1,
     });
   });
 
@@ -183,6 +247,58 @@ describe('server-authoritative Option Chain purchase', () => {
       create,
     });
     expect(result).toMatchObject({ ok: false, code: 'quote-changed', quote: { strike: 205 } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  /*
+   * The browser sends the fee as typed plus the mode; the total is the server's
+   * to compute. A client that multiplied it out itself — or lied about it —
+   * cannot change what the row is written with or what the cash check spends.
+   */
+  it('resolves a per-contract fee itself and hands the writer one total', async () => {
+    const quote = buildOptionPurchaseQuote(chain(), 'AAPL260821C00200000')!;
+    const create = vi.fn<OptionPurchaseServiceDependencies['create']>(async () => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    const result = await purchaseOptionFromChain(
+      { ...request(quote), fee: '0.65', feeMode: 'per_contract' },
+      { now: () => NOW, loadChain: async () => chain(), loadPortfolio: async () => portfolio(1_000), create },
+    );
+    // 2 contracts x 100 x 2.50 = 500, plus 2 x 0.65 of commission.
+    expect(result).toMatchObject({ ok: true, cost: 501.3, fee: 1.3, cashAfter: 498.7 });
+    expect(create.mock.calls[0][2]).toBe(1.3);
+  });
+
+  it('defaults an absent fee to a zero total, so an older client still writes what it always did', async () => {
+    const quote = buildOptionPurchaseQuote(chain(), 'AAPL260821C00200000')!;
+    const create = vi.fn<OptionPurchaseServiceDependencies['create']>(async () => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    const result = await purchaseOptionFromChain(request(quote), {
+      now: () => NOW, loadChain: async () => chain(), loadPortfolio: async () => portfolio(1_000), create,
+    });
+    expect(result).toMatchObject({ ok: true, cost: 500, fee: 0 });
+    expect(create.mock.calls[0][0]).toMatchObject({ fee: '0', feeMode: 'total' });
+    expect(create.mock.calls[0][2]).toBe(0);
+  });
+
+  it.each(['-5', '5.123456789', 'abc'])('refuses the fee %j at the boundary and writes nothing', async (badFee) => {
+    const quote = buildOptionPurchaseQuote(chain(), 'AAPL260821C00200000')!;
+    const create = vi.fn();
+    const result = await purchaseOptionFromChain(
+      { ...request(quote), fee: badFee },
+      { now: () => NOW, loadChain: async () => chain(), loadPortfolio: async () => portfolio(1_000), create },
+    );
+    expect(result).toMatchObject({ ok: false, code: 'invalid' });
+    expect(result.ok === false && result.fields?.fee).toBeTruthy();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('counts the fee against the cash the reader has, not just the premium', async () => {
+    const quote = buildOptionPurchaseQuote(chain(), 'AAPL260821C00200000')!;
+    const create = vi.fn();
+    // 500 of premium is affordable at 505; 500 + 10 of commission is not.
+    const result = await purchaseOptionFromChain(
+      { ...request(quote), fee: '10', feeMode: 'total' },
+      { now: () => NOW, loadChain: async () => chain(), loadPortfolio: async () => portfolio(505), create },
+    );
+    expect(result).toMatchObject({ ok: false, code: 'insufficient-cash' });
     expect(create).not.toHaveBeenCalled();
   });
 
