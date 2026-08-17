@@ -1,8 +1,11 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   commodityMarketAsset,
   continuousMarketAsset,
   equityMarketSymbols,
+  marketAssetLogoUrl,
   MARKET_ASSETS,
 } from './market-assets';
 
@@ -71,6 +74,30 @@ describe('Overview market asset mapping', () => {
     expect(continuousMarketAsset('SPY')).toBeNull();
     // A commodity is not continuous: it has a weekend and a daily halt.
     expect(continuousMarketAsset('GC-F')).toBeNull();
+  });
+
+  /**
+   * A logo provider answers for a listed company, and no company issues a
+   * futures contract — so without a bundled mark all three cards fall back to a
+   * monogram of an exchange code (`GCF`, `SIF`, `CLF`) that means nothing to the
+   * reader. The file has to exist as well as be named: a 404 here is silent, and
+   * the card degrades to exactly the monogram this is meant to replace.
+   */
+  it('ships a mark for every card the logo providers cannot answer for', () => {
+    for (const asset of MARKET_ASSETS) {
+      expect(asset.logoUrl, `${asset.symbol} has no bundled mark`).toBeTruthy();
+      expect(existsSync(join(process.cwd(), 'public', asset.logoUrl!)), `${asset.logoUrl} is missing`).toBe(true);
+      expect(marketAssetLogoUrl(asset.symbol.toLowerCase())).toBe(asset.logoUrl);
+    }
+  });
+
+  /** A commodity mark is drawn for the thing, never borrowed from the fund. */
+  it('never dresses a contract in the mark of the ETF it replaced', () => {
+    for (const asset of MARKET_ASSETS) {
+      if (asset.marketKind !== 'commodity') continue;
+      expect(asset.logoUrl).not.toContain('gld');
+      expect(asset.logoUrl).not.toContain('slv');
+    }
   });
 
   it('canonicalizes the three contracts as commodities and nothing else', () => {

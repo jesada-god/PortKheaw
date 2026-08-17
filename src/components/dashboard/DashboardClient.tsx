@@ -619,6 +619,12 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
     <Link
       href={stockDetailHref(item.symbol)}
       aria-label={`เปิดรายละเอียด ${item.name} (${item.symbol})`}
+      // Addressable by instrument, so a browser check can measure ONE card's
+      // contents against ONE card's box. The rail is a legitimate horizontal
+      // scroller, which is exactly what makes a viewport-level overflow probe
+      // blind to a card whose own text is running past its edge.
+      data-testid="market-card"
+      data-symbol={item.symbol}
       /*
        * Enter is native to a link; Space is not — it scrolls the page. Readers
        * who arrive by keyboard try both, so Space is claimed here and turned
@@ -631,41 +637,54 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
       }}
       className="group block min-w-[238px] snap-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:bg-[var(--surface-selected)] sm:min-w-0"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <InstrumentLogo
-            symbol={item.symbol}
-            companyName={item.instrument.companyName}
-            logoUrl={item.instrument.logoUrl}
-            size={36}
-            appearance="plain"
-          />
-          <div className="min-w-0">
-            {/*
-              The name wraps rather than truncates. On a 238px handset card the
-              status pill is `shrink-0` and takes its width first, which left
-              "น้ำมัน WTI" rendering as an ellipsis — and the name of the market
-              is the one thing on the card that cannot afford to be unreadable.
-              A short name is unaffected; a long one takes a second line.
-            */}
-            <h3 className="font-semibold leading-tight text-[var(--text)]">{item.name}</h3>
-            <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">{item.subtitle}</p>
-          </div>
+      {/*
+        The name row owns the card's full width.
+
+        It used to share it with the session pill, and on a 238px handset card
+        that pill is `shrink-0` — it took its width first and left the name
+        roughly 60px to live in, so "น้ำมัน WTI" and "SPY · ETF อ้างอิง" each
+        broke over two or three lines while the pill sat comfortably beside
+        them. The pill is not the card's headline and does not belong in the
+        headline's row; it has moved to the provenance line at the foot, which
+        is where the reader already looks to find out how current the price is.
+        Nothing shrank to make this fit and no type got smaller.
+      */}
+      <div className="flex items-start gap-3">
+        <InstrumentLogo
+          symbol={item.symbol}
+          companyName={item.instrument.companyName}
+          logoUrl={item.instrument.logoUrl}
+          size={36}
+          appearance="plain"
+        />
+        <div className="min-w-0 flex-1">
+          {/*
+            Still allowed to wrap rather than truncate: the name of the market
+            is the one thing on the card that cannot afford to be unreadable.
+            With the row to itself a long name now fits on one line at 320px,
+            and the wrap is the safety net rather than the normal case.
+          */}
+          <h3 className="font-semibold leading-tight text-[var(--text)]">{item.name}</h3>
+          <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-muted)]">{item.subtitle}</p>
         </div>
-        <span className="flex shrink-0 items-center gap-1">
-          <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)]">
-            {item.sessionLabel}
-          </span>
-          {/* The one affordance: enough to read as "this opens", small enough
-              not to compete with the price. */}
-          <ChevronRight
-            size={16}
-            aria-hidden="true"
-            className="text-[var(--text-muted)] transition-transform group-hover:translate-x-0.5"
-          />
-        </span>
+        {/* The one affordance: enough to read as "this opens", small enough
+            not to compete with the price. */}
+        <ChevronRight
+          size={16}
+          aria-hidden="true"
+          className="mt-0.5 shrink-0 text-[var(--text-muted)] transition-transform group-hover:translate-x-0.5"
+        />
       </div>
-      <p className="mt-4 text-xl font-bold tabular-nums text-[var(--text)]">
+      {/*
+        `break-words` on the price, not a smaller size.
+
+        A commodity quotes in whole dollars per ounce or per barrel and carries a
+        currency after it — "3,432.10 USD" is half again as long as "612.44 USD"
+        — and the price is the reason the card exists, so it keeps its full
+        text-xl weight at every width and is simply allowed to take a second line
+        in the impossible case rather than run off the edge of a 320px screen.
+      */}
+      <p className="mt-4 break-words text-xl font-bold tabular-nums text-[var(--text)]">
         {item.price === null ? 'ข้อมูลยังไม่พร้อม' : `${formatNumber(item.price)} ${item.currency}`}
       </p>
       <div className={`mt-1 flex gap-2 text-xs font-semibold tabular-nums ${tone(item.changePercent)}`}>
@@ -678,9 +697,24 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
       {item.price === null && item.unavailableReason && (
         <p className="mt-2 text-[10px] leading-4 text-[var(--warning)]">{item.unavailableReason}</p>
       )}
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-[var(--text-muted)]">
+      {/*
+        The provenance line: what state the market is in, how much to trust the
+        number, and when it was taken. Three short facts about the SAME price,
+        which is why the session pill reads correctly here and read as a headline
+        up beside the name.
+
+        It wraps. "ข้อมูลล่าสุดที่บันทึกไว้" beside a full Thai date and time is
+        wider than a 238px card's content box on its own, and this row used to be
+        a no-wrap `justify-between` — so on a handset it pushed the card wider
+        than every other card in the rail. Wrapping is what lets each fact stay
+        at its own legible size instead of being squeezed to fit one line.
+      */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[var(--text-muted)]">
+        <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-0.5 text-[var(--text-secondary)]">
+          {item.sessionLabel}
+        </span>
         <span>{OVERVIEW_STATUS_COPY[item.status]}</span>
-        <span>{item.asOf ? formatBangkokDateTime(item.asOf) : 'ยังไม่มีเวลาอัปเดต'}</span>
+        <span className="ml-auto">{item.asOf ? formatBangkokDateTime(item.asOf) : 'ยังไม่มีเวลาอัปเดต'}</span>
       </div>
       {/*
         The vendor name is deliberately NOT printed here.

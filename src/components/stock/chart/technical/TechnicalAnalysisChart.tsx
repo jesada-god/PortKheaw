@@ -80,6 +80,16 @@ export interface TechnicalAnalysisChartProps {
   onToggleFavoriteRange(range: CandleRange): void;
   onChartType(type: ChartPreferences['chartType']): void;
   onToggle(key: ToolbarToggleKey): void;
+  /**
+   * Whether options are LISTED on this instrument at all — the instrument's own
+   * classification, not an entitlement and not a loading state.
+   *
+   * Defaults true so every existing equity/ETF caller is unchanged. False for
+   * the kinds nothing writes contracts on: the toolbar toggle and the whole
+   * Options section disappear rather than sitting there as a control whose only
+   * possible answer is "ไม่มีข้อมูล".
+   */
+  optionsAvailable?: boolean;
   liveUpdateSinkRef?: { current: CanonicalLiveUpdateSink | null };
 }
 
@@ -128,6 +138,7 @@ export function TechnicalAnalysisChart({
   onToggleFavoriteRange,
   onChartType,
   onToggle,
+  optionsAvailable = true,
   liveUpdateSinkRef,
 }: TechnicalAnalysisChartProps) {
   const { can } = useEntitlement();
@@ -246,7 +257,11 @@ export function TechnicalAnalysisChart({
   const nearest = useMemo(() => nearestLevel(srRows, acceptedPrice), [srRows, acceptedPrice]);
 
   // ── Options-driven levels (real open interest only) ────────────────────────
-  const optionsTicker = symbol.trim().length > 0;
+  // `optionsAvailable` is the instrument gate and it comes first: with it false
+  // the hook is never enabled, so an instrument with no listed contracts issues
+  // zero expiration and zero chain requests no matter what the toggle remembers
+  // from the last equity the reader looked at.
+  const optionsTicker = symbol.trim().length > 0 && optionsAvailable;
   const optionsSr = useOptionsSupportResistance({
     symbol,
     acceptedPrice,
@@ -434,11 +449,16 @@ export function TechnicalAnalysisChart({
 
       {/*
         Fixed page order below the toolbar: chart → Options → แนวรับ–แนวต้าน.
-        The Options section always occupies this slot (so the order is identical
-        on mobile and desktop); only its body is gated, and while it is collapsed
-        the hook is disabled, so a closed section issues zero provider requests.
+        For every instrument that HAS options the section always occupies this
+        slot regardless of its own state, so the order is identical on mobile and
+        desktop; only its body is gated, and while it is collapsed the hook is
+        disabled, so a closed section issues zero provider requests.
+
+        `optionsAvailable` is a different question and the only thing that
+        removes the slot: it says nothing lists options on this instrument, so
+        there is no section to order.
       */}
-      <OptionsLevelsPanel
+      {optionsAvailable && <OptionsLevelsPanel
         chain={optionsSr.chain}
         result={optionsResult}
         loading={optionsSr.loading}
@@ -450,7 +470,7 @@ export function TechnicalAnalysisChart({
         onToggleExpanded={() => onToggle('options')}
         onExpirationChange={optionsSr.setExpiration}
         onRetry={optionsSr.refresh}
-      />
+      />}
 
       <SupportResistancePanel
         rows={srRows}

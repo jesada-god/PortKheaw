@@ -157,6 +157,7 @@ export interface ChartToolbarProps {
   interval: CandleInterval;
   range: CandleRange;
   preferences: ChartPreferences;
+  /** Whether options exist on this instrument. False removes the toggle. */
   optionsAvailable: boolean;
   onSelectInterval(interval: CandleInterval): void;
   onSelectRange(range: CandleRange): void;
@@ -285,17 +286,25 @@ export function ChartToolbar({
         >
           VPVR
         </LockedFeatureButton>
-        <LockedFeatureButton
-          capability="options.chain.basic"
-          source="chart.toolbar-options"
-          pressed={preferences.options}
-          disabled={!optionsAvailable}
-          onActivate={() => onToggle('options')}
-          className={`${TOGGLE_BASE} px-2.5 ${preferences.options ? OPTIONS_ON : OFF} disabled:cursor-not-allowed disabled:opacity-40`}
-          data-testid="toggle-options"
-        >
-          Options
-        </LockedFeatureButton>
+        {/*
+          Not rendered at all when nothing lists options on this instrument.
+          It used to be rendered disabled, which reads as "you cannot use this
+          yet" — an upgrade or a loading state — when the truth is that there
+          are no contracts on a barrel of crude for anybody, at any tier, ever.
+          A control that can never be enabled is not a control.
+        */}
+        {optionsAvailable && (
+          <LockedFeatureButton
+            capability="options.chain.basic"
+            source="chart.toolbar-options"
+            pressed={preferences.options}
+            onActivate={() => onToggle('options')}
+            className={`${TOGGLE_BASE} px-2.5 ${preferences.options ? OPTIONS_ON : OFF}`}
+            data-testid="toggle-options"
+          >
+            Options
+          </LockedFeatureButton>
+        )}
       </div>
       <button
         type="button"

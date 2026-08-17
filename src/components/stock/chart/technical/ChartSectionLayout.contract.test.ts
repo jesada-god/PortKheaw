@@ -31,9 +31,27 @@ describe('Chart section order', () => {
     expect(srPanel).toBeGreaterThan(optionsPanel);
   });
 
-  it('renders the Options slot unconditionally so the order cannot change with its state', () => {
+  /**
+   * The slot's position must not depend on the reader's TOGGLE — that is what
+   * would make the page reflow differently on mobile than on desktop. It may
+   * depend on the INSTRUMENT: an instrument nothing lists options on has no
+   * Options section to place, and `optionsAvailable` is the only thing allowed
+   * to remove it.
+   */
+  it('never lets the Options toggle decide whether the slot exists', () => {
     expect(chart).not.toContain('{preferences.options && <OptionsLevelsPanel');
     expect(chart).toContain('expanded={preferences.options && optionsTicker}');
+    expect(chart).toContain('{optionsAvailable && <OptionsLevelsPanel');
+  });
+
+  /**
+   * The instrument gate has to sit on the LOADER, not just on the markup. With
+   * it only on the render, a commodity page would still have issued expiration
+   * and chain requests for a contract nobody writes options on, every time the
+   * toggle happened to be remembered as on from the last equity.
+   */
+  it('gates the options loader on the instrument, not only its panel', () => {
+    expect(chart).toContain('symbol.trim().length > 0 && optionsAvailable');
   });
 });
 

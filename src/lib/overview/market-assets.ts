@@ -13,13 +13,19 @@ export const MARKET_ASSETS = [
    * chart pipeline every other card uses. `proxyLabel` says which is which, so
    * "สินทรัพย์จริง" is never printed over a proxy.
    *
-   * `logoUrl` is null on purpose: the bundled `gld.svg`/`slv.svg` are marks for
-   * those two funds, and putting a fund's mark on a commodity card would restate
-   * the exact confusion this replaced. `InstrumentLogo` falls back to a monogram.
+   * Their marks are bundled here for the same reason SPY's and BTC's are: a logo
+   * provider answers for a LISTED COMPANY, and there is no company behind a
+   * futures contract to answer for — the resolver would find nothing and every
+   * one of the three would fall back to a monogram of an exchange code
+   * (`GCF`, `SIF`, `CLF`) that means nothing to the reader this card is for.
+   * They are deliberately NOT `gld.svg`/`slv.svg`: those are the marks of the two
+   * funds this change removed, and putting one on a commodity card would restate
+   * the exact confusion it replaced. Each is drawn for the thing itself — an
+   * ingot for the metals, a drop for the crude.
    */
-  { symbol: 'GC-F', name: 'ทองคำ', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: null, marketKind: 'commodity' },
-  { symbol: 'SI-F', name: 'เงิน', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: null, marketKind: 'commodity' },
-  { symbol: 'CL-F', name: 'น้ำมัน WTI', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: null, marketKind: 'commodity' },
+  { symbol: 'GC-F', name: 'ทองคำ', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: '/market-logos/gc-f.svg', marketKind: 'commodity' },
+  { symbol: 'SI-F', name: 'เงิน', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: '/market-logos/si-f.svg', marketKind: 'commodity' },
+  { symbol: 'CL-F', name: 'น้ำมัน WTI', proxyLabel: 'สัญญาล่วงหน้า', logoUrl: '/market-logos/cl-f.svg', marketKind: 'commodity' },
   { symbol: 'REMX', name: 'แร่หายาก', proxyLabel: 'ETF อ้างอิง', logoUrl: '/market-logos/remx.svg', marketKind: 'us-equity' },
   { symbol: 'BTC-USD', name: 'Bitcoin', proxyLabel: 'สินทรัพย์จริง', logoUrl: '/market-logos/btc.svg', marketKind: 'continuous' },
 ] as const;
@@ -28,10 +34,11 @@ export const MARKET_ASSETS = [
  * The bundled mark for an overview proxy, if it is one.
  *
  * These are the only instruments the product ships artwork for, and they are the
- * ones a provider logo suits worst — "S&P 500" is not a company. Reading it here
- * as well as on the overview card is what keeps SPY looking the same on the card
- * the reader taps and on the page it opens. A commodity contract has no mark and
- * resolves to null, which is a monogram downstream.
+ * ones a provider logo suits worst — "S&P 500" is not a company, and neither is
+ * a barrel of crude. Reading it here as well as on the overview card is what
+ * keeps SPY and ทองคำ looking the same on the card the reader taps and on the
+ * page it opens. Everything else resolves to null and is answered by the
+ * instrument master's own logo pipeline.
  */
 export function marketAssetLogoUrl(symbol: string): string | null {
   const normalized = symbol.trim().toUpperCase();

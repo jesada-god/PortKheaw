@@ -103,10 +103,12 @@ const OptionsSignalSection = dynamic(
 /**
  * The tab strip an instrument actually has content for.
  *
- * Financials is analyst targets, key statistics and a fundamentals-driven market
- * signal; Analysis is the US-listed options chain and its analytics. Neither
- * exists for a spot crypto pair, so both used to open on a permanently empty
- * panel. The presentation policy — not this component — decides that.
+ * Financials holds analyst targets, key statistics and the technical signal;
+ * Analysis is the US-listed options chain and its analytics. Neither exists for
+ * a spot crypto pair, so both used to open on a permanently empty panel. A
+ * futures contract keeps Financials for the signal alone — see
+ * `resolveAssetPresentationPolicy`, which is what decides all of this. This
+ * component only reads the answer.
  */
 function tabsFor(policy: { showFinancials: boolean; showOptionsAnalysis: boolean }): string[] {
   return [
@@ -681,7 +683,7 @@ export function StockDetailClient({
               profileLanguage={profileLanguage}
               onProfileLanguageChange={setProfileLanguage}
               instrumentAssetType={instrumentAssetType}
-              continuousMarket={continuousMarket}
+              marketKind={commodityMarket ? 'commodity' : continuousMarket ? 'continuous' : 'us-equity'}
             />
           )}
           {tab === 'Chart' && (
@@ -701,7 +703,15 @@ export function StockDetailClient({
               liveRefreshDisabled={quoteLoading}
               onSelectionChange={handleSelectionChange}
               onHistoryFallbackChange={setChartHistoryFallback}
-              continuousMarket={continuousMarket}
+              marketKind={commodityMarket ? 'commodity' : continuousMarket ? 'continuous' : 'us-equity'}
+              /*
+                The chart's Options layer, from the SAME policy that decides the
+                Analysis tab. It was previously gated on nothing but "is this a
+                non-empty symbol", so a contract that has no listed options at
+                all still offered the toggle, the expiry picker and a panel that
+                could only ever resolve to "unavailable".
+              */
+              optionsAvailable={presentation.showOptionsAnalysis}
               technicalIndicatorsEnabled={technicalIndicatorsEnabled}
               advancedChartTypesEnabled={advancedChartTypesEnabled}
               extendedIndicatorsEnabled={extendedIndicatorsEnabled}
@@ -710,10 +720,21 @@ export function StockDetailClient({
           )}
           {tab === 'News' && <NewsFeed symbol={symbol} />}
           {tab === 'Financials' && (
+            /*
+              Three independent panels, each behind the flag that decides whether
+              it describes THIS instrument — not one flag over all three. The
+              signal is the only one a futures contract keeps, because it is the
+              only one computed from the contract's own prices; the targets and
+              the statistics are about an issuer, and a contract has none.
+            */
             <div className="space-y-4">
-              <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
+              {presentation.showAnalystTargets && (
+                <AnalystTargetSection symbol={symbol} enabled={analystConsensusEnabled} />
+              )}
               <MarketSignalSection result={marketSignal} />
-              {keyStatisticsEnabled && <KeyStatisticsSection symbol={symbol} />}
+              {presentation.showKeyStatistics && keyStatisticsEnabled && (
+                <KeyStatisticsSection symbol={symbol} />
+              )}
               {/*
                 Last in Financials, after the targets and the statistics: the
                 reader has just read what other people expect of this stock, and
@@ -761,7 +782,7 @@ function Overview({
   profileLanguage,
   onProfileLanguageChange,
   instrumentAssetType,
-  continuousMarket,
+  marketKind,
 }: {
   symbol: string;
   quoteResource: StockDetailQuoteResource;
@@ -773,7 +794,8 @@ function Overview({
   profileLanguage: CompanyProfileLanguage;
   onProfileLanguageChange: (language: CompanyProfileLanguage) => void;
   instrumentAssetType: string | null;
-  continuousMarket: boolean;
+  /** Which trading day "ราคาเปิด" and "สูงสุดวันนี้" are counted over. */
+  marketKind: 'us-equity' | 'continuous' | 'commodity';
 }) {
   const quote = quoteResource.data;
   const profile = profileResource.data;
@@ -782,8 +804,16 @@ function Overview({
     {
       label: 'ราคาเปิด',
       value: numberValue(quote?.open),
-      tooltip: continuousMarket
+      /*
+        Which day this is the first price OF. A Globex day is not a calendar
+        day and not a US equity session: it starts the evening before, at 17:00
+        Chicago, so saying "เมื่อเปิดตลาดของวันนี้" over a futures contract
+        would name the wrong opening.
+      */
+      tooltip: marketKind === 'continuous'
         ? 'ราคาแรกของวัน (Open) ตามวันสากล UTC ของสินทรัพย์ที่ซื้อขายตลอด 24 ชั่วโมง'
+        : marketKind === 'commodity'
+        ? 'ราคาแรกของรอบซื้อขาย (Open) ของสัญญาล่วงหน้า ซึ่งเริ่มตั้งแต่เย็นวันก่อนหน้าตามเวลาตลาด ไม่ใช่ตามวันปฏิทิน'
         : 'ราคาแรกที่ซื้อขายเมื่อเปิดตลาดของวันนี้ (Open)',
     },
     {

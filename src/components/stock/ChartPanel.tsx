@@ -29,6 +29,23 @@ export const RANGE_LABELS: Record<HistoricalRange, string> = {
   ytd: 'YTD', '1y': '1Y', '3y': '3Y', '5y': '5Y',
 };
 
+/**
+ * What slice of the trading day the drawn series covers.
+ *
+ * `EXT`/`REG` are US-equity session names and mean nothing off that clock.
+ * `24/7` is the crypto pair. `GLOBEX` is the CME week the metals and crude
+ * trade on — one continuous session with a weekend and a daily halt, which is
+ * neither of the other two and must not borrow either one's label.
+ */
+function sessionScopeLabel(
+  marketKind: 'us-equity' | 'continuous' | 'commodity',
+  session: MarketSessionMode,
+): string {
+  if (marketKind === 'continuous') return '24/7';
+  if (marketKind === 'commodity') return 'GLOBEX';
+  return session === 'extended' ? 'EXT' : 'REG';
+}
+
 interface Props {
   symbol: string;
   active: boolean;
@@ -49,8 +66,21 @@ interface Props {
   onSelectionChange?: (selection: MarketSelection) => void;
   /** Report the chart's newest completed displayed bar up as the header's history-fallback price. */
   onHistoryFallbackChange?: (fallback: AcceptedPriceCandidate | null) => void;
-  /** Continuous assets have one 24/7 session and no pre/post selector. */
-  continuousMarket?: boolean;
+  /**
+   * Which kind of trading day the chart is drawing.
+   *
+   * Was a single `continuousMarket` boolean, which forced a futures contract to
+   * be described as one of the two things it is not: left false it offered a
+   * Pre/Regular/Post selector for a market that has no pre-market, and set true
+   * it would have labelled the Globex week "24/7" and erased its weekend.
+   */
+  marketKind?: 'us-equity' | 'continuous' | 'commodity';
+  /**
+   * Whether anything lists options on this instrument. False hides the Options
+   * toggle and its panel outright rather than leaving a control that can only
+   * ever answer "unavailable".
+   */
+  optionsAvailable?: boolean;
   technicalIndicatorsEnabled: boolean;
   advancedChartTypesEnabled: boolean;
   extendedIndicatorsEnabled: boolean;
@@ -70,7 +100,8 @@ export function ChartPanel({
   liveRefreshDisabled,
   onSelectionChange,
   onHistoryFallbackChange,
-  continuousMarket = false,
+  marketKind = 'us-equity',
+  optionsAvailable = true,
 }: Props) {
   const { addToast } = useToast();
   // Interval and range are two independent axes and both live in the persisted
@@ -130,8 +161,10 @@ export function ChartPanel({
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-2" data-testid="chart-session-controls">
       {feedLabel && <span className="rounded-full border border-[var(--warning-line)] bg-[var(--warning-soft)] px-2 py-1 text-[10px] font-semibold tracking-wide text-[var(--warning)]" data-testid="chart-feed-status">{feedLabel}</span>}
-      {intraday && !continuousMarket && <select aria-label="Market session" value={session} onChange={(event) => setSession(event.target.value as MarketSessionMode)} className="min-h-11 rounded-[var(--radius-control)] border border-[var(--border-strong)] bg-[var(--input-bg)] px-3 text-xs text-[var(--text)]"><option value="extended">Pre + Regular + Post</option><option value="regular">Regular only</option></select>}
-      <span className="figure ml-auto text-xs text-[var(--text-muted)]">{rangeOption(range).label} · {interval} · {continuousMarket ? '24/7' : session === 'extended' ? 'EXT' : 'REG'}</span>
+      {/* Pre and post are US-equity windows. Neither the 24/7 pair nor the
+          Globex contract has them, so neither is offered the choice. */}
+      {intraday && marketKind === 'us-equity' && <select aria-label="Market session" value={session} onChange={(event) => setSession(event.target.value as MarketSessionMode)} className="min-h-11 rounded-[var(--radius-control)] border border-[var(--border-strong)] bg-[var(--input-bg)] px-3 text-xs text-[var(--text)]"><option value="extended">Pre + Regular + Post</option><option value="regular">Regular only</option></select>}
+      <span className="figure ml-auto text-xs text-[var(--text-muted)]">{rangeOption(range).label} · {interval} · {sessionScopeLabel(marketKind, session)}</span>
     </div>
 
     {/*
@@ -154,7 +187,8 @@ export function ChartPanel({
       onLiveRefresh={onLiveRefresh}
       liveRefreshDisabled={liveRefreshDisabled}
       onHistoryFallbackChange={onHistoryFallbackChange}
-      continuousMarket={continuousMarket}
+      marketKind={marketKind}
+      optionsAvailable={optionsAvailable}
       preferences={preferences}
       onSelectInterval={onSelectInterval}
       onSelectRange={onSelectRange}

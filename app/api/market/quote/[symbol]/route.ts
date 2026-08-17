@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server';
 import { observedMarketDataResponse } from '@/src/lib/market-data/route';
 import { loadResilientQuote, type ResilientQuoteDiagnostics } from '@/src/lib/market-data/quote-service';
 import { symbolSchema } from '@/src/lib/market-data/validation';
-import { continuousMarketAsset } from '@/src/lib/overview/market-assets';
+import { commodityMarketAsset, continuousMarketAsset } from '@/src/lib/overview/market-assets';
 import { loadContinuousQuote } from '@/src/lib/stock-detail/continuous-snapshot';
 
 export async function GET(request: NextRequest, context: { params: Promise<{ symbol: string }> }) {
@@ -14,12 +14,19 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sym
     async () => {
       const symbol = symbolSchema.parse(rawSymbol);
       /*
-       * A continuous asset never reaches the US-equity pipeline: it has no row
-       * in `market_instruments`, so the resolver would reject it as an invalid
-       * symbol, and the trading-date reconciliation downstream assumes an
-       * exchange session it does not have. Its own chart pipeline answers.
+       * Neither a continuous asset nor a futures contract ever reaches the
+       * US-equity pipeline: neither has a row in `market_instruments`, so the
+       * resolver would reject it as an invalid symbol, and the trading-date
+       * reconciliation downstream assumes an exchange session neither has. The
+       * chart pipeline they are both quoted from answers instead — the same one
+       * that rendered the page, so the poll cannot disagree with the first paint.
+       *
+       * This is what makes the commodity detail page a LIVE page rather than a
+       * server-rendered snapshot: without it every refresh of /stock/GC-F asked
+       * the equity resolver for a COMEX contract and was told the symbol does
+       * not exist, so the price never moved after the first render.
        */
-      if (continuousMarketAsset(symbol)) {
+      if (continuousMarketAsset(symbol) || commodityMarketAsset(symbol)) {
         const result = await loadContinuousQuote(symbol);
         observed.diagnostics = {
           symbol,

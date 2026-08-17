@@ -166,8 +166,32 @@ export interface AssetPresentationPolicy {
   showSectorAndIndustry: boolean;
   /** Corporate market capitalisation. Never reused as a fund's size. */
   showMarketCapitalization: boolean;
-  /** Analyst targets, key statistics and market signal are equity fundamentals. */
+  /**
+   * Whether the Financials TAB exists at all — not what is inside it.
+   *
+   * The tab used to be one switch over three unrelated things, so an instrument
+   * that had none of the equity fundamentals also lost the technical signal, and
+   * an instrument that kept the tab was assumed to want all three. The two flags
+   * below say what may go in it; this one says only whether there is anywhere to
+   * put them, and it is false exactly when everything below is.
+   */
   showFinancials: boolean;
+  /**
+   * Analyst price targets and consensus.
+   *
+   * The analysts publish on an ISSUER. Nobody issues gold, so there is no target
+   * to consense on — and a "Consensus" panel over a contract would be reporting
+   * somebody's view of a company that has nothing to do with the metal.
+   */
+  showAnalystTargets: boolean;
+  /**
+   * Key statistics — P/E, EPS, revenue, the valuation multiples.
+   *
+   * Every one of them is a ratio of a price to an accounting figure. A futures
+   * contract files no accounts, so each would be a division by something that
+   * does not exist.
+   */
+  showKeyStatistics: boolean;
   /** US-listed options analytics. Nothing lists options on a spot crypto pair. */
   showOptionsAnalysis: boolean;
 }
@@ -178,10 +202,18 @@ export function resolveAssetPresentationPolicy(
   const kind = companyProfileKind(assetType);
   /*
    * A futures contract has no legal entity behind it at all: no filings, no
-   * headcount, no sector, no market capitalisation, and no equity options chain.
-   * Everything an equity page is built to show is withheld, for the same reason
-   * it is withheld from a currency pair — the number would be about something
-   * other than the thing on screen.
+   * headcount, no sector, no market capitalisation, no analyst covering it, no
+   * earnings to multiply a price by, and no equity options chain. Every one of
+   * those is withheld for the same reason it is withheld from a currency pair —
+   * the number would be about something other than the thing on screen.
+   *
+   * The Financials TAB survives all of that, and deliberately. What is left in
+   * it is the technical signal, which is computed from this contract's OWN daily
+   * candles by the same engine, at the same entitlement, as every other
+   * instrument: EMAs, momentum, trend strength, volume and price structure are
+   * statements about a price series, and a price series is exactly what a
+   * futures contract has. Dropping the tab to withhold the fundamentals would
+   * have withheld the one thing on it that is true here.
    */
   if (kind === 'commodity') {
     return {
@@ -191,7 +223,9 @@ export function resolveAssetPresentationPolicy(
       showCountry: false,
       showSectorAndIndustry: false,
       showMarketCapitalization: false,
-      showFinancials: false,
+      showFinancials: true,
+      showAnalystTargets: false,
+      showKeyStatistics: false,
       showOptionsAnalysis: false,
     };
   }
@@ -204,6 +238,8 @@ export function resolveAssetPresentationPolicy(
       showSectorAndIndustry: false,
       showMarketCapitalization: false,
       showFinancials: false,
+      showAnalystTargets: false,
+      showKeyStatistics: false,
       showOptionsAnalysis: false,
     };
   }
@@ -216,6 +252,8 @@ export function resolveAssetPresentationPolicy(
       showSectorAndIndustry: false,
       showMarketCapitalization: false,
       showFinancials: true,
+      showAnalystTargets: true,
+      showKeyStatistics: true,
       showOptionsAnalysis: true,
     };
   }
@@ -227,6 +265,8 @@ export function resolveAssetPresentationPolicy(
     showSectorAndIndustry: true,
     showMarketCapitalization: true,
     showFinancials: true,
+    showAnalystTargets: true,
+    showKeyStatistics: true,
     showOptionsAnalysis: true,
   };
 }

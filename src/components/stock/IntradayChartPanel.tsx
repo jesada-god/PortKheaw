@@ -52,7 +52,10 @@ interface Props {
   liveRefreshDisabled?: boolean;
   /** Report the newest completed displayed bar up as a history-fallback price candidate. */
   onHistoryFallbackChange?: (fallback: AcceptedPriceCandidate | null) => void;
-  continuousMarket?: boolean;
+  /** @see ChartPanel — the trading day this series is drawn over. */
+  marketKind?: 'us-equity' | 'continuous' | 'commodity';
+  /** False for an instrument nothing lists options on; hides the whole layer. */
+  optionsAvailable?: boolean;
   preferences: ChartPreferences;
   onSelectInterval: (interval: CandleInterval) => void;
   onSelectRange: (range: HistoricalRange) => void;
@@ -76,7 +79,8 @@ export function MarketCandleChartPanel(props: Props) {
   const {
     symbol, active, interval, range, session, adjusted, currentPrice, marketLabel, liveCandle,
     liveUpdateSinkRef, liveActive, onLiveRefresh, liveRefreshDisabled, onHistoryFallbackChange,
-    continuousMarket = false,
+    marketKind = 'us-equity',
+    optionsAvailable = true,
     preferences, onSelectInterval, onSelectRange, onToggleFavoriteInterval, onToggleFavoriteRange,
     onChartType, onToggle,
   } = props;
@@ -239,9 +243,17 @@ export function MarketCandleChartPanel(props: Props) {
     // The bar's own semantic domain. A bucket from the `extended` session selection
     // must not reach the header as a regular price, so an unclassifiable bar is
     // reported as no candidate at all rather than as a regular one.
+    //
+    // Only a US-equity series has pre/post buckets to tell apart. A Globex bar
+    // put through that classifier would be read against New York's opening bell:
+    // an 08:00 ET print of gold — the middle of an ordinary COMEX session —
+    // would reach the header labelled "pre-market", and an overnight one would
+    // classify as nothing at all and silently drop the fallback. Both non-equity
+    // kinds therefore share the `continuous` role, exactly as the shared market
+    // source already treats them.
     const priceRole = historyBarPriceRole(
       newestCompleted.date,
-      continuousMarket ? 'continuous' : 'us-equity',
+      marketKind === 'us-equity' ? 'us-equity' : 'continuous',
     );
     if (!priceRole) return null;
     return {
@@ -252,7 +264,7 @@ export function MarketCandleChartPanel(props: Props) {
       provider: result.provider,
       priceRole,
     };
-  }, [continuousMarket, result, displayPrices]);
+  }, [marketKind, result, displayPrices]);
   useEffect(() => { onHistoryFallbackChange?.(historyFallback); }, [historyFallback, onHistoryFallbackChange]);
 
   // Truthful raw/adjusted provenance: `adjusted` is what we asked the provider
@@ -308,6 +320,7 @@ export function MarketCandleChartPanel(props: Props) {
       onToggleFavoriteRange={onToggleFavoriteRange}
       onChartType={onChartType}
       onToggle={onToggle}
+      optionsAvailable={optionsAvailable}
       liveUpdateSinkRef={liveUpdateSinkRef}
     />}
     {result && displayPrices.length === 0 && <p className="rounded-xl border border-amber-500/20 p-4 text-sm text-amber-200">ไม่มีแท่งเทียนที่ผ่านการตรวจสอบสำหรับช่วงที่เลือก</p>}

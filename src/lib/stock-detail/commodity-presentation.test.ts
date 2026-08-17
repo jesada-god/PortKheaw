@@ -22,6 +22,10 @@ describe('commodity asset presentation', () => {
    * something else. Before the commodity kind existed, an unknown asset type fell
    * through to 'company' and the page would have shown a sector, an industry, a
    * market capitalisation and an options chain for a barrel of oil.
+   *
+   * `showFinancials` is the one thing that is TRUE here, and it is not a
+   * fundamental — it is the tab the technical signal lives in, computed from
+   * this contract's own candles. See the policy's own note.
    */
   it('withholds every equity fundamental for a commodity', () => {
     expect(resolveAssetPresentationPolicy('commodity')).toEqual({
@@ -31,9 +35,32 @@ describe('commodity asset presentation', () => {
       showCountry: false,
       showSectorAndIndustry: false,
       showMarketCapitalization: false,
-      showFinancials: false,
+      showFinancials: true,
+      showAnalystTargets: false,
+      showKeyStatistics: false,
       showOptionsAnalysis: false,
     });
+  });
+
+  /**
+   * The distinction the split exists for: the tab is kept, and the two equity
+   * panels inside it are not. A single `showFinancials` could only say "all
+   * three or none", so keeping the signal would have dragged analyst targets and
+   * P/E onto a page about a metal.
+   */
+  it('keeps the Financials tab for the signal while withholding what is in it for a stock', () => {
+    const policy = resolveAssetPresentationPolicy('commodity');
+    expect(policy.showFinancials).toBe(true);
+    expect(policy.showAnalystTargets).toBe(false);
+    expect(policy.showKeyStatistics).toBe(false);
+  });
+
+  /** A 24/7 pair keeps the behaviour it had: no Financials tab at all. */
+  it('leaves crypto without a Financials tab', () => {
+    const policy = resolveAssetPresentationPolicy('crypto');
+    expect(policy.showFinancials).toBe(false);
+    expect(policy.showAnalystTargets).toBe(false);
+    expect(policy.showKeyStatistics).toBe(false);
   });
 
   it('titles the profile card as a contract rather than a company', () => {
@@ -50,8 +77,16 @@ describe('commodity asset presentation', () => {
     expect(companyProfileKind('anything-unknown')).toBe('company');
     const equity = resolveAssetPresentationPolicy('stock');
     expect(equity.showFinancials).toBe(true);
+    expect(equity.showAnalystTargets).toBe(true);
+    expect(equity.showKeyStatistics).toBe(true);
     expect(equity.showMarketCapitalization).toBe(true);
     expect(equity.showSectorAndIndustry).toBe(true);
+    expect(equity.showOptionsAnalysis).toBe(true);
+    const fund = resolveAssetPresentationPolicy('etf');
+    expect(fund.showFinancials).toBe(true);
+    expect(fund.showAnalystTargets).toBe(true);
+    expect(fund.showKeyStatistics).toBe(true);
+    expect(fund.showOptionsAnalysis).toBe(true);
   });
 
   it('keeps commodity and continuous as separate client paths', () => {
