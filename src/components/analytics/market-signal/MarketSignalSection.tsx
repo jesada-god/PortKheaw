@@ -62,6 +62,56 @@ export const MARKET_SIGNAL_PRESENTATION = {
   tone: string;
 }>;
 
+/**
+ * Flag chips, in the order a reader should meet them.
+ *
+ * Ordering is by how much the flag should change what someone does with the
+ * card: things that undermine the reading come before things that colour it.
+ * Only the first `MAX_FLAG_CHIPS` are drawn; the rest are listed in the "ทำไม?"
+ * dialog, because a row of eight chips is a row nobody reads.
+ *
+ * This ordering — and the Thai wording — applies only once `result.gate` is
+ * present, i.e. only with `SIGNAL_GATE` on. With the flag off the card renders
+ * the raw flag list exactly as it did before P1.
+ */
+const FLAG_COPY: Record<string, string> = {
+  conflicting_evidence: 'หลักฐานขัดแย้งกัน',
+  stale_or_partial_data: 'ข้อมูลไม่สดหรือไม่ครบ',
+  earnings_imminent: 'ใกล้ประกาศงบมาก',
+  earnings_soon: 'ใกล้ประกาศงบ',
+  pre_earnings_breakout: 'เบรกก่อนงบ',
+  low_volume_confirmation: 'วอลุ่มไม่ยืนยัน',
+  weak_confirmation: 'ยังยืนยันไม่ชัด',
+  overextended: 'ราคาไกลค่าเฉลี่ย',
+  squeeze: 'ความผันผวนบีบตัว',
+  bearish_divergence: 'Bearish divergence',
+  bullish_divergence: 'Bullish divergence',
+  strong_momentum: 'โมเมนตัมแรง',
+  high_volume: 'วอลุ่มสูง',
+};
+const FLAG_ORDER = Object.keys(FLAG_COPY);
+const MAX_FLAG_CHIPS = 4;
+
+const orderedFlags = (flags: readonly string[]) => [...flags].sort((left, right) => {
+  const leftIndex = FLAG_ORDER.indexOf(left);
+  const rightIndex = FLAG_ORDER.indexOf(right);
+  return (leftIndex === -1 ? FLAG_ORDER.length : leftIndex) - (rightIndex === -1 ? FLAG_ORDER.length : rightIndex);
+});
+
+const flagLabel = (flag: string) => FLAG_COPY[flag] ?? flag.replaceAll('_', ' ');
+
+const BAND_COPY = {
+  neutral: 'คะแนนรวมยังต่ำกว่าเกณฑ์ที่จะเรียกว่ามีทิศทาง',
+  weak: 'มีทิศทาง แต่ยังบาง',
+  moderate: 'มีทิศทางชัดพอสมควร',
+  strong: 'คะแนนอยู่ในช่วงสูงสุด',
+} as const;
+
+const CONFLICT_COPY = {
+  ema_vs_momentum: 'EMA/Trend กับ Momentum ชี้คนละทาง',
+  structure_vs_momentum: 'Price Structure กับ Momentum ชี้คนละทาง',
+} as const;
+
 const BREAKDOWN_COPY = {
   emaTrend: { label: 'EMA / Trend', helper: 'ดูว่าราคาและเส้นค่าเฉลี่ยกำลังเรียงตัวขึ้นหรือลง' },
   momentum: { label: 'Momentum', helper: 'ดูว่าแรงของการเคลื่อนไหวยังเพิ่มขึ้นหรือเริ่มอ่อนลง' },
@@ -204,7 +254,16 @@ function MarketSignalContent({ result, entitled, capability }: {
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2" aria-label="Signal flags">
-        {result.flags.map((flag) => <span key={flag} className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold">{flag.replaceAll('_', ' ')}</span>)}
+        {(result.gate ? orderedFlags(result.flags).slice(0, MAX_FLAG_CHIPS) : result.flags).map((flag) => (
+          <span key={flag} className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold">
+            {result.gate ? flagLabel(flag) : flag.replaceAll('_', ' ')}
+          </span>
+        ))}
+        {result.gate && result.flags.length > MAX_FLAG_CHIPS ? (
+          <span className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold text-slate-400">
+            +{result.flags.length - MAX_FLAG_CHIPS} ใน “ทำไม?”
+          </span>
+        ) : null}
       </div>
       <p className="mt-3 text-xs leading-5 text-slate-400">{DISCLAIMER}</p>
 
@@ -218,6 +277,37 @@ function MarketSignalContent({ result, entitled, capability }: {
             <h3 className="font-semibold text-white">1. สถานะนี้แปลว่าอะไร</h3>
             <p className="mt-2 leading-6">{beginnerDescription}</p>
           </section>
+
+          {result.gate ? (
+            <section data-testid="signal-gate-explainer">
+              <h3 className="font-semibold text-white">ทำไมถึงไม่สรุปแรงกว่านี้</h3>
+              <p className="mt-2 leading-6">{BAND_COPY[result.gate.band]} (คะแนนรวม {signed(result.score)})</p>
+              {result.gate.conflicts.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {result.gate.conflicts.map((conflict) => <li key={conflict}>{CONFLICT_COPY[conflict]}</li>)}
+                </ul>
+              ) : null}
+              {result.gate.earningsProximity === 'imminent' || result.gate.earningsProximity === 'soon' ? (
+                <p className="mt-2 leading-6">อีก {result.gate.daysToEarnings} วันจะประกาศงบ ซึ่งเป็นเหตุการณ์ที่กราฟยังมองไม่เห็น จึงลดความมั่นใจลง</p>
+              ) : null}
+              {result.flags.length > MAX_FLAG_CHIPS ? (
+                <p className="mt-2 text-xs leading-5 text-slate-400">
+                  สัญญาณอื่นที่พบ: {orderedFlags(result.flags).slice(MAX_FLAG_CHIPS).map(flagLabel).join(' · ')}
+                </p>
+              ) : null}
+              {/* The multipliers, in the order the product takes them. Confidence
+                  is not a sum of parts any more, so showing parts that add up
+                  would misdescribe it. */}
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <ConfidenceDetail label="ฐานจากน้ำหนักหลักฐาน" value={Math.round(result.gate.confidenceFactors.base)} />
+                <ConfidenceDetail label="× ความครบของข้อมูล" value={Math.round(result.gate.confidenceFactors.completeness * 100)} />
+                <ConfidenceDetail label="× ความสอดคล้อง" value={Math.round(result.gate.confidenceFactors.agreement * 100)} />
+                <ConfidenceDetail label="× ความชัดของภาวะตลาด" value={Math.round(result.gate.confidenceFactors.regimeClarity * 100)} />
+                <ConfidenceDetail label="× หักความขัดแย้ง" value={Math.round(result.gate.confidenceFactors.conflict * 100)} />
+                <ConfidenceDetail label="× ระยะถึงวันงบ" value={Math.round(result.gate.confidenceFactors.earnings * 100)} />
+              </dl>
+            </section>
+          ) : null}
 
           <section>
             <h3 className="font-semibold text-white">2. ระบบดูจากอะไร</h3>

@@ -19,7 +19,59 @@ export type MarketSignalFlag =
   | 'bullish_divergence'
   | 'bearish_divergence'
   | 'strong_momentum'
-  | 'weak_confirmation';
+  | 'weak_confirmation'
+  // P1 (`SIGNAL_GATE`). Never emitted while the flag is off.
+  | 'conflicting_evidence'
+  | 'low_volume_confirmation'
+  | 'stale_or_partial_data'
+  | 'earnings_imminent'
+  | 'earnings_soon'
+  | 'pre_earnings_breakout';
+
+/** Which rollout phases the caller has turned on for this calculation. */
+export interface MarketSignalFeatures {
+  gate: boolean;
+}
+
+/**
+ * Where the next earnings report sits relative to the signal.
+ *
+ * `daysToNextReport` is whole calendar days, `null` when the calendar could not
+ * answer — which is a normal outcome, not an error, and makes the engine skip
+ * every earnings rule rather than assume the print is far away.
+ */
+export interface MarketSignalEarningsContext {
+  daysToNextReport: number | null;
+}
+
+export type MarketSignalBand = 'neutral' | 'weak' | 'moderate' | 'strong';
+export type MarketSignalConflict = 'ema_vs_momentum' | 'structure_vs_momentum';
+export type MarketSignalEarningsProximity = 'imminent' | 'soon' | 'clear' | 'unknown';
+
+/**
+ * What the P1 consistency layer decided, and why.
+ *
+ * Present only when `SIGNAL_GATE` is on; absent — not null — otherwise, so a
+ * flags-OFF payload is byte-identical to the one that shipped before P1.
+ */
+export interface MarketSignalGate {
+  band: MarketSignalBand;
+  /** Components whose signs contradict each other badly enough to void a direction. */
+  conflicts: MarketSignalConflict[];
+  /** True when a directional label was withheld despite a non-zero score. */
+  forcedNeutral: boolean;
+  earningsProximity: MarketSignalEarningsProximity;
+  daysToEarnings: number | null;
+  /** Every multiplier applied to confidence, in the order the product takes them. */
+  confidenceFactors: {
+    base: number;
+    completeness: number;
+    agreement: number;
+    regimeClarity: number;
+    conflict: number;
+    earnings: number;
+  };
+}
 
 export interface MarketSignalCandle extends HistoricalPrice {
   finalized: boolean;
@@ -99,6 +151,8 @@ interface MarketSignalBase {
   flags: MarketSignalFlag[];
   metrics: MarketSignalMetrics;
   confidenceBreakdown: MarketSignalConfidenceBreakdown;
+  /** P1 only. Omitted entirely when `SIGNAL_GATE` is off. */
+  gate?: MarketSignalGate;
 }
 
 export type MarketSignalResult = MarketSignalBase & ({
@@ -123,4 +177,8 @@ export interface MarketSignalContext {
   source: string | null;
   freshness: DataFreshness;
   calculatedAt: string;
+  /** Rollout switches, resolved by the caller. Absent means every phase is off. */
+  features?: Partial<MarketSignalFeatures>;
+  /** Optional by design: the engine degrades rather than fails without it. */
+  earnings?: MarketSignalEarningsContext;
 }

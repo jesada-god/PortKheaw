@@ -38,6 +38,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { calendarDaysUntil } from '@/src/lib/analytics/earnings/normalize';
 import { calculateMarketSignal } from '@/src/lib/analytics/market-signal/calculations';
 import type { MarketSignalCandle } from '@/src/lib/analytics/market-signal/types';
 import { SIGNAL_FLAG_KEYS, signalFlagState } from '@/src/config/signal-flags';
@@ -58,12 +59,26 @@ const ROOT = process.cwd();
 const GOLDEN_DIR = join(ROOT, '__golden__');
 const CANDLES_DIR = join(GOLDEN_DIR, 'candles');
 const SIGNAL_DIR = join(GOLDEN_DIR, 'signal');
+/** Where a flag-ON run writes, so it can never overwrite the flags-OFF baseline. */
+const PREVIEW_DIR = join(GOLDEN_DIR, 'preview');
 
 interface FrozenInput {
   symbol: string;
   capturedAt: string;
   source: string | null;
   freshness: DataFreshness;
+  /*
+   * The next report DATE, not a number of days.
+   *
+   * Frozen alongside the bars because P1's earnings rules would otherwise make a
+   * replay depend on a live calendar and stop being reproducible. Storing the
+   * date rather than "days from now" is what keeps it reproducible *tomorrow* as
+   * well: days are derived against the capture's own last bar, so the same file
+   * yields the same signal forever. `null` is a real answer here — most of these
+   * symbols are ETFs and futures that never report — and it exercises the same
+   * skip-silently path production takes when the calendar is down.
+   */
+  nextReportDate?: string | null;
   candles: MarketSignalCandle[];
 }
 
@@ -71,7 +86,9 @@ const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
 const option = (name: string) => args.find((value) => value.startsWith(`--${name}=`))?.split('=').slice(1).join('=') ?? null;
 
-const MODE = flag('check') ? 'check' : flag('refresh') ? 'refresh' : 'write';
+const MODE = flag('check') ? 'check'
+  : flag('refresh') ? 'refresh'
+    : flag('refresh-earnings') ? 'refresh-earnings' : 'write';
 const SYMBOLS = (option('symbols')?.split(',').map((value) => value.trim()).filter(Boolean)
   ?? [...DEFAULT_SYMBOLS]).map((value) => value.toUpperCase());
 
@@ -93,12 +110,12 @@ function stableStringify(value: unknown): string {
 }
 
 const candlePath = (symbol: string) => join(CANDLES_DIR, `${symbol}.json`);
-const signalPath = (symbol: string) => join(SIGNAL_DIR, `${symbol}.json`);
 
 async function fetchFrozenInput(symbol: string): Promise<FrozenInput> {
   // Imported lazily: the replay and gate paths must run with no provider module
   // loaded and no network reachable.
   const { getCandleMarketDataService } = await import('@/src/lib/market-data/candles');
+  const { loadEarningsSchedule } = await import('@/src/lib/analytics/earnings/service');
   const result = await getCandleMarketDataService().getCandles({
     symbol,
     interval: '1D',
@@ -106,11 +123,13 @@ async function fetchFrozenInput(symbol: string): Promise<FrozenInput> {
     adjusted: true,
     session: 'regular',
   });
+  const schedule = await loadEarningsSchedule(symbol).catch(() => null);
   return {
     symbol,
     capturedAt: new Date().toISOString(),
     source: result.provider ?? result.data.provider,
     freshness: result.freshness,
+    nextReportDate: schedule?.status === 'available' ? schedule.reportDate : null,
     candles: result.data.candles.map((candle) => ({
       date: new Date(candle.timestamp * 1_000).toISOString().slice(0, 10),
       open: candle.open,
@@ -121,6 +140,18 @@ async function fetchFrozenInput(symbol: string): Promise<FrozenInput> {
       finalized: candle.partial !== true,
     })),
   };
+}
+
+/**
+ * Days from the capture's newest finalized bar to its frozen report date.
+ *
+ * Measured against the bar rather than the wall clock, so replaying a capture
+ * next month produces the same signal it produced today.
+ */
+function daysToReport(frozen: FrozenInput): number | null {
+  if (!frozen.nextReportDate) return null;
+  const lastBar = frozen.candles.filter((candle) => candle.finalized).at(-1)?.date;
+  return lastBar ? calendarDaysUntil(lastBar, frozen.nextReportDate) : null;
 }
 
 function readFrozenInput(symbol: string): FrozenInput | null {
@@ -159,12 +190,33 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
+  /*
+   * A flag-ON run writes somewhere else entirely. Being able to look at what a
+   * phase does is necessary; being able to overwrite the flags-OFF baseline with
+   * it, one careless environment variable at a time, is not.
+   */
+  const previewing = flagsOn.length > 0;
+  const outputDir = previewing ? PREVIEW_DIR : SIGNAL_DIR;
+  if (previewing) {
+    mkdirSync(PREVIEW_DIR, { recursive: true });
+    console.log('writing to __golden__/preview/ — the flags-OFF baseline in signal/ is left alone');
+  }
 
   let failures = 0;
   let changed = 0;
 
   for (const symbol of SYMBOLS) {
     let frozen = readFrozenInput(symbol);
+    if (MODE === 'refresh-earnings' && frozen) {
+      // Only the calendar, never the bars. Adding earnings coverage to an
+      // existing capture must not silently move the price history the reference
+      // fixtures are pinned to.
+      const { loadEarningsSchedule } = await import('@/src/lib/analytics/earnings/service');
+      const schedule = await loadEarningsSchedule(symbol).catch(() => null);
+      frozen = { ...frozen, nextReportDate: schedule?.status === 'available' ? schedule.reportDate : null };
+      writeFileSync(candlePath(symbol), stableStringify(frozen), 'utf8');
+      console.log(`${symbol.padEnd(8)} earnings ${frozen.nextReportDate ?? 'none scheduled'}${frozen.nextReportDate ? ` · ${daysToReport(frozen)} วันจากแท่งล่าสุด` : ''}`);
+    }
     if (MODE === 'refresh' || !frozen) {
       if (MODE === 'check') {
         console.error(`${symbol.padEnd(8)} MISSING frozen input — run --refresh first`);
@@ -186,9 +238,11 @@ async function main(): Promise<void> {
       source: frozen.source,
       freshness: frozen.freshness,
       calculatedAt: PINNED_CALCULATED_AT,
+      features: { gate: flags.SIGNAL_GATE },
+      earnings: { daysToNextReport: daysToReport(frozen) },
     });
     const serialized = stableStringify(result);
-    const path = signalPath(symbol);
+    const path = join(outputDir, `${symbol}.json`);
     const previous = existsSync(path) ? readFileSync(path, 'utf8') : null;
 
     if (MODE === 'check') {

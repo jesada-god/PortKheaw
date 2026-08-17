@@ -1,0 +1,194 @@
+{
+  "bias": "bullish",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 71,
+  "confidenceBreakdown": {
+    "agreement": 100,
+    "completeness": 100,
+    "conflictPenalty": 0,
+    "evidenceStrength": 48,
+    "regimeClarity": 80,
+    "volumeConfirmation": 20
+  },
+  "confidenceLabel": "Medium",
+  "dataPoints": {
+    "finalized": 1256,
+    "received": 1257
+  },
+  "flags": [
+    "low_volume_confirmation"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T04:00:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "gate": {
+    "band": "moderate",
+    "confidenceFactors": {
+      "agreement": 1,
+      "base": 79.22,
+      "completeness": 1,
+      "conflict": 1,
+      "earnings": 1,
+      "regimeClarity": 0.9
+    },
+    "conflicts": [],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
+  },
+  "latestCandleAt": "2026-08-14",
+  "metrics": {
+    "adx14": 28.005301368459616,
+    "atr14": 75.24404481047077,
+    "atrNormalizedDistance": 2.028291698188238,
+    "bollingerLower": 3887.885171592162,
+    "bollingerMiddle": 4174.625,
+    "bollingerUpper": 4461.364828407838,
+    "close": 4380.39990234375,
+    "divergence": "bullish",
+    "ema20": 4227.783030916568,
+    "ema200": 4282.715301500278,
+    "ema200SlopePct": -0.5191,
+    "ema20DeviationPct": 3.6098558112168506,
+    "ema20SlopePct": 2.3912,
+    "ema50": 4234.291932271339,
+    "ema50SlopePct": 0.7421,
+    "emaCompressionRatio": 0.01254,
+    "keltnerLower": 4114.052846483926,
+    "keltnerMiddle": 4226.918913699632,
+    "keltnerUpper": 4339.784980915338,
+    "macd": 68.61316314157739,
+    "macdHistogram": 36.54986889697748,
+    "macdSignal": 32.06329424459991,
+    "minusDi14": 21.050387660870793,
+    "nearestResistance": 4386.43335,
+    "nearestSupport": 4267.600098,
+    "obvTrend": "rising",
+    "plusDi14": 33.819128489855444,
+    "relativeVolume20": 0.25184534567505024,
+    "rsi14": 64.58608252278472,
+    "squeezeOn": false
+  },
+  "reasons": [
+    {
+      "id": "swing-structure",
+      "impact": 15,
+      "polarity": "positive",
+      "text": "Swing price ยกสูงขึ้น"
+    },
+    {
+      "id": "macd-signal",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD อยู่เหนือ Signal"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA20 ชันขึ้น 2.39%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "OBV มีแนวโน้มสูงขึ้น"
+    },
+    {
+      "id": "adx-dmi",
+      "impact": 6,
+      "polarity": "positive",
+      "text": "ADX 28 โดย +DI เหนือ -DI"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 5.57,
+      "polarity": "positive",
+      "text": "EMA50 ชันขึ้น 0.74%"
+    },
+    {
+      "id": "rsi14",
+      "impact": 4.86,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 64.6"
+    },
+    {
+      "id": "macd-histogram",
+      "impact": 4.17,
+      "polarity": "positive",
+      "text": "MACD Histogram เป็นบวกแต่หดตัว"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 3.89,
+      "polarity": "negative",
+      "text": "EMA200 ชันลง -0.52%"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 2.5,
+      "polarity": "negative",
+      "text": "ราคาและ EMA เรียงตัวเอนลง"
+    },
+    {
+      "id": "bullish-divergence",
+      "impact": 0.8,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 64.6 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
+    }
+  ],
+  "score": 48,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": 0.2224,
+      "points": 7
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": 0.6945,
+      "points": 17
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 1,
+      "points": 15
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0.4003,
+      "points": 6
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": 0.2,
+      "points": 3
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "BULLISH",
+  "status": "available",
+  "symbol": "GC-F",
+  "timeframe": "1D",
+  "warnings": [
+    "Relative Volume 0.25× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
+  ]
+}

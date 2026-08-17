@@ -3,16 +3,21 @@ import { calculateTechnicalAnalysis } from '@/src/lib/analytics/technical/calcul
 import type { AdxPoint, BollingerPoint, IndicatorPoint, KeltnerPoint, MacdPoint } from '@/src/lib/analytics/technical/types';
 import {
   MARKET_SIGNAL_EXPECTED_FACTORS,
+  MARKET_SIGNAL_GATE,
   MARKET_SIGNAL_SCORE_WEIGHTS,
   MARKET_SIGNAL_THRESHOLDS,
 } from '@/src/config/signal';
 import type {
+  MarketSignalBand,
   MarketSignalBias,
   MarketSignalCandle,
   MarketSignalComponentId,
   MarketSignalConfidenceBreakdown,
+  MarketSignalConflict,
   MarketSignalContext,
+  MarketSignalEarningsProximity,
   MarketSignalFlag,
+  MarketSignalGate,
   MarketSignalMetrics,
   MarketSignalReason,
   MarketSignalResult,
@@ -327,6 +332,273 @@ export function calculateSignalConfidence(
   };
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * P1 consistency layer (`SIGNAL_GATE`)
+ * ---------------------------------------------------------------------------
+ * Everything below is reachable only when the caller passes `features.gate`.
+ * With the flag off none of it runs and the payload is byte-for-byte what it
+ * was before P1 — that equivalence is the whole rollout contract, and
+ * `snapshot-signal --check` is what holds it.
+ */
+
+/**
+ * How much direction a score is actually carrying.
+ *
+ * The engine published "BULLISH" off a +1 score, which is five components
+ * disagreeing and rounding, not a trend. A band is the smallest honest fix:
+ * below `neutral` the sign of the total is noise.
+ */
+export function bandFromScore(score: number): MarketSignalBand {
+  const magnitude = Math.abs(score);
+  const bands = MARKET_SIGNAL_GATE.bands;
+  if (magnitude < bands.neutral) return 'neutral';
+  if (magnitude < bands.weak) return 'weak';
+  if (magnitude < bands.strong) return 'moderate';
+  return 'strong';
+}
+
+/**
+ * Pairs of components that cannot both be right about direction.
+ *
+ * Trend and momentum pointing opposite ways is not a weak trend, it is an
+ * unresolved one — the average of the two says "mildly bullish" when what the
+ * evidence says is "wait". Same for structure against momentum.
+ *
+ * A component only gets a vote once it is actually using some of its range.
+ * Sign alone made silver neutral on a score of 36 because its EMA component sat
+ * at -0.11 of full scale while everything else agreed; that is not two parts of
+ * the evidence disagreeing, it is one of them rounding.
+ */
+export function detectComponentConflicts(scoreBreakdown: MarketSignalScoreBreakdown): MarketSignalConflict[] {
+  const sign = (component: MarketSignalScoreComponent) => {
+    const normalized = component.normalizedScore;
+    if (normalized === null || Math.abs(normalized) < MARKET_SIGNAL_GATE.conflictMinimumMagnitude) return 0;
+    return Math.sign(normalized);
+  };
+  const momentum = sign(scoreBreakdown.momentum);
+  const conflicts: MarketSignalConflict[] = [];
+  if (momentum !== 0) {
+    const ema = sign(scoreBreakdown.emaTrend);
+    const structure = sign(scoreBreakdown.priceStructure);
+    if (ema !== 0 && ema !== momentum) conflicts.push('ema_vs_momentum');
+    if (structure !== 0 && structure !== momentum) conflicts.push('structure_vs_momentum');
+  }
+  return conflicts;
+}
+
+/**
+ * The share of available component weight whose contribution points the same
+ * way as the total.
+ *
+ * The old definition compared magnitude-weighted positive and negative masses
+ * and reported 99% for a case where a quarter of the evidence was pulling the
+ * other way. This one answers the question a reader thinks it answers: of the
+ * evidence that had a say, how much agreed? It also makes the invariant
+ * testable — any opposing weight is excluded from the numerator, so a non-zero
+ * conflict penalty can never coexist with 100% agreement.
+ */
+export function agreementRatio(scoreBreakdown: MarketSignalScoreBreakdown, score: number): number {
+  const entries = Object.entries(scoreBreakdown) as Array<[MarketSignalComponentId, MarketSignalScoreComponent]>;
+  const availableWeight = entries.reduce((sum, [id, item]) => sum + (item.available ? MARKET_SIGNAL_SCORE_WEIGHTS[id] : 0), 0);
+  if (availableWeight === 0) return 0;
+  const direction = Math.sign(score);
+  const aligned = entries.reduce((sum, [id, item]) => sum
+    + (item.available && Math.sign(item.points ?? 0) === direction ? MARKET_SIGNAL_SCORE_WEIGHTS[id] : 0), 0);
+  return aligned / availableWeight;
+}
+
+/**
+ * How much a divergence is worth, given where RSI sits.
+ *
+ * A bullish divergence is a statement about exhausted selling, so it means
+ * something near the oversold end and almost nothing at RSI 54.86 — which is
+ * where the engine was raising it at full strength. Weighting is DIRECTIONAL on
+ * purpose: distance from the midpoint alone would score a bullish divergence
+ * highest at RSI 80.
+ */
+export function divergenceWeight(direction: 'bullish' | 'bearish', rsi14: number | null): number {
+  if (rsi14 === null) return 0;
+  const thresholds = MARKET_SIGNAL_THRESHOLDS.momentum;
+  return direction === 'bullish'
+    ? clamp((50 - rsi14) / (50 - thresholds.rsiBearishExtreme), 0, 1)
+    : clamp((rsi14 - 50) / (thresholds.rsiBullishExtreme - 50), 0, 1);
+}
+
+export function earningsProximityFrom(daysToNextReport: number | null | undefined): MarketSignalEarningsProximity {
+  if (daysToNextReport == null || !Number.isFinite(daysToNextReport) || daysToNextReport < 0) return 'unknown';
+  if (daysToNextReport <= MARKET_SIGNAL_GATE.earnings.imminentDays) return 'imminent';
+  if (daysToNextReport <= MARKET_SIGNAL_GATE.earnings.soonDays) return 'soon';
+  return 'clear';
+}
+
+const earningsFactorFor = (proximity: MarketSignalEarningsProximity) => proximity === 'imminent'
+  ? MARKET_SIGNAL_GATE.earnings.imminentFactor
+  : proximity === 'soon' ? MARKET_SIGNAL_GATE.earnings.soonFactor : 1;
+
+/** Map [0,1] onto [floor,1]: a bad term hurts a lot without zeroing the product. */
+const withFloor = (value: number, floor: number) => floor + (1 - floor) * clamp(value, 0, 1);
+
+/** Freshness states in which the provider did not actually give us today's data. */
+const DEGRADED_FRESHNESS = new Set(['stale', 'cached', 'unknown', 'unavailable']);
+export const isDegradedFreshness = (status: string) => DEGRADED_FRESHNESS.has(status);
+
+/**
+ * Confidence as a product rather than a sum.
+ *
+ * Additively, completeness carried 30 of the 100 points available, so a symbol
+ * with every indicator present started at 30% no matter how incoherent the
+ * reading was: IREN reported 64% while regime clarity was 2%. Multiplied, each
+ * term is a veto in proportion to how bad it is, and a 2% clarity cannot be
+ * paid for by anything.
+ *
+ * The six displayed breakdown numbers keep their meanings so the dialog does
+ * not change shape; `factors` reports the multipliers themselves, in order.
+ */
+export function calculateGatedConfidence(input: {
+  scoreBreakdown: MarketSignalScoreBreakdown;
+  score: number;
+  bias: MarketSignalBias;
+  regimeClarity: number;
+  dataDegraded: boolean;
+  earningsProximity: MarketSignalEarningsProximity;
+}): { confidence: number; breakdown: MarketSignalConfidenceBreakdown; factors: MarketSignalGate['confidenceFactors'] } {
+  const { scoreBreakdown, score, bias, regimeClarity, dataDegraded, earningsProximity } = input;
+  const entries = Object.entries(scoreBreakdown) as Array<[MarketSignalComponentId, MarketSignalScoreComponent]>;
+  const availableWeight = entries.reduce((sum, [id, item]) => sum + (item.available ? MARKET_SIGNAL_SCORE_WEIGHTS[id] : 0), 0);
+  const positiveWeight = entries.reduce((sum, [id, item]) => sum + ((item.normalizedScore ?? 0) > 0 ? MARKET_SIGNAL_SCORE_WEIGHTS[id] * Math.abs(item.normalizedScore as number) : 0), 0);
+  const negativeWeight = entries.reduce((sum, [id, item]) => sum + ((item.normalizedScore ?? 0) < 0 ? MARKET_SIGNAL_SCORE_WEIGHTS[id] * Math.abs(item.normalizedScore as number) : 0), 0);
+
+  /*
+   * Completeness is about the DATA, not about how many optional patterns
+   * happened to occur.
+   *
+   * The additive version measured factor coverage, so a symbol that simply had
+   * no breakout scored 93% "complete" — reporting missing data where there was
+   * none, and reporting nothing at all when the provider served a week-old
+   * cache. Here it is the share of component weight whose indicators actually
+   * computed, discounted when the provider's own freshness says the bars are
+   * stale, cached or of unknown age.
+   */
+  const completeness = (availableWeight / 100)
+    * (dataDegraded ? MARKET_SIGNAL_GATE.confidence.degradedDataFactor : 1);
+  const agreement = agreementRatio(scoreBreakdown, score);
+  const evidenceStrength = entries.reduce((sum, [id, item]) => sum + Math.abs(item.normalizedScore ?? 0) * MARKET_SIGNAL_SCORE_WEIGHTS[id], 0) / 100;
+  const conflictPenalty = availableWeight === 0 ? 1 : bias === 'bullish'
+    ? negativeWeight / availableWeight
+    : bias === 'bearish' ? positiveWeight / availableWeight : Math.min(positiveWeight, negativeWeight) / availableWeight;
+  const volumeScore = scoreBreakdown.volume.normalizedScore;
+  const volumeConfirmation = volumeScore === null ? 0 : bias === 'neutral'
+    ? 1 - Math.abs(volumeScore)
+    : clamp((bias === 'bullish' ? volumeScore : -volumeScore), 0, 1);
+
+  const floors = MARKET_SIGNAL_GATE.confidence;
+  const factors = {
+    base: round(withFloor(evidenceStrength, floors.evidenceFloor) * 100, 2),
+    completeness: round(withFloor(completeness, floors.completenessFloor), 4),
+    agreement: round(withFloor(agreement, floors.agreementFloor), 4),
+    regimeClarity: round(withFloor(regimeClarity, floors.regimeClarityFloor), 4),
+    conflict: round(clamp(1 - conflictPenalty, 0, 1), 4),
+    earnings: earningsFactorFor(earningsProximity),
+  };
+  const confidence = Math.round(clamp(
+    factors.base * factors.completeness * factors.agreement * factors.regimeClarity * factors.conflict * factors.earnings,
+    0,
+    100,
+  ));
+  return {
+    confidence,
+    breakdown: {
+      completeness: Math.round(completeness * 100),
+      agreement: Math.round(agreement * 100),
+      evidenceStrength: Math.round(evidenceStrength * 100),
+      volumeConfirmation: Math.round(volumeConfirmation * 100),
+      regimeClarity: Math.round(regimeClarity * 100),
+      conflictPenalty: Math.round(conflictPenalty * 100),
+    },
+    factors,
+  };
+}
+
+/**
+ * The direction the card is allowed to claim.
+ *
+ * An unresolved conflict or a sub-band score means no direction, whatever the
+ * arithmetic sign of the total says.
+ */
+export function gatedBias(score: number, band: MarketSignalBand, conflicts: readonly MarketSignalConflict[]): MarketSignalBias {
+  if (conflicts.length > 0 || band === 'neutral') return 'neutral';
+  return score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'neutral';
+}
+
+/**
+ * The v1 state machine, then two extra conditions a STRONG label has to clear:
+ * the score must actually be in the top band, and there must not be an earnings
+ * print inside three days — a technical read cannot see across a gap.
+ */
+export function gatedPresentationState(input: {
+  score: number;
+  bias: MarketSignalBias;
+  regime: RegimeEvidence;
+  scoreBreakdown: MarketSignalScoreBreakdown;
+  adx: number | null;
+  relativeVolume: number | null;
+  band: MarketSignalBand;
+  earningsProximity: MarketSignalEarningsProximity;
+}): MarketSignalState {
+  const { score, bias, regime, scoreBreakdown, adx, relativeVolume, band, earningsProximity } = input;
+  if (regime.squeeze) return 'SQUEEZE';
+  if (regime.overextended) return 'OVEREXTENDED';
+  if (bias === 'neutral') return 'SIDEWAYS';
+  const base = presentationState(score, bias, regime, scoreBreakdown, adx, relativeVolume);
+  if ((base === 'STRONG_BULLISH' || base === 'STRONG_BEARISH')
+    && (band !== 'strong' || earningsProximity === 'imminent')) {
+    return score >= 0 ? 'BULLISH' : 'BEARISH';
+  }
+  return base;
+}
+
+/**
+ * Cap a volume component that is claiming support it does not have.
+ *
+ * Relative volume below its own average means the day was quieter than usual.
+ * The component could still reach +8/15 on a rising OBV alone, so the card said
+ * participation backed the move on a 0.84x day. Only the supportive side is
+ * capped: a decline on light volume is still a decline.
+ */
+export function capLowVolumeComponent(
+  component: MarketSignalScoreComponent,
+  relativeVolume: number | null,
+): { component: MarketSignalScoreComponent; capped: boolean } {
+  const limit = MARKET_SIGNAL_GATE.volume.belowAverageMaximumPoints;
+  if (relativeVolume === null || relativeVolume >= MARKET_SIGNAL_GATE.volume.belowAverageThreshold) {
+    return { component, capped: false };
+  }
+  if (component.points === null || component.points <= limit) return { component, capped: false };
+  return {
+    component: { ...component, points: limit, normalizedScore: round(limit / component.maxPoints, 4) },
+    capped: true,
+  };
+}
+
+/**
+ * Tags that say two different things about the same fact.
+ *
+ * A reader who sees one id argued as support and the same id argued as a
+ * warning has no way to resolve it, and the card has no way to be right. This
+ * is a cheap invariant to hold and an easy one to break by accident when adding
+ * reasons, so it is checked rather than assumed.
+ */
+export function duplicatedReasonTags(reasons: readonly MarketSignalReason[]): string[] {
+  const polarities = new Map<string, Set<string>>();
+  reasons.forEach((reason) => {
+    const seen = polarities.get(reason.id) ?? new Set<string>();
+    seen.add(reason.polarity === 'caution' ? 'caution' : reason.polarity === 'information' ? 'information' : 'directional');
+    polarities.set(reason.id, seen);
+  });
+  return [...polarities.entries()].filter(([, seen]) => seen.size > 1).map(([id]) => id).sort();
+}
+
 export function presentationState(
   score: number,
   bias: MarketSignalBias,
@@ -534,11 +806,14 @@ export function calculateMarketSignal(
   }
   if (breakout || breakdown) structureFactors.push({ id: breakout ? 'structure-breakout' : 'structure-breakdown', score: breakout ? 1 : -1, text: `${breakout ? 'Breakout แนวต้าน' : 'Breakdown แนวรับ'} จาก confirmed pivot` });
 
+  const gateOn = context.features?.gate === true;
+  const lowVolume = capLowVolumeComponent(component('volume', volumeFactors), relativeVolume20);
+  const volumeCapped = gateOn && lowVolume.capped;
   const scoreBreakdown: MarketSignalScoreBreakdown = {
     emaTrend: component('emaTrend', trendFactors),
     momentum: component('momentum', momentumFactors),
     trendStrength: component('trendStrength', trendStrengthFactors),
-    volume: component('volume', volumeFactors),
+    volume: volumeCapped ? lowVolume.component : component('volume', volumeFactors),
     priceStructure: component('priceStructure', structureFactors),
   };
   const availableWeight = (Object.entries(scoreBreakdown) as Array<[MarketSignalComponentId, MarketSignalScoreComponent]>)
@@ -593,28 +868,102 @@ export function calculateMarketSignal(
     divergence,
   };
   const regime = classifyRegimeEvidence(metrics);
-  const state = presentationState(score, bias, regime, scoreBreakdown, metrics.adx14, metrics.relativeVolume20);
+
+  /*
+   * P1 decisions. Every one of these is computed only when the gate is on and
+   * every consumer below falls back to the v1 value when it is off, so the
+   * flags-OFF payload keeps every field it had, unchanged.
+   */
+  const band = gateOn ? bandFromScore(score) : null;
+  const conflicts = gateOn ? detectComponentConflicts(scoreBreakdown) : [];
+  const earningsProximity = gateOn ? earningsProximityFrom(context.earnings?.daysToNextReport) : 'unknown';
+  const dataDegraded = gateOn && isDegradedFreshness(context.freshness.status);
+  const gatedBiasValue = gateOn ? gatedBias(score, band as MarketSignalBand, conflicts) : bias;
+
+  const state = gateOn
+    ? gatedPresentationState({
+      score,
+      bias: gatedBiasValue,
+      regime,
+      scoreBreakdown,
+      adx: metrics.adx14,
+      relativeVolume: metrics.relativeVolume20,
+      band: band as MarketSignalBand,
+      earningsProximity,
+    })
+    : presentationState(score, bias, regime, scoreBreakdown, metrics.adx14, metrics.relativeVolume20);
   const regimeClarity = regime.squeeze ? 1
     : regime.overextended ? clamp(regime.overextensionEvidence / 3, 0, 1)
       : state === 'SIDEWAYS' ? clamp(regime.sidewaysTrue / Math.max(regime.sidewaysAvailable, 1), 0, 1)
         : clamp(Math.abs(score) / 60, 0, 1);
-  const confidenceResult = calculateSignalConfidence(scoreBreakdown, bias, regimeClarity);
+  const gatedConfidenceResult = gateOn
+    ? calculateGatedConfidence({ scoreBreakdown, score, bias: gatedBiasValue, regimeClarity, dataDegraded, earningsProximity })
+    : null;
+  const confidenceResult = gatedConfidenceResult ?? calculateSignalConfidence(scoreBreakdown, bias, regimeClarity);
   const confidenceLabel = confidenceLabelFromValue(confidenceResult.confidence);
+  const effectiveBias = gateOn ? gatedBiasValue : bias;
+
+  // A divergence in the middle of the RSI range is not worth a chip of its own;
+  // it stays a written caution, which is also what keeps one fact from being
+  // shown as support and as a warning on the same card.
+  const divergenceStrength = gateOn && divergence ? divergenceWeight(divergence, rsi14) : 1;
+  const showDivergenceFlag = divergence !== null
+    && (!gateOn || divergenceStrength >= MARKET_SIGNAL_GATE.divergence.minimumFlagWeight);
 
   const flags: MarketSignalFlag[] = [];
   if (regime.squeeze) flags.push('squeeze');
   if (regime.overextended) flags.push('overextended');
   if (isHighVolume(relativeVolume20)) flags.push('high_volume');
-  if (divergence === 'bullish') flags.push('bullish_divergence');
-  if (divergence === 'bearish') flags.push('bearish_divergence');
+  if (divergence === 'bullish' && showDivergenceFlag) flags.push('bullish_divergence');
+  if (divergence === 'bearish' && showDivergenceFlag) flags.push('bearish_divergence');
   if (Math.abs(scoreBreakdown.momentum.normalizedScore ?? 0) >= 0.7) flags.push('strong_momentum');
   const hasConflict = confidenceResult.breakdown.conflictPenalty >= 15;
   const weakVolume = scoreBreakdown.volume.normalizedScore === null || Math.abs(scoreBreakdown.volume.normalizedScore) < 0.2;
   if (hasConflict || weakVolume) flags.push('weak_confirmation');
+  if (gateOn) {
+    if (conflicts.length) flags.push('conflicting_evidence');
+    if (volumeCapped) flags.push('low_volume_confirmation');
+    if (dataDegraded) flags.push('stale_or_partial_data');
+    if (earningsProximity === 'imminent') flags.push('earnings_imminent');
+    if (earningsProximity === 'soon') flags.push('earnings_soon');
+    // Breakouts into a print are the ones that most often do not hold, because
+    // what resolves them is an event the chart has not seen.
+    if ((breakout || breakdown) && (earningsProximity === 'imminent' || earningsProximity === 'soon')) {
+      flags.push('pre_earnings_breakout');
+    }
+  }
 
   if (regime.squeeze) supplementalReasons.push({ id: 'squeeze-on', polarity: 'caution', text: 'Bollinger Bands อยู่ภายใน Keltner Channels: ความผันผวนกำลังบีบตัว', impact: 6 });
   if (regime.overextended) supplementalReasons.push({ id: 'overextended', polarity: 'caution', text: `ราคาอยู่ห่าง EMA20 มากกว่าปกติทาง${regime.overextensionDirection > 0 ? 'ด้านบน' : 'ด้านล่าง'}`, impact: 6 });
-  if (divergence) supplementalReasons.push({ id: `${divergence}-divergence`, polarity: 'caution', text: `พบ ${divergence === 'bullish' ? 'Bullish' : 'Bearish'} divergence จาก confirmed historical pivots`, impact: 4 });
+  if (divergence) {
+    supplementalReasons.push({
+      id: `${divergence}-divergence`,
+      polarity: 'caution',
+      text: `พบ ${divergence === 'bullish' ? 'Bullish' : 'Bearish'} divergence จาก confirmed historical pivots${gateOn && divergenceStrength < MARKET_SIGNAL_GATE.divergence.minimumFlagWeight ? ` (RSI ${round(rsi14 ?? 0, 1)} อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)` : ''}`,
+      impact: gateOn
+        ? round(4 * (MARKET_SIGNAL_GATE.divergence.minimumImpactShare
+          + (1 - MARKET_SIGNAL_GATE.divergence.minimumImpactShare) * divergenceStrength), 2)
+        : 4,
+    });
+  }
+  if (gateOn && conflicts.length) {
+    supplementalReasons.push({
+      id: 'component-conflict',
+      polarity: 'caution',
+      text: conflicts.includes('ema_vs_momentum')
+        ? 'ทิศทางของ EMA/Trend กับ Momentum ขัดกัน จึงยังไม่สรุปเป็นขาขึ้นหรือขาลง'
+        : 'ทิศทางของ Price Structure กับ Momentum ขัดกัน จึงยังไม่สรุปเป็นขาขึ้นหรือขาลง',
+      impact: 7,
+    });
+  }
+  if (gateOn && earningsProximity !== 'clear' && earningsProximity !== 'unknown') {
+    supplementalReasons.push({
+      id: 'earnings-proximity',
+      polarity: 'caution',
+      text: `อีก ${context.earnings?.daysToNextReport} วันจะประกาศงบ ซึ่งเป็นเหตุการณ์ที่กราฟยังมองไม่เห็น`,
+      impact: earningsProximity === 'imminent' ? 8 : 5,
+    });
+  }
   if ((breakout || breakdown) && !hasVolumeConfirmation(relativeVolume20)) {
     supplementalReasons.push({ id: 'structure-volume-unconfirmed', polarity: 'caution', text: `${breakout ? 'Breakout' : 'Breakdown'} ยังไม่มี Relative Volume ยืนยัน`, impact: 3 });
   }
@@ -632,12 +981,25 @@ export function calculateMarketSignal(
   if (weakVolume) warnings.push('Volume confirmation ยังอ่อนหรือไม่มีข้อมูล');
   if (hasConflict) warnings.push('หลักฐานบางหมวดขัดแย้งกัน');
   if (divergence === null) warnings.push('ยังไม่ยืนยัน RSI/MACD divergence จาก historical pivots');
+  if (gateOn && dataDegraded) warnings.push(`ข้อมูลจากผู้ให้บริการอยู่ในสถานะ ${context.freshness.status} จึงลดความมั่นใจลง`);
+  if (volumeCapped) warnings.push(`Relative Volume ${round(relativeVolume20 ?? 0, 2)}× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume`);
+
+  const gate: MarketSignalGate | undefined = gateOn && band !== null && gatedConfidenceResult !== null
+    ? {
+      band,
+      conflicts,
+      forcedNeutral: effectiveBias === 'neutral' && bias !== 'neutral',
+      earningsProximity,
+      daysToEarnings: context.earnings?.daysToNextReport ?? null,
+      confidenceFactors: gatedConfidenceResult.factors,
+    }
+    : undefined;
 
   return {
     ...base,
     status: 'available',
     state,
-    bias,
+    bias: effectiveBias,
     score,
     confidence: confidenceResult.confidence,
     confidenceLabel,
@@ -653,5 +1015,9 @@ export function calculateMarketSignal(
     flags,
     metrics,
     confidenceBreakdown: confidenceResult.breakdown,
+    // Spread rather than assigned, so the key is absent (not `undefined`) with
+    // the flag off — `JSON.stringify` keeps an explicit `undefined` out too, but
+    // deep-equality assertions and the golden gate both see the difference.
+    ...(gate ? { gate } : {}),
   };
 }

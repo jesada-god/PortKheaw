@@ -11303,6 +11303,7 @@
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
   },
+  "nextReportDate": null,
   "source": "yahoo-finance-chart",
   "symbol": "IWM"
 }

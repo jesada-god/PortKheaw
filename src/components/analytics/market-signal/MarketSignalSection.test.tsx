@@ -205,4 +205,69 @@ describe('MarketSignalSection', () => {
     expect(container.textContent).not.toContain('SQUEEZE • Bullish Bias');
     expect(container.textContent).not.toContain('Score +31');
   });
+
+  /*
+   * P1 rendering is keyed off `result.gate`, which the engine only produces when
+   * `SIGNAL_GATE` is on. Everything above this block is the flags-OFF card and
+   * passes unchanged — that is the evidence that turning the flag off really
+   * does give a reader back the card they had.
+   */
+  describe('with the consistency layer on', () => {
+    const gated: MarketSignalResult = {
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      score: 11,
+      confidence: 27,
+      confidenceLabel: 'Low',
+      flags: ['strong_momentum', 'conflicting_evidence', 'low_volume_confirmation', 'high_volume', 'squeeze', 'weak_confirmation'],
+      gate: {
+        band: 'neutral',
+        conflicts: ['ema_vs_momentum'],
+        forcedNeutral: false,
+        earningsProximity: 'soon',
+        daysToEarnings: 10,
+        confidenceFactors: { base: 72.66, completeness: 1, agreement: 0.7, regimeClarity: 0.6, conflict: 0.9, earnings: 0.8 },
+      },
+    };
+
+    it('draws at most four chips, most consequential first, and says where the rest went', async () => {
+      await render(gated);
+      const chips = [...container.querySelector('[aria-label="Signal flags"]')!.children].map((chip) => chip.textContent);
+      expect(chips).toHaveLength(5);
+      // Sorted by consequence, not by the order the engine happened to push them:
+      // the conflict that voided the direction leads, the decorative ones drop off.
+      expect(chips.slice(0, 4)).toEqual(['หลักฐานขัดแย้งกัน', 'วอลุ่มไม่ยืนยัน', 'ยังยืนยันไม่ชัด', 'ความผันผวนบีบตัว']);
+      expect(chips.at(-1)).toContain('+2');
+    });
+
+    it('explains in the dialog why it would not commit to a direction', async () => {
+      await render(gated);
+      await act(async () => buttonContaining('ทำไม?').click());
+      const explainer = document.querySelector('[data-testid="signal-gate-explainer"]')!;
+      expect(explainer.textContent).toContain('คะแนนรวมยังต่ำกว่าเกณฑ์');
+      expect(explainer.textContent).toContain('EMA/Trend กับ Momentum ชี้คนละทาง');
+      expect(explainer.textContent).toContain('อีก 10 วันจะประกาศงบ');
+      // The overflow chips are listed rather than lost.
+      expect(explainer.textContent).toContain('โมเมนตัมแรง');
+      expect(explainer.textContent).toContain('วอลุ่มสูง');
+    });
+
+    it('shows confidence as the multipliers it actually is', async () => {
+      await render(gated);
+      await act(async () => buttonContaining('ทำไม?').click());
+      const explainer = document.querySelector('[data-testid="signal-gate-explainer"]')!;
+      expect(explainer.textContent).toContain('× ความชัดของภาวะตลาด');
+      expect(explainer.textContent).toContain('60%');
+      expect(explainer.textContent).toContain('× ระยะถึงวันงบ');
+      expect(explainer.textContent).toContain('80%');
+    });
+
+    it('leaves the card alone when there is no gate block', async () => {
+      await render(result);
+      const chips = [...container.querySelector('[aria-label="Signal flags"]')!.children].map((chip) => chip.textContent);
+      expect(chips).toEqual(['squeeze', 'weak confirmation']);
+      expect(container.querySelector('[data-testid="signal-gate-explainer"]')).toBeNull();
+    });
+  });
 });
