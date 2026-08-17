@@ -826,16 +826,27 @@ function Overview({
   return (
     <div className="space-y-5">
       {/*
-        Two bands rather than two grids of boxes: today's trading range first,
-        then the fundamentals beside it. The column count follows the number of
-        facts each band actually has, and a band that comes up short in its last
-        row simply ends — the divider is drawn by cells, never by the grid.
+        ONE band, not two.
+
+        Today's trading range and the fundamentals were two strips with page
+        rhythm between them, and on a handset — where each is two columns of two
+        — that read as two separate objects with a gap ruled across the middle:
+        four facts about the instrument, a break, four more. They are facets of
+        the same instrument, so they are one hairline rectangle now, and the
+        divider under `ต่ำสุดวันนี้`/`ราคาปิดก่อนหน้า` is the same cell-drawn
+        hairline as every other row instead of empty margin.
+
+        The order is the read order and is unchanged: price metrics, then
+        profile metrics. A band that comes up short in its last row simply ends
+        — the divider is drawn by cells, never by the grid — so the counts a
+        withholding `resolveAssetPresentationPolicy` produces (5, 6 or 8 cells)
+        need no column arithmetic. `--4` keeps the desktop band four across as
+        before; the base two columns give the requested 2 × 4 on mobile.
       */}
       <div className="data-strip data-strip--4">
-        {priceMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
-      </div>
-      <div className={`data-strip ${profileMetrics.length > 2 ? 'data-strip--4' : profileMetrics.length === 1 ? 'data-strip--1' : ''}`}>
-        {profileMetrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
+        {[...priceMetrics, ...profileMetrics].map((metric) => (
+          <MetricCard key={metric.label} {...metric} />
+        ))}
       </div>
       {policy.kind === 'fund' && (
         <p className="text-xs leading-6 text-[var(--text-muted)]">
