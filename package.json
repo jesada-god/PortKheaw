@@ -45,7 +45,8 @@
     "signal:htf-probe": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-htf-probe.ts",
     "signal:actionable": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-actionable-probe.ts",
     "signal:lookback": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-lookback-sensitivity.ts",
-    "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts"
+    "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts",
+    "signal:context": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-context-probe.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
