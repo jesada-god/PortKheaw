@@ -97,7 +97,41 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  // `measuring` replaces `getBoundingClientRect` on Element.prototype, and a
+  // stubbed layout leaking into the next test is a test that measures the last
+  // one's bar.
+  vi.restoreAllMocks();
 });
+
+/**
+ * A browser's answer, in a runner that has no layout engine.
+ *
+ * The zone bar decides whether two captions can stand apart by MEASURING them,
+ * which under jsdom means measuring nothing: every box is 0x0 and the bar keeps
+ * the arrangement it rendered with. That is the right default — it is why the
+ * card never merges two captions on a guess — but it also means the measured
+ * path has no coverage unless the measurements are supplied, so this supplies
+ * them: a track of a stated width, and captions whose width is a stated
+ * function of their text.
+ *
+ * Only the two things the layout reads are answered. Everything else keeps
+ * jsdom's own zero, so nothing else in the card starts behaving as if it had
+ * been laid out.
+ */
+function measuring(track: number, widthOfText: (text: string) => number) {
+  const rect = (width: number) => ({
+    width, height: 0, top: 0, bottom: 0, left: 0, right: width, x: 0, y: 0, toJSON: () => ({}),
+  }) as DOMRect;
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const node = this as HTMLElement;
+    if (node.dataset?.measure) return rect(widthOfText(node.textContent ?? ''));
+    if (node.dataset?.track === 'prices') return rect(track);
+    return rect(0);
+  });
+}
+
+/** Every glyph the same width, so a test's arithmetic is doable by hand. */
+const SEVEN_PX_PER_GLYPH = (text: string) => text.length * 7;
 
 async function render(
   value: MarketSignalResult | null = result,
@@ -353,10 +387,92 @@ describe('MarketSignalSection', () => {
     const widthOf = (id: string) => Number.parseFloat(segment(id).style.width);
     const leftOf = (id: string) => Number.parseFloat(segment(id).style.left);
 
-    it('says which close every number is measured from', async () => {
+    it('says which close every number is measured from, on one line', async () => {
       await render(zoned);
-      expect(zoneBar().textContent).toContain('ตัวเลขทั้งหมดวัดจากราคาปิด 44.06 วันที่ 2026-08-14');
-      expect(zoneBar().textContent).toContain('นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน');
+      const source = zoneBar().querySelector('[data-zone-row="source"]')!;
+      expect(source.textContent).toBe(
+        'ตัวเลขทั้งหมดวัดจากราคาปิด 44.06 วันที่ 2026-08-14 · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน',
+      );
+      // One footnote, not two greyed lines that get skipped as a pair.
+      expect(zoneBar().querySelectorAll('[data-zone-row="source"]').length).toBe(1);
+    });
+
+    /*
+     * The bar is a picture with a measure, not a picture as wide as the monitor.
+     *
+     * At 1,500px every distance on it grew without a single number growing with
+     * it: the eye had to carry a caption a hand's width back to its line. The
+     * geometry is the browser QA's to prove (`qa:signal-zone-bar` measures the
+     * drawn block at 1280px); what is asserted here is that the cap is on the
+     * block that contains ALL of it — bar, captions, edge prices and the lines
+     * underneath — so no part of it can be laid out to a different width.
+     */
+    it('caps the whole zone block at one reading width and centres it', async () => {
+      await render(zoned, 'elite', 42.38);
+      expect(zoneBar().className).toContain('max-w-[640px]');
+      expect(zoneBar().className).toContain('mx-auto');
+    });
+
+    /*
+     * Every row in the block is MARKED as a row, which is what lets the browser
+     * QA check that each one starts at the left end of the track and finishes at
+     * the right end. The row this rule came from was a two-column grid whose
+     * right cell ran out at about 70% of the block, leaving the up condition
+     * ending in the middle of nowhere; nothing in the markup said it was wrong.
+     */
+    it('marks every row of the block so the QA can measure it against the track', async () => {
+      await render(zoned, 'elite', 42.38);
+      for (const child of zoneBar().children) {
+        expect(child.getAttribute('data-zone-row'), `${child.tagName} is not a marked row`).not.toBeNull();
+      }
+      const picture = zoneBar().querySelector('[data-zone-row="picture"]')!;
+      for (const child of picture.children) {
+        expect(child.getAttribute('data-zone-row'), `${child.tagName} is not a marked row`).not.toBeNull();
+      }
+    });
+
+    /*
+     * Eight lines under a bar that has to be read in ten seconds is not a
+     * reading, it is a page. What is left is the four that say something the
+     * picture cannot: the live price against the close, where this leg is
+     * considered over, where the convention points, and which close it all came
+     * from.
+     */
+    it('leaves at most four lines under the picture', async () => {
+      await render({
+        ...zoned,
+        zones: { ...zoned.zones!, zone: 'uptrend' },
+        actionable: {
+          invalidation: 42.24, invalidationAtr: 0.45, invalidationPct: 4.13, invalidationBasis: 'zone_floor',
+          target: 58.51, targetAtr: 3.56, targetBasis: 'measured_move', targetIsConvention: true,
+          riskReward: 7.94, notes: [],
+        },
+      }, 'elite', 42.38);
+      const rows = [...zoneBar().children];
+      const picture = rows.findIndex((node) => node.getAttribute('data-zone-row') === 'picture');
+      const lines = rows.slice(picture + 1).flatMap((node) => (
+        // The actionable list is one element and two lines; everything else is
+        // one element and one line.
+        node.getAttribute('data-zone-row') === 'actionable' ? [...node.children] : [node]
+      ));
+      expect(lines.length).toBeLessThanOrEqual(4);
+    });
+
+    /*
+     * The two trigger rows, gone. Both numbers are still on the card — printed
+     * under the cut each one makes — and the distance to the nearer of them is
+     * still in the proximity line above the bar. What is gone is the third
+     * telling of it in prose.
+     */
+    it('does not repeat the triggers as a row of prose under the bar', async () => {
+      await render(zoned);
+      const text = zoneBar().textContent ?? '';
+      expect(text).not.toContain('ถือว่าเข้าโซนขาลง');
+      expect(text).not.toContain('ถือว่าเข้าโซนขาขึ้น');
+      expect(text).not.toContain('ต่ำกว่าตอนนี้ 13.2%');
+      // Still drawn, under their own cuts.
+      expect(zoneBar().querySelector('[data-label="edge-lower"]')!.textContent).toBe('38.26');
+      expect(zoneBar().querySelector('[data-label="edge-upper"]')!.textContent).toBe('47.24');
     });
 
     /*
@@ -567,62 +683,123 @@ describe('MarketSignalSection', () => {
     });
 
     /*
-     * The collapse, and the thing that must not collapse with it.
+     * The merge, and the measurement that is now the only thing that can trigger
+     * it.
      *
-     * Two prices a hair apart cannot have two captions — at 320px there is not
-     * room for both, and moving them apart would point them at the wrong lines.
-     * So the captions become one. The MARKS stay two, because the marks are the
-     * fact: a reader looking at one line concludes the live price is the price
-     * the card is talking about.
+     * Two captions is the normal arrangement: each names one price and has a
+     * leader down to its own mark, which is the only version where a reader can
+     * pair a number with a line. Merging is a concession, and the card makes it
+     * for exactly one reason — the two rectangles, as drawn, overlap. Not the
+     * distance between the prices, not a threshold, not a hypothetical 216px
+     * track it is not being read on: the boxes.
      */
-    describe('when the two prices are too close for two captions', () => {
-      it('says both prices in one caption, and still draws both marks', async () => {
+    describe('when two captions would land on top of each other', () => {
+      it('never merges on a guess, when nothing has been measured', async () => {
+        // No layout stub: every box reads 0, which is jsdom and also the server.
+        // The bar has no evidence the captions collide, so it does not act as if
+        // they do.
         await render(zoned, 'elite', 44.07);
-        const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
-        expect(merged.textContent).toBe('ปิด 44.06 · สด 44.07');
-        expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
-        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
-
-        expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
-        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
-        // One leader per mark, both belonging to the one caption.
-        const leaders = [...zoneBar().querySelectorAll<HTMLElement>('[data-leader-for="prices"]')]
-          .map((node) => node.dataset.leader);
-        expect(leaders.sort()).toEqual(['close', 'live']);
-      });
-
-      it('keeps two captions when there is room for two', async () => {
-        // 38.5 against a close of 44.06: far enough apart on the drawn extent
-        // that both captions fit once each grows away from the other.
-        await render(zoned, 'elite', 38.5);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
         expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ตอนนี้ 44.06');
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 38.5');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 44.07');
       });
 
       /*
-       * The arrangement is decided on the NARROWEST track the bar is measured
-       * on, so it cannot differ between two phones — a picture that merges at
-       * 320px and splits at 390px is two pictures of one fact.
+       * 44.06 and 43.85 sit 1.3% of the drawn extent apart. On a 216px track
+       * that is 2.8px between the two captions once each has been grown away
+       * from the other — under the 4px that keeps them from reading as one run
+       * of text — so they merge. The same two prices on a 640px track are 8.3px
+       * apart, and the same code leaves them alone. One picture per width,
+       * because at those two widths they genuinely are different pictures.
        */
-      it('answers the collision question the same way at every width', () => {
+      it('merges when the measured boxes touch', async () => {
+        measuring(216, SEVEN_PX_PER_GLYPH);
+        await render(zoned, 'elite', 43.85);
+        const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
+        expect(merged.textContent).toBe('ปิด 44.06 · สด 43.85');
+        expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
+        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
+        // The MARKS never collapse: the lines are the fact, the caption is the
+        // reading of it.
+        expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
+        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+      });
+
+      it('keeps the two captions on the same prices once the bar is wide enough', async () => {
+        measuring(640, SEVEN_PX_PER_GLYPH);
+        await render(zoned, 'elite', 43.85);
+        expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ตอนนี้ 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 43.85');
+        // And each one still points at its own mark rather than at the pair.
+        for (const key of ['close', 'live']) {
+          const leaders = [...zoneBar().querySelectorAll<HTMLElement>(`[data-leader-for="${key}"]`)]
+            .map((node) => node.dataset.leader);
+          expect(leaders).toEqual([key]);
+        }
+      });
+
+      /*
+       * The merged caption points at ONE mark, and it is the close.
+       *
+       * It used to be anchored at the midpoint between the two marks with a
+       * leader running to each — "ปิด 44.9 · สด 42.14" hanging between two lines
+       * and claiming both. A reader who cannot tell which number belongs to
+       * which line is worse off than one who has to read the live price out of
+       * the sentence underneath, which is where it still is in full.
+       */
+      it('anchors the merged caption on the close and leads to that mark alone', async () => {
+        measuring(216, SEVEN_PX_PER_GLYPH);
+        await render(zoned, 'elite', 43.85);
+        const leaders = [...zoneBar().querySelectorAll<HTMLElement>('[data-leader-for="prices"]')];
+        expect(leaders.map((node) => node.dataset.leader)).toEqual(['close']);
+
+        const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
+        const closeMark = zoneBar().querySelector<HTMLElement>('[data-marker="close"]')!;
+        const asJsdomParsesIt = (style: React.CSSProperties) => {
+          const probe = document.createElement('span');
+          Object.assign(probe.style, style);
+          return probe.style.left;
+        };
+        expect(merged.style.left).toBe(asJsdomParsesIt(zoneLabelStyle({
+          at: Number.parseFloat(closeMark.style.left),
+          width: Number(merged.dataset.labelWidth),
+          bias: LABEL_BIAS.centre,
+        })));
+        // The live price is still on the card in full, in the sentence below.
+        expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
+          .toContain('ราคาสด 43.85');
+      });
+
+      /*
+       * The rule itself, without a component around it: the same two labels
+       * collide on a phone and stand apart on a desktop, because the track is an
+       * argument now rather than a constant.
+       */
+      it('answers the collision question on the track it is given', () => {
         const close = { at: 60, width: 80, bias: LABEL_BIAS.centre };
         const live = { at: 61, width: 62, bias: LABEL_BIAS.centre };
-        expect(labelsCollide(close, live)).toBe(true);
-        // Grown apart they still touch on a 216px track, which is what makes the
-        // pair collapse into one caption.
-        expect(spreadLabels(close, live)).toBeNull();
+        expect(labelsCollide(close, live, 216)).toBe(true);
+        expect(spreadLabels(close, live, 216)).toBeNull();
+        // The same pair on a 640px track: grown apart, there is room, and two
+        // captions survive.
+        expect(spreadLabels(close, live, 640)).toEqual([
+          { ...close, bias: LABEL_BIAS.growLeft },
+          { ...live, bias: LABEL_BIAS.growRight },
+        ]);
         // Far apart, and centring is left alone.
         const away = { at: 20, width: 62, bias: LABEL_BIAS.centre };
-        expect(spreadLabels(close, away)).toEqual([away, close]);
+        expect(spreadLabels(close, away, 216)).toEqual([away, close]);
       });
     });
 
-    it('states both triggers as a percentage away from the price on screen', async () => {
+    it('states the distance to the nearest trigger once, above the bar', async () => {
       await render(zoned);
-      // 5.8017 / 44.06 and 3.184 / 44.06, from the engine's own distances.
-      expect(zoneBar().textContent).toContain('ต่ำกว่าตอนนี้ 13.2%');
-      expect(zoneBar().textContent).toContain('สูงกว่าตอนนี้ 7.2%');
+      // 3.184 / 44.06, from the engine's own distance — said in the proximity
+      // line and nowhere else on the card.
+      const proximity = zoneBar().querySelector('[data-zone-row="proximity"]')!;
+      expect(proximity.textContent).toContain('7.2%');
+      expect((zoneBar().textContent ?? '').split('7.2%').length - 1).toBe(1);
     });
 
     /*
@@ -656,22 +833,56 @@ describe('MarketSignalSection', () => {
       }
     });
 
-    it('words the triggers as conditions, never as instructions', async () => {
-      await render(zoned);
-      expect(zoneBar().textContent).toContain('ถ้าปิดเหนือ');
-      expect(zoneBar().textContent).toContain('ถือว่าเข้าโซนขาขึ้น');
-      expect(zoneBar().textContent).toContain('ถือว่าเข้าโซนขาลง');
+    it('words every level as a condition, never as an instruction', async () => {
+      await render({
+        ...zoned,
+        zones: { ...zoned.zones!, zone: 'uptrend' },
+        actionable: {
+          invalidation: 42.24, invalidationAtr: 0.45, invalidationPct: 4.13, invalidationBasis: 'zone_floor',
+          target: 58.51, targetAtr: 3.56, targetBasis: 'measured_move', targetIsConvention: true,
+          riskReward: 7.94, notes: [],
+        },
+      });
+      expect(zoneBar().textContent).toContain('ถ้าปิดต่ำกว่า');
+      expect(zoneBar().textContent).toContain('ถือว่าขาขึ้นรอบนี้จบตามกฎเดิม');
       expect(zoneBar().textContent).not.toMatch(/ซื้อเมื่อ|ขายเมื่อ|ควรซื้อ|ควรขาย|แนะนำให้/);
     });
 
     /*
-     * The reversal the brief opened with: the up condition was in the LEFT cell
-     * of the grid while the bar drew up on the right.
+     * The reversal the brief opened with: the up condition used to be in the
+     * LEFT cell of a grid while the bar drew up on the right. The prose is gone
+     * and the drawing is the only statement of it left, so this is asserted
+     * where it is now made — on the fields, and on the name each one carries.
      */
-    it('lists the down condition before the up one, matching the bar', async () => {
+    it('draws down on the left and up on the right, each named on its own field', async () => {
       await render(zoned);
-      const labels = [...zoneBar().querySelectorAll('dt')].map((node) => node.textContent?.trim());
-      expect(labels.indexOf('ถ้าปิดต่ำกว่า')).toBeLessThan(labels.indexOf('ถ้าปิดเหนือ'));
+      expect(leftOf('downtrend')).toBeLessThan(leftOf('uptrend'));
+      expect(segment('downtrend').textContent).toBe('ขาลง');
+      expect(segment('uptrend').textContent).toBe('ขาขึ้น');
+    });
+
+    /*
+     * A field's name belongs against the cut that defines it.
+     *
+     * "ขาลง" names everything below the lower trigger, and that trigger is the
+     * field's right-hand edge; centring the word put it as far from its own
+     * boundary as the field allowed, which on a wide bar was most of a hand's
+     * width of empty red before the word explaining the red.
+     */
+    it('sets each field name against the cut it is about', async () => {
+      await render(zoned);
+      expect(segment('downtrend').className).toContain('justify-end');
+      expect(segment('uptrend').className).toContain('justify-start');
+    });
+
+    it('moves a name off its own edge when the price marker is standing there', async () => {
+      // Close 44.06 against an upper trigger of 43.25: the marker is in the
+      // left-hand half of the uptrend field, which is where that name would go.
+      await render({
+        ...zoned,
+        zones: { ...zoned.zones!, zone: 'uptrend', upperTrigger: 43.25, upperDistance: -0.81, nearestTriggerAtr: -0.2 },
+      });
+      expect(segment('uptrend').className).toContain('justify-end');
     });
 
     /*
@@ -797,7 +1008,13 @@ describe('MarketSignalSection', () => {
       };
       await render(broken);
       expect(zoneBar().textContent).toContain('ราคาขึ้นมาเหนือกรอบเดิมแล้ว');
-      expect(zoneBar().textContent).toContain('ราคาผ่านขึ้นไปแล้ว');
+      /*
+       * "ราคาผ่านขึ้นไปแล้ว" was the second half of a trigger row, and the rows
+       * are gone: the same fact is now the drawing's to make — the close marker
+       * stands past the upper cut, in the field named ขาขึ้น. So what is left to
+       * assert here is the sentence and the number that must not appear.
+       */
+      expect(zoneBar().querySelector('[data-zone="uptrend"]')!.getAttribute('data-active')).toBe('true');
       expect(zoneBar().textContent).not.toContain('113.7');
     });
 
@@ -1090,8 +1307,11 @@ describe('MarketSignalSection', () => {
         expect(className).not.toMatch(/overflow-hidden/);
         // `whitespace-nowrap` is allowed on the floating labels ONLY — a price
         // must not wrap mid-number — and those are kept inside the bar by
-        // `zoneLabelStyle`. Anywhere else it is how a sentence gets cut.
-        if (/whitespace-nowrap/.test(className)) {
+        // `zoneLabelStyle`. Anywhere else it is how a sentence gets cut. The
+        // measuring copies are exempt because they are never painted: they exist
+        // to be measured, and a caption that has to be measured unwrapped is the
+        // whole reason they carry the class.
+        if (/whitespace-nowrap/.test(className) && !(node as HTMLElement).dataset?.measure) {
           expect(node.getAttribute('style') ?? '', 'a nowrap node with no clamped position').toMatch(/left|right/);
         }
       }

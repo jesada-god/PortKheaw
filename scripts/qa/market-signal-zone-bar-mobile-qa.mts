@@ -7,6 +7,13 @@
  * the other half: it renders the real component to HTML, compiles the app's real
  * stylesheet over it, and asks Chrome for the boxes.
  *
+ * The cards are HYDRATED here, not merely rendered. The bar decides whether two
+ * captions can stand apart by measuring the boxes it drew, so the arrangement
+ * in server markup is only the one it falls back to having measured nothing —
+ * a probe pointed at that would be checking the fallback and reporting on the
+ * picture. The component is bundled for the browser, hydrated over the same
+ * markup, and measured after its layout effect has run.
+ *
  * It is deliberately NOT the full-page QA (`npm run qa:ui-redesign-auth`), which
  * needs a server and a signed-in Elite account. This mounts one component in one
  * page-width container, so it runs offline, in seconds, on any machine with
@@ -15,8 +22,9 @@
  *
  * What it checks, per case, per width:
  *   1. nothing in the card extends past the card's own content box
- *   2. all three zone fields have real width, and each name fits inside its own
- *      field with no overlap into the next
+ *   2. all three zone fields have real width; a field carries its name when it
+ *      is wider than the name and goes unnamed when it is not, and a name that
+ *      is drawn never overlaps into the field beside it
  *   3. NO TWO LABELS OVERLAP. Every label the picture draws — the price
  *      captions, the frame's edge prices, the three field names — is measured as
  *      a box and compared against every other one. This is the check the last
@@ -45,18 +53,30 @@
  *      behind it and vanished without any box moving anywhere.
  *  11. where the two prices sit in different fields of the frame, the two
  *      markers are far enough apart to read as two marks rather than one
+ *  12. every row of the zone block starts where the track starts and finishes
+ *      where the track finishes, within 2px, and nothing in the block reaches
+ *      past either end. This is the rule the two-column trigger grid broke: its
+ *      right-hand cell ran out at about 70% of the block, so a sentence about
+ *      the top of the frame ended in the middle of nowhere
+ *  13. the block is no wider than one reading width and is centred in the card.
+ *      Stretched across a desktop card the bar put a hand's width between a
+ *      caption and the line it named, which no font size fixes
+ *  14. nothing on the page logged a console error, which is how a hydration
+ *      mismatch — the two halves of this harness drawing two different cards —
+ *      would show up
  */
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderToString } from 'react-dom/server';
+import { build } from 'esbuild';
 import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import { MarketSignalSection } from '@/src/components/analytics/market-signal/MarketSignalSection';
-import type { MarketSignalResult, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
+import { CASES } from './market-signal-zone-bar-cases';
 
 /*
  * The project compiles JSX with the classic runtime, so the components reach
@@ -68,8 +88,23 @@ import type { MarketSignalResult, MarketSignalZones } from '@/src/lib/analytics/
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const OUT_DIR = '.qa/artifacts/market-signal-zone-bar';
 
-/** 390x844 is the brief; the two narrower ones are the margin of safety. */
-const WIDTHS = [390, 360, 320];
+/**
+ * 390x844 is the brief and the two narrower ones are the margin of safety.
+ * 1280 is the width the bar was WRONG at: stretched across a desktop card it
+ * put a hand's width between a caption and the line it named, and — because the
+ * layout used to answer "do these two collide" on a hypothetical 216px track —
+ * it merged captions that had 90px of clear air between them. Nothing about
+ * that was visible at 390.
+ */
+const WIDTHS = [1280, 390, 360, 320];
+/**
+ * The reading width the zone block is capped at, from `max-w-[640px]`. Checked
+ * rather than assumed: the cap is the fix for the desktop bar, and a class that
+ * stops being applied is invisible on a phone, where it never bound anyway.
+ */
+const ZONE_BLOCK_MAX_PX = 640;
+/** Nothing in the block may start or end more than this far from the track. */
+const ROW_ALIGN_TOLERANCE = 2;
 /*
  * Both appearances, because the bar's three fields are the first thing on this
  * card to depend on translucent whites and on the 100-shade status text, and
@@ -81,219 +116,6 @@ const APPEARANCES = ['dark', 'light'] as const;
 /** The analytics column's own horizontal padding, so the card gets its real width. */
 const PAGE_PADDING = 16;
 
-const base: MarketSignalResult = {
-  status: 'available',
-  symbol: 'IREN',
-  state: 'BULLISH',
-  bias: 'bullish',
-  score: 34,
-  confidence: 62,
-  confidenceLabel: 'Medium',
-  evidenceAgreement: 62,
-  evidenceAgreementLabel: 'Medium',
-  timeframe: '1D',
-  calculatedAt: '2026-08-18T00:00:00.000Z',
-  latestCandleAt: '2026-08-14',
-  source: 'yahoo-finance-chart',
-  freshness: { status: 'end-of-day', asOf: '2026-08-14T20:00:00.000Z', maxAgeSeconds: 21_600 },
-  dataPoints: { received: 260, finalized: 259 },
-  scoreBreakdown: {
-    emaTrend: { points: 12, maxPoints: 30, normalizedScore: 0.4, coverage: 1, factorsUsed: 4, available: true },
-    momentum: { points: 8, maxPoints: 25, normalizedScore: 0.32, coverage: 1, factorsUsed: 3, available: true },
-    trendStrength: { points: 4, maxPoints: 15, normalizedScore: 0.27, coverage: 1, factorsUsed: 1, available: true },
-    volume: { points: 3, maxPoints: 15, normalizedScore: 0.2, coverage: 1, factorsUsed: 2, available: true },
-    priceStructure: { points: 7, maxPoints: 15, normalizedScore: 0.47, coverage: 1, factorsUsed: 2, available: true },
-  },
-  reasons: [{ id: 'ema-structure', polarity: 'positive', text: 'ราคาและ EMA เรียงตัวเอนขึ้น', impact: 8 }],
-  warnings: [],
-  flags: ['conflicting_evidence', 'low_volume_confirmation', 'weak_confirmation', 'squeeze', 'strong_momentum'],
-  metrics: {
-    close: 44.06, ema20: 42, ema50: 40, ema200: 33,
-    ema20SlopePct: 1.2, ema50SlopePct: 0.8, ema200SlopePct: 0.3, emaCompressionRatio: 0.04,
-    rsi14: 62, macd: 2.1, macdSignal: 1.8, macdHistogram: 0.3,
-    adx14: 24, plusDi14: 31, minusDi14: 18, relativeVolume20: 1.4, obvTrend: 'rising',
-    bollingerUpper: 48, bollingerMiddle: 44, bollingerLower: 40,
-    keltnerUpper: 49, keltnerMiddle: 44, keltnerLower: 39,
-    squeezeOn: false, atr14: 4.06, ema20DeviationPct: 3.42, atrNormalizedDistance: 1.71,
-    nearestSupport: 39.27, nearestResistance: 46.23, divergence: null,
-  },
-  confidenceBreakdown: {
-    completeness: 85, agreement: 62, evidenceStrength: 34,
-    volumeConfirmation: 20, regimeClarity: 100, conflictPenalty: 5,
-  },
-};
-
-const zones: MarketSignalZones = {
-  mode: 'structural',
-  zone: 'sideways',
-  support: 39.2727,
-  resistance: 46.2297,
-  upperTrigger: 47.244,
-  lowerTrigger: 38.2583,
-  positionPct: 68.8,
-  upperDistance: 3.184,
-  upperDistanceAtr: 0.78,
-  lowerDistance: 5.8017,
-  lowerDistanceAtr: 1.43,
-  frameAgeBars: 12,
-  proximity: 'near_trigger',
-  nearestTriggerAtr: 0.78,
-  zoneAgeBars: 9,
-  lastTestedBarsAgo: 0,
-  triggerCrossings: 14,
-  pendingBreakout: false,
-  pendingBreakdown: false,
-  entry: null,
-  referenceClose: 44.06,
-  referenceDate: '2026-08-14',
-};
-
-/**
- * The cases, chosen so every branch that positions something lands in at least
- * one of them: marker in the middle, marker jammed against each end, a live
- * price beside the close, a five-digit instrument, and the fully loaded card.
- */
-const CASES: Array<{
-  name: string;
-  result: MarketSignalResult;
-  livePrice: number | null;
-  /** The live price is in a different field from the close, so the two marks
-      have to read as two marks at every width and in both appearances. */
-  markersApart?: boolean;
-}> = [
-  {
-    name: 'sideways-mid-frame',
-    result: { ...base, state: 'SIDEWAYS', bias: 'neutral', score: 16, zones },
-    livePrice: null,
-  },
-  {
-    name: 'live-price-crossed-up',
-    result: { ...base, zones: { ...zones, zone: 'uptrend' } },
-    livePrice: 47.9,
-    markersApart: true,
-  },
-  {
-    name: 'close-pinned-to-the-low-end',
-    result: {
-      ...base,
-      state: 'BEARISH',
-      bias: 'bearish',
-      score: -42,
-      zones: { ...zones, zone: 'downtrend', referenceClose: 30.11, lowerDistance: -8.15, upperDistance: 17.13, zoneAgeBars: 1 },
-    },
-    livePrice: 29.4,
-  },
-  {
-    name: 'close-pinned-to-the-high-end',
-    result: {
-      ...base,
-      zones: { ...zones, zone: 'uptrend', referenceClose: 61.42, upperDistance: -14.18, lowerDistance: 23.16, frameAgeBars: 2 },
-    },
-    livePrice: 62.05,
-  },
-  {
-    name: 'five-figure-instrument-with-actionable',
-    result: {
-      ...base,
-      symbol: 'BTC-USD',
-      zones: {
-        ...zones,
-        zone: 'uptrend',
-        support: 104_233.41, resistance: 118_902.77,
-        lowerTrigger: 103_192.08, upperTrigger: 120_091.68,
-        referenceClose: 121_884.35,
-        upperDistance: -1792.67, lowerDistance: 18_692.27,
-        entry: { level: 118_902.77, height: 14_669.36, mode: 'structural', barsAgo: 1 },
-      },
-      actionable: {
-        invalidation: 118_902.77, invalidationAtr: 0.45, invalidationPct: 2.45, invalidationBasis: 'zone_floor',
-        target: 133_572.13, targetAtr: 3.56, targetBasis: 'measured_move', targetIsConvention: true,
-        riskReward: 3.94, notes: ['risk_leg_inside_noise'],
-      },
-    },
-    livePrice: 122_401.9,
-  },
-  /*
-   * IREN, 2026-08-18 — the case the bar was rebuilt for.
-   *
-   * Upper trigger 43.25, close 44.06, live 42.38: the headline reads BULLISH
-   * off a close above the frame while the price on screen has already fallen
-   * back inside it. One marker in a green field is a reader concluding the move
-   * is still on, so both marks have to be drawn, both have to be visible in
-   * both appearances, and they have to be far enough apart to read as two.
-   */
-  {
-    name: 'live-price-back-inside-the-frame',
-    result: {
-      ...base,
-      zones: {
-        ...zones,
-        zone: 'uptrend',
-        upperTrigger: 43.25,
-        lowerTrigger: 38.2583,
-        referenceClose: 44.06,
-        upperDistance: -0.81,
-        upperDistanceAtr: -0.2,
-        lowerDistance: 5.8017,
-        nearestTriggerAtr: -0.2,
-        positionPct: 116.2,
-      },
-      actionable: {
-        invalidation: 43.25, invalidationAtr: 0.2, invalidationPct: 1.84, invalidationBasis: 'zone_floor',
-        target: 48.24, targetAtr: 1.23, targetBasis: 'measured_move', targetIsConvention: true,
-        riskReward: 5.16, notes: ['risk_leg_inside_noise'],
-      },
-    },
-    livePrice: 42.38,
-    markersApart: true,
-  },
-  /*
-   * The case that has to be IMPOSSIBLE to pass by accident.
-   *
-   * Close 44.06, live 43.70, upper trigger 43.90: the live price is 0.82% from
-   * the close and 0.46% from the trigger, which is the arrangement that put
-   * three numbers into one row on the bar it replaced. Nothing here is far
-   * enough from anything else for the layout to get away with placing each
-   * caption on its own mark, so this is the case where the merge has to fire —
-   * and where, if it stops firing, the overlap check has to be the thing that
-   * says so. Reverting the merge and re-running is the falsification: it reports
-   * `labels-overlap` on this case at all three widths, in both appearances.
-   */
-  {
-    name: 'live-price-jammed-against-the-trigger',
-    result: {
-      ...base,
-      zones: {
-        ...zones,
-        zone: 'uptrend',
-        upperTrigger: 43.9,
-        lowerTrigger: 38.2583,
-        referenceClose: 44.06,
-        upperDistance: -0.16,
-        upperDistanceAtr: -0.04,
-        lowerDistance: 5.8017,
-        nearestTriggerAtr: -0.04,
-        positionPct: 103.2,
-      },
-    },
-    livePrice: 43.7,
-    markersApart: true,
-  },
-  {
-    name: 'actionable-with-every-row',
-    result: {
-      ...base,
-      zones: { ...zones, zone: 'uptrend', entry: { level: 43.72, height: 14.79, mode: 'structural', barsAgo: 1 } },
-      actionable: {
-        invalidation: 42.24, invalidationAtr: 0.45, invalidationPct: 4.13, invalidationBasis: 'zone_floor',
-        target: 58.51, targetAtr: 3.56, targetBasis: 'measured_move', targetIsConvention: true,
-        riskReward: 7.94, notes: [],
-      },
-    },
-    livePrice: 44.58,
-  },
-];
-
 async function stylesheet(): Promise<string> {
   const from = path.resolve('app/globals.css');
   const source = await readFile(from, 'utf8');
@@ -302,7 +124,9 @@ async function stylesheet(): Promise<string> {
 }
 
 function markup(entry: (typeof CASES)[number]): string {
-  return renderToStaticMarkup(
+  // `renderToString`, not `renderToStaticMarkup`: this markup gets hydrated, and
+  // static markup drops the text-node boundaries hydration matches against.
+  return renderToString(
     React.createElement(
       EntitlementProvider,
       { tier: 'elite', authenticated: true, trialOffer: 'used' },
@@ -311,18 +135,58 @@ function markup(entry: (typeof CASES)[number]): string {
   );
 }
 
-function page(css: string, width: number, appearance: (typeof APPEARANCES)[number]): string {
+/**
+ * The same cards, bundled for the browser so they can be hydrated there.
+ *
+ * Without this the page is a photograph: the caption arrangement in the markup
+ * is the one the card falls back to when nothing has been measured, and the
+ * whole point of the rebuild is that the real arrangement is decided from
+ * measured boxes. Bundling the component and running it means the boxes this
+ * probe measures are the boxes a reader gets.
+ */
+async function clientBundle(): Promise<string> {
+  const built = await build({
+    entryPoints: [path.resolve('scripts/qa/market-signal-zone-bar-client.tsx')],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    platform: 'browser',
+    jsx: 'automatic',
+    target: 'es2022',
+    /*
+     * The card reaches config that reads `process.env`, and a browser has no
+     * `process`. Defined rather than shimmed so the bundle carries the same
+     * flag state the server render used: every SIGNAL_* flag off.
+     */
+    define: {
+      'process.env.NODE_ENV': '"development"',
+    },
+    banner: { js: 'globalThis.process = globalThis.process || { env: { NODE_ENV: "development" } };' },
+    alias: { '@': process.cwd(), 'server-only': path.resolve('src/test/server-only-stub.ts') },
+    logLevel: 'silent',
+  });
+  return built.outputFiles[0].text;
+}
+
+function page(css: string, script: string, width: number, appearance: (typeof APPEARANCES)[number]): string {
   const cards = CASES.map((entry) => `
     <section data-case="${entry.name}" data-markers-apart="${entry.markersApart ? 'true' : 'false'}" data-live="${entry.livePrice === null ? 'false' : 'true'}" style="width:${width}px;padding:0 ${PAGE_PADDING}px;margin:0 auto 24px;">
       <p style="font:12px monospace;color:#64748b;margin:0 0 6px;">${entry.name} @ ${width}px</p>
-      ${markup(entry)}
+      <div data-hydrate="${entry.name}">${markup(entry)}</div>
     </section>`).join('');
   const ground = appearance === 'light' ? '#F6F7F9' : '#0B0F17';
   return `<!doctype html><html lang="th" data-theme="portkheaw" data-appearance="${appearance}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${css}</style>
 <style>html,body{margin:0;background:${ground};} body{overflow-x:hidden;}</style>
-</head><body>${cards}</body></html>`;
+</head><body>${cards}
+<script>window.__qaErrors = [];
+addEventListener('error', (event) => window.__qaErrors.push(String(event.message)));
+const consoleError = console.error;
+console.error = (...args) => { window.__qaErrors.push(args.map(String).join(' ')); consoleError(...args); };
+</script>
+<script>${script}</script>
+</body></html>`;
 }
 
 /**
@@ -362,6 +226,8 @@ const PROBE = `() => {
   const TOLERANCE = 0.5;
   const MARKER_MIN_CONTRAST = ${MARKER_MIN_CONTRAST};
   const MARKER_MIN_GAP = ${MARKER_MIN_GAP};
+  const ZONE_BLOCK_MAX_PX = ${ZONE_BLOCK_MAX_PX};
+  const ROW_ALIGN_TOLERANCE = ${ROW_ALIGN_TOLERANCE};
   const problems = [];
   const markers = [];
   const widths = [];
@@ -463,8 +329,26 @@ const PROBE = `() => {
     for (const field of fields) {
       const box = field.getBoundingClientRect();
       if (box.width < 24) note(name, 'field-too-narrow', field.dataset.zone + ' is ' + box.width.toFixed(1) + 'px');
-      const label = field.querySelector('span');
-      if (!label) { note(name, 'field-unnamed', field.dataset.zone + ' has no name drawn on it'); continue; }
+      /*
+       * A field carries its name when it has room for it, and not otherwise.
+       *
+       * Both halves are failures. A named field too narrow for the name spills
+       * the word into the field beside it, where it names the wrong thing; an
+       * unnamed field that had room is a word the reader was owed. The width
+       * compared against is the one the bar itself measured — the invisible copy
+       * it lays out from — so the rule here and the rule in the component are
+       * the same rule rather than two guesses that happen to agree.
+       */
+      const label = field.querySelector('[data-label]');
+      const nameProbe = bar.querySelector('[data-measure="zone-' + field.dataset.zone + '"]');
+      const nameWidth = nameProbe ? nameProbe.getBoundingClientRect().width : 0;
+      if (!label) {
+        if (nameWidth > 0 && box.width > nameWidth + 2 + TOLERANCE) {
+          note(name, 'field-unnamed', field.dataset.zone + ' is ' + box.width.toFixed(1)
+            + 'px and its name only ' + nameWidth.toFixed(1) + 'px');
+        }
+        continue;
+      }
       const labelBox = label.getBoundingClientRect();
       if (labelBox.left < box.left - TOLERANCE || labelBox.right > box.right + TOLERANCE) {
         note(name, 'name-overflows-field', field.dataset.zone + ' name is ' + labelBox.width.toFixed(1) + 'px in a ' + box.width.toFixed(1) + 'px field');
@@ -516,6 +400,72 @@ const PROBE = `() => {
     const barRow = bar.querySelector('[data-track="bar"]');
     const barBox = barRow ? barRow.getBoundingClientRect() : null;
     if (!barRow) note(name, 'missing-bar-row', 'the bar itself is not marked as a track');
+
+    /*
+     * THE ALIGNMENT RULE.
+     *
+     * Every row of the zone block starts where the track starts and finishes
+     * where the track finishes. The row that produced this rule was a
+     * two-column grid: its right-hand cell began at 50% of the block and ran out
+     * at about 70%, so "ถ้าปิดเหนือ 43.23 · ถือว่าเข้าโซนขาขึ้น" ended in the
+     * middle of nowhere with a third of the block empty beside it, and nothing
+     * about it said which end of the bar it was talking about. That row is gone,
+     * but the class of bug is not: any row that does not run the full width of
+     * the track is a row a reader cannot pair with the picture.
+     *
+     * Checked against the TRACK rather than against the card, because the track
+     * is what the picture is drawn on and the only edge a caption or an edge
+     * price can be lined up with.
+     */
+    if (barBox) {
+      const rows = [...bar.querySelectorAll('[data-zone-row]')];
+      if (rows.length === 0) note(name, 'no-zone-rows', 'no row of the block is marked for measuring');
+      for (const row of rows) {
+        const box = row.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0) continue;
+        const left = box.left - barBox.left;
+        const right = box.right - barBox.right;
+        if (Math.abs(left) > ROW_ALIGN_TOLERANCE || Math.abs(right) > ROW_ALIGN_TOLERANCE) {
+          note(name, 'row-not-aligned-with-track',
+            row.getAttribute('data-zone-row') + ' spans ' + box.left.toFixed(1) + '-' + box.right.toFixed(1)
+            + ' against a track of ' + barBox.left.toFixed(1) + '-' + barBox.right.toFixed(1)
+            + ' (' + left.toFixed(1) + ' / ' + right.toFixed(1) + ')');
+        }
+      }
+
+      /*
+       * And nothing unmarked wanders outside them either — a row that forgot
+       * its attribute would otherwise be invisible to the rule above.
+       */
+      for (const node of bar.querySelectorAll('*')) {
+        const style = getComputedStyle(node);
+        if (style.position !== 'static' || style.display === 'inline') continue;
+        const box = node.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0) continue;
+        if (box.left < barBox.left - ROW_ALIGN_TOLERANCE || box.right > barBox.right + ROW_ALIGN_TOLERANCE) {
+          note(name, 'zone-block-overflows-track',
+            node.className + ' :: ' + (node.textContent || '').slice(0, 30)
+            + ' spans ' + box.left.toFixed(1) + '-' + box.right.toFixed(1));
+        }
+      }
+
+      /*
+       * The reading width. A bar as wide as a desktop card puts a hand's width
+       * between a caption and its line, and no font size fixes that — it is the
+       * same constraint that stops body text from running the width of a page.
+       */
+      const blockBox = bar.getBoundingClientRect();
+      if (blockBox.width > ZONE_BLOCK_MAX_PX + 1) {
+        note(name, 'zone-block-too-wide', 'the block is ' + blockBox.width.toFixed(1) + 'px wide');
+      }
+      const cardStyle = getComputedStyle(card);
+      const contentLeft = cardBox.left + parseFloat(cardStyle.borderLeftWidth) + parseFloat(cardStyle.paddingLeft);
+      const contentRight = cardBox.right - parseFloat(cardStyle.borderRightWidth) - parseFloat(cardStyle.paddingRight);
+      const offCentre = (blockBox.left - contentLeft) - (contentRight - blockBox.right);
+      if (Math.abs(offCentre) > ROW_ALIGN_TOLERANCE) {
+        note(name, 'zone-block-not-centred', 'the block sits ' + offCentre.toFixed(1) + 'px off centre in the card');
+      }
+    }
 
     const markX = (which) => {
       const node = bar.querySelector('[data-marker="' + which + '"]') || bar.querySelector('[data-cut="' + which + '"]');
@@ -655,6 +605,7 @@ const PROBE = `() => {
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
   const css = await stylesheet();
+  const script = await clientBundle();
   const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
   const failures: string[] = [];
   const readings: Array<MarkerReading & { at: string }> = [];
@@ -666,10 +617,24 @@ async function main(): Promise<void> {
       const tag = `${appearance}-${width}`;
       const context = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
       const tab = await context.newPage();
-      const html = page(css, width, appearance);
+      const html = page(css, script, width, appearance);
       writeFileSync(path.join(OUT_DIR, `zone-bar-${tag}.html`), html, 'utf8');
       await tab.setContent(html, { waitUntil: 'load' });
       await tab.evaluate(() => document.fonts.ready);
+      /*
+       * Nothing is measured until React is running on the page: the markup the
+       * server produced is the arrangement the bar falls back to when it has
+       * measured nothing, and probing that would be probing the fallback.
+       */
+      await tab.waitForFunction(() => document.documentElement.dataset.hydrated === 'true', undefined, { timeout: 20_000 });
+      await tab.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      // A hydration mismatch means the two halves of this harness are drawing
+      // two different cards, which would make every measurement below a
+      // measurement of the wrong one.
+      const consoleErrors = await tab.evaluate<string[]>('window.__qaErrors || []');
+      for (const message of consoleErrors) {
+        failures.push(`${tag} · console error · ${message.slice(0, 300)}`);
+      }
 
       // A string handed to `evaluate` is an EXPRESSION, so the probe has to be
       // called rather than merely named — otherwise the page hands back a
