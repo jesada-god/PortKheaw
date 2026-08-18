@@ -20,6 +20,20 @@ npm run snapshot:signal -- --check      # flags OFF still matches the baseline
 The last one is the gate. If it fails, nothing below should be turned on,
 because the thing being rolled out is no longer the thing that was measured.
 
+Each step of the rollout also has its own reference, captured per combination:
+
+```
+SIGNAL_GATE=true npm run snapshot:signal -- --check
+SIGNAL_GATE=true SIGNAL_ZONES=true npm run snapshot:signal -- --check
+SIGNAL_GATE=true SIGNAL_ZONES=true SIGNAL_ACTIONABLE=true npm run snapshot:signal -- --check
+```
+
+These write to and compare against `__golden__/preview/<combination>/` and are
+NOT the pre-deploy gate — the gate is the flags-OFF run, because flags-OFF is
+what production is. They answer the question the gate cannot: before turning the
+next flag on, is this step still doing what it did when it was measured. Run the
+matching one immediately before each step below.
+
 ## 0b. The copy — DONE, before step 1
 
 The four items in `prediction-language-audit.md` were approved and applied:
@@ -37,6 +51,43 @@ What is still outstanding is the owner's:
   from here. Check the admin console before step 1.
 * the drafts in `changelog.md`, `in-app-notice.md` and `pricing-copy.md`, which
   are wording decisions rather than code.
+
+## 0c. What each step does to the labels, measured before turning anything on
+
+Every combination below was replayed over the cached 109-instrument corpus in
+`__golden__/corpus/` at a pinned `calculatedAt`. These are label counts on frozen
+bars, not a forecast of production: the corpus is one day's worth of history for
+109 liquid instruments, and the live universe is larger and moves. Read them as
+the shape of the change, not as the number you will see.
+
+| | all OFF (today) | GATE | GATE+ZONES | +ACTIONABLE |
+| --- | --- | --- | --- | --- |
+| BULLISH | 72 (66.1%) | 54 (49.5%) | 20 (18.3%) | 20 (18.3%) |
+| **SIDEWAYS** | **15 (13.8%)** | **34 (31.2%)** | **80 (73.4%)** | **80 (73.4%)** |
+| BEARISH | 15 (13.8%) | 14 (12.8%) | 2 (1.8%) | 2 (1.8%) |
+| SQUEEZE | 6 (5.5%) | 6 (5.5%) | 6 (5.5%) | 6 (5.5%) |
+| OVEREXTENDED | 1 (0.9%) | 1 (0.9%) | 1 (0.9%) | 1 (0.9%) |
+
+72 of the 109 change label at some point in the rollout.
+
+**Two things to know before step 1.**
+
+`SIGNAL_ZONES` is the bigger change, not `SIGNAL_GATE`. The gate roughly doubles
+SIDEWAYS, 13.8% to 31.2%. Zones more than doubles it again, to 73.4% — nearly
+three instruments in four. Step 1 is described above as "the largest single
+change a reader sees", and by label count that is step 2. Plan the questions
+accordingly.
+
+BEARISH nearly disappears at step 2: 15 instruments to 2. Almost every bearish
+label is a directional read that zone structure declines to confirm. If that is
+not intended, step 2 is where to find out, and it is a reason to sit on step 1
+for longer than it feels like it needs.
+
+`SIGNAL_ACTIONABLE` changes no label at all — the two right-hand columns are
+identical. It still changes the payload (invalidation and target fields), so the
+snapshots differ; it just never renames anything.
+
+Regenerate with the snapshot harness per combination, below.
 
 ## 1. `SIGNAL_GATE`
 

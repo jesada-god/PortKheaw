@@ -1,0 +1,200 @@
+{
+  "bias": "neutral",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 27,
+  "confidenceBreakdown": {
+    "agreement": 40,
+    "completeness": 100,
+    "conflictPenalty": 10,
+    "evidenceStrength": 32,
+    "regimeClarity": 20,
+    "volumeConfirmation": 80
+  },
+  "confidenceLabel": "Low",
+  "dataPoints": {
+    "finalized": 1189,
+    "received": 1190
+  },
+  "evidenceAgreement": 27,
+  "evidenceAgreementLabel": "Low",
+  "flags": [
+    "strong_momentum",
+    "conflicting_evidence",
+    "low_volume_confirmation"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T13:30:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "gate": {
+    "band": "neutral",
+    "confidenceFactors": {
+      "agreement": 0.7,
+      "base": 72.66,
+      "completeness": 1,
+      "conflict": 0.9,
+      "earnings": 1,
+      "regimeClarity": 0.6
+    },
+    "conflicts": [
+      "ema_vs_momentum"
+    ],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
+  },
+  "latestCandleAt": "2026-08-14",
+  "metrics": {
+    "adx14": 20.47353079719775,
+    "atr14": 4.057440548522486,
+    "atrNormalizedDistance": 0.8432502069529184,
+    "bollingerLower": 32.29377091990326,
+    "bollingerMiddle": 39.23199987411499,
+    "bollingerUpper": 46.17022882832672,
+    "close": 44.060001373291016,
+    "divergence": "bullish",
+    "ema20": 40.63856379105027,
+    "ema200": 43.35356768340958,
+    "ema200SlopePct": -2.0224,
+    "ema20DeviationPct": 8.419189220939554,
+    "ema20SlopePct": 3.0683,
+    "ema50": 43.352740718552596,
+    "ema50SlopePct": -2.4333,
+    "emaCompressionRatio": 0.061621,
+    "keltnerLower": 34.809382961249554,
+    "keltnerMiddle": 40.89554378403328,
+    "keltnerUpper": 46.981704606817004,
+    "macd": -0.11205758719454195,
+    "macdHistogram": 1.2741204119171146,
+    "macdSignal": -1.3861779991116565,
+    "minusDi14": 19.012472429141617,
+    "nearestResistance": 46.229667,
+    "nearestSupport": 39.272692,
+    "obvTrend": "rising",
+    "plusDi14": 27.83322253200101,
+    "relativeVolume20": 0.840676005483402,
+    "rsi14": 54.86175677980208,
+    "squeezeOn": false
+  },
+  "reasons": [
+    {
+      "id": "macd-histogram",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD Histogram เป็นบวกและขยายตัว"
+    },
+    {
+      "id": "macd-signal",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD อยู่เหนือ Signal"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA20 ชันขึ้น 3.07%"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "EMA200 ชันลง -2.02%"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "EMA50 ชันลง -2.43%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "OBV มีแนวโน้มสูงขึ้น"
+    },
+    {
+      "id": "component-conflict",
+      "impact": 7,
+      "polarity": "caution",
+      "text": "ทิศทางของ EMA/Trend กับ Momentum ขัดกัน จึงยังไม่สรุปเป็นขาขึ้นหรือขาลง"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 2.5,
+      "polarity": "negative",
+      "text": "ราคาและ EMA เรียงตัวเอนลง"
+    },
+    {
+      "id": "rsi14",
+      "impact": 1.62,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 54.9"
+    },
+    {
+      "id": "bullish-divergence",
+      "impact": 0.8,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 54.9 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
+    },
+    {
+      "id": "adx-dmi",
+      "impact": 0.36,
+      "polarity": "positive",
+      "text": "ADX 20.5 โดย +DI เหนือ -DI"
+    }
+  ],
+  "score": 11,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": -0.3333,
+      "points": -10
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": 0.7315,
+      "points": 18
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0.0237,
+      "points": 0
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": 0.2,
+      "points": 3
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "SIDEWAYS",
+  "status": "available",
+  "symbol": "IREN",
+  "timeframe": "1D",
+  "warnings": [
+    "Relative Volume 0.84× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
+  ]
+}

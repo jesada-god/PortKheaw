@@ -62,6 +62,25 @@ const SIGNAL_DIR = join(GOLDEN_DIR, 'signal');
 /** Where a flag-ON run writes, so it can never overwrite the flags-OFF baseline. */
 const PREVIEW_DIR = join(GOLDEN_DIR, 'preview');
 
+/**
+ * One directory per flag COMBINATION, not one directory for "some flag is on".
+ *
+ * The rollout turns these on one at a time, so production passes through states
+ * nobody has a reference for - GATE alone, then GATE+ZONES - before it reaches
+ * the combination the preview was captured at. A single flat `preview/` cannot
+ * hold those: the second combination's run overwrites the first one's files, and
+ * the overwrite is silent because both are legitimate flag-ON output. What looked
+ * like a preview of the rollout was only ever a preview of its last step.
+ *
+ * `gate-only` rather than `gate` because the name has to say what is OFF as well
+ * as what is on; a directory called `gate` read six months from now is a question
+ * rather than an answer.
+ */
+function previewSlug(flagsOn: readonly string[]): string {
+  const parts = flagsOn.map((key) => key.replace(/^SIGNAL_/, '').toLowerCase());
+  return parts.length === 1 ? `${parts[0]}-only` : parts.join('-');
+}
+
 interface FrozenInput {
   symbol: string;
   capturedAt: string;
@@ -184,22 +203,24 @@ async function main(): Promise<void> {
   const flagsOn = SIGNAL_FLAG_KEYS.filter((key) => flags[key]);
   console.log(`mode: ${MODE}`);
   console.log(`signal flags: ${flagsOn.length ? flagsOn.join(', ') : 'all OFF'}`);
-  if (MODE === 'check' && flagsOn.length) {
-    console.error('\nGATE REFUSED: the pre-deploy gate compares against the flags-OFF baseline.');
-    console.error(`Unset ${flagsOn.join(', ')} and run again.`);
-    process.exitCode = 2;
-    return;
-  }
   /*
    * A flag-ON run writes somewhere else entirely. Being able to look at what a
    * phase does is necessary; being able to overwrite the flags-OFF baseline with
    * it, one careless environment variable at a time, is not.
+   *
+   * A flag-ON --check is allowed, and compares against that combination's own
+   * directory. It is NOT the pre-deploy gate and does not claim to be: the gate
+   * is the flags-OFF run, because flags-OFF is what production is. This is the
+   * check that answers a different question - "did turning this one flag on do
+   * what it did last time?" - which is the only question worth asking at each
+   * step of a rollout that moves one flag at a time.
    */
   const previewing = flagsOn.length > 0;
-  const outputDir = previewing ? PREVIEW_DIR : SIGNAL_DIR;
+  const outputDir = previewing ? join(PREVIEW_DIR, previewSlug(flagsOn)) : SIGNAL_DIR;
   if (previewing) {
-    mkdirSync(PREVIEW_DIR, { recursive: true });
-    console.log('writing to __golden__/preview/ — the flags-OFF baseline in signal/ is left alone');
+    mkdirSync(outputDir, { recursive: true });
+    console.log(`${MODE === 'check' ? 'comparing against' : 'writing to'} __golden__/preview/${previewSlug(flagsOn)}/`);
+    if (MODE === 'check') console.log('PREVIEW check, not the pre-deploy gate; the gate is the flags-OFF run');
   }
 
   let failures = 0;
@@ -269,7 +290,8 @@ async function main(): Promise<void> {
   if (stale.length && !option('symbols')) console.log(`\nsnapshots not covered by this run: ${stale.join(', ')}`);
 
   if (MODE === 'check') {
-    console.log(`\n${failures ? `GATE FAILED · ${failures} symbol(s) differ` : `GATE PASSED · ${SYMBOLS.length} symbol(s) byte-identical`}`);
+    const label = previewing ? `PREVIEW ${previewSlug(flagsOn)}` : 'GATE';
+    console.log(`\n${failures ? `${label} FAILED · ${failures} symbol(s) differ` : `${label} PASSED · ${SYMBOLS.length} symbol(s) byte-identical`}`);
     process.exitCode = failures ? 1 : 0;
     return;
   }
