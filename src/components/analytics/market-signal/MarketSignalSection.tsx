@@ -745,30 +745,216 @@ function relativeCopy(distance: number | null, reference: number, side: 'above' 
 }
 
 /**
- * Where a floating label may sit without leaving the track it belongs to.
+ * Roughly how wide a label will be drawn, in pixels, without measuring it.
  *
- * A label centred on its marker is the readable arrangement and it is also the
- * one that hangs off the end of the bar: at 390px there is no gutter to hang
- * into, so the line runs under the card's own padding. Centring is therefore
- * only used in the middle fifth of the track, where it is safe for a label up
- * to 80% of the track's width. Anywhere else the label ANCHORS to the marker
- * and grows inward — its near edge sits on the mark, so it still reads as that
- * mark's label, and it cannot overhang unless it is wider than the whole track.
+ * The bar is laid out on the server at a width nobody knows yet, so the two
+ * decisions this file has to make — is this label about to hang off the track,
+ * is it about to land on the label beside it — need the label's own width
+ * BEFORE any browser has drawn it. A per-glyph estimate is the only version of
+ * that which works in one pass, and it deliberately runs a little wide: an
+ * estimate that is too big pins a label closer to its mark than it had to be,
+ * an estimate that is too small puts one label on top of another, and only the
+ * second one costs a reader anything.
  *
- * The first version of this clamped on position alone (edge-pin below 14%,
- * above 86%) and `qa:signal-zone-bar` caught what that misses: "ตอนนี้
- * 121,884.35" is 103px of a 290px track, so centring it at 84% put 4px of the
- * price under the card's padding. A rule that ignores the label's own width
- * cannot be right at both ends of the corpus, and growing inward is the rule
- * that needs no width at all.
+ * The numbers are Chrome's, measured on the labels this bar actually draws over
+ * the app's own font stack at the size `text-[10px]` really renders (12px — the
+ * `.text-\[10px\]` override in `globals.css` lifts every one of these captions):
+ * digits 5.75px, Thai base glyphs 8.24px, a monospace advance of 6.6px. Each is
+ * rounded up from there. `qa:signal-zone-bar` re-measures every drawn label
+ * against the estimate the layout used, so a font change that invalidates this
+ * table fails there rather than in front of a reader.
+ */
+const LABEL_GLYPH_PX = {
+  mono: 6.9,
+  digit: 6.2,
+  space: 4,
+  punctuation: 3.6,
+  middot: 6.6,
+  /** Thai vowels and tone marks stack ON their consonant and advance nothing. */
+  combining: 0.5,
+  other: 9,
+} as const;
+
+/**
+ * The Thai combining marks the captions on this bar use: ตอนนี้, ปิด, สด.
+ * Written as code points rather than as glyphs because a mark on its own is
+ * invisible in most editors, and an invisible character in a character class is
+ * a bug nobody can see.
+ */
+const THAI_COMBINING = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/;
+
+/** `px-1.5` on both sides of a chip, which is what the padding costs. */
+const CHIP_PADDING_PX = 12;
+
+export function estimateLabelWidth(text: string, { padding = 0, mono = false } = {}): number {
+  let width = padding;
+  for (const character of text) {
+    if (mono) width += LABEL_GLYPH_PX.mono;
+    else if (character >= '0' && character <= '9') width += LABEL_GLYPH_PX.digit;
+    else if (character === ' ') width += LABEL_GLYPH_PX.space;
+    else if (character === '.' || character === ',') width += LABEL_GLYPH_PX.punctuation;
+    else if (character === '·') width += LABEL_GLYPH_PX.middot;
+    else if (THAI_COMBINING.test(character)) width += LABEL_GLYPH_PX.combining;
+    else width += LABEL_GLYPH_PX.other;
+  }
+  return Math.ceil(width);
+}
+
+/**
+ * Which part of a label sits on the mark it names.
+ *
+ * `centre` is the readable arrangement and the default. The other two are for
+ * the one case centring cannot serve: two labels whose marks are close enough
+ * that centred boxes would overlap. Then each grows AWAY from the other — the
+ * lower one ends on its mark, the upper one starts on its mark — which buys the
+ * full width of the track between them without either label leaving its mark.
+ */
+export const LABEL_BIAS = { centre: 0.5, growLeft: 1, growRight: 0 } as const;
+
+/** A caption, and everything needed to place it: `at` is a percent of the track. */
+export interface FloatingLabel { at: number; width: number; bias: number }
+
+/**
+ * The narrowest track the bar is ever measured on.
+ *
+ * 320px of viewport leaves the card 220px of track (`qa:signal-zone-bar`
+ * measures 220/260/290 at its three widths), and 216 keeps a couple of pixels
+ * in hand. It is used ONLY to decide whether two labels would collide, never to
+ * position one: the collision rule has to give the same answer at every width
+ * or the bar would rearrange itself between two phones, and answering it on the
+ * narrowest track is the answer that is safe on all of them.
+ */
+const MIN_TRACK_PX = 216;
+/** Closer than this and two captions read as one run of text. */
+const LABEL_MIN_GAP_PX = 4;
+
+/** Where a label's left edge lands on a track this wide, in px. */
+function labelLeftPx(track: number, label: FloatingLabel): number {
+  const anchored = (label.at / 100) * track - label.width * label.bias;
+  return Math.min(Math.max(anchored, 0), Math.max(0, track - label.width));
+}
+
+/**
+ * Would these two labels touch?
+ *
+ * Answered on the narrowest track by default, because a label's width does not
+ * shrink with the phone but the distance between two marks does: the crowded
+ * case is always the narrow one, and a bar that merges captions at 320px and
+ * splits them at 390px is two different pictures of the same fact.
+ */
+export function labelsCollide(a: FloatingLabel, b: FloatingLabel, track: number = MIN_TRACK_PX): boolean {
+  const aLeft = labelLeftPx(track, a);
+  const bLeft = labelLeftPx(track, b);
+  return aLeft < bLeft + b.width + LABEL_MIN_GAP_PX && bLeft < aLeft + a.width + LABEL_MIN_GAP_PX;
+}
+
+const trackPct = (value: number) => `${Math.round(Math.min(100, Math.max(0, value)) * 100) / 100}%`;
+const trackPx = (value: number) => `${Math.round(value * 100) / 100}px`;
+
+/** The label's left edge, as CSS, before it is clamped into the track. */
+function labelAnchor(label: FloatingLabel): string {
+  return `${trackPct(label.at)} - ${trackPx(label.width * label.bias)}`;
+}
+
+/** The same edge, clamped so no part of the label can leave the track. */
+function labelLeft(label: FloatingLabel): string {
+  return `clamp(0px, ${labelAnchor(label)}, 100% - ${trackPx(label.width)})`;
+}
+
+/**
+ * Where a floating label sits, and why it is never off on its own.
+ *
+ * Two rules, in this order. The label is CENTRED on its mark, because a caption
+ * centred over a line is the arrangement a reader does not have to think about.
+ * And it is CLAMPED into the track, because at 390px there is no gutter to hang
+ * into — an unclamped caption on a six-figure price runs out under the card's
+ * padding, which `qa:signal-zone-bar` caught on "ตอนนี้ 121,884".
+ *
+ * The clamp is done in CSS rather than here on purpose. The previous version
+ * switched to an edge-anchored position at fixed percentages (below 40%, above
+ * 60%), which meant a label whose mark stood at 41% was drawn entirely to the
+ * RIGHT of it — the caption and the line it named were a label-width apart, and
+ * the reader had to work out which mark was theirs. `clamp()` mixes the two
+ * units the problem is actually in: the mark is a percentage of the track, the
+ * label's own width is pixels, so the caption stays exactly centred at every
+ * width and moves only when it would otherwise leave the card.
  *
  * Exported because this is the whole mobile-safety argument for the bar, and it
  * is worth a test rather than an eyeball.
  */
-export function zoneLabelStyle(position: number): React.CSSProperties {
-  if (position <= 40) return { left: `${Math.max(0, position)}%` };
-  if (position >= 60) return { right: `${Math.max(0, 100 - position)}%` };
-  return { left: `${position}%`, transform: 'translateX(-50%)' };
+export function zoneLabelStyle(label: FloatingLabel): React.CSSProperties {
+  return { left: `clamp(0px, calc(${labelAnchor(label)}), calc(100% - ${trackPx(label.width)}))` };
+}
+
+/**
+ * The hairline from a caption down to the mark it names.
+ *
+ * A clamped label is a label that is no longer centred on its mark, and with two
+ * captions in one row that is exactly when a reader has to guess which caption
+ * belongs to which line. The leader removes the guess: it runs from the mark to
+ * the middle of its own caption, so it is zero-width in the ordinary centred
+ * case and only appears when there is something to explain.
+ *
+ * It is one element rather than two because the label may end up on either side
+ * of its mark, and `min()`/`max()` express "between these two x positions"
+ * without the component having to know which side won.
+ */
+export function zoneLeaderStyle(markerAt: number, label: FloatingLabel): React.CSSProperties {
+  const mark = trackPct(markerAt);
+  const centre = `(${labelLeft(label)} + ${trackPx(label.width / 2)})`;
+  return {
+    left: `min(${mark}, ${centre})`,
+    width: `calc(max(${mark}, ${centre}) - min(${mark}, ${centre}))`,
+  };
+}
+
+/** A caption on the bar: what it says, which marks it names, how wide it will be. */
+interface Caption extends FloatingLabel {
+  key: string;
+  text: string;
+  /** Drawn in the monospace face, which is narrower per character. */
+  mono: boolean;
+  marks: Array<{ key: string; at: number }>;
+}
+
+function caption(
+  key: string,
+  text: string,
+  at: number,
+  marks: Array<{ key: string; at: number }>,
+  mono = false,
+): Caption {
+  return {
+    key,
+    text,
+    at,
+    marks,
+    mono,
+    bias: LABEL_BIAS.centre,
+    width: estimateLabelWidth(text, mono ? { mono: true } : { padding: CHIP_PADDING_PX }),
+  };
+}
+
+/**
+ * Two captions in one row, moved as little as it takes to keep them apart.
+ *
+ * Centred first, because that is the arrangement that needs no explaining. If
+ * centring overlaps them, each one grows AWAY from the other — the left caption
+ * ends on its mark, the right one starts on it — which is the most room two
+ * labels can have while both still sit on the line they name. `null` means even
+ * that is not enough, and the caller has to say both things in one caption.
+ *
+ * The answer is computed on the narrowest track (see `labelsCollide`), so the
+ * arrangement is the same on every phone. Returned in left-to-right order.
+ */
+export function spreadLabels<T extends FloatingLabel>(a: T, b: T): [T, T] | null {
+  const [left, right] = a.at <= b.at ? [a, b] : [b, a];
+  if (!labelsCollide(left, right)) return [left, right];
+  const grown: [T, T] = [
+    { ...left, bias: LABEL_BIAS.growLeft },
+    { ...right, bias: LABEL_BIAS.growRight },
+  ];
+  return labelsCollide(grown[0], grown[1]) ? null : grown;
 }
 
 /**
@@ -888,6 +1074,67 @@ function ZoneBar({ zones, livePrice, actionable }: {
    */
   const freshlyFormed = Math.min(zones.zoneAgeBars, zones.frameAgeBars) <= FRESH_ZONE_BARS;
 
+  /*
+   * The captions, in two rows that cannot reach each other.
+   *
+   * ROW ONE, above the bar: the prices, one caption per mark. ROW TWO, below it:
+   * the two edge prices, and nothing else ever. The live caption used to sit in
+   * a third row directly under the edge prices, which put "สด 42.59" and the
+   * frame's "43.23" a few pixels apart with nothing between them — two numbers
+   * of different kinds reading as one row of numbers. Separating them by KIND
+   * rather than by a row of padding is what makes that unrepeatable: a price the
+   * card measures from is above the bar, a level the frame is made of is below
+   * it, and neither row can grow into the other.
+   */
+  const closeText = `ตอนนี้ ${markerPriceText(referenceClose)}`;
+  const closeCaption = caption('close', closeText, closeAt, [{ key: 'close', at: closeAt }]);
+  const liveCaption = liveAt === null
+    ? null
+    : caption('live', `สด ${markerPriceText(livePrice as number)}`, liveAt, [{ key: 'live', at: liveAt }]);
+  /*
+   * One caption for two prices, when two captions will not fit.
+   *
+   * `spreadLabels` gets first refusal: centred, then each caption grown away
+   * from the other so it starts or ends on its own mark. Only when even that
+   * overlaps do the two collapse into a single caption naming both prices in
+   * reading order, anchored between the marks with a leader to each of them —
+   * which is the case where the live price is sitting on the close or on the
+   * trigger beside it, and where moving the captions apart would be a lie about
+   * where the marks are.
+   *
+   * What does NOT collapse is the marks. Two prices are always two lines on the
+   * bar, because the lines are the fact and the caption is only the reading.
+   */
+  const spreadCaptions = liveCaption === null ? null : spreadLabels(closeCaption, liveCaption);
+  const mergedText = liveCaption === null
+    ? ''
+    : `ปิด ${markerPriceText(referenceClose)} · สด ${markerPriceText(livePrice as number)}`;
+  const captions = liveCaption === null
+    ? [closeCaption]
+    : spreadCaptions ?? [caption(
+      'prices',
+      mergedText,
+      (closeCaption.at + liveCaption.at) / 2,
+      [closeCaption.marks[0], liveCaption.marks[0]],
+    )];
+
+  /*
+   * The edge prices, laid out by the same three rules. A pair that cannot be
+   * spread merges the same way the price captions do — both levels in one
+   * caption between the two cuts — rather than being drawn on top of each other
+   * or quietly dropped.
+   */
+  const lowerEdge = caption('edge-lower', markerPriceText(lowerTrigger), lowerAt, [{ key: 'lower', at: lowerAt }], true);
+  const upperEdge = caption('edge-upper', markerPriceText(upperTrigger), upperAt, [{ key: 'upper', at: upperAt }], true);
+  const spreadEdges = spreadLabels(lowerEdge, upperEdge);
+  const edges = !hasFrame ? [] : spreadEdges ?? [caption(
+    'edges',
+    `${markerPriceText(lowerTrigger)} · ${markerPriceText(upperTrigger)}`,
+    (lowerAt + upperAt) / 2,
+    [lowerEdge.marks[0], upperEdge.marks[0]],
+    true,
+  )];
+
   const segments = [
     {
       id: 'downtrend' as const,
@@ -959,20 +1206,46 @@ function ZoneBar({ zones, livePrice, actionable }: {
       */}
       <div className="mt-3" aria-hidden="true">
         {/*
-          "ตอนนี้" rides ABOVE the bar and the edge prices sit BELOW it, so the
-          two rows of floating text can never land on top of each other however
-          close the marker gets to a cut.
+          ROW ONE — the prices, each caption on its own mark.
+
+          Nothing else is ever in this row, and no price is ever in the row under
+          the bar. The leader hairline and its stem are drawn first so the
+          caption is painted over them rather than under them, and they carry no
+          text, which is how `qa:signal-zone-bar` tells a label from a line.
         */}
-        <div className="relative h-5">
-          <span
-            className="absolute top-0 whitespace-nowrap rounded-md bg-white/15 px-1.5 py-0.5 text-[10px] font-semibold text-white"
-            style={zoneLabelStyle(closeAt)}
-          >
-            ตอนนี้ {markerPriceText(referenceClose)}
-          </span>
+        <div className="relative h-7" data-track="prices">
+          {captions.flatMap((price) => price.marks.map((mark) => (
+            <div
+              key={`leader-${price.key}-${mark.key}`}
+              data-leader={mark.key}
+              data-leader-for={price.key}
+              className="absolute top-[21px] h-px bg-white/40"
+              style={zoneLeaderStyle(mark.at, price)}
+            />
+          )))}
+          {captions.flatMap((price) => price.marks.map((mark) => (
+            <div
+              key={`stem-${price.key}-${mark.key}`}
+              className="absolute top-[21px] h-[7px] w-px -translate-x-1/2 bg-white/40"
+              style={{ left: `${mark.at}%` }}
+            />
+          )))}
+          {captions.map((price) => (
+            <span
+              key={price.key}
+              data-label={price.key}
+              data-label-width={price.width}
+              className={`absolute top-0 whitespace-nowrap px-1.5 py-0.5 text-[10px] font-semibold ${
+                price.key === 'live' ? 'text-slate-300' : 'rounded-md bg-white/15 text-white'
+              }`}
+              style={zoneLabelStyle(price)}
+            >
+              {price.text}
+            </span>
+          ))}
         </div>
 
-        <div className="relative h-9">
+        <div className="relative h-9" data-track="bar">
           {segments.map((segment) => (
             <div
               key={segment.id}
@@ -984,13 +1257,20 @@ function ZoneBar({ zones, livePrice, actionable }: {
               {/* Below this width the name would spill into the next field. The
                   list underneath still names both directions, so nothing is lost. */}
               {segment.width >= 12 ? (
-                <span className="px-1 text-[10px] font-semibold tracking-wide">{ZONE_SEGMENT_COPY[segment.id]}</span>
+                <span data-label={`zone-${segment.id}`} className="px-1 text-[10px] font-semibold tracking-wide">
+                  {ZONE_SEGMENT_COPY[segment.id]}
+                </span>
               ) : null}
             </div>
           ))}
-          {hasFrame ? [lowerAt, upperAt].map((position) => (
-            <div key={position} className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${position}%` }} />
-          )) : null}
+          {edges.flatMap((edge) => edge.marks.map((mark) => (
+            <div
+              key={`cut-${mark.key}`}
+              data-cut={mark.key}
+              className="absolute inset-y-0 w-px bg-white/40"
+              style={{ left: `${mark.at}%` }}
+            />
+          )))}
           {/*
             The live price, drawn thinner and fainter than the close because it
             is the softer fact: the label moves on closes, not on this. Faint is
@@ -1020,42 +1300,42 @@ function ZoneBar({ zones, livePrice, actionable }: {
         </div>
 
         {/*
-          The edge prices, under the cut each one makes. They used to sit in the
-          first and last cell of a grid, i.e. hard against the ends of the bar,
-          pointing at nothing.
+          ROW TWO — the two edge prices, under the cut each one makes, and
+          nothing else. They used to sit in the first and last cell of a grid,
+          i.e. hard against the ends of the bar, pointing at nothing; then they
+          shared a border with the live caption, which is how "43.23" ended up
+          reading as part of "สด 42.59". Each one now has a stem up to its own cut
+          and a leader for the case where it had to move off it.
         */}
-        <div className="relative mt-1 h-4">
-          {hasFrame ? (
-            <>
-              <span className="absolute top-0 whitespace-nowrap font-mono text-[10px] text-slate-400" style={zoneLabelStyle(lowerAt)}>
-                {markerPriceText(lowerTrigger)}
-              </span>
-              <span className="absolute top-0 whitespace-nowrap font-mono text-[10px] text-slate-400" style={zoneLabelStyle(upperAt)}>
-                {markerPriceText(upperTrigger)}
-              </span>
-            </>
-          ) : null}
-        </div>
-
-        {/*
-          The live price's caption, in a row of its own.
-          It cannot share the top row with "ตอนนี้" or this row with the edge
-          prices: the interesting case is the one where the live price is a
-          little way off the close or sitting right on a trigger, which is
-          exactly when two captions in one row land on top of each other. A row
-          to itself means the caption never has to be dropped to keep the
-          picture readable — and the marker on the bar is there either way.
-        */}
-        {liveAt !== null ? (
-          <div className="relative mt-0.5 h-4">
+        <div className="relative mt-1 h-6" data-track="edges">
+          {edges.flatMap((edge) => edge.marks.map((mark) => (
+            <div
+              key={`stem-${edge.key}-${mark.key}`}
+              className="absolute top-0 h-[7px] w-px -translate-x-1/2 bg-white/40"
+              style={{ left: `${mark.at}%` }}
+            />
+          )))}
+          {edges.flatMap((edge) => edge.marks.map((mark) => (
+            <div
+              key={`leader-${edge.key}-${mark.key}`}
+              data-leader={mark.key}
+              data-leader-for={edge.key}
+              className="absolute top-[7px] h-px bg-white/40"
+              style={zoneLeaderStyle(mark.at, edge)}
+            />
+          )))}
+          {edges.map((edge) => (
             <span
-              className="absolute top-0 whitespace-nowrap text-[10px] font-semibold text-slate-300"
-              style={zoneLabelStyle(liveAt)}
+              key={edge.key}
+              data-label={edge.key}
+              data-label-width={edge.width}
+              className="absolute top-[8px] whitespace-nowrap font-mono text-[10px] text-slate-400"
+              style={zoneLabelStyle(edge)}
             >
-              สด {markerPriceText(livePrice as number)}
+              {edge.text}
             </span>
-          </div>
-        ) : null}
+          ))}
+        </div>
       </div>
 
       {/* Down on the left, up on the right — the same order as the bar. */}

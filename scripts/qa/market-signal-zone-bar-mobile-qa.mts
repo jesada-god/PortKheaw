@@ -17,17 +17,33 @@
  *   1. nothing in the card extends past the card's own content box
  *   2. all three zone fields have real width, and each name fits inside its own
  *      field with no overlap into the next
- *   3. every floating label (the "ตอนนี้" marker, the two edge prices) sits
- *      fully inside the track it is positioned against
- *   4. no element is clipping its own text (`scrollWidth > clientWidth`)
- *   5. the document never scrolls sideways
- *   6. both price markers are drawn, and each one is actually VISIBLE against
+ *   3. NO TWO LABELS OVERLAP. Every label the picture draws — the price
+ *      captions, the frame's edge prices, the three field names — is measured as
+ *      a box and compared against every other one. This is the check the last
+ *      round was missing: it measured the distance between the two MARKERS,
+ *      which was 36-64px and passed, while "สด 42.59" and the frame's "43.23"
+ *      sat on top of each other one row apart. Marks being far enough apart
+ *      says nothing about the captions that name them.
+ *   4. every label sits fully inside the track row it is positioned against
+ *   5. prices are above the bar and frame levels are below it, always. The two
+ *      kinds of number are separated by ROW, so no arrangement can put a live
+ *      price back beside an edge price
+ *   6. every label is joined to each mark it names by a leader that actually
+ *      reaches from one to the other
+ *   7. every label is at most as wide as the estimate the layout placed it on.
+ *      The bar is laid out on the server without a browser, so the estimate in
+ *      `estimateLabelWidth` is load-bearing: if a font makes a caption wider
+ *      than estimated, the collision arithmetic upstream was wrong and this is
+ *      where that is caught
+ *   8. no element is clipping its own text (`scrollWidth > clientWidth`)
+ *   9. the document never scrolls sideways
+ *  10. both price markers are drawn, and each one is actually VISIBLE against
  *      the field it stands on — composited through every translucent ancestor,
- *      in both appearances. This is the `bg-white` failure that got through
- *      last time: in the light appearance that class is mapped to the SURFACE
- *      colour, so the marker was painted the same colour as the thing behind it
- *      and vanished without any box moving anywhere.
- *   7. where the two prices sit in different fields of the frame, the two
+ *      in both appearances. This is the `bg-white` failure that got through an
+ *      earlier round: in the light appearance that class is mapped to the
+ *      SURFACE colour, so the marker was painted the same colour as the thing
+ *      behind it and vanished without any box moving anywhere.
+ *  11. where the two prices sit in different fields of the frame, the two
  *      markers are far enough apart to read as two marks rather than one
  */
 import { chromium } from 'playwright-core';
@@ -231,6 +247,38 @@ const CASES: Array<{
     livePrice: 42.38,
     markersApart: true,
   },
+  /*
+   * The case that has to be IMPOSSIBLE to pass by accident.
+   *
+   * Close 44.06, live 43.70, upper trigger 43.90: the live price is 0.82% from
+   * the close and 0.46% from the trigger, which is the arrangement that put
+   * three numbers into one row on the bar it replaced. Nothing here is far
+   * enough from anything else for the layout to get away with placing each
+   * caption on its own mark, so this is the case where the merge has to fire —
+   * and where, if it stops firing, the overlap check has to be the thing that
+   * says so. Reverting the merge and re-running is the falsification: it reports
+   * `labels-overlap` on this case at all three widths, in both appearances.
+   */
+  {
+    name: 'live-price-jammed-against-the-trigger',
+    result: {
+      ...base,
+      zones: {
+        ...zones,
+        zone: 'uptrend',
+        upperTrigger: 43.9,
+        lowerTrigger: 38.2583,
+        referenceClose: 44.06,
+        upperDistance: -0.16,
+        upperDistanceAtr: -0.04,
+        lowerDistance: 5.8017,
+        nearestTriggerAtr: -0.04,
+        positionPct: 103.2,
+      },
+    },
+    livePrice: 43.7,
+    markersApart: true,
+  },
   {
     name: 'actionable-with-every-row',
     result: {
@@ -287,7 +335,14 @@ function page(css: string, width: number, appearance: (typeof APPEARANCES)[numbe
  */
 interface ZoneBarProblem { case: string; kind: string; detail: string }
 interface MarkerReading { case: string; marker: string; contrast: number; gap: number | null }
-interface ZoneBarReport { problems: ZoneBarProblem[]; markers: MarkerReading[]; documentScrollWidth: number }
+/** What a label actually measured, against the estimate it was placed on. */
+interface WidthReading { case: string; label: string; measured: number; estimate: number }
+interface ZoneBarReport {
+  problems: ZoneBarProblem[];
+  markers: MarkerReading[];
+  widths: WidthReading[];
+  documentScrollWidth: number;
+}
 
 /**
  * The contrast a price marker has to clear against whatever is behind it.
@@ -309,6 +364,7 @@ const PROBE = `() => {
   const MARKER_MIN_GAP = ${MARKER_MIN_GAP};
   const problems = [];
   const markers = [];
+  const widths = [];
   const note = (caseName, kind, detail) => problems.push({ case: caseName, kind, detail });
 
   /*
@@ -415,27 +471,137 @@ const PROBE = `() => {
       }
     }
 
-    // The three floating labels: the marker caption above the bar and the two
-    // edge prices below it. Each must sit inside the track it is measured on,
-    // and the two that share a row must not land on top of each other.
-    const edgePrices = [];
-    for (const track of bar.querySelectorAll('.relative')) {
-      const trackBox = track.getBoundingClientRect();
-      for (const floater of track.children) {
-        if (getComputedStyle(floater).position !== 'absolute') continue;
-        if (!(floater.textContent || '').trim()) continue;
-        const box = floater.getBoundingClientRect();
-        if (box.left < trackBox.left - TOLERANCE || box.right > trackBox.right + TOLERANCE) {
-          note(name, 'label-overhangs-track', (floater.textContent || '').trim() + ' at ' + box.left.toFixed(1) + '-' + box.right.toFixed(1) + ' in ' + trackBox.left.toFixed(1) + '-' + trackBox.right.toFixed(1));
+    /*
+     * Every label the picture draws, as a box.
+     *
+     * Labels are found by \`data-label\` rather than by "an absolutely positioned
+     * child with text in it", because the leaders and stems are absolutely
+     * positioned children too and a rule written around them is a rule that
+     * silently stops covering the labels. Anything the reader is meant to READ
+     * carries the attribute; anything that is only a line does not.
+     */
+    const labels = [...bar.querySelectorAll('[data-label]')].map((node) => ({
+      node,
+      key: node.getAttribute('data-label'),
+      text: (node.textContent || '').trim(),
+      box: node.getBoundingClientRect(),
+      estimate: node.getAttribute('data-label-width') === null ? null : Number(node.getAttribute('data-label-width')),
+      track: node.closest('[data-track]'),
+    }));
+    if (labels.length === 0) note(name, 'no-labels', 'the picture drew no labels at all');
+
+    /*
+     * THE CHECK THE LAST ROUND WAS MISSING.
+     *
+     * Every pair, not just the pairs that share a row: the rows are 16-28px tall
+     * and a caption that grew could reach the row above it, and "the two numbers
+     * are in different rows" was exactly the assumption that let a live price sit
+     * on an edge price. Two boxes that overlap on BOTH axes are on top of each
+     * other, whatever the markup says about them.
+     */
+    for (let i = 0; i < labels.length; i += 1) {
+      for (let j = i + 1; j < labels.length; j += 1) {
+        const a = labels[i];
+        const b = labels[j];
+        const overlapX = Math.min(a.box.right, b.box.right) - Math.max(a.box.left, b.box.left);
+        const overlapY = Math.min(a.box.bottom, b.box.bottom) - Math.max(a.box.top, b.box.top);
+        if (overlapX > TOLERANCE && overlapY > TOLERANCE) {
+          note(name, 'labels-overlap',
+            a.key + ' "' + a.text + '" and ' + b.key + ' "' + b.text + '" overlap by '
+            + overlapX.toFixed(1) + 'x' + overlapY.toFixed(1) + 'px');
         }
-        if (floater.classList.contains('font-mono')) edgePrices.push({ text: (floater.textContent || '').trim(), box });
       }
     }
 
-    if (edgePrices.length === 2) {
-      const [left, right] = edgePrices.sort((a, b) => a.box.left - b.box.left);
-      if (left.box.right > right.box.left - 2) {
-        note(name, 'edge-prices-collide', left.text + ' ends at ' + left.box.right.toFixed(1) + ', ' + right.text + ' starts at ' + right.box.left.toFixed(1));
+    const barRow = bar.querySelector('[data-track="bar"]');
+    const barBox = barRow ? barRow.getBoundingClientRect() : null;
+    if (!barRow) note(name, 'missing-bar-row', 'the bar itself is not marked as a track');
+
+    const markX = (which) => {
+      const node = bar.querySelector('[data-marker="' + which + '"]') || bar.querySelector('[data-cut="' + which + '"]');
+      if (!node) return null;
+      const box = node.getBoundingClientRect();
+      return (box.left + box.right) / 2;
+    };
+
+    for (const label of labels) {
+      // Inside the row it is positioned against. A label that has left its track
+      // is broken long before anything reaches the edge of the card.
+      if (label.track) {
+        const trackBox = label.track.getBoundingClientRect();
+        if (label.box.left < trackBox.left - TOLERANCE || label.box.right > trackBox.right + TOLERANCE) {
+          note(name, 'label-overhangs-track',
+            label.key + ' "' + label.text + '" at ' + label.box.left.toFixed(1) + '-' + label.box.right.toFixed(1)
+            + ' in ' + trackBox.left.toFixed(1) + '-' + trackBox.right.toFixed(1));
+        }
+      } else {
+        note(name, 'label-outside-any-track', label.key + ' "' + label.text + '" is not in a track row');
+      }
+
+      // No wider than the layout was told to expect. The estimate is what the
+      // collision arithmetic ran on, so an underestimate is a wrong answer
+      // upstream even when nothing has visibly collided yet.
+      if (label.estimate !== null) {
+        if (label.box.width > label.estimate + TOLERANCE) {
+          note(name, 'label-wider-than-estimated',
+            label.key + ' "' + label.text + '" measures ' + label.box.width.toFixed(1)
+            + 'px against an estimate of ' + label.estimate + 'px');
+        } else if (label.estimate > label.box.width * 1.4 + 8) {
+          // The other direction costs readability rather than correctness: a
+          // caption estimated far too wide gets merged with its neighbour when
+          // the two had room to stand apart.
+          note(name, 'label-estimate-too-wide',
+            label.key + ' "' + label.text + '" measures ' + label.box.width.toFixed(1)
+            + 'px against an estimate of ' + label.estimate + 'px');
+        }
+        widths.push({
+          case: name,
+          label: label.key,
+          measured: Number(label.box.width.toFixed(1)),
+          estimate: label.estimate,
+        });
+      }
+
+      // Prices above the bar, frame levels below it. This is the separation the
+      // rebuild is FOR, so it is asserted rather than assumed.
+      if (barBox) {
+        const level = label.key === 'edges' || label.key.indexOf('edge-') === 0;
+        const price = label.key === 'prices' || label.key === 'close' || label.key === 'live';
+        if (price && label.box.bottom > barBox.top + TOLERANCE) {
+          note(name, 'price-caption-not-above-the-bar', label.key + ' "' + label.text + '" reaches ' + label.box.bottom.toFixed(1) + ', bar starts at ' + barBox.top.toFixed(1));
+        }
+        if (level && label.box.top < barBox.bottom - TOLERANCE) {
+          note(name, 'frame-level-not-below-the-bar', label.key + ' "' + label.text + '" starts at ' + label.box.top.toFixed(1) + ', bar ends at ' + barBox.bottom.toFixed(1));
+        }
+      }
+
+      // Joined to every mark it names. A caption that has been pushed off centre
+      // is only readable if a reader can see which line it came from.
+      if (label.key.indexOf('zone-') === 0) continue;
+      const leaders = [...bar.querySelectorAll('[data-leader-for="' + label.key + '"]')];
+      if (leaders.length === 0) {
+        note(name, 'label-has-no-leader', label.key + ' "' + label.text + '" points at no mark');
+        continue;
+      }
+      for (const leader of leaders) {
+        const which = leader.getAttribute('data-leader');
+        const x = markX(which);
+        if (x === null) { note(name, 'leader-points-at-nothing', label.key + ' leads to ' + which + ', which is not drawn'); continue; }
+        const box = leader.getBoundingClientRect();
+        const reaches = box.left <= Math.min(x, label.box.right) + 1.5
+          && box.right >= Math.max(x, label.box.left) - 1.5;
+        if (!reaches) {
+          note(name, 'leader-does-not-reach',
+            label.key + ' "' + label.text + '" sits at ' + label.box.left.toFixed(1) + '-' + label.box.right.toFixed(1)
+            + ' and its ' + which + ' leader spans ' + box.left.toFixed(1) + '-' + box.right.toFixed(1)
+            + ' for a mark at ' + x.toFixed(1));
+        }
+        if (label.track) {
+          const trackBox = label.track.getBoundingClientRect();
+          if (box.top < trackBox.top - TOLERANCE || box.bottom > trackBox.bottom + TOLERANCE) {
+            note(name, 'leader-outside-track', label.key + ' leader for ' + which + ' left its row');
+          }
+        }
       }
     }
 
@@ -483,7 +649,7 @@ const PROBE = `() => {
     }
   }
 
-  return { problems, markers, documentScrollWidth: document.documentElement.scrollWidth };
+  return { problems, markers, widths, documentScrollWidth: document.documentElement.scrollWidth };
 }`;
 
 async function main(): Promise<void> {
@@ -492,6 +658,7 @@ async function main(): Promise<void> {
   const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
   const failures: string[] = [];
   const readings: Array<MarkerReading & { at: string }> = [];
+  const labelWidths: Array<WidthReading & { at: string }> = [];
 
   try {
     for (const appearance of APPEARANCES) {
@@ -530,13 +697,26 @@ async function main(): Promise<void> {
       const worst = report.markers.filter((entry) => entry.marker !== 'gap')
         .sort((a, b) => a.contrast - b.contrast)[0];
       const gaps = report.markers.filter((entry) => entry.gap !== null);
+      /*
+       * The width estimate's smallest margin, printed for the same reason: it is
+       * the number that decides whether two captions merge, and the day a font
+       * change eats the margin the print is where somebody sees it coming.
+       */
+      const tightest = [...report.widths].sort(
+        (a, b) => (a.estimate - a.measured) - (b.estimate - b.measured),
+      )[0];
       console.log(
         `${appearance} ${width}x844 · ${report.problems.length === 0 ? 'clean' : `${report.problems.length} problem(s)`}`
         + ` · scrollWidth ${report.documentScrollWidth}`
         + (worst ? ` · faintest marker ${worst.contrast}:1 (${worst.case} ${worst.marker})` : '')
-        + (gaps.length ? ` · marker gap ${gaps.map((entry) => `${entry.gap}px`).join(', ')}` : ''),
+        + (gaps.length ? ` · marker gap ${gaps.map((entry) => `${entry.gap}px`).join(', ')}` : '')
+        + (tightest
+          ? ` · tightest label estimate +${(tightest.estimate - tightest.measured).toFixed(1)}px`
+            + ` (${tightest.case} ${tightest.label})`
+          : ''),
       );
       readings.push(...report.markers.map((entry) => ({ ...entry, at: tag })));
+      labelWidths.push(...report.widths.map((entry) => ({ ...entry, at: tag })));
       await context.close();
     }
     }
@@ -551,6 +731,7 @@ async function main(): Promise<void> {
     markerMinContrast: MARKER_MIN_CONTRAST,
     markerMinGap: MARKER_MIN_GAP,
     markers: readings,
+    labelWidths,
     failures,
   }, null, 2), 'utf8');
 

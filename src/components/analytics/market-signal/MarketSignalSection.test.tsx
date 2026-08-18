@@ -8,7 +8,7 @@ import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
-import { MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle } from './MarketSignalSection';
+import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle } from './MarketSignalSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -408,41 +408,114 @@ describe('MarketSignalSection', () => {
       /*
        * The edge prices used to be the first and last cell of a two-column grid,
        * i.e. hard against the ends of the bar, pointing at nothing. They belong
-       * under the cut they name, so this asserts the position they are given is
-       * the position of the divider and not a corner.
+       * under the cut they name, so this asserts each one is anchored on the
+       * divider it names — and that a stem is drawn from the cut down to it, so
+       * a reader can see the pairing rather than infer it.
        */
       it('puts each edge price under the cut it makes, not at the ends of the bar', async () => {
         await render(zoned);
-        const edges = [...zoneBar().querySelectorAll<HTMLElement>('span.font-mono')]
-          .filter((node) => ['38.26', '47.24'].includes(node.textContent ?? ''));
-        expect(edges).toHaveLength(2);
+        const lower = zoneBar().querySelector<HTMLElement>('[data-label="edge-lower"]')!;
+        const upper = zoneBar().querySelector<HTMLElement>('[data-label="edge-upper"]')!;
+        expect(lower.textContent).toBe('38.26');
+        expect(upper.textContent).toBe('47.24');
+
         const lowerCut = leftOf('sideways');
         const upperCut = leftOf('uptrend');
-        // Each price is anchored ON its own cut and grows inward from it, so the
-        // lower one is placed from the left and the upper one from the right.
-        expect(Number.parseFloat(edges[0].style.left)).toBeCloseTo(lowerCut, 6);
-        expect(Number.parseFloat(edges[1].style.right)).toBeCloseTo(100 - upperCut, 6);
         expect(lowerCut).toBeGreaterThan(0);
         expect(upperCut).toBeLessThan(100);
+        /*
+         * Anchored on the cut, centred on it, and pulled back only by half its
+         * own width — the same expression `zoneLabelStyle` builds for the marker
+         * captions, so the price cannot drift away from the line it names.
+         *
+         * Compared through jsdom's own CSS parser rather than as a string:
+         * `cssstyle` mangles `clamp()` into an unrecognisable value, so the only
+         * honest comparison here is between two values it has mangled the same
+         * way. What the browser actually resolves these to is measured by
+         * `qa:signal-zone-bar`, which is the point of having it.
+         */
+        const asJsdomParsesIt = (style: React.CSSProperties) => {
+          const probe = document.createElement('span');
+          Object.assign(probe.style, style);
+          return probe.style.left;
+        };
+        expect(lower.style.left).toBe(asJsdomParsesIt(zoneLabelStyle({
+          at: lowerCut, width: Number(lower.dataset.labelWidth), bias: LABEL_BIAS.centre,
+        })));
+        expect(upper.style.left).toBe(asJsdomParsesIt(zoneLabelStyle({
+          at: upperCut, width: Number(upper.dataset.labelWidth), bias: LABEL_BIAS.centre,
+        })));
+        // The cut each one is measured against is drawn, and it is the divider
+        // between the fields rather than a corner of the bar.
+        expect(zoneBar().querySelector<HTMLElement>('[data-cut="lower"]')!.style.left)
+          .toBe(`${lowerCut}%`);
+        expect(zoneBar().querySelector<HTMLElement>('[data-cut="upper"]')!.style.left)
+          .toBe(`${upperCut}%`);
       });
 
       /*
-       * A label cannot hang off the side of its track: at 390px there is no
-       * gutter to hang into, so it runs under the card's own padding. Outside
-       * the middle fifth the label anchors to the marker and grows INWARD,
-       * which is safe without knowing the label's width — the rule that
-       * replaced an edge-pin `qa:signal-zone-bar` caught overhanging on a
-       * six-figure price.
+       * The reason this helper exists at all: a caption that is not on its mark
+       * makes the reader hunt for the line it belongs to.
+       *
+       * The version this replaced switched to an edge-anchored position at fixed
+       * percentages — under 40% the label started at the mark and ran right — so
+       * a mark standing at 41% got a caption drawn a whole label-width away from
+       * it. Centring plus a `clamp()` is the rule that holds at both ends: the
+       * mark is a percentage of the track, the label's width is pixels, and the
+       * caption only leaves centre when it would otherwise leave the card.
        */
-      it('grows a floating label inward from its marker instead of overhanging', () => {
-        expect(zoneLabelStyle(50)).toEqual({ left: '50%', transform: 'translateX(-50%)' });
-        // Left of the band: the label starts at the mark and runs right.
-        expect(zoneLabelStyle(2)).toEqual({ left: '2%' });
-        expect(zoneLabelStyle(40)).toEqual({ left: '40%' });
-        // Right of it: the label ends at the mark and runs left. 84% is the
-        // position that put "ตอนนี้ 121,884" through the edge of the card.
-        expect(zoneLabelStyle(84)).toEqual({ right: '16%' });
-        expect(zoneLabelStyle(100)).toEqual({ right: '0%' });
+      it('centres a floating label on its mark, and clamps it into the track', () => {
+        const label = { at: 50, width: 80, bias: LABEL_BIAS.centre };
+        expect(zoneLabelStyle(label)).toEqual({
+          left: 'clamp(0px, calc(50% - 40px), calc(100% - 80px))',
+        });
+        // Same expression at both ends of the track: the clamp does the work, so
+        // a caption at 2% and one at 98% are still described as centred.
+        expect(zoneLabelStyle({ ...label, at: 2 }).left)
+          .toBe('clamp(0px, calc(2% - 40px), calc(100% - 80px))');
+        expect(zoneLabelStyle({ ...label, at: 98 }).left)
+          .toBe('clamp(0px, calc(98% - 40px), calc(100% - 80px))');
+        // Grown outward: the label ends on its mark, or starts on it.
+        expect(zoneLabelStyle({ ...label, at: 30, bias: LABEL_BIAS.growLeft }).left)
+          .toBe('clamp(0px, calc(30% - 80px), calc(100% - 80px))');
+        expect(zoneLabelStyle({ ...label, at: 70, bias: LABEL_BIAS.growRight }).left)
+          .toBe('clamp(0px, calc(70% - 0px), calc(100% - 80px))');
+      });
+
+      /*
+       * The leader is what makes a moved caption readable: it runs from the mark
+       * to the middle of the caption, so it is nothing at all in the ordinary
+       * centred case and appears only where there is something to explain.
+       */
+      it('draws the leader between the mark and the label it names', () => {
+        const label = { at: 50, width: 80, bias: LABEL_BIAS.centre };
+        const centre = '(clamp(0px, 50% - 40px, 100% - 80px) + 40px)';
+        expect(zoneLeaderStyle(50, label)).toEqual({
+          left: `min(50%, ${centre})`,
+          width: `calc(max(50%, ${centre}) - min(50%, ${centre}))`,
+        });
+        // A caption for a mark that is not its own — the merged one names two —
+        // still resolves to the span between the two x positions.
+        expect(zoneLeaderStyle(20, label).left).toBe(`min(20%, ${centre})`);
+      });
+
+      /*
+       * The estimate the layout runs on. It has to be an OVERestimate: too big
+       * pins a caption closer to its mark than it needed to be, too small puts
+       * one caption on top of another. `qa:signal-zone-bar` re-measures every
+       * drawn label against it in a real browser, and these are the numbers that
+       * run measured on Chrome at the size these captions actually render.
+       */
+      it('estimates a label at least as wide as Chrome draws it', () => {
+        expect(estimateLabelWidth('ตอนนี้ 44.06', { padding: 12 })).toBeGreaterThanOrEqual(78);
+        expect(estimateLabelWidth('สด 42.38', { padding: 12 })).toBeGreaterThanOrEqual(62);
+        expect(estimateLabelWidth('38.26', { mono: true })).toBeGreaterThanOrEqual(33);
+        expect(estimateLabelWidth('103,192', { mono: true })).toBeGreaterThanOrEqual(47);
+        // And not wildly over: an estimate twice the truth would merge captions
+        // that had room to stand apart.
+        expect(estimateLabelWidth('ตอนนี้ 44.06', { padding: 12 })).toBeLessThan(100);
+        // Thai tone marks stack on their consonant, so they cost almost nothing.
+        expect(estimateLabelWidth('ปิด')).toBeLessThan(estimateLabelWidth('ปดด'));
       });
 
       it('keeps every field visible even when price is far outside the frame', async () => {
@@ -450,6 +523,98 @@ describe('MarketSignalSection', () => {
         for (const id of ['downtrend', 'sideways', 'uptrend']) {
           expect(widthOf(id), `${id} field collapsed`).toBeGreaterThan(10);
         }
+      });
+    });
+
+    /*
+     * The row rule, which is the fix for two numbers of different kinds reading
+     * as one row of numbers: "สด 42.59" used to sit directly under the frame's
+     * "43.23" with nothing between them.
+     *
+     * PRICES above the bar. LEVELS below it. Not "spaced apart" — separated by
+     * kind, so no arrangement of the numbers can put them back in one row.
+     */
+    describe('the captions sit in two rows that cannot reach each other', () => {
+      const rowOf = (label: string) => zoneBar().querySelector<HTMLElement>(`[data-label="${label}"]`)!
+        .closest('[data-track]')!.getAttribute('data-track');
+
+      it('keeps every price above the bar and every frame level below it', async () => {
+        await render(zoned, 'elite', 41.2);
+        const prices = [...zoneBar().querySelectorAll<HTMLElement>('[data-track="prices"] [data-label]')]
+          .map((node) => node.dataset.label);
+        const levels = [...zoneBar().querySelectorAll<HTMLElement>('[data-track="edges"] [data-label]')]
+          .map((node) => node.dataset.label);
+        // Whatever the arrangement chose, the two rows hold what they hold.
+        expect(prices.every((key) => ['close', 'live', 'prices'].includes(key!))).toBe(true);
+        expect(levels.every((key) => ['edge-lower', 'edge-upper', 'edges'].includes(key!))).toBe(true);
+        expect(levels.length).toBeGreaterThan(0);
+        expect(rowOf('edge-lower')).toBe('edges');
+        // And the bar itself is BETWEEN them: prices above, levels below, in
+        // that order, which is the whole separation stated as document order.
+        const tracks = [...zoneBar().querySelectorAll('[data-track]')].map((node) => node.getAttribute('data-track'));
+        expect(tracks).toEqual(['prices', 'bar', 'edges']);
+      });
+
+      it('gives every caption a leader to each mark it names', async () => {
+        await render(zoned, 'elite', 41.2);
+        for (const label of zoneBar().querySelectorAll<HTMLElement>('[data-label]')) {
+          const key = label.dataset.label!;
+          if (key.startsWith('zone-')) continue;
+          const leaders = zoneBar().querySelectorAll(`[data-leader-for="${key}"]`);
+          expect(leaders.length, `${key} has no leader to its mark`).toBeGreaterThan(0);
+        }
+      });
+    });
+
+    /*
+     * The collapse, and the thing that must not collapse with it.
+     *
+     * Two prices a hair apart cannot have two captions — at 320px there is not
+     * room for both, and moving them apart would point them at the wrong lines.
+     * So the captions become one. The MARKS stay two, because the marks are the
+     * fact: a reader looking at one line concludes the live price is the price
+     * the card is talking about.
+     */
+    describe('when the two prices are too close for two captions', () => {
+      it('says both prices in one caption, and still draws both marks', async () => {
+        await render(zoned, 'elite', 44.07);
+        const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
+        expect(merged.textContent).toBe('ปิด 44.06 · สด 44.07');
+        expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
+        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
+
+        expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
+        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+        // One leader per mark, both belonging to the one caption.
+        const leaders = [...zoneBar().querySelectorAll<HTMLElement>('[data-leader-for="prices"]')]
+          .map((node) => node.dataset.leader);
+        expect(leaders.sort()).toEqual(['close', 'live']);
+      });
+
+      it('keeps two captions when there is room for two', async () => {
+        // 38.5 against a close of 44.06: far enough apart on the drawn extent
+        // that both captions fit once each grows away from the other.
+        await render(zoned, 'elite', 38.5);
+        expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ตอนนี้ 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 38.5');
+      });
+
+      /*
+       * The arrangement is decided on the NARROWEST track the bar is measured
+       * on, so it cannot differ between two phones — a picture that merges at
+       * 320px and splits at 390px is two pictures of one fact.
+       */
+      it('answers the collision question the same way at every width', () => {
+        const close = { at: 60, width: 80, bias: LABEL_BIAS.centre };
+        const live = { at: 61, width: 62, bias: LABEL_BIAS.centre };
+        expect(labelsCollide(close, live)).toBe(true);
+        // Grown apart they still touch on a 216px track, which is what makes the
+        // pair collapse into one caption.
+        expect(spreadLabels(close, live)).toBeNull();
+        // Far apart, and centring is left alone.
+        const away = { at: 20, width: 62, bias: LABEL_BIAS.centre };
+        expect(spreadLabels(close, away)).toEqual([away, close]);
       });
     });
 
