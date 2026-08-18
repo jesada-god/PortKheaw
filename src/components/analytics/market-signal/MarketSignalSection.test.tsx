@@ -263,8 +263,10 @@ describe('MarketSignalSection', () => {
         upperDistanceAtr: 0.78,
         lowerDistance: 5.8017,
         lowerDistanceAtr: 1.43,
+        frameAgeBars: 12,
         zoneAgeBars: 9,
         lastTestedBarsAgo: 0,
+        triggerCrossings: 14,
         pendingBreakout: false,
         pendingBreakdown: false,
         referenceClose: 44.06,
@@ -316,27 +318,17 @@ describe('MarketSignalSection', () => {
       expect(bar.textContent).toContain('ผ่านแนวบนไปแล้ว — รอปิดแท่งยืนยัน');
     });
 
-    it('names an open side rather than drawing a level nobody defended', async () => {
-      const open: MarketSignalResult = {
+    it('shows a broken frame as a position past 100%, not as a clamp', async () => {
+      const broken: MarketSignalResult = {
         ...zoned,
         state: 'BULLISH',
         bias: 'bullish',
-        zones: {
-          ...zoned.zones!,
-          mode: 'open_above',
-          zone: 'uptrend',
-          resistance: null,
-          upperTrigger: null,
-          positionPct: null,
-          upperDistance: null,
-          upperDistanceAtr: null,
-        },
+        zones: { ...zoned.zones!, zone: 'uptrend', positionPct: 113.7, upperDistance: -0.81, upperDistanceAtr: -0.2 },
       };
-      await render(open);
+      await render(broken);
       const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
-      expect(bar.textContent).toContain('ไม่มีแนวที่ยืนยันแล้วฝั่งนี้');
-      expect(bar.textContent).toContain('ไม่เหลือแนวต้านที่ยืนยันแล้วเหนือราคา');
-      expect(bar.textContent).not.toContain('% ของกรอบ');
+      expect(bar.textContent).toContain('113.7% ของกรอบ');
+      expect(bar.textContent).toContain('อยู่เหนือโครงสร้างที่ยืนยันแล้ว');
     });
 
     it('reports the score as a lean inside the zone, not as a direction', async () => {

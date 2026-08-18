@@ -1,16 +1,16 @@
 {
-  "bias": "bullish",
+  "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 74,
+  "confidence": 59,
   "confidenceBreakdown": {
     "agreement": 58,
     "completeness": 93,
     "conflictPenalty": 0,
     "evidenceStrength": 58,
-    "regimeClarity": 98,
+    "regimeClarity": 0,
     "volumeConfirmation": 50
   },
-  "confidenceLabel": "Medium",
+  "confidenceLabel": "Low",
   "dataPoints": {
     "finalized": 1254,
     "received": 1255
@@ -164,28 +164,30 @@
     }
   },
   "source": "yahoo-finance-chart",
-  "state": "BULLISH",
+  "state": "SIDEWAYS",
   "status": "available",
   "symbol": "SPY",
   "timeframe": "1D",
   "warnings": [],
   "zones": {
-    "lastTestedBarsAgo": 9,
-    "lowerDistance": 26.1663,
-    "lowerDistanceAtr": 3.45,
-    "lowerTrigger": 750.1738,
-    "mode": "open_above",
+    "frameAgeBars": 4,
+    "lastTestedBarsAgo": 0,
+    "lowerDistance": 49.1362,
+    "lowerDistanceAtr": 6.48,
+    "lowerTrigger": 727.2038,
+    "mode": "structural",
     "pendingBreakdown": false,
     "pendingBreakout": false,
-    "positionPct": null,
+    "positionPct": 98.9,
     "referenceClose": 776.3400268554688,
     "referenceDate": "2026-08-14",
-    "resistance": null,
-    "support": 752.0699,
-    "upperDistance": null,
-    "upperDistanceAtr": null,
-    "upperTrigger": null,
-    "zone": "uptrend",
-    "zoneAgeBars": 9
+    "resistance": 776.85,
+    "support": 729.1,
+    "triggerCrossings": 49,
+    "upperDistance": 2.4061,
+    "upperDistanceAtr": 0.32,
+    "upperTrigger": 778.7462,
+    "zone": "sideways",
+    "zoneAgeBars": 3
   }
 }

@@ -17,7 +17,8 @@
   },
   "flags": [
     "bullish_divergence",
-    "weak_confirmation"
+    "weak_confirmation",
+    "stale_zone"
   ],
   "freshness": {
     "asOf": "2026-08-17T04:00:00.000Z",
@@ -172,22 +173,24 @@
     "หลักฐานบางหมวดขัดแย้งกัน"
   ],
   "zones": {
-    "lastTestedBarsAgo": 4,
-    "lowerDistance": 4.426,
-    "lowerDistanceAtr": 1.1,
-    "lowerTrigger": 77.974,
+    "frameAgeBars": 107,
+    "lastTestedBarsAgo": 110,
+    "lowerDistance": 19.8089,
+    "lowerDistanceAtr": 4.91,
+    "lowerTrigger": 62.5911,
     "mode": "structural",
     "pendingBreakdown": false,
     "pendingBreakout": false,
-    "positionPct": 50.5,
+    "positionPct": 33.6,
     "referenceClose": 82.4000015258789,
     "referenceDate": "2026-08-14",
-    "resistance": 85.7488,
-    "support": 78.9829,
-    "upperDistance": 4.3576,
-    "upperDistanceAtr": 1.08,
-    "upperTrigger": 86.7576,
+    "resistance": 119.48,
+    "support": 63.6,
+    "triggerCrossings": 9,
+    "upperDistance": 38.0889,
+    "upperDistanceAtr": 9.44,
+    "upperTrigger": 120.4889,
     "zone": "sideways",
-    "zoneAgeBars": 4
+    "zoneAgeBars": 106
   }
 }

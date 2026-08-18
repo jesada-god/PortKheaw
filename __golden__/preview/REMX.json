@@ -178,22 +178,24 @@
     "หลักฐานบางหมวดขัดแย้งกัน"
   ],
   "zones": {
-    "lastTestedBarsAgo": 0,
-    "lowerDistance": 5.6976,
-    "lowerDistanceAtr": 2.23,
-    "lowerTrigger": 72.8524,
+    "frameAgeBars": 9,
+    "lastTestedBarsAgo": 12,
+    "lowerDistance": 15.1288,
+    "lowerDistanceAtr": 5.92,
+    "lowerTrigger": 63.4212,
     "mode": "structural",
     "pendingBreakdown": false,
     "pendingBreakout": false,
-    "positionPct": 97.3,
+    "positionPct": 57.3,
     "referenceClose": 78.55000305175781,
     "referenceDate": "2026-08-14",
-    "resistance": 78.6916,
-    "support": 73.4912,
-    "upperDistance": 0.7804,
-    "upperDistanceAtr": 0.31,
-    "upperTrigger": 79.3304,
+    "resistance": 89.35,
+    "support": 64.06,
+    "triggerCrossings": 48,
+    "upperDistance": 11.4387,
+    "upperDistanceAtr": 4.48,
+    "upperTrigger": 89.9887,
     "zone": "sideways",
-    "zoneAgeBars": 5
+    "zoneAgeBars": 8
   }
 }

@@ -1,13 +1,13 @@
 {
-  "bias": "bullish",
+  "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 73,
+  "confidence": 62,
   "confidenceBreakdown": {
     "agreement": 58,
     "completeness": 93,
     "conflictPenalty": 0,
     "evidenceStrength": 58,
-    "regimeClarity": 97,
+    "regimeClarity": 20,
     "volumeConfirmation": 50
   },
   "confidenceLabel": "Medium",
@@ -17,7 +17,8 @@
   },
   "flags": [
     "bearish_divergence",
-    "strong_momentum"
+    "strong_momentum",
+    "pending_breakout"
   ],
   "freshness": {
     "asOf": "2026-08-17T13:30:00.000Z",
@@ -102,6 +103,12 @@
       "text": "EMA20 ชันขึ้น 0.93%"
     },
     {
+      "id": "pending-zone-break",
+      "impact": 6,
+      "polarity": "caution",
+      "text": "ราคาปิดผ่านแนวต้านแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน"
+    },
+    {
       "id": "rsi14",
       "impact": 4.48,
       "polarity": "positive",
@@ -158,28 +165,30 @@
     }
   },
   "source": "yahoo-finance-chart",
-  "state": "BULLISH",
+  "state": "SIDEWAYS",
   "status": "available",
   "symbol": "IWM",
   "timeframe": "1D",
   "warnings": [],
   "zones": {
+    "frameAgeBars": 4,
     "lastTestedBarsAgo": 0,
-    "lowerDistance": 3.61,
-    "lowerDistanceAtr": 0.95,
-    "lowerTrigger": 301.48,
-    "mode": "open_above",
+    "lowerDistance": 18.2067,
+    "lowerDistanceAtr": 4.81,
+    "lowerTrigger": 286.8833,
+    "mode": "structural",
     "pendingBreakdown": false,
-    "pendingBreakout": false,
-    "positionPct": null,
+    "pendingBreakout": true,
+    "positionPct": 113.3,
     "referenceClose": 305.0899963378906,
     "referenceDate": "2026-08-14",
-    "resistance": null,
-    "support": 302.4267,
-    "upperDistance": null,
-    "upperDistanceAtr": null,
-    "upperTrigger": null,
-    "zone": "uptrend",
-    "zoneAgeBars": 0
+    "resistance": 303.06,
+    "support": 287.83,
+    "triggerCrossings": 42,
+    "upperDistance": -1.0833,
+    "upperDistanceAtr": -0.29,
+    "upperTrigger": 304.0067,
+    "zone": "sideways",
+    "zoneAgeBars": 3
   }
 }

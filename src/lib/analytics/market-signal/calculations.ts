@@ -1,5 +1,5 @@
 import { calculateSupportResistance, confirmedSwingPivots } from '@/src/lib/analytics/support-resistance/calculations';
-import { calculateTechnicalAnalysis } from '@/src/lib/analytics/technical/calculations';
+import { atrWilder, calculateTechnicalAnalysis } from '@/src/lib/analytics/technical/calculations';
 import type { AdxPoint, BollingerPoint, IndicatorPoint, KeltnerPoint, MacdPoint } from '@/src/lib/analytics/technical/types';
 import {
   MARKET_SIGNAL_EXPECTED_FACTORS,
@@ -659,125 +659,142 @@ function breakConfirmed(
  */
 export function calculateTrendZones(input: {
   candles: readonly Omit<MarketSignalCandle, 'finalized'>[];
-  support: number | null;
-  resistance: number | null;
-  atr14: number | null;
   ema20: number | null;
 }): MarketSignalZones | null {
-  const { candles, atr14, ema20 } = input;
+  const { candles, ema20 } = input;
   const latest = candles.at(-1);
-  if (!latest || atr14 === null || !Number.isFinite(atr14) || atr14 <= 0) return null;
+  if (!latest) return null;
+  const atrSeries = atrWilder(candles, MARKET_SIGNAL_THRESHOLDS.squeeze.keltnerAtrPeriod);
+  const atrLatest = atrSeries.at(-1);
+  if (atrLatest === null || atrLatest === undefined || !Number.isFinite(atrLatest) || atrLatest <= 0) return null;
 
-  const finite = (value: number | null) => value !== null && Number.isFinite(value) ? value : null;
-  const rawSupport = finite(input.support);
-  const rawResistance = finite(input.resistance);
-  const buffer = MARKET_SIGNAL_ZONE.triggerAtrMultiple * atr14;
-  const close = latest.close;
+  const pivots = confirmedSwingPivots(candles, MARKET_SIGNAL_THRESHOLDS.structure.pivotWindow);
+  const lookback = MARKET_SIGNAL_ZONE.anchor.lookbackBars;
 
-  let mode: MarketSignalZones['mode'];
-  let support: number | null;
-  let resistance: number | null;
-  if (rawSupport !== null && rawResistance !== null) {
-    if (rawResistance - rawSupport >= MARKET_SIGNAL_ZONE.narrowRange.minimumAtrWidth * atr14) {
-      mode = 'structural';
-      support = rawSupport;
-      resistance = rawResistance;
-    } else {
-      // A "range" narrower than one day's normal movement describes no boundary
-      // anyone could break, so stop presenting it as one.
-      mode = 'atr_band';
-      support = (ema20 ?? close) - MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
-      resistance = (ema20 ?? close) + MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
-    }
-  } else if (rawSupport !== null) {
-    mode = 'open_above';
-    support = rawSupport;
-    resistance = null;
-  } else if (rawResistance !== null) {
-    mode = 'open_below';
-    support = null;
-    resistance = rawResistance;
-  } else if (ema20 !== null && Number.isFinite(ema20)) {
-    mode = 'atr_band';
-    support = ema20 - MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
-    resistance = ema20 + MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
-  } else {
-    return null;
-  }
-
-  const upperTrigger = resistance === null ? null : resistance + buffer;
-  const lowerTrigger = support === null ? null : support - buffer;
-
-  /*
-   * The walk applies TODAY's boundaries to the last `walkbackBars` bars. It is
-   * deliberately not a replay of where the boundaries used to be: the question
-   * `zoneAgeBars` answers is "how long has price been on this side of the lines
-   * we are drawing now", which is what a reader looking at the bar is asking.
+  /**
+   * The frame as it would have been drawn at `index`, from the pivots that were
+   * confirmed by then.
    *
-   * Entry always needs a confirmed close past `level + buffer`; leaving needs
-   * only a close back inside the level itself. Without that asymmetry a price
-   * oscillating around one number relabels the card every other day, which
-   * teaches a reader the label is noise.
+   * Causal on purpose: `confirmedAtIndex <= index` is what keeps the walk from
+   * anchoring on a swing the market had not yet finished making, which would
+   * make every historical trigger look easier to cross than it was.
    */
+  const anchorAt = (index: number): { support: number; resistance: number } | null => {
+    const usable = pivots.filter((pivot) => pivot.confirmedAtIndex <= index && index - pivot.confirmedAtIndex <= lookback);
+    const high = usable.filter((pivot) => pivot.kind === 'high').at(-1);
+    const low = usable.filter((pivot) => pivot.kind === 'low').at(-1);
+    if (!high || !low) return null;
+    // The two most recent pivots can arrive in either order, and a recent low
+    // above an older high would invert the frame. Order them rather than
+    // publishing a resistance beneath its own support.
+    return { support: Math.min(high.price, low.price), resistance: Math.max(high.price, low.price) };
+  };
+
+  const bandAt = (index: number, atr: number) => {
+    const centre = ema20 !== null && Number.isFinite(ema20) ? ema20 : candles[index].close;
+    const half = MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr;
+    return { support: centre - half, resistance: centre + half };
+  };
+
+  interface Frame { support: number; resistance: number; mode: MarketSignalZones['mode']; anchoredAt: number }
+
+  const frameAt = (index: number): Frame => {
+    const atr = atrSeries[index] ?? atrLatest;
+    const anchored = anchorAt(index);
+    if (anchored && anchored.resistance - anchored.support >= MARKET_SIGNAL_ZONE.narrowRange.minimumAtrWidth * atr) {
+      return { ...anchored, mode: 'structural', anchoredAt: index };
+    }
+    return { ...bandAt(index, atr), mode: 'atr_band', anchoredAt: index };
+  };
+
   const from = Math.max(1, candles.length - MARKET_SIGNAL_ZONE.walkbackBars);
-  let zone: MarketSignalZoneName = mode === 'open_above' ? 'uptrend'
-    : mode === 'open_below' ? 'downtrend' : 'sideways';
+  let frame = frameAt(from);
+  let zone: MarketSignalZoneName = 'sideways';
   let zoneSince = from;
+  let crossings = 0;
+
   for (let index = from; index < candles.length; index += 1) {
-    const bar = candles[index].close;
+    const atr = atrSeries[index] ?? atrLatest;
+    const buffer = MARKET_SIGNAL_ZONE.triggerAtrMultiple * atr;
+    const upper = frame.resistance + buffer;
+    const lower = frame.support - buffer;
+    const close = candles[index].close;
     const previous: MarketSignalZoneName = zone;
-    if (zone === 'uptrend' && support !== null && resistance === null) {
-      // Open above: the support is the only structure left, so losing it is what
-      // ends the move rather than re-entering a range from the top.
-      if (bar < support) zone = 'sideways';
-    } else if (zone === 'uptrend' && resistance !== null) {
-      if (bar < resistance) zone = 'sideways';
-    } else if (zone === 'downtrend' && resistance !== null && support === null) {
-      if (bar > resistance) zone = 'sideways';
-    } else if (zone === 'downtrend' && support !== null) {
-      if (bar > support) zone = 'sideways';
-    }
+
+    /*
+     * Hysteresis: entry needs `level + 0.25 ATR`, leaving needs only the level
+     * itself. Without the gap a price grinding across one number relabels the
+     * card on alternate days, which teaches a reader that the label is noise.
+     */
+    if (zone === 'uptrend' && close < frame.resistance) zone = 'sideways';
+    else if (zone === 'downtrend' && close > frame.support) zone = 'sideways';
+
+    let reanchor = false;
     if (zone === 'sideways') {
-      const upper = upperTrigger ?? (support === null ? null : support + buffer);
-      const lower = lowerTrigger ?? (resistance === null ? null : resistance - buffer);
-      if (upper !== null && breakConfirmed(candles, index, (value) => value > upper)) zone = 'uptrend';
-      else if (lower !== null && breakConfirmed(candles, index, (value) => value < lower)) zone = 'downtrend';
+      if (breakConfirmed(candles, index, (value) => value > upper)) {
+        zone = 'uptrend';
+        reanchor = true;
+      } else if (breakConfirmed(candles, index, (value) => value < lower)) {
+        zone = 'downtrend';
+        reanchor = true;
+      }
     }
+    if (close > upper || close < lower) crossings += 1;
+
+    /*
+     * Sticky. A frame that has been set stays set — that is what makes the
+     * trigger an answer to "how far does price have to go" rather than a number
+     * that retreats as price approaches it. It moves for exactly two reasons: a
+     * confirmed break of it, or a newly confirmed pivot that lies outside it and
+     * so proves the market is now trading somewhere the frame does not describe.
+     */
+    const freshPivot = pivots.some((pivot) => pivot.confirmedAtIndex === index
+      && (pivot.price > frame.resistance || pivot.price < frame.support));
+    if (reanchor || freshPivot) frame = frameAt(index);
+
     if (zone !== previous) zoneSince = index;
   }
 
-  const tolerance = MARKET_SIGNAL_ZONE.expiry.touchToleranceAtrMultiple * atr14;
+  const atr = atrLatest;
+  const buffer = MARKET_SIGNAL_ZONE.triggerAtrMultiple * atr;
+  const upperTrigger = frame.resistance + buffer;
+  const lowerTrigger = frame.support - buffer;
+  const close = latest.close;
+
+  const tolerance = MARKET_SIGNAL_ZONE.expiry.touchToleranceAtrMultiple * atr;
   let lastTestedBarsAgo: number | null = null;
   for (let index = candles.length - 1; index >= from; index -= 1) {
     const bar = candles[index];
-    const touchedUpper = resistance !== null && bar.high >= resistance - tolerance;
-    const touchedLower = support !== null && bar.low <= support + tolerance;
-    if (touchedUpper || touchedLower) {
+    if (bar.high >= frame.resistance - tolerance || bar.low <= frame.support + tolerance) {
       lastTestedBarsAgo = candles.length - 1 - index;
       break;
     }
   }
 
-  const width = support !== null && resistance !== null ? resistance - support : null;
+  const width = frame.resistance - frame.support;
   return {
-    mode,
+    mode: frame.mode,
     zone,
-    support: support === null ? null : round(support, 4),
-    resistance: resistance === null ? null : round(resistance, 4),
-    upperTrigger: upperTrigger === null ? null : round(upperTrigger, 4),
-    lowerTrigger: lowerTrigger === null ? null : round(lowerTrigger, 4),
-    positionPct: width !== null && width > 0 ? round(((close - (support as number)) / width) * 100, 1) : null,
-    upperDistance: upperTrigger === null ? null : round(upperTrigger - close, 4),
-    upperDistanceAtr: upperTrigger === null ? null : round((upperTrigger - close) / atr14, 2),
-    lowerDistance: lowerTrigger === null ? null : round(close - lowerTrigger, 4),
-    lowerDistanceAtr: lowerTrigger === null ? null : round((close - lowerTrigger) / atr14, 2),
+    support: round(frame.support, 4),
+    resistance: round(frame.resistance, 4),
+    upperTrigger: round(upperTrigger, 4),
+    lowerTrigger: round(lowerTrigger, 4),
+    // Unclamped: past 100 is price above its own frame, which is the reading
+    // that matters and the one a clamp would hide.
+    positionPct: round(width > 0 ? ((close - frame.support) / width) * 100 : 0, 1),
+    upperDistance: round(upperTrigger - close, 4),
+    upperDistanceAtr: round((upperTrigger - close) / atr, 2),
+    lowerDistance: round(close - lowerTrigger, 4),
+    lowerDistanceAtr: round((close - lowerTrigger) / atr, 2),
+    frameAgeBars: candles.length - 1 - frame.anchoredAt,
     zoneAgeBars: candles.length - 1 - zoneSince,
     lastTestedBarsAgo,
+    triggerCrossings: crossings,
     // "Pending" is the honest state between a close clearing a trigger and the
     // confirmation rule accepting it: the zone has not moved, and the reader is
     // told why it has not moved yet rather than being shown nothing.
-    pendingBreakout: zone !== 'uptrend' && upperTrigger !== null && close > upperTrigger,
-    pendingBreakdown: zone !== 'downtrend' && lowerTrigger !== null && close < lowerTrigger,
+    pendingBreakout: zone !== 'uptrend' && close > upperTrigger,
+    pendingBreakdown: zone !== 'downtrend' && close < lowerTrigger,
     referenceClose: close,
     referenceDate: latest.date,
   };
@@ -1091,13 +1108,14 @@ export function calculateMarketSignal(
   const gatedBiasValue = gateOn ? gatedBias(score, band as MarketSignalBand, conflicts) : bias;
 
   /*
-   * P2. Zones are built from the SAME `nearestSupport`/`nearestResistance` the
-   * summary card at the top of the page already prints, so the two can never
-   * quote different levels for the same instrument.
+   * P2. The frame is anchored to swing structure, deliberately NOT to
+   * `nearestSupport`/`nearestResistance`: those are defined as the levels
+   * closest to the current price, so a trigger built from them retreats as
+   * price approaches and can never be crossed. They remain in `metrics` as
+   * context, and the card labels them as the nearest levels rather than as the
+   * frame.
    */
-  const zones = zonesOn
-    ? calculateTrendZones({ candles: finalized, support: nearestSupport, resistance: nearestResistance, atr14, ema20 })
-    : null;
+  const zones = zonesOn ? calculateTrendZones({ candles: finalized, ema20 }) : null;
 
   /*
    * When zones are on, STRUCTURE names the label and the score is demoted to

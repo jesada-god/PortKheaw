@@ -424,10 +424,8 @@ const ZONE_COPY = {
 } as const;
 
 const ZONE_MODE_COPY = {
-  structural: 'อิงแนวรับ/แนวต้านที่ยืนยันแล้ว',
-  open_above: 'ไม่เหลือแนวต้านที่ยืนยันแล้วเหนือราคา',
-  open_below: 'ไม่เหลือแนวรับที่ยืนยันแล้วใต้ราคา',
-  atr_band: 'แนวรับและแนวต้านชิดกันเกินไป จึงใช้กรอบ ATR รอบ EMA20',
+  structural: 'กรอบยึดจาก swing high/low ล่าสุด',
+  atr_band: 'ยังไม่มี swing ที่ใช้ได้ จึงใช้กรอบ ATR รอบ EMA20',
 } as const;
 
 /** A tilt inside a zone, worded as a lean rather than as a direction. */

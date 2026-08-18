@@ -56,54 +56,48 @@ export type MarketSignalBand = 'neutral' | 'weak' | 'moderate' | 'strong';
 export type MarketSignalZoneName = 'uptrend' | 'sideways' | 'downtrend';
 
 /**
- * Where the boundaries came from — and this distinction is the whole phase.
+ * Where the frame's boundaries came from.
  *
- * The engine's `nearestSupport`/`nearestResistance` are, by construction, the
- * confirmed levels immediately below and above the CURRENT price. So whenever
- * both exist, price is inside them and cannot be closing beyond either: a zone
- * built only from that pair would read `sideways` forever and the label would be
- * a constant. What actually distinguishes a trending instrument is that one side
- * has no confirmed level left at all.
- *
- *   `structural`  Both levels exist and are more than an ATR apart. Price is
- *                 inside a range it has traded against, so the zone is sideways
- *                 and `positionPct` carries the lean.
- *   `open_above`  No confirmed resistance remains above price. It is beyond
- *                 every level anyone has defended — the real breakout state.
- *   `open_below`  The mirror: no confirmed support left beneath.
- *   `atr_band`    Both levels missing, or closer together than one ATR, which is
- *                 a "range" narrower than a normal day's movement and cannot be
- *                 broken meaningfully. Falls back to a band around EMA20, and
- *                 every number in it is a volatility envelope rather than a
- *                 level anybody has traded against.
- *
- * On an open side there is no boundary and no trigger, so those fields are
- * `null` rather than a projected number that would read as a real level.
+ * `structural` is the normal case: the most recent confirmed swing high and
+ * swing low, anchored in the past and therefore crossable. `atr_band` is the
+ * fallback when no usable pivot pair exists inside the lookback, or when the
+ * pair is closer together than one ATR — a "range" narrower than a normal day's
+ * movement, which cannot be broken meaningfully. In that mode every number is a
+ * volatility envelope rather than a level anybody has traded against.
  */
-export type MarketSignalZoneMode = 'structural' | 'open_above' | 'open_below' | 'atr_band';
+export type MarketSignalZoneMode = 'structural' | 'atr_band';
 
 export interface MarketSignalZones {
   mode: MarketSignalZoneMode;
   /** The zone the latest FINALIZED close sits in, after confirmation and hysteresis. */
   zone: MarketSignalZoneName;
-  /** `null` on an open side: there is no confirmed level there to name. */
-  support: number | null;
-  resistance: number | null;
+  /** The frame's anchors. Fixed in the past, so price can close through them. */
+  support: number;
+  resistance: number;
   /** Close above this enters the upper zone; falling back below `resistance` leaves it. */
-  upperTrigger: number | null;
+  upperTrigger: number;
   /** Close below this enters the lower zone; recovering above `support` leaves it. */
-  lowerTrigger: number | null;
-  /** Where the close sits between support and resistance; `null` when a side is open. */
-  positionPct: number | null;
-  /** Distance from the close to each trigger, in price and in ATR. */
-  upperDistance: number | null;
-  upperDistanceAtr: number | null;
-  lowerDistance: number | null;
-  lowerDistanceAtr: number | null;
+  lowerTrigger: number;
+  /** Where the close sits across the frame. Deliberately unclamped: past 100 means broken out. */
+  positionPct: number;
+  /** Distance from the close to each trigger, in price and in ATR. Negative once crossed. */
+  upperDistance: number;
+  upperDistanceAtr: number;
+  lowerDistance: number;
+  lowerDistanceAtr: number;
+  /** Bars since the frame was last anchored or re-anchored. */
+  frameAgeBars: number;
   /** How many finalized bars price has held this zone under today's boundaries. */
   zoneAgeBars: number;
   /** Bars since a bar's range last reached either level; `null` if never within the walk. */
   lastTestedBarsAgo: number | null;
+  /**
+   * How many closes in the replayed window landed beyond the then-current
+   * trigger. Reported because it is the falsification check for the whole
+   * design: a frame that price can never cross would read 0 here on every
+   * instrument, which is exactly what the price-relative levels did.
+   */
+  triggerCrossings: number;
   /** A close is beyond a trigger but has not met the confirmation rule yet. */
   pendingBreakout: boolean;
   pendingBreakdown: boolean;

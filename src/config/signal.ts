@@ -269,10 +269,28 @@ export const MARKET_SIGNAL_ZONE = {
     touchToleranceAtrMultiple: 0.25,
   },
   /*
-   * How far back the zone walk starts. The walk applies TODAY's boundaries to
-   * past bars to answer "how long has price been on this side of them" — it is
-   * deliberately not a replay of what the boundaries used to be, which would be
-   * a different question and a far more expensive one.
+   * The frame is anchored to SWING STRUCTURE, not to the levels nearest the
+   * current price.
+   *
+   * `nearestSupport`/`nearestResistance` are by construction the confirmed
+   * levels immediately below and above price, so a trigger derived from them
+   * moves every time price moves and can never be crossed. That answers a
+   * different question from the one the card exists to answer, which is "how
+   * far does price have to go before this becomes an uptrend". A frame built
+   * from the most recent confirmed swing high and low is fixed in the past, so
+   * price can and does close through it.
+   *
+   * `lookbackBars` bounds how stale an anchoring pivot may be. Beyond it the
+   * frame is treated as having no structure to stand on and falls back to the
+   * ATR band.
+   */
+  anchor: {
+    lookbackBars: 120,
+  },
+  /*
+   * How far back the zone walk starts — the window over which the frame is
+   * replayed forward so `zoneAgeBars` and the current zone are the product of
+   * the same rules a reader would apply by hand.
    */
   walkbackBars: 120,
 } as const;
