@@ -736,4 +736,96 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
     expect(first.textContent).toHaveLength(NOT_A_FORECAST.length);
   });
 });
+
+/*
+ * P6 — the history strip, and the things the measurement forbids it to say.
+ *
+ * `docs/market-signal/p6-history-findings.md` asked whether a label that has
+ * stood longer is a more accurate one and found nothing: no age bucket beat the
+ * base rate by more than its own sampling error, and the buckets old enough to
+ * matter hold 76, 4 and 0 observations. So the strip is a disclosure, and these
+ * tests are mostly about what it must NOT do.
+ */
+describe('the history strip discloses without ranking', () => {
+  const day = (asOf: string, state: MarketSignalState) => ({
+    asOf,
+    state,
+    bias: 'neutral' as const,
+    zone: 'sideways' as const,
+    score: 4,
+    evidenceAgreement: 61,
+    flags: [] as string[],
+  });
+
+  const withHistory = (over: Partial<MarketSignalResult['history']> = {}): MarketSignalResult => ({
+    ...result,
+    history: {
+      entries: [
+        day('2026-08-10', 'SIDEWAYS'),
+        day('2026-08-11', 'SIDEWAYS'),
+        day('2026-08-12', 'SIDEWAYS'),
+      ],
+      windowDays: 30,
+      currentLabelDays: 2,
+      recentFlip: false,
+      ...over,
+    },
+  });
+
+  it('draws one cell per recorded day and not one per calendar day', async () => {
+    await render(withHistory());
+    const strip = container.querySelector('[aria-label="ประวัติป้าย 30 วัน"]')!;
+    expect(strip.children).toHaveLength(3);
+  });
+
+  it('says how many of the days in its window it actually has', async () => {
+    await render(withHistory());
+    const block = container.querySelector('[data-testid="signal-history"]')!;
+    // The absence is disclosed as a number rather than drawn as invented cells.
+    expect(block.textContent).toContain('บันทึกได้ 3 วัน จาก 30 วันที่ผ่านมา');
+  });
+
+  it('states the label age as a duration', async () => {
+    await render(withHistory());
+    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
+      .toContain('ยืนมา 2 วัน');
+  });
+
+  it('will not call one recorded day a run', async () => {
+    await render(withHistory({ entries: [day('2026-08-12', 'SIDEWAYS')], currentLabelDays: null }));
+    const block = container.querySelector('[data-testid="signal-history"]')!;
+    expect(block.textContent).toContain('บันทึกไว้วันเดียว');
+    expect(block.textContent).not.toContain('ยืนมา 0 วัน');
+  });
+
+  /*
+   * The load-bearing one. A colour, weight or opacity that grew with age would
+   * be an argument the harness does not support, made in a language nobody
+   * reads critically — so cells of the same label must be pixel-identical
+   * whatever their position in the run.
+   */
+  it('gives every cell of the same label identical styling, whatever its age', async () => {
+    await render(withHistory());
+    const cells = [...container.querySelector('[aria-label="ประวัติป้าย 30 วัน"]')!.children]
+      .map((cell) => cell.getAttribute('class'));
+    expect(new Set(cells).size).toBe(1);
+  });
+
+  it('says in words that a long-standing label is not a more accurate one', async () => {
+    await render(withHistory());
+    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
+      .toContain('ป้ายที่ยืนนานไม่ได้แปลว่าแม่นกว่า');
+  });
+
+  it('warns when the label is unsettled, which is the safe direction', async () => {
+    await render(withHistory({ recentFlip: true }));
+    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
+      .toContain('ยังไม่นิ่ง');
+  });
+
+  it('draws nothing at all while the flag is off', async () => {
+    await render(result);
+    expect(container.querySelector('[data-testid="signal-history"]')).toBeNull();
+  });
+});
 });

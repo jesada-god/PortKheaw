@@ -12,6 +12,14 @@ card that looks different one morning.
 | `in-app-notice.md` | The one-time notice on first sight of the new card | Every existing subscriber with the capability |
 | `pricing-copy.md` | Which pricing strings now describe something that no longer exists | You, before the flags go on |
 
+And two measurement write-ups, which are findings rather than drafts — they
+record what was measured and what the product is therefore allowed to say:
+
+| File | What it answers |
+| --- | --- |
+| `p5-context-findings.md` | Whether any of the four context features beats the base rate. None does; none was built. |
+| `p6-history-findings.md` | Whether a label that has stood longer is a more accurate one. It is not, which is what makes the history strip a disclosure and forbids it from ranking. |
+
 **The wording is yours.** These are drafts written to a brief — "a seller who
 measured their own product and is telling the truth, not a system that gave up".
 Nothing here is in the product and nothing here has a test holding it in place,

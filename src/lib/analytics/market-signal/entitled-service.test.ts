@@ -84,16 +84,41 @@ describe('what an unentitled reader actually receives', () => {
     readFileSync(join(process.cwd(), '__golden__', 'candles', 'IREN.json'), 'utf8'),
   ) as { source: string | null; freshness: DataFreshness; candles: MarketSignalCandle[] };
 
-  /** Every phase on at once — the widest payload the engine can produce today. */
-  const load = async () => calculateMarketSignal(frozen.candles, {
-    symbol: 'IREN',
-    source: frozen.source,
-    freshness: frozen.freshness,
-    calculatedAt: '2026-01-01T00:00:00.000Z',
-    features: { gate: true, zones: true, actionable: true },
+  /**
+   * Every phase on at once — the widest payload a reader can be served today.
+   *
+   * `history` is stapled on rather than computed, because it is the one phase
+   * field the ENGINE cannot produce: `calculateMarketSignal` is pure over the
+   * candles in front of it and `loadMarketSignal` is what reads yesterday back
+   * out of the database. It has to be here anyway — the question this block
+   * asks is what an unentitled reader receives, and a field the boundary has
+   * never been shown cannot be proven absent.
+   */
+  const load = async (): Promise<MarketSignalResult> => ({
+    ...calculateMarketSignal(frozen.candles, {
+      symbol: 'IREN',
+      source: frozen.source,
+      freshness: frozen.freshness,
+      calculatedAt: '2026-01-01T00:00:00.000Z',
+      features: { gate: true, zones: true, actionable: true },
+    }),
+    history: {
+      entries: [{
+        asOf: '2026-01-01',
+        state: 'SIDEWAYS',
+        bias: 'neutral',
+        zone: 'sideways',
+        score: 4,
+        evidenceAgreement: 61,
+        flags: [],
+      }],
+      windowDays: 30,
+      currentLabelDays: null,
+      recentFlip: false,
+    },
   });
 
-  const PHASE_FIELDS = ['gate', 'zones', 'actionable'];
+  const PHASE_FIELDS = ['gate', 'zones', 'actionable', 'history'];
 
   const PATHS: Array<{ name: string; tier: SubscriptionTier; capability: 'technical.outlook' | 'technical.outlook.commodity'; entitled: boolean }> = [
     { name: 'Basic on a stock', tier: 'basic', capability: 'technical.outlook', entitled: false },
@@ -136,8 +161,12 @@ describe('what an unentitled reader actually receives', () => {
     const during = await loadEntitledMarketSignal('IREN', active, 'technical.outlook', { load });
     const after = await loadEntitledMarketSignal('IREN', expired, 'technical.outlook', { load });
     expect(during?.actionable).toBeDefined();
+    expect(during?.history).toBeDefined();
     expect(after).toBeNull();
     expect(JSON.stringify(after)).not.toContain('actionable');
+    // The strip is a record of everything this card has ever said about the
+    // symbol, so it is the single worst field to leak past the boundary.
+    expect(JSON.stringify(after)).not.toContain('history');
   });
 
   /*

@@ -286,16 +286,50 @@ const gap = (rate: number | null, base: number | null) => rate === null || base 
 /* loading                                                                   */
 /* ------------------------------------------------------------------------- */
 
-function loadCorpus(): Instrument[] {
+/**
+ * Which instruments this run measures.
+ *
+ * By default: whatever is cached. With `--like=<runId>`: exactly the list that
+ * run measured, read from its own manifest.
+ *
+ * `__golden__/corpus/` is a CACHE and it grows — another probe fetching its own
+ * instrument list adds files to it. Two runs over different corpora are not
+ * comparable, and the whole purpose of a second calibration is comparison, so
+ * P4b pins itself to the P4a list rather than to a directory listing. A symbol
+ * the manifest names but the cache does not hold is reported and skipped, never
+ * silently dropped.
+ */
+function instrumentList(): { symbols: string[] | null; like: string | null } {
+  const flag = process.argv.find((argument) => argument.startsWith('--like='));
+  if (!flag) return { symbols: null, like: null };
+  const like = flag.slice('--like='.length);
+  const manifest = JSON.parse(
+    readFileSync(join(OUTPUT_ROOT, like, 'manifest.json'), 'utf8'),
+  ) as { instruments: string[] };
+  return { symbols: manifest.instruments, like };
+}
+
+function loadCorpus(): { instruments: Instrument[]; like: string | null; missing: string[] } {
+  const { symbols, like } = instrumentList();
+  const wanted = symbols
+    ?? readdirSync(CORPUS_DIR).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
+
   const instruments: Instrument[] = [];
-  for (const file of readdirSync(CORPUS_DIR).filter((name) => name.endsWith('.json'))) {
-    const frozen = JSON.parse(readFileSync(join(CORPUS_DIR, file), 'utf8')) as Frozen;
+  const missing: string[] = [];
+  for (const symbol of wanted) {
+    let frozen: Frozen;
+    try {
+      frozen = JSON.parse(readFileSync(join(CORPUS_DIR, `${symbol}.json`), 'utf8')) as Frozen;
+    } catch {
+      missing.push(symbol);
+      continue;
+    }
     const bars = frozen.candles.filter((candle) => candle.finalized)
       .map(({ finalized: _finalized, ...candle }) => candle);
-    if (bars.length < WINDOW + Math.max(...HORIZONS) + STRIDE) continue;
+    if (bars.length < WINDOW + Math.max(...HORIZONS) + STRIDE) { missing.push(symbol); continue; }
     instruments.push({ symbol: frozen.symbol, source: frozen.source, freshness: frozen.freshness, bars });
   }
-  return instruments;
+  return { instruments, like, missing };
 }
 
 /** SPY above or below its own 200-day simple average, by date. */
@@ -509,8 +543,9 @@ function barrierRates(context: Context, rows: readonly Observation[], horizon: n
 /* ------------------------------------------------------------------------- */
 
 function main(): void {
-  const instruments = loadCorpus();
-  console.error(`corpus: ${instruments.length} instruments`);
+  const { instruments, like, missing } = loadCorpus();
+  console.error(`corpus: ${instruments.length} instruments${like ? ` (pinned to ${like})` : ''}`);
+  if (missing.length > 0) console.error(`  NOT MEASURED: ${missing.join(', ')}`);
 
   console.error('verifying the left window is long enough ...');
   const windowCheck = verifyWindow(instruments);
@@ -547,7 +582,8 @@ function main(): void {
   say('P4a. Nothing here is fitted and nothing here feeds the engine.');
   say();
   say('```');
-  say(`corpus             ${instruments.length} instruments`);
+  say(`corpus             ${instruments.length} instruments${like ? ` — pinned to the list run ${like} measured` : ''}`);
+  if (missing.length > 0) say(`NOT MEASURED       ${missing.join(', ')} — named by that manifest, absent from the cache`);
   say(`observations       ${observations.length}   (stride ${STRIDE} bars, left window ${WINDOW} bars)`);
   say(`period             ${dates[0]} .. ${dates.at(-1)}   (${dates.length} distinct as-of dates)`);
   say(`time split         train < ${boundary} <= test   (${observations.filter((row) => row.split === 'train').length} / ${observations.filter((row) => row.split === 'test').length})`);

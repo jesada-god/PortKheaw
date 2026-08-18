@@ -427,6 +427,44 @@ export const MARKET_SIGNAL_MEASURED = {
  * they are actually shown is a constant somebody picked, wearing a calculation's
  * clothes. `null` is the honest output and the UI hides the row.
  */
+/**
+ * P6 signal history — read only when `SIGNAL_HISTORY` is on.
+ *
+ * What the card published, kept so that a reader can see it change. The table
+ * behind this is `public.market_signal_history` and it stores what was SAID, not
+ * what the market did: the market's own history is in the candles, and the thing
+ * nobody can reconstruct afterwards is which label was on screen on which day,
+ * because a label is a pure function of the engine at the version it ran.
+ *
+ * THE CONSTRAINT THIS BLOCK EXISTS TO CARRY. P4a measured that a label outlives
+ * the thing it describes — SIDEWAYS is still SIDEWAYS at twenty bars 72.6% of
+ * the time while price is still inside the frame it named only 25.7% of the
+ * time. So "this label has stood for 40 days" is a fact about the label, and it
+ * reads as a fact about the market. Nothing built on these numbers may rank,
+ * score or visually privilege an older label unless the P6 probe says age
+ * predicts accuracy; see `docs/market-signal/p6-history-findings.md`.
+ */
+export const MARKET_SIGNAL_HISTORY = {
+  /** Cells in the strip. Thirty is a month of trading and fits a phone. */
+  stripDays: 30,
+  /*
+   * How recently the label must have changed to raise `recent_flip`.
+   *
+   * Three days as specified. Worth knowing when reading the evidence: the P6
+   * probe samples every fifth bar, so it can say nothing about a 3-day
+   * threshold specifically — the finest thing it measured is "changed within
+   * five bars". This number is a product choice, not a measured one.
+   */
+  recentFlipDays: 3,
+  /*
+   * How long a row is kept. A little over a year of trading days plus enough
+   * slack that "the same week last year" is reachable. The database function
+   * `sweep_market_signal_history` takes this as an argument rather than
+   * hardcoding it, so this stays the only place it is written down.
+   */
+  retentionDays: 400,
+} as const;
+
 export const MARKET_SIGNAL_ACTIONABLE = {
   /*
    * Below this the trade the card is describing risks more than it stands to

@@ -34,7 +34,17 @@ export type MarketSignalFlag =
   | 'narrow_range'
   // P3 (`SIGNAL_ACTIONABLE`). Never emitted while the flag is off.
   | 'unfavorable_risk_reward'
-  | 'risk_leg_inside_noise';
+  | 'risk_leg_inside_noise'
+  /*
+   * P6 (`SIGNAL_HISTORY`). Added by the SERVICE, never by the engine.
+   *
+   * `calculateMarketSignal` is a pure function of the candles in front of it and
+   * has no idea what it said yesterday, so this is the one member of this union
+   * the engine cannot produce. It is listed here anyway because the union
+   * describes what a PAYLOAD may carry, and a reader of the type should not have
+   * to know which layer appended which member.
+   */
+  | 'recent_flip';
 
 /** Which rollout phases the caller has turned on for this calculation. */
 export interface MarketSignalFeatures {
@@ -337,6 +347,8 @@ interface MarketSignalBase {
   zones?: MarketSignalZones;
   /** P3 only. Omitted entirely when `SIGNAL_ACTIONABLE` is off, or when there is no zone. */
   actionable?: MarketSignalActionable;
+  /** P6 only. Omitted entirely when `SIGNAL_HISTORY` is off, or when nothing is stored yet. */
+  history?: MarketSignalHistory;
 }
 
 export type MarketSignalResult = MarketSignalBase & ({
@@ -378,6 +390,61 @@ export type MarketSignalResult = MarketSignalBase & ({
   evidenceAgreementLabel: 'Insufficient';
   reason: string;
 });
+
+/**
+ * One day the card was published, as it was published.
+ *
+ * Read back out of `public.market_signal_history`, never recomputed. Replaying
+ * today's engine over yesterday's bars gives yesterday's label AT TODAY'S
+ * ENGINE, which is a different statement and the reason this is stored rather
+ * than derived.
+ */
+export interface MarketSignalHistoryEntry {
+  /** The finalized candle's date, `YYYY-MM-DD`. Not the date the row was written. */
+  asOf: string;
+  state: MarketSignalState;
+  bias: MarketSignalBias;
+  /** `null` on days `SIGNAL_ZONES` was off, which is a fact worth keeping. */
+  zone: MarketSignalZoneName | null;
+  score: number | null;
+  evidenceAgreement: number | null;
+  flags: readonly string[];
+}
+
+/**
+ * P6 only. Omitted entirely when `SIGNAL_HISTORY` is off.
+ *
+ * WHAT THIS IS NOT. `currentLabelDays` is a fact about the LABEL, not about the
+ * market, and P4a is why the distinction is load-bearing: a SIDEWAYS label is
+ * still SIDEWAYS at twenty bars 72.6% of the time while price is still inside
+ * the frame it named only 25.7% of the time. A label that has stood a long time
+ * has demonstrated that it is slow to change. Nothing in the UI may present it
+ * as a label that is more likely to be right — see
+ * `docs/market-signal/p6-history-findings.md` for the measurement that settles
+ * what this number is allowed to imply.
+ */
+export interface MarketSignalHistory {
+  /**
+   * Oldest first, and GAPPY ON PURPOSE.
+   *
+   * A row exists for a day only if the signal was computed that day, which
+   * happens when somebody opened the card. A symbol nobody looked at on Tuesday
+   * has no Tuesday entry. The array therefore has fewer than `windowDays`
+   * members most of the time, and a renderer must draw the absence rather than
+   * close the gap: interpolating invents a label that was never published.
+   */
+  entries: readonly MarketSignalHistoryEntry[];
+  /** Days requested. `entries.length` below this is missing data, not a flat market. */
+  windowDays: number;
+  /**
+   * Calendar days from the first recorded day of the current unbroken run of
+   * this label to the newest entry. `null` when there is only one entry, because
+   * a run of one has no length yet — and 0 would read as "changed today".
+   */
+  currentLabelDays: number | null;
+  /** Whether the newest entry's label differs from any inside `recentFlipDays`. */
+  recentFlip: boolean;
+}
 
 export interface MarketSignalContext {
   symbol: string;

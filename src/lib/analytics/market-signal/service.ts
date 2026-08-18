@@ -1,10 +1,18 @@
 import 'server-only';
 
-import { signalActionableEnabled, signalGateEnabled, signalZonesEnabled } from '@/src/config/signal-flags';
+import { MARKET_SIGNAL_HISTORY } from '@/src/config/signal';
+import {
+  signalActionableEnabled,
+  signalGateEnabled,
+  signalHistoryEnabled,
+  signalZonesEnabled,
+} from '@/src/config/signal-flags';
 import { loadEarningsSchedule } from '@/src/lib/analytics/earnings/service';
 import { getCandleMarketDataService } from '@/src/lib/market-data/candles';
 import type { DataFreshness } from '@/src/lib/market-data/types';
 import { calculateMarketSignal } from './calculations';
+import { snapshotOf, summariseHistory } from './history';
+import { readSignalHistory, writeSignalSnapshot } from './history-repository';
 import type { MarketSignalCandle, MarketSignalEarningsContext, MarketSignalResult } from './types';
 
 const unavailableFreshness: DataFreshness = {
@@ -30,6 +38,76 @@ async function loadEarningsContext(symbol: string): Promise<MarketSignalEarnings
   } catch {
     return { daysToNextReport: null };
   }
+}
+
+/**
+ * Record today's reading and hand back the strip, or change nothing at all.
+ *
+ * Reads the stored days, then writes today's, then folds today in locally
+ * rather than reading it back. Today has to be IN the strip — it is the newest
+ * thing the card has said, and a strip ending yesterday would show every label
+ * change one day late for anyone who looked before the close — but a second
+ * round trip to fetch a row we just wrote would buy nothing.
+ *
+ * `recent_flip` is appended to the flags here rather than produced by the
+ * engine, because the engine is a pure function of the candles in front of it
+ * and has no memory. It is the only member of `MarketSignalFlag` that arrives
+ * this way, and the type says so.
+ */
+async function withHistory(result: MarketSignalResult): Promise<MarketSignalResult> {
+  if (!signalHistoryEnabled()) return result;
+  if (result.status !== 'available') return result;
+  try {
+    return await attachHistory(result);
+  } catch {
+    /*
+     * Its own boundary, not the caller's.
+     *
+     * `loadMarketSignal`'s outer catch answers "the provider failed" with an
+     * insufficient-data card, which is the right answer to that question and
+     * the wrong answer to this one: a strip that could not load must cost the
+     * strip, not the reading. Without this, a throw anywhere below would blank
+     * a card that had already been computed correctly.
+     */
+    return result;
+  }
+}
+
+async function attachHistory(result: MarketSignalResult): Promise<MarketSignalResult> {
+  const entries = await readSignalHistory(result.symbol, MARKET_SIGNAL_HISTORY.stripDays);
+
+  const features = {
+    gate: signalGateEnabled(),
+    zones: signalZonesEnabled(),
+    actionable: signalActionableEnabled(),
+  };
+  const snapshot = snapshotOf(result, features);
+  if (snapshot) await writeSignalSnapshot(snapshot);
+
+  const history = summariseHistory(
+    snapshot ? [...entries.filter((entry) => entry.asOf !== snapshot.asOf), {
+      asOf: snapshot.asOf,
+      state: snapshot.state,
+      bias: snapshot.bias,
+      zone: snapshot.zone,
+      score: snapshot.score,
+      evidenceAgreement: snapshot.evidenceAgreement,
+      flags: snapshot.flags,
+    }] : entries,
+    {
+      windowDays: MARKET_SIGNAL_HISTORY.stripDays,
+      recentFlipDays: MARKET_SIGNAL_HISTORY.recentFlipDays,
+    },
+  );
+  if (!history) return result;
+
+  return {
+    ...result,
+    flags: history.recentFlip && !result.flags.includes('recent_flip')
+      ? [...result.flags, 'recent_flip']
+      : result.flags,
+    history,
+  };
 }
 
 export async function loadMarketSignal(
@@ -58,14 +136,14 @@ export async function loadMarketSignal(
       volume: Math.round(candle.volume),
       finalized: candle.partial !== true,
     }));
-    return calculateMarketSignal(candles, {
+    return await withHistory(calculateMarketSignal(candles, {
       symbol,
       source: result.provider ?? result.data.provider,
       freshness: result.freshness,
       calculatedAt,
       features,
       earnings: await loadEarningsContext(symbol),
-    });
+    }));
   } catch {
     return calculateMarketSignal([], {
       symbol,

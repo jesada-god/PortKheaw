@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
-import type { MarketSignalActionable, MarketSignalBias, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
+import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
@@ -144,6 +144,7 @@ const FLAG_COPY: Record<string, string> = {
   weak_confirmation: 'ยังยืนยันไม่ชัด',
   unfavorable_risk_reward: 'ระยะเสี่ยงมากกว่าระยะเป้า',
   risk_leg_inside_noise: 'อัตราส่วนไม่นิ่ง ราคาเพิ่งผ่านแนวมา',
+  recent_flip: 'ป้ายเพิ่งเปลี่ยน',
   stale_zone: 'ไม่มีการแตะแนวมานาน',
   narrow_range: 'กรอบแคบกว่า 1 ATR',
   overextended: 'ราคาไกลค่าเฉลี่ย',
@@ -358,6 +359,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           actionable={result.actionable ?? null}
         />
       ) : null}
+      {result.history ? <HistoryStrip history={result.history} /> : null}
       <SignalFooter tone="text-slate-400" />
 
       <ResponsiveDialog
@@ -501,6 +503,86 @@ function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallba
   return fallback;
 }
 
+
+
+/**
+ * The colour of one recorded day.
+ *
+ * By STATE and by nothing else. There is deliberately no ramp, no fade and no
+ * opacity that grows with age: `docs/market-signal/p6-history-findings.md`
+ * measured whether an older label is a more accurate one and found nothing —
+ * not one age bucket beat the base rate by more than its own sampling error,
+ * and the buckets old enough to be interesting contain 76, 4 and 0
+ * observations. A visual that made older cells look more solid would be an
+ * argument the evidence does not support, made in a language nobody reads
+ * critically.
+ */
+const HISTORY_CELL_TONE: Record<MarketSignalState, string> = {
+  STRONG_BULLISH: 'bg-emerald-400/80',
+  BULLISH: 'bg-green-500/60',
+  SIDEWAYS: 'bg-sky-400/40',
+  SQUEEZE: 'bg-amber-400/60',
+  OVEREXTENDED: 'bg-orange-400/60',
+  BEARISH: 'bg-red-500/60',
+  STRONG_BEARISH: 'bg-red-700/80',
+};
+
+/**
+ * P6 — what this card said, for as long as anyone has been looking.
+ *
+ * ONE CELL PER RECORDED DAY, not per calendar day. A row exists for a day only
+ * if somebody opened the card that day, so a fixed grid of thirty would be
+ * mostly weekends and absences, and filling those cells with the neighbouring
+ * label would put a label on a day the card never published. The density is
+ * therefore stated as a number — "N of the last 30 days" — which is the same
+ * disclosure without the invented cells.
+ *
+ * The age line sits with the three the zone bar already carries (zone, frame,
+ * last touch) because it is the fourth member of the same family: a duration,
+ * stated plainly, that a reader must not mistake for a confidence.
+ */
+function HistoryStrip({ history }: { history: MarketSignalHistory }) {
+  const { entries, windowDays, currentLabelDays, recentFlip } = history;
+  const latest = entries[entries.length - 1];
+
+  return (
+    <div className="mt-3" data-testid="signal-history">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] text-slate-400">ป้ายย้อนหลัง</span>
+        <div className="flex flex-1 items-end gap-[2px]" aria-label="ประวัติป้าย 30 วัน" role="img">
+          {entries.map((entry) => (
+            <span
+              key={entry.asOf}
+              title={`${entry.asOf} · ${entry.state}`}
+              className={`h-4 min-w-[3px] flex-1 rounded-[1px] ${HISTORY_CELL_TONE[entry.state]}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <p className="mt-2 text-[11px] leading-5 text-slate-400">
+        {/*
+          The label's own age, said as a duration and never as a score. The
+          measurement behind the wording: a SIDEWAYS label is still SIDEWAYS
+          twenty bars later 72.6% of the time while price is still inside the
+          frame it named only 25.7% of the time, at EVERY age. So a long run is
+          a fact about the engine's willingness to change its mind, and the
+          sentence says exactly that rather than leaving a number to be read as
+          endorsement.
+        */}
+        {currentLabelDays === null
+          ? `${latest.state} บันทึกไว้วันเดียว ยังบอกไม่ได้ว่ายืนมานานแค่ไหน`
+          : `ป้าย ${latest.state} นี้ยืนมา ${currentLabelDays} วัน`}
+        {' · '}
+        บันทึกได้ {entries.length} วัน จาก {windowDays} วันที่ผ่านมา
+      </p>
+      <p className="text-[11px] leading-5 text-slate-500">
+        ป้ายที่ยืนนานไม่ได้แปลว่าแม่นกว่า — วัดย้อนหลังแล้วไม่พบว่าอายุของป้ายสัมพันธ์กับความแม่น
+        {recentFlip ? ' · ป้ายเพิ่งเปลี่ยนภายในไม่กี่วัน จึงยังไม่นิ่ง' : ''}
+      </p>
+    </div>
+  );
+}
 
 const ZONE_COPY = {
   uptrend: 'อยู่เหนือโครงสร้างที่ยืนยันแล้ว',
