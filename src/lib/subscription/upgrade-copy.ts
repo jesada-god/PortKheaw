@@ -92,12 +92,21 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
   },
   'technical.outlook': {
     title: 'Technical Outlook · Market Signal',
-    benefit: 'เห็นสถานะแนวโน้ม คะแนนทิศทาง ความมั่นใจ และตัวชี้วัดจริงที่ระบบใช้สรุป',
+    /*
+     * No "ความมั่นใจ" here any more. P4a measured what that number was worth as
+     * a forecast — the 90-99 band hits what the 20-29 band hits — so the card
+     * stopped showing it, and a benefit line may not sell what the card will
+     * not show. The per-reason breakdown takes its place: it is real, it is the
+     * most useful thing on the card, and it was never sold.
+     */
+    benefit: 'เห็นสถานะแนวโน้ม คะแนนทิศทาง ตัวชี้วัดจริงที่ระบบใช้ และเหตุผลรายข้อว่าทำไมถึงสรุปแบบนั้น',
     lockedLabel: 'Technical Outlook ใช้ได้ใน Elite',
   },
   'technical.outlook.commodity': {
     title: 'Technical Outlook · สินค้าโภคภัณฑ์',
-    benefit: 'เห็นแนวโน้ม คะแนนทิศทาง และความมั่นใจของทองคำ เงิน และน้ำมัน WTI จากราคาจริงของสัญญาล่วงหน้า',
+    /* Same swap, and the tail is a claim that IS true and does differentiate:
+       the contract itself, not the fund that tracks it. */
+    benefit: 'เห็นแนวโน้ม คะแนนทิศทาง และตัวชี้วัดของทองคำ เงิน และน้ำมัน WTI จากราคาจริงของสัญญาล่วงหน้า ไม่ใช่จากกองทุนที่อ้างอิงมัน',
     lockedLabel: 'Technical Outlook ของสินค้าโภคภัณฑ์ ใช้ได้ตั้งแต่ Pro',
   },
   'theme.premium': {

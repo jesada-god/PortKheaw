@@ -20,6 +20,24 @@ npm run snapshot:signal -- --check      # flags OFF still matches the baseline
 The last one is the gate. If it fails, nothing below should be turned on,
 because the thing being rolled out is no longer the thing that was measured.
 
+## 0b. The copy — DONE, before step 1
+
+The four items in `prediction-language-audit.md` were approved and applied:
+both `upgrade-copy.ts` benefit lines, the card's own locked-preview summary, and
+the glossary cross-reference. `technical-outlook-copy.test.ts` and the card's
+locked-preview test now fail if any of them drifts back.
+
+This had to happen BEFORE `SIGNAL_GATE`, not after: all four were live with every
+flag off, and the locked-preview one sat a few centimetres above the footer
+saying the card does not forecast.
+
+What is still outstanding is the owner's:
+
+* **release notes in the database** — not in this repository, so not sweepable
+  from here. Check the admin console before step 1.
+* the drafts in `changelog.md`, `in-app-notice.md` and `pricing-copy.md`, which
+  are wording decisions rather than code.
+
 ## 1. `SIGNAL_GATE`
 
 The largest single change a reader sees, and the one everything else assumes.
@@ -55,11 +73,8 @@ silence rate moves a long way from four in five, the anchoring changed.
 
 ## 4. The user-facing communication
 
-Before or with step 5, not after. `docs/market-signal/changelog.md`,
-`in-app-notice.md` and `pricing-copy.md` are drafts waiting on your wording. The
-pricing strings in `src/lib/subscription/upgrade-copy.ts` currently promise
-"ความมั่นใจ" directly above a card that deliberately no longer shows it, and that
-is true today with every flag off.
+Before or with step 5, not after. The three drafts above are waiting on your
+wording.
 
 ## 5. `SIGNAL_HISTORY` — **and the migration first**
 

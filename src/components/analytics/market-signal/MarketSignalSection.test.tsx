@@ -129,6 +129,31 @@ describe('MarketSignalSection', () => {
     expect(container.textContent).not.toContain('206.84');
   });
 
+  /*
+   * The locked preview is the surface where the old promise and the new honesty
+   * would have met: its description sits a few centimetres above the footer
+   * saying the card does not forecast, so a word like "ความมั่นใจ" there would
+   * contradict the sentence directly underneath it. It is also the surface where
+   * somebody decides whether to pay.
+   */
+  it.each(['basic', 'pro'] as const)('sells %s nothing the card will not show', async (tier) => {
+    await render(result, tier);
+    const locked = container.querySelector('[data-testid="technical-outlook-locked"]')!;
+    /*
+     * Scoped to the SUMMARY, not the whole section. The footer underneath says
+     * "ไม่ได้พยากรณ์สิ่งที่ราคาจะทำ", and a forbidden-word scan over the section
+     * would fail on the very sentence doing the disclosing.
+     */
+    const summary = locked.querySelector('[data-testid="technical-outlook-locked-summary"]')!;
+    ['ความมั่นใจ', 'Confidence', 'แม่นยำ', 'ทำนาย', 'พยากรณ์'].forEach((word) => {
+      expect(summary.textContent, `"${word}" is back in the locked preview`).not.toContain(word);
+    });
+    // And it still describes what is actually there.
+    expect(summary.textContent).toContain('เหตุผลว่าทำไมถึงสรุปแบบนั้น');
+    // The not-a-forecast line reaches this reader too — it is the same footer.
+    expect(locked.textContent).toContain('ไม่ได้พยากรณ์สิ่งที่ราคาจะทำ');
+  });
+
   it('shows state, independent bias, beginner copy, score, flags, and the exact disclaimer', async () => {
     await render();
     expect(container.textContent).toContain('SQUEEZE • Bullish Bias');

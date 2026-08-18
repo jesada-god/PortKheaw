@@ -174,11 +174,18 @@ export const MARKET_SIGNAL_GATE = {
    *   conflict      median 0.970   (min 0.743)  deliberately UNFLOORED
    *   earnings      median 1.000   INERT — the dev calendar has no entitlement
    *
-   * So the product has four live terms today, not six. That is a known state,
-   * not a defect: `completeness` wakes up in P5 when optional context sources
-   * start being genuinely absent, and `earnings` wakes up wherever the calendar
-   * is entitled. Re-run `npm run signal:sensitivity -- --confidence` at the end
-   * of P5 and compare against those medians.
+   * So the product has four live terms today, not six, and P5 did not change
+   * that. The P1.5 version of this note predicted `completeness` would wake up
+   * in P5 once optional context sources started being genuinely absent; P5
+   * measured four context candidates, found none that beat the base rate, and
+   * built none of them, so no optional source exists to be absent. It is still
+   * inert at a median of 1.000 and stays that way until something optional is
+   * actually wired in. `earnings` is inert for a different and unchanged reason:
+   * the dev calendar carries no entitlement.
+   *
+   * Neither is a defect, but neither should be read as a term that is working.
+   * Re-run `npm run signal:sensitivity -- --confidence` after anything that adds
+   * an optional source, and compare against those medians.
    *
    * `conflict` has no floor ON PURPOSE. It is the term that should be able to
    * take confidence all the way down, because evidence pointing two ways is the

@@ -233,7 +233,13 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <Info aria-hidden="true" size={18} />
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
-        <p className="mt-3 text-sm leading-6 text-slate-400">สรุปแนวโน้ม คะแนนทิศทาง และความมั่นใจจากข้อมูลทางเทคนิคจริง</p>
+        {/*
+          The locked preview is the one surface where the old promise and the new
+          honesty would have met: this line sits a few centimetres above the
+          footer saying the card does not forecast, so selling "ความมั่นใจ" here
+          would contradict the sentence directly underneath it.
+        */}
+        <p className="mt-3 text-sm leading-6 text-slate-400" data-testid="technical-outlook-locked-summary">สรุปแนวโน้ม คะแนนทิศทาง และตัวชี้วัดทางเทคนิคจริง พร้อมเหตุผลว่าทำไมถึงสรุปแบบนั้น</p>
         <div className="mt-3">
           {/* The notice derives its own wording and its own required plan from
               the capability, so a commodity page asks for Pro and a stock page

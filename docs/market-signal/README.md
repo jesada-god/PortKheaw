@@ -20,13 +20,14 @@ record what was measured and what the product is therefore allowed to say:
 | `p5-context-findings.md` | Whether any of the four context features beats the base rate. None does; none was built. |
 | `p6-history-findings.md` | Whether a label that has stood longer is a more accurate one. It is not, which is what makes the history strip a disclosure and forbids it from ranking. |
 | `p4b-findings.md` | Whether there is anything to calibrate. There is not, and the reliability table is not even monotone, so a remap would restore the misreading P4.5 removed. |
-| `prediction-language-audit.md` | Every place in the app that describes this feature with a word implying prediction, with proposed replacements. **Awaiting the owner — nothing changed.** |
+| `prediction-language-audit.md` | Every place in the app that described this feature with a word implying prediction. All four items **approved and applied**; the file remains as the record of what changed and why. |
 
 And one operational note:
 
 | File | What it is |
 | --- | --- |
 | `rollout-order.md` | The order to turn the five flags on, what to watch at each step, and the one step that touches the database. |
+| `open-work.md` | What is known, decided and not done — including the second signal engine nobody has measured. |
 
 **The wording is yours.** These are drafts written to a brief — "a seller who
 measured their own product and is telling the truth, not a system that gave up".
