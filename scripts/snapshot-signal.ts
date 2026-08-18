@@ -238,7 +238,7 @@ async function main(): Promise<void> {
       source: frozen.source,
       freshness: frozen.freshness,
       calculatedAt: PINNED_CALCULATED_AT,
-      features: { gate: flags.SIGNAL_GATE, zones: flags.SIGNAL_ZONES },
+      features: { gate: flags.SIGNAL_GATE, zones: flags.SIGNAL_ZONES, actionable: flags.SIGNAL_ACTIONABLE },
       earnings: { daysToNextReport: daysToReport(frozen) },
     });
     const serialized = stableStringify(result);

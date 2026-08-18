@@ -15,6 +15,8 @@
     "finalized": 1827,
     "received": 1827
   },
+  "evidenceAgreement": 74,
+  "evidenceAgreementLabel": "Medium",
   "flags": [
     "squeeze",
     "bullish_divergence",

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { signalGateEnabled, signalZonesEnabled } from '@/src/config/signal-flags';
+import { signalActionableEnabled, signalGateEnabled, signalZonesEnabled } from '@/src/config/signal-flags';
 import { loadEarningsSchedule } from '@/src/lib/analytics/earnings/service';
 import { getCandleMarketDataService } from '@/src/lib/market-data/candles';
 import type { DataFreshness } from '@/src/lib/market-data/types';
@@ -37,7 +37,7 @@ export async function loadMarketSignal(
   options: { now?: () => Date } = {},
 ): Promise<MarketSignalResult> {
   const calculatedAt = (options.now ?? (() => new Date()))().toISOString();
-  const features = { gate: signalGateEnabled(), zones: signalZonesEnabled() };
+  const features = { gate: signalGateEnabled(), zones: signalZonesEnabled(), actionable: signalActionableEnabled() };
   try {
     // One canonical 1D dataset supplies the signal. The candle service owns its
     // 6h/7d cache and in-flight dedupe, so opening tabs/dialogs or receiving a

@@ -2,13 +2,17 @@ import { calculateSupportResistance, confirmedSwingPivots } from '@/src/lib/anal
 import { atrWilder, calculateTechnicalAnalysis } from '@/src/lib/analytics/technical/calculations';
 import type { AdxPoint, BollingerPoint, IndicatorPoint, KeltnerPoint, MacdPoint } from '@/src/lib/analytics/technical/types';
 import {
+  MARKET_SIGNAL_ACTIONABLE,
   MARKET_SIGNAL_EXPECTED_FACTORS,
   MARKET_SIGNAL_GATE,
+  MARKET_SIGNAL_MEASURED,
   MARKET_SIGNAL_SCORE_WEIGHTS,
   MARKET_SIGNAL_THRESHOLDS,
   MARKET_SIGNAL_ZONE,
 } from '@/src/config/signal';
 import type {
+  MarketSignalActionable,
+  MarketSignalActionableNote,
   MarketSignalBand,
   MarketSignalBias,
   MarketSignalCandle,
@@ -24,7 +28,9 @@ import type {
   MarketSignalResult,
   MarketSignalScoreBreakdown,
   MarketSignalScoreComponent,
+  MarketSignalInvalidationBasis,
   MarketSignalState,
+  MarketSignalZoneEntry,
   MarketSignalZoneName,
   MarketSignalZoneProximity,
   MarketSignalZones,
@@ -708,12 +714,30 @@ export function calculateTrendZones(input: {
     return { ...bandAt(index, atr), mode: 'atr_band', anchoredAt: index };
   };
 
+  /*
+   * An ATR band has no height worth projecting. Its width is 3 ATR by
+   * construction, so a "measured move" taken from it is an ATR multiple with a
+   * structural-sounding name — the exact thing P3 refuses to publish.
+   */
+  const frameHeight = (candidate: Frame): number | null =>
+    candidate.mode === 'atr_band' ? null : candidate.resistance - candidate.support;
+
   const from = Math.max(1, candles.length - MARKET_SIGNAL_ZONE.walkbackBars);
   let frame = frameAt(from);
   let zone: MarketSignalZoneName = 'sideways';
   let zoneSince = from;
   let crossings = 0;
   let lastTouch = from;
+  /*
+   * The frame that was broken to enter the current zone, recorded AT the break.
+   *
+   * It has to be captured here because the very next statements re-anchor the
+   * frame: a bar or two later the boundaries price crossed exist nowhere in this
+   * function, and reconstructing them afterwards would mean guessing. Cleared
+   * when hysteresis returns the zone to sideways, because a sideways zone was
+   * not entered by breaking anything.
+   */
+  let entry: (Omit<MarketSignalZoneEntry, 'barsAgo'> & { atIndex: number }) | null = null;
 
   for (let index = from; index < candles.length; index += 1) {
     const atr = atrSeries[index] ?? atrLatest;
@@ -728,16 +752,18 @@ export function calculateTrendZones(input: {
      * itself. Without the gap a price grinding across one number relabels the
      * card on alternate days, which teaches a reader that the label is noise.
      */
-    if (zone === 'uptrend' && close < frame.resistance) zone = 'sideways';
-    else if (zone === 'downtrend' && close > frame.support) zone = 'sideways';
+    if (zone === 'uptrend' && close < frame.resistance) { zone = 'sideways'; entry = null; }
+    else if (zone === 'downtrend' && close > frame.support) { zone = 'sideways'; entry = null; }
 
     let reanchor = false;
     if (zone === 'sideways') {
       if (breakConfirmed(candles, index, (value) => value > upper)) {
         zone = 'uptrend';
+        entry = { level: frame.resistance, height: frameHeight(frame), mode: frame.mode, atIndex: index };
         reanchor = true;
       } else if (breakConfirmed(candles, index, (value) => value < lower)) {
         zone = 'downtrend';
+        entry = { level: frame.support, height: frameHeight(frame), mode: frame.mode, atIndex: index };
         reanchor = true;
       }
     }
@@ -826,8 +852,161 @@ export function calculateTrendZones(input: {
     // told why it has not moved yet rather than being shown nothing.
     pendingBreakout: zone !== 'uptrend' && close > upperTrigger,
     pendingBreakdown: zone !== 'downtrend' && close < lowerTrigger,
+    entry: entry === null ? null : {
+      level: round(entry.level, 4),
+      height: entry.height === null ? null : round(entry.height, 4),
+      mode: entry.mode,
+      barsAgo: candles.length - 1 - entry.atIndex,
+    },
     referenceClose: close,
     referenceDate: latest.date,
+  };
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * P3 actionable layer (`SIGNAL_ACTIONABLE`)
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * Where the published zone stops being true, and where it would have got to.
+ *
+ * Two decisions in here are deliberate departures from the obvious reading, and
+ * both are about making the number answer the question the card actually asks.
+ *
+ * INVALIDATION IS THE ZONE'S NEAR EDGE, NOT THE FRAME'S FAR ONE.
+ * An uptrend is entered by closing above `resistance + buffer` and — by the
+ * engine's own hysteresis, in `calculateTrendZones` — it ENDS on the first close
+ * back below `resistance`. So `resistance` is the price at which the card
+ * changes what it says. Taking the frame's lower edge instead would publish a
+ * level far below the one the label actually depends on: the card would have
+ * read "sideways" for weeks by the time price got there, while the invalidation
+ * row still claimed the uptrend was intact. A stop that the engine's own rules
+ * disagree with is worse than no stop, and it is not testable — nothing in the
+ * output would ever confirm or refute it.
+ *
+ * NO TARGET WITHOUT AN INVALIDATION, AND NO TARGET FROM A BAND.
+ * A target alone is half a trade and cannot form a ratio. And the only
+ * derivation allowed is a measured move — the broken frame's own height,
+ * projected from the level that broke. It is a CONVENTION and is labelled as
+ * one; what it is not is a constant of ours dressed up as arithmetic. When the
+ * broken frame was an ATR band its height is 3 ATR by construction, so
+ * projecting it would be precisely that, and the target is withheld instead.
+ *
+ * NOTHING AT ALL IN `atr_band` MODE — a departure from the brief, on evidence.
+ * The brief asked for the band edge with the fallback named in a reason. It was
+ * measured before it was published, by appending one bar that closes a tenth of
+ * a percent either side of the level and re-running the zone. A structural
+ * invalidation passes that: close through it and the zone ends, close short of
+ * it and the zone holds. The band edge fails it — NVDA on 2026-08-17 left the
+ * uptrend for a close on EITHER side, because the band is centred on EMA20 and
+ * re-centres every bar, so the level drifts for reasons that have nothing to do
+ * with the market. It is also, literally, the ATR multiple this layer refuses to
+ * publish as a target: 1.5 ATR from a moving average. A footnote cannot rescue a
+ * number that does not survive one bar, so the mode yields `null` and says
+ * `atr_band_fallback`. It costs 1 instrument in 108 today.
+ */
+export function calculateActionable(input: {
+  zones: MarketSignalZones;
+  atr: number | null;
+}): MarketSignalActionable {
+  const { zones } = input;
+  const atr = input.atr !== null && Number.isFinite(input.atr) && input.atr > 0 ? input.atr : null;
+  const close = zones.referenceClose;
+  const notes: MarketSignalActionableNote[] = [];
+  const directional = zones.zone === 'uptrend' || zones.zone === 'downtrend';
+
+  // A volatility envelope is not a level anybody traded against, and it moves
+  // with EMA20 every bar. Nothing downstream may be derived from it.
+  const envelope = zones.mode === 'atr_band';
+  if (envelope && directional) notes.push('atr_band_fallback');
+
+  // `null` for a sideways zone (nothing to invalidate) and for an envelope
+  // (nothing that was traded against). See the note on this function for why the
+  // edge is the one the zone STANDS on rather than the far side of the frame.
+  const edge: { level: number; basis: MarketSignalInvalidationBasis } | null = envelope ? null
+    : zones.zone === 'uptrend' ? { level: zones.resistance, basis: 'zone_floor' }
+      : zones.zone === 'downtrend' ? { level: zones.support, basis: 'zone_ceiling' }
+        : null;
+  let invalidation = edge?.level ?? null;
+  let invalidationBasis = edge?.basis ?? null;
+  if (!directional) notes.push('no_direction_to_invalidate');
+
+  /*
+   * The frame re-anchors on the breakout bar, and the new frame is built from
+   * pivots rather than from where price happens to be. So the edge can land on
+   * the wrong side of the close — for an uptrend, at or above it. A "stop" above
+   * the current price is not a stop; withhold it and say which refusal it was.
+   */
+  if (invalidation !== null) {
+    const behind = zones.zone === 'uptrend' ? close <= invalidation : close >= invalidation;
+    if (behind) {
+      invalidation = null;
+      invalidationBasis = null;
+      notes.push('invalidation_behind_close');
+    }
+  }
+
+  let target: number | null = null;
+  let targetBasis: MarketSignalActionable['targetBasis'] = null;
+  if (invalidation !== null) {
+    const broken = zones.entry;
+    if (!broken || broken.height === null) {
+      notes.push('no_measurable_frame');
+    } else {
+      const projected = zones.zone === 'uptrend'
+        ? broken.level + broken.height
+        : broken.level - broken.height;
+      // A projection price has already run past is behind the reader, not ahead
+      // of them, and reporting it would make the reward leg negative.
+      const reached = zones.zone === 'uptrend' ? close >= projected : close <= projected;
+      if (reached) notes.push('measured_move_reached');
+      else {
+        target = round(projected, 4);
+        targetBasis = 'measured_move';
+      }
+    }
+  }
+
+  const risk = invalidation === null ? null : Math.abs(close - invalidation);
+  const reward = target === null ? null : Math.abs(target - close);
+
+  /*
+   * The ratio is published, and labelled, when its risk leg is inside noise.
+   *
+   * A freshly entered zone sits ON its own floor by construction, so the risk
+   * leg goes to nearly nothing and the ratio explodes: the four largest ratios
+   * in the corpus (17.79, 17.51, 13.78, 7.94) were the four instruments closest
+   * to their invalidation, all entered within two bars, with ordinary reward
+   * legs. ORCL's 17.79 would read about 4 if its close were half an ATR higher —
+   * same structure, same target, same everything a reader can see.
+   *
+   * It is NOT withheld, because unlike the numbers P3 refuses to print this one
+   * is arithmetically correct; it is unstable, which calls for a label rather
+   * than a deletion. P4a settled which: the sub-0.5-ATR bucket carries an edge
+   * of +0.5 / +0.5 / -0.8pp over base — these signals are not better, so the
+   * ratio must not be allowed to read as though they were. The threshold is
+   * `proximity.nearTriggerAtr`, reused rather than re-invented.
+   */
+  const noisyRiskLeg = risk !== null && reward !== null && atr !== null
+    && risk / atr < MARKET_SIGNAL_ZONE.proximity.nearTriggerAtr;
+  if (noisyRiskLeg) notes.push('risk_leg_inside_noise');
+
+  return {
+    invalidation: invalidation === null ? null : round(invalidation, 4),
+    // Magnitudes, not signed distances: which way the level lies is already
+    // fully determined by `invalidationBasis`, and a sign here reads as a
+    // direction the number does not have.
+    invalidationAtr: risk === null || atr === null ? null : round(risk / atr, 2),
+    invalidationPct: risk === null || close === 0 ? null : round((risk / Math.abs(close)) * 100, 2),
+    invalidationBasis,
+    target,
+    targetAtr: reward === null || atr === null ? null : round(reward / atr, 2),
+    targetBasis,
+    targetIsConvention: targetBasis !== null,
+    riskReward: risk === null || reward === null || risk <= 0 ? null : round(reward / risk, 2),
+    notes,
   };
 }
 
@@ -906,6 +1085,8 @@ export function calculateMarketSignal(
     score: null,
     confidence: 0,
     confidenceLabel: 'Insufficient',
+    evidenceAgreement: 0,
+    evidenceAgreementLabel: 'Insufficient',
     scoreBreakdown,
     reasons: [],
     warnings,
@@ -1065,6 +1246,7 @@ export function calculateMarketSignal(
 
   const gateOn = context.features?.gate === true;
   const zonesOn = context.features?.zones === true;
+  const actionableOn = context.features?.actionable === true;
   const lowVolume = capLowVolumeComponent(component('volume', volumeFactors), relativeVolume20);
   const volumeCapped = gateOn && lowVolume.capped;
   const scoreBreakdown: MarketSignalScoreBreakdown = {
@@ -1147,6 +1329,15 @@ export function calculateMarketSignal(
    * frame.
    */
   const zones = zonesOn ? calculateTrendZones({ candles: finalized, ema20 }) : null;
+
+  /*
+   * P3 reads the zone and nothing else, so it is silent whenever P2 is — turning
+   * `SIGNAL_ACTIONABLE` on by itself changes no byte of the payload. That is not
+   * a guard against misconfiguration, it is the actual dependency: an
+   * invalidation is defined as the price at which the ZONE stops being true, and
+   * without a zone the sentence has no subject.
+   */
+  const actionable = actionableOn && zones ? calculateActionable({ zones, atr: atr14 }) : null;
 
   /*
    * When zones are on, STRUCTURE names the label and the score is demoted to
@@ -1234,6 +1425,12 @@ export function calculateMarketSignal(
       flags.push('stale_zone');
     }
   }
+  if (actionable !== null
+    && actionable.riskReward !== null
+    && actionable.riskReward < MARKET_SIGNAL_ACTIONABLE.unfavorableRiskReward) {
+    flags.push('unfavorable_risk_reward');
+  }
+  if (actionable?.notes.includes('risk_leg_inside_noise')) flags.push('risk_leg_inside_noise');
   if (gateOn) {
     if (conflicts.length) flags.push('conflicting_evidence');
     if (volumeCapped) flags.push('low_volume_confirmation');
@@ -1282,7 +1479,16 @@ export function calculateMarketSignal(
     supplementalReasons.push({
       id: 'pending-zone-break',
       polarity: 'caution',
-      text: `ราคาปิดผ่านแนว${zones.pendingBreakout ? 'ต้าน' : 'รับ'}แล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน`,
+      /*
+       * The measured outcome, said out loud. This state used to be described
+       * only as "not confirmed yet", which a reader completes as "not confirmed
+       * YET" — an event on its way. Most of them are not: see
+       * `MARKET_SIGNAL_MEASURED.pendingBreakout`.
+       */
+      text: `ราคาปิดผ่านแนว${zones.pendingBreakout ? 'ต้าน' : 'รับ'}แล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน`
+        + ` — จากการวัดย้อนหลัง ${MARKET_SIGNAL_MEASURED.pendingBreakout.sampleSize} ครั้ง มีราว`
+        + ` ${MARKET_SIGNAL_MEASURED.pendingBreakout.confirmedWithinFiveBars}% ที่ยืนยันภายใน 5 แท่ง`
+        + ` และเหลือราว ${MARKET_SIGNAL_MEASURED.pendingBreakout.stillDirectionalAtTwentyBars}% ที่ยังเป็นแนวโน้มอยู่เมื่อครบ 20 แท่ง`,
       impact: 6,
     });
   }
@@ -1291,6 +1497,24 @@ export function calculateMarketSignal(
       id: 'narrow-range-band',
       polarity: 'information',
       text: 'แนวรับและแนวต้านห่างกันน้อยกว่า 1 ATR จึงใช้กรอบ ATR รอบ EMA20 แทน',
+      impact: 2,
+    });
+  }
+  if (actionable?.notes.includes('atr_band_fallback')) {
+    supplementalReasons.push({
+      id: 'invalidation-from-band',
+      polarity: 'information',
+      text: 'กรอบตอนนี้เป็นกรอบ ATR รอบ EMA20 ซึ่งขยับทุกแท่งตามค่าเฉลี่ย ไม่ใช่แนวที่ตลาดเคยเทรดจริง จึงยังไม่ระบุระดับที่ทำให้สัญญาณเป็นโมฆะ',
+      impact: 2,
+    });
+  }
+  if (actionable !== null && actionable.invalidation !== null && actionable.target === null) {
+    supplementalReasons.push({
+      id: 'no-defensible-target',
+      polarity: 'information',
+      text: actionable.notes.includes('measured_move_reached')
+        ? 'ราคาไปถึงระยะที่กรอบเดิมวัดได้แล้ว จึงยังไม่มีเป้าถัดไปที่อ้างอิงโครงสร้างได้'
+        : 'ยังไม่มีกรอบที่วัดความสูงได้เป็นที่มาของเป้า จึงไม่แสดงเป้าและอัตราส่วน',
       impact: 2,
     });
   }
@@ -1331,8 +1555,18 @@ export function calculateMarketSignal(
     state,
     bias: effectiveBias,
     score,
+    /*
+     * The same number twice, under two names, on purpose. `confidence` is
+     * deprecated and cannot be deleted without breaking the additive rule, and
+     * `evidenceAgreement` is what it always measured: how well the five
+     * components agree, not the chance price does anything. P4a measured the
+     * gap — the 90-99 band hits 53-55%, the same as the 20-29 band — which is
+     * why the card no longer prints it as a headline percentage.
+     */
     confidence: confidenceResult.confidence,
     confidenceLabel,
+    evidenceAgreement: confidenceResult.confidence,
+    evidenceAgreementLabel: confidenceLabel,
     scoreBreakdown,
     reasons: factorReasons([
       { factors: trendFactors, weight: MARKET_SIGNAL_SCORE_WEIGHTS.emaTrend },
@@ -1350,5 +1584,6 @@ export function calculateMarketSignal(
     // deep-equality assertions and the golden gate both see the difference.
     ...(gate ? { gate } : {}),
     ...(zones ? { zones } : {}),
+    ...(actionable ? { actionable } : {}),
   };
 }

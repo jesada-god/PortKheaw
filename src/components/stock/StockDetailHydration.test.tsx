@@ -126,6 +126,8 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
     score: 37,
     confidence: 72,
     confidenceLabel: 'Medium',
+    evidenceAgreement: 72,
+    evidenceAgreementLabel: 'Medium',
     timeframe: '1D',
     calculatedAt: '2026-07-19T00:00:00.000Z',
     latestCandleAt: '2026-07-18',

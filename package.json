@@ -41,7 +41,11 @@
     "qa:ui-redesign": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-responsive-qa.mjs",
     "qa:ui-redesign-auth": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-authenticated-qa.mjs",
     "signal:sensitivity": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sensitivity.ts",
-    "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts"
+    "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts",
+    "signal:htf-probe": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-htf-probe.ts",
+    "signal:actionable": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-actionable-probe.ts",
+    "signal:lookback": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-lookback-sensitivity.ts",
+    "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -95,6 +95,13 @@ const SURFACES = [
     id: 'stock-financials',
     path: '/stock/AAPL',
     expect: '[data-testid="stock-last-price"]',
+    /*
+     * The Market Signal footer carries the line saying the card describes what
+     * price did rather than predicting what it will do. jsdom can prove the
+     * classes that would collapse it are absent; only a real layout can prove
+     * the sentence is on screen and un-clipped at 390px, which is `mustRead`.
+     */
+    mustRead: '[data-testid="signal-footer"]',
     async prepare(page) {
       await page.getByRole('button', { name: 'Financials', exact: true }).first().click({ timeout: 20_000 }).catch(() => undefined);
       await page.waitForTimeout(2_500);
@@ -127,6 +134,7 @@ const report = {
   overflow: [],
   consoleErrors: [],
   missingAnchors: [],
+  clipped: [],
   cleanup: null,
 };
 
@@ -322,6 +330,43 @@ const OVERFLOW_PROBE = `(() => {
   return offenders.slice(0, 10);
 })()`;
 
+/**
+ * Is this block fully readable, or has the layout quietly eaten part of it?
+ *
+ * A disclosure that renders but is clipped to one line has not been made. Four
+ * ways that happens, all checked: the box is not painted, it is painted at zero
+ * size, its content is taller than the box holding it (a clamp, a fixed height,
+ * an `overflow: hidden` ancestor), or it runs off the side of the screen.
+ */
+const CLIP_PROBE = (selector) => {
+  const node = document.querySelector(selector);
+  if (!node) return { problem: 'missing' };
+  const style = getComputedStyle(node);
+  if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+    return { problem: 'hidden', display: style.display, visibility: style.visibility, opacity: style.opacity };
+  }
+  const rect = node.getBoundingClientRect();
+  const viewport = document.documentElement.clientWidth;
+  if (rect.width <= 1 || rect.height <= 1) return { problem: 'collapsed', width: rect.width, height: rect.height };
+  if (rect.right > viewport + 1 || rect.left < -1) {
+    return { problem: 'offscreen', left: Math.round(rect.left), right: Math.round(rect.right), viewport };
+  }
+  for (const line of [node, ...node.querySelectorAll('*')]) {
+    if (line.scrollHeight > line.clientHeight + 1) {
+      return {
+        problem: 'clipped',
+        text: (line.textContent || '').slice(0, 60),
+        scrollHeight: line.scrollHeight,
+        clientHeight: line.clientHeight,
+      };
+    }
+    if (getComputedStyle(line).webkitLineClamp !== 'none') {
+      return { problem: 'clamped', text: (line.textContent || '').slice(0, 60) };
+    }
+  }
+  return null;
+};
+
 async function main() {
   const user = await createQaUser('elite');
   console.log(`QA user ${user.email}`);
@@ -370,6 +415,15 @@ async function main() {
           }
           await page.waitForTimeout(900);
 
+          if (surface.mustRead) {
+            const problem = await page.evaluate(CLIP_PROBE, surface.mustRead);
+            if (problem) {
+              report.clipped.push({
+                appearance, viewport: viewport.name, surface: surface.id, selector: surface.mustRead, ...problem,
+              });
+            }
+          }
+
           const offenders = await page.evaluate(OVERFLOW_PROBE);
           if (offenders.length > 0) {
             report.overflow.push({ appearance, viewport: viewport.name, surface: surface.id, offenders });
@@ -414,7 +468,8 @@ async function main() {
   report.finishedAt = new Date().toISOString();
   writeFileSync(`${OUT_DIR}/report.json`, JSON.stringify(report, null, 2));
 
-  const failed = report.overflow.length > 0 || report.consoleErrors.length > 0 || report.missingAnchors.length > 0;
+  const failed = report.overflow.length > 0 || report.consoleErrors.length > 0
+    || report.missingAnchors.length > 0 || report.clipped.length > 0;
   if (report.missingAnchors.length > 0) {
     console.error('SURFACE DID NOT RENDER:');
     console.error(JSON.stringify(report.missingAnchors, null, 2));
@@ -426,6 +481,10 @@ async function main() {
   if (report.consoleErrors.length > 0) {
     console.error('CONSOLE ERRORS:');
     console.error(JSON.stringify(report.consoleErrors, null, 2));
+  }
+  if (report.clipped.length > 0) {
+    console.error('DISCLOSURE NOT FULLY READABLE:');
+    console.error(JSON.stringify(report.clipped, null, 2));
   }
   if (!failed) console.log('Portfolio, Stock Detail and Tools: clean at 1440x900 and 390x844, dark and light.');
   console.log(`Screenshots and report: ${OUT_DIR}`);

@@ -1,4 +1,18 @@
 {
+  "actionable": {
+    "invalidation": null,
+    "invalidationAtr": null,
+    "invalidationBasis": null,
+    "invalidationPct": null,
+    "notes": [
+      "no_direction_to_invalidate"
+    ],
+    "riskReward": null,
+    "target": null,
+    "targetAtr": null,
+    "targetBasis": null,
+    "targetIsConvention": false
+  },
   "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
   "confidence": 38,
@@ -15,6 +29,8 @@
     "finalized": 1254,
     "received": 1255
   },
+  "evidenceAgreement": 38,
+  "evidenceAgreementLabel": "Low",
   "flags": [
     "bearish_divergence",
     "strong_momentum",
@@ -188,6 +204,7 @@
     "Relative Volume 0.65× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
   ],
   "zones": {
+    "entry": null,
     "frameAgeBars": 4,
     "lastTestedBarsAgo": 0,
     "lowerDistance": 49.1362,

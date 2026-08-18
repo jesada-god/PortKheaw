@@ -305,6 +305,16 @@ export const MARKET_SIGNAL_ZONE = {
    * things: QQQ sat 0.05 ATR under its trigger while CL-F sat 4.9 ATR from the
    * nearest one. Same word, opposite situations. These split the state for
    * DESCRIPTION only — they change no label and no rule.
+   *
+   * SCOPE, measured in P4a and narrower than this block originally implied.
+   * The band predicts how long the LABEL lasts, over about five bars: a
+   * `near_trigger` zone is something else five bars later 64.8% of the time
+   * against 51.4% for `deep_range`. That is the whole of it. By twenty bars the
+   * gap is 1.5pp and `mid_range` is the least durable of the three, so the
+   * ordering does not hold at longer horizons. And it says NOTHING about being
+   * right: directional accuracy is statistically indistinguishable across all
+   * three bands at every horizon measured. Nothing in the UI may imply that
+   * `deep_range` is the more trustworthy signal.
    */
   proximity: {
     nearTriggerAtr: 0.5,
@@ -316,4 +326,113 @@ export const MARKET_SIGNAL_ZONE = {
    * the same rules a reader would apply by hand.
    */
   walkbackBars: 120,
+} as const;
+
+/**
+ * What the P4a harness measured, for the card to quote.
+ *
+ * These are OBSERVATIONS, not thresholds — nothing in the engine branches on
+ * them. They exist because a chip that says "pending breakout" reads as
+ * anticipation, and the measured truth is that most of them do not become
+ * breakouts. A card that knows that and does not say it is choosing to mislead.
+ *
+ * Provenance is the point: every number here comes from one named run over the
+ * 108-instrument corpus, and re-running `npm run signal:calibrate` is what
+ * updates them. If the run id below no longer matches anything in
+ * `__calibration__/`, these figures are stale and the copy quoting them is
+ * making a claim nobody can check.
+ */
+export const MARKET_SIGNAL_MEASURED = {
+  runId: '20260818T092020Z',
+  corpusInstruments: 108,
+  /*
+   * The window the corpus covers, bound here so the card can say it.
+   *
+   * "Backtested" without a period is not a checkable claim; it is a mood. The
+   * ISO halves are what `signal-measured.test.ts` matches against the run
+   * manifest, and `thai` is what a reader sees. All three move together or the
+   * test fails.
+   */
+  period: {
+    from: '2023-04',
+    to: '2026-07',
+    thai: 'เม.ย. 2023 – ก.ค. 2026',
+  },
+  /*
+   * The finding the whole card now has to live with.
+   *
+   * Directional labels were followed against the unconditional rate over the
+   * same instrument-days, weighted to the same long/short mix, at three
+   * horizons:
+   *
+   *   5 bars   51.4% vs 51.3%   +0.0pp
+   *   10 bars  51.4% vs 51.6%   -0.2pp
+   *   20 bars  51.5% vs 51.9%   -0.4pp
+   *
+   * Every one of those sits well inside its own sampling error (±2.3pp at 20
+   * bars on 1853 independent observations), so the honest statement is that no
+   * edge was FOUND — not that none exists, and not that the label is a coin
+   * toss. That is the sentence the card carries, and these two numbers are what
+   * make it falsifiable.
+   *
+   * `largestAbsolutePp` is the biggest gap across the three horizons.
+   * `claimHoldsBelowPp` is the editorial line: above it the card is claiming
+   * something the run does not support and the copy has to be rewritten. The
+   * test also checks the gap against the measured confidence interval, so a
+   * later run cannot pass by being large-but-noisy either.
+   *
+   * KNOWN AND DELIBERATELY NOT SMOOTHED OVER: the two halves of the split
+   * disagree in sign — train -0.8/-1.7/-2.3pp, test +1.2/+1.9/+2.2pp. Neither
+   * half is significant on its own (±3.5pp at 20 bars on the test half), and a
+   * result that changes sign across the split is the textbook shape of noise,
+   * so the full-sample figure is the one quoted. It is also the reason P5 may
+   * not accept a feature that only works on one half.
+   */
+  directionalEdge: {
+    largestAbsolutePp: 0.4,
+    claimHoldsBelowPp: 1,
+  },
+  /*
+   * Followed for 20 bars from the bar the flag was raised, n = 299.
+   *   confirmed as an uptrend      52.8%
+   *   price fell back inside       42.5%
+   *   frame re-anchored around it   4.7%
+   * Of those that confirm, most do it inside five bars and many lose it again:
+   * only 21.2% were still directional AT bar 20.
+   */
+  pendingBreakout: {
+    confirmedWithinFiveBars: 53,
+    stillDirectionalAtTwentyBars: 21,
+    sampleSize: 299,
+  },
+  /*
+   * The proximity band's real scope. `near_trigger` labels change more often
+   * than `deep_range` ones over FIVE bars (64.8% vs 51.4%, +13.4pp). By twenty
+   * bars the gap is 1.5pp and `mid_range` is the highest of the three, so the
+   * ordering does not survive. Accuracy does not differ at any horizon.
+   */
+  proximity: {
+    labelChangedNearTriggerFiveBars: 65,
+    labelChangedDeepRangeFiveBars: 51,
+  },
+} as const;
+
+/**
+ * P3 actionable layer — read only when `SIGNAL_ACTIONABLE` is on.
+ *
+ * Two numbers, both anchored to the zone frame and to nothing else. The rule
+ * this block exists to enforce is negative rather than positive: an invalidation
+ * or a target that cannot be derived from structure the market actually traded
+ * is NOT emitted. A reader shown "stop at 2.5 ATR" reads a calculation; what
+ * they are actually shown is a constant somebody picked, wearing a calculation's
+ * clothes. `null` is the honest output and the UI hides the row.
+ */
+export const MARKET_SIGNAL_ACTIONABLE = {
+  /*
+   * Below this the trade the card is describing risks more than it stands to
+   * make, and `unfavorable_risk_reward` says so. It is a REPORTING line, not a
+   * filter: nothing is suppressed for crossing it, because the card does not
+   * decide whether a reader takes the trade.
+   */
+  unfavorableRiskReward: 1,
 } as const;

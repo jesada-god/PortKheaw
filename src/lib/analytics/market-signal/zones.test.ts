@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { MARKET_SIGNAL_ZONE } from '@/src/config/signal';
+import { MARKET_SIGNAL_MEASURED, MARKET_SIGNAL_ZONE } from '@/src/config/signal';
 import { confirmedSwingPivots } from '@/src/lib/analytics/support-resistance/calculations';
 import { ema } from '@/src/lib/analytics/technical/calculations';
 import type { DataFreshness } from '@/src/lib/market-data/types';
@@ -241,6 +241,45 @@ describe('a range too narrow to break', () => {
 
   it('keeps the structural frame when the swings are wide enough to mean something', () => {
     expect(zonesOf(swings(6)).mode).toBe('structural');
+  });
+});
+
+/**
+ * P4.5 — the card had to stop implying things the measurements do not support.
+ *
+ * These pin the copy that carries a measured claim, so a later edit that
+ * quietly restores the old confident wording fails here rather than in review.
+ */
+describe('what the card is allowed to imply', () => {
+  const withZones = (symbol: string) => run(symbol, true);
+
+  it('quotes the measured outcome wherever it says a break is pending', () => {
+    const reason = SYMBOLS.map((symbol) => withZones(symbol))
+      .flatMap((result) => result.reasons)
+      .find((item) => item.id === 'pending-zone-break');
+    // IWM carries `pending_breakout` on the committed capture.
+    expect(reason).toBeDefined();
+    expect(reason!.text).toContain(`${MARKET_SIGNAL_MEASURED.pendingBreakout.confirmedWithinFiveBars}% ที่ยืนยันภายใน 5 แท่ง`);
+    expect(reason!.text).toContain(`${MARKET_SIGNAL_MEASURED.pendingBreakout.stillDirectionalAtTwentyBars}% ที่ยังเป็นแนวโน้มอยู่เมื่อครบ 20 แท่ง`);
+  });
+
+  /*
+   * The label outlasting its own frame is the thing `frameAgeBars` exists to
+   * make visible: 74% of sideways observations see price close outside the
+   * frame within twenty bars, and two thirds of those keep the label because
+   * the frame re-anchored around the move. Both ages have to be reachable.
+   */
+  it('reports the frame age separately from the zone age', () => {
+    SYMBOLS.forEach((symbol) => {
+      const zones = withZones(symbol).zones!;
+      expect(Number.isInteger(zones.frameAgeBars)).toBe(true);
+      expect(zones.frameAgeBars).toBeGreaterThanOrEqual(0);
+      expect(Number.isInteger(zones.zoneAgeBars)).toBe(true);
+    });
+    // And they genuinely differ somewhere, or showing both would be noise.
+    const differing = SYMBOLS.map((symbol) => withZones(symbol).zones!)
+      .filter((zones) => zones.frameAgeBars !== zones.zoneAgeBars);
+    expect(differing.length).toBeGreaterThan(0);
   });
 });
 

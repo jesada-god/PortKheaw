@@ -1,4 +1,18 @@
 {
+  "actionable": {
+    "invalidation": 42.24,
+    "invalidationAtr": 0.45,
+    "invalidationBasis": "zone_floor",
+    "invalidationPct": 4.13,
+    "notes": [
+      "risk_leg_inside_noise"
+    ],
+    "riskReward": 7.94,
+    "target": 58.51,
+    "targetAtr": 3.56,
+    "targetBasis": "measured_move",
+    "targetIsConvention": true
+  },
   "bias": "bullish",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
   "confidence": 27,
@@ -15,8 +29,11 @@
     "finalized": 1189,
     "received": 1190
   },
+  "evidenceAgreement": 27,
+  "evidenceAgreementLabel": "Low",
   "flags": [
     "strong_momentum",
+    "risk_leg_inside_noise",
     "conflicting_evidence",
     "low_volume_confirmation"
   ],
@@ -196,6 +213,12 @@
     "Relative Volume 0.84× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
   ],
   "zones": {
+    "entry": {
+      "barsAgo": 1,
+      "height": 14.79,
+      "level": 43.72,
+      "mode": "structural"
+    },
     "frameAgeBars": 1,
     "lastTestedBarsAgo": 0,
     "lowerDistance": 16.1444,

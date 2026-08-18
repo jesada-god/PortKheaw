@@ -1,4 +1,18 @@
 {
+  "actionable": {
+    "invalidation": null,
+    "invalidationAtr": null,
+    "invalidationBasis": null,
+    "invalidationPct": null,
+    "notes": [
+      "no_direction_to_invalidate"
+    ],
+    "riskReward": null,
+    "target": null,
+    "targetAtr": null,
+    "targetBasis": null,
+    "targetIsConvention": false
+  },
   "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
   "confidence": 42,
@@ -15,6 +29,8 @@
     "finalized": 1254,
     "received": 1255
   },
+  "evidenceAgreement": 42,
+  "evidenceAgreementLabel": "Low",
   "flags": [
     "bearish_divergence",
     "strong_momentum",
@@ -122,7 +138,7 @@
       "id": "pending-zone-break",
       "impact": 6,
       "polarity": "caution",
-      "text": "ราคาปิดผ่านแนวต้านแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน"
+      "text": "ราคาปิดผ่านแนวต้านแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน — จากการวัดย้อนหลัง 299 ครั้ง มีราว 53% ที่ยืนยันภายใน 5 แท่ง และเหลือราว 21% ที่ยังเป็นแนวโน้มอยู่เมื่อครบ 20 แท่ง"
     },
     {
       "id": "rsi14",
@@ -189,6 +205,7 @@
     "Relative Volume 0.63× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
   ],
   "zones": {
+    "entry": null,
     "frameAgeBars": 4,
     "lastTestedBarsAgo": 0,
     "lowerDistance": 18.2067,

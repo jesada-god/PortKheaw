@@ -2,15 +2,64 @@
 
 import React, { useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
-import type { MarketSignalBias, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
+import type { MarketSignalActionable, MarketSignalBias, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
+import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
 
 const DISCLAIMER = 'Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย';
+
+/*
+ * The sentence P4a made unavoidable.
+ *
+ * The disclaimer under it has always said the card does not guarantee a
+ * direction. That is a legal sentence, and readers have been trained by every
+ * other product they use to read it as one. This is the different thing: a
+ * statement of what the harness actually found when it followed 3,628
+ * directional labels — that they were right about as often as the market was up
+ * anyway. It goes ABOVE the disclaimer because it is the more useful of the two
+ * and because a reader who stops after one line should stop after this one.
+ *
+ * It says "ยังไม่พบ" and not "ไม่มี". No edge was FOUND, over one corpus and one
+ * period; that is a smaller claim than "there is no edge", and it is the one the
+ * evidence supports. The provenance line under it is what lets a reader tell the
+ * difference — a period and a corpus size, so the claim has edges.
+ *
+ * Every figure here is interpolated from `MARKET_SIGNAL_MEASURED`, never typed
+ * in, and `src/config/signal-measured.test.ts` fails the build if that block
+ * stops matching the newest run in `__calibration__/`. So the day a harness pass
+ * finds something, this copy cannot stay as it is.
+ */
+const NOT_A_FORECAST = 'การ์ดนี้อธิบายสิ่งที่ราคาทำไปแล้ว ไม่ได้พยากรณ์สิ่งที่ราคาจะทำ — ผลทดสอบย้อนหลังยังไม่พบว่าทิศทางที่ระบุแม่นกว่าอัตราพื้นฐานของตลาด';
+const MEASURED_PROVENANCE = `วัดจาก ${MARKET_SIGNAL_MEASURED.corpusInstruments} สินทรัพย์ · ${MARKET_SIGNAL_MEASURED.period.thai}`;
+
+/**
+ * The card's footer, in one component so that no render path can ship without it.
+ *
+ * There are four ways this card can render — locked, failed to load, not enough
+ * data, and the real thing — and the honest lines belong on all four. A locked
+ * preview is where somebody decides whether to pay for this, which makes it the
+ * single most important place for the sentence to appear, not the one place it
+ * would be convenient to leave out.
+ *
+ * Nothing here truncates, clamps or hides below a breakpoint. That is a
+ * deliberate constraint rather than an accident of styling: a disclosure that
+ * collapses on the screen most readers use is a disclosure that was not made.
+ * `MarketSignalSection.test.tsx` asserts the classes stay that way.
+ */
+function SignalFooter({ tone }: { tone: string }) {
+  return (
+    <div className={`mt-3 space-y-1 ${tone}`} data-testid="signal-footer">
+      <p className="text-xs leading-5">{NOT_A_FORECAST}</p>
+      <p className="text-[11px] leading-5 opacity-80">{MEASURED_PROVENANCE}</p>
+      <p className="text-xs leading-5">{DISCLAIMER}</p>
+    </div>
+  );
+}
 
 export const MARKET_SIGNAL_PRESENTATION = {
   STRONG_BULLISH: {
@@ -74,9 +123,18 @@ export const MARKET_SIGNAL_PRESENTATION = {
  * present, i.e. only with `SIGNAL_GATE` on. With the flag off the card renders
  * the raw flag list exactly as it did before P1.
  */
+/*
+ * Chip wording, and one place it was quietly making a forecast.
+ *
+ * "รอปิดยืนยันเบรกขึ้น" reads as a breakout that is on its way. P4a followed 299
+ * of them: 53% confirm within five bars, 21% are still directional at twenty,
+ * and 71% are back to sideways by then. So the chip now names an unresolved
+ * STATE rather than an impending event, and the reason line underneath carries
+ * the measured numbers.
+ */
 const FLAG_COPY: Record<string, string> = {
-  pending_breakout: 'รอปิดยืนยันเบรกขึ้น',
-  pending_breakdown: 'รอปิดยืนยันหลุดลง',
+  pending_breakout: 'ผ่านแนวแล้ว ยังไม่ยืนยัน',
+  pending_breakdown: 'หลุดแนวแล้ว ยังไม่ยืนยัน',
   conflicting_evidence: 'หลักฐานขัดแย้งกัน',
   stale_or_partial_data: 'ข้อมูลไม่สดหรือไม่ครบ',
   earnings_imminent: 'ใกล้ประกาศงบมาก',
@@ -84,6 +142,8 @@ const FLAG_COPY: Record<string, string> = {
   pre_earnings_breakout: 'เบรกก่อนงบ',
   low_volume_confirmation: 'วอลุ่มไม่ยืนยัน',
   weak_confirmation: 'ยังยืนยันไม่ชัด',
+  unfavorable_risk_reward: 'ระยะเสี่ยงมากกว่าระยะเป้า',
+  risk_leg_inside_noise: 'อัตราส่วนไม่นิ่ง ราคาเพิ่งผ่านแนวมา',
   stale_zone: 'ไม่มีการแตะแนวมานาน',
   narrow_range: 'กรอบแคบกว่า 1 ATR',
   overextended: 'ราคาไกลค่าเฉลี่ย',
@@ -179,7 +239,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
               asks for Elite without either naming a tier here. */}
           <LockedNotice capability={capability} source="financials.technical-outlook" />
         </div>
-        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+        <SignalFooter tone="text-slate-500" />
       </section>
     );
   }
@@ -193,7 +253,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
         <p className="mt-3 text-sm text-slate-400">ยังโหลดข้อมูล Technical Outlook ไม่สำเร็จ จึงไม่แสดงผลลัพธ์ที่เดาขึ้นเอง</p>
-        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+        <SignalFooter tone="text-slate-500" />
       </section>
     );
   }
@@ -208,7 +268,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
         </div>
         <p className="mt-3 text-sm text-slate-400">ข้อมูลไม่เพียงพอ · {result.reason}</p>
         {result.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-300">{warning}</p>)}
-        <p className="mt-3 text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+        <SignalFooter tone="text-slate-500" />
       </section>
     );
   }
@@ -263,8 +323,18 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           Score <strong className="font-mono text-white">{signed(result.score)} / 100</strong>
           <InfoHint term="directionalScore" align="start" />
         </span>
+        {/*
+          NOT a percentage, and not on the headline line any more.
+          P4a measured what this number is worth as a forecast: the 90-99 band
+          hits 53-55% of the time, which is what the 20-29 band hits. A reader
+          shown "93%" beside a direction reads a probability, and there is no
+          honest way to print that figure large. So the headline carries the
+          WORD — how well the evidence agrees — and the number itself moved into
+          the breakdown, where it sits beside the terms that produced it.
+        */}
         <span className="inline-flex min-h-11 items-center gap-2">
-          Confidence <strong className="font-mono text-white">{result.confidence}%</strong>
+          ความสอดคล้องของหลักฐาน
+          <strong className="font-mono text-white">{AGREEMENT_COPY[result.evidenceAgreementLabel]}</strong>
           <InfoHint term="signalConfidence" align="end" />
         </span>
       </div>
@@ -280,8 +350,15 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           </span>
         ) : null}
       </div>
-      {result.zones ? <ZoneBar zones={result.zones} score={result.score} livePrice={livePrice} /> : null}
-      <p className="mt-3 text-xs leading-5 text-slate-400">{DISCLAIMER}</p>
+      {result.zones ? (
+        <ZoneBar
+          zones={result.zones}
+          score={result.score}
+          livePrice={livePrice}
+          actionable={result.actionable ?? null}
+        />
+      ) : null}
+      <SignalFooter tone="text-slate-400" />
 
       <ResponsiveDialog
         isOpen={open}
@@ -327,7 +404,12 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
           <section>
             <h3 className="font-semibold text-white">2. ระบบดูจากอะไร</h3>
-            <p className="mt-2 leading-6">ใช้ finalized 1D candles และหลักฐานจาก EMA, Momentum, ADX/DMI, Volume และ Price Structure โดยไม่ใช้ Score แทน Confidence</p>
+            <p className="mt-2 leading-6">ใช้ finalized 1D candles และหลักฐานจาก EMA, Momentum, ADX/DMI, Volume และ Price Structure</p>
+            <p className="mt-2 leading-6 text-slate-400">
+              ตัวเลขความสอดคล้อง {result.evidenceAgreement}/100 วัดว่าหลักฐานทั้งห้าหมวดไปทางเดียวกันแค่ไหน
+              จากการวัดย้อนหลังพบว่าตัวเลขนี้ไม่ได้บอกโอกาสที่ราคาจะไปทางที่ระบุ
+              ค่าสูงกับค่าต่ำให้ผลใกล้เคียงกัน จึงห้ามอ่านเป็นเปอร์เซ็นต์ความน่าจะเป็น
+            </p>
             <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
               <ConfidenceDetail label="Data completeness" value={result.confidenceBreakdown.completeness} />
               <ConfidenceDetail label="Evidence agreement" value={result.confidenceBreakdown.agreement} />
@@ -390,12 +472,15 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
           <div className="rounded-xl border border-slate-800 p-3 text-xs leading-5 text-slate-400">
             <p>Score: {signed(result.score)} / 100</p>
-            <p>Confidence: {result.confidenceLabel} ({result.confidence}%)</p>
+            <p>ความสอดคล้องของหลักฐาน: {AGREEMENT_COPY[result.evidenceAgreementLabel]} ({result.evidenceAgreement}/100 — ไม่ใช่ % โอกาสที่ราคาจะไปทางนั้น)</p>
             <p>Timeframe: {result.timeframe} · Finalized candles: {result.dataPoints.finalized}</p>
             <p>Updated: {formatBangkokDateTime(result.calculatedAt)}</p>
             <p>Source: {result.source ?? 'ไม่พร้อมใช้งาน'}</p>
+            {/* The run every measured figure on this card came from, so a
+                reader who wants to check one has a name to ask about. */}
+            <p>Calibration run: {MARKET_SIGNAL_MEASURED.runId}</p>
           </div>
-          <p className="text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
+          <SignalFooter tone="text-slate-500" />
         </div>
       </ResponsiveDialog>
     </section>
@@ -421,6 +506,20 @@ const ZONE_COPY = {
   uptrend: 'อยู่เหนือโครงสร้างที่ยืนยันแล้ว',
   sideways: 'อยู่ในกรอบระหว่างแนวรับและแนวต้าน',
   downtrend: 'อยู่ใต้โครงสร้างที่ยืนยันแล้ว',
+} as const;
+
+/**
+ * The three agreement levels, worded so none of them reads as a probability.
+ *
+ * "High confidence" is a sentence about the future. "หลักฐานไปทางเดียวกันมาก" is
+ * a sentence about the evidence on the card, which is the only thing this number
+ * has ever measured.
+ */
+const AGREEMENT_COPY = {
+  High: 'หลักฐานไปทางเดียวกันมาก',
+  Medium: 'หลักฐานไปทางเดียวกันบ้าง',
+  Low: 'หลักฐานยังกระจัดกระจาย',
+  Insufficient: 'ข้อมูลไม่พอ',
 } as const;
 
 const ZONE_MODE_COPY = {
@@ -450,10 +549,11 @@ function tiltCopy(score: number): string {
  * Every distance is stated in price AND in ATR, because "3.18 away" means
  * nothing without knowing that this instrument moves 4.06 on an average day.
  */
-function ZoneBar({ zones, score, livePrice }: {
+function ZoneBar({ zones, score, livePrice, actionable }: {
   zones: MarketSignalZones;
   score: number;
   livePrice: number | null;
+  actionable: MarketSignalActionable | null;
 }) {
   const { support, resistance, upperTrigger, lowerTrigger, referenceClose } = zones;
   // The drawn extent always covers both markers and both triggers, so nothing
@@ -487,11 +587,19 @@ function ZoneBar({ zones, score, livePrice }: {
             0.05 ATR under its trigger and CL-F 4.9 ATR from the nearest one read
             identically. This says which, in words rather than as another chip.
           */}
+          {/*
+            Scoped to what P4a actually measured. The band predicts how long the
+            LABEL lasts over about five bars and nothing else: directional
+            accuracy is indistinguishable across all three bands at every
+            horizon. So `near_trigger` says the label may not last, and
+            `deep_range` says only where price is — it must NOT read as the more
+            trustworthy signal, because it is not one.
+          */}
           {zones.proximity === 'near_trigger' ? (
             <span className="ml-1 font-normal text-slate-300">
               · {zones.nearestTriggerAtr < 0 ? 'เลยแนวใกล้สุดมา' : 'ห่างแนวใกล้สุด'}
               {' '}{Math.abs(nearestDistance).toLocaleString('en-US', { maximumFractionDigits: 2 })}
-              {' '}({Math.abs(zones.nearestTriggerAtr)} ATR)
+              {' '}({Math.abs(zones.nearestTriggerAtr)} ATR) · ป้ายนี้มีโอกาสเปลี่ยนภายในไม่กี่แท่ง
             </span>
           ) : zones.proximity === 'deep_range' ? (
             <span className="ml-1 font-normal text-slate-400">
@@ -549,7 +657,16 @@ function ZoneBar({ zones, score, livePrice }: {
           ? ZONE_MODE_COPY[zones.mode]
           : `อยู่ที่ ${zones.positionPct}% ของกรอบ · ${ZONE_MODE_COPY[zones.mode]}`}
         {' · '}
-        โซนนี้ยืนมา {zones.zoneAgeBars} แท่ง
+        {/*
+          Both ages, because the label outlasts the thing it describes.
+          Measured in P4a: 74% of sideways observations see price close outside
+          the frame within twenty bars, and in 66% of those the LABEL stays
+          sideways because the frame re-anchors around the move rather than
+          because price stayed put. Showing the zone age alone therefore reads
+          as "this has been true for 45 bars" when the boundaries it is true
+          about are three bars old. Printing both is what makes that visible.
+        */}
+        โซนนี้ยืนมา {zones.zoneAgeBars} แท่ง · กรอบปัจจุบันตั้งมา {zones.frameAgeBars} แท่ง
         {zones.lastTestedBarsAgo === null ? '' : ` · แตะแนวล่าสุดเมื่อ ${zones.lastTestedBarsAgo} แท่งก่อน`}
       </p>
 
@@ -562,8 +679,83 @@ function ZoneBar({ zones, score, livePrice }: {
         </p>
       ) : null}
 
+      {actionable ? <ActionableRows zones={zones} actionable={actionable} /> : null}
+
       <p className="mt-1 text-[11px] leading-5 text-slate-500">ใช้ราคาปิดยืนยันเท่านั้น ไส้เทียนที่ทะลุแนวไม่นับ</p>
     </div>
+  );
+}
+
+/**
+ * The two rows under the zone bar, or nothing.
+ *
+ * A row whose number is `null` is not drawn — no em dash, no "ไม่มีข้อมูล", no
+ * greyed placeholder. A placeholder in a price row reads as a value the card is
+ * withholding, and invites the reader to go and find it somewhere else; an
+ * absent row reads as a question this card does not answer, which is the truth.
+ * On today's corpus that is four instruments in five, so this is the common
+ * path, not the edge case.
+ *
+ * The wording is conditional throughout — "ถ้าปิดต่ำกว่า X โซนนี้จบ" is a
+ * statement about the engine's own rule, which is checkable. "ตั้ง stop ที่ X"
+ * would be an instruction, and the card does not give instructions.
+ */
+function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actionable: MarketSignalActionable }) {
+  const { invalidation, invalidationAtr, invalidationPct, target, targetAtr, riskReward } = actionable;
+  if (invalidation === null && target === null) return null;
+  const price = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const ends = zones.zone === 'uptrend' ? 'ปิดต่ำกว่า' : 'ปิดสูงกว่า';
+
+  return (
+    <dl className="mt-3 space-y-1 border-t border-current/15 pt-2 text-[11px] text-slate-300" data-testid="signal-actionable">
+      {invalidation === null ? null : (
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <dt className="text-slate-500">ถ้า{ends}</dt>
+          <dd className="font-mono text-white">{price(invalidation)}</dd>
+          <dd className="text-slate-400">
+            โซน{zones.zone === 'uptrend' ? 'ขาขึ้น' : 'ขาลง'}นี้จบลงตามกฎเดิม
+            {/* "จากราคาปิด" so the percent cannot be read as a likelihood. */}
+            {invalidationAtr === null ? '' : ` (ห่าง ${invalidationAtr} ATR`}
+            {invalidationPct === null ? '' : ` · ${invalidationPct}% จากราคาปิด`}
+            {invalidationAtr === null ? '' : ')'}
+          </dd>
+        </div>
+      )}
+      {target === null ? null : (
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <dt className="text-slate-500">ระยะที่กรอบเดิมวัดได้</dt>
+          <dd className="font-mono text-white">{price(target)}</dd>
+          <dd className="text-slate-400">
+            {targetAtr === null ? '' : `ห่าง ${targetAtr} ATR · `}
+            {/*
+              Said on the row itself, not in a footnote. A measured move is the
+              charting convention that a broken range travels its own height
+              again; it is not a property of this instrument that anything here
+              has measured, and a reader has no way to tell those apart from the
+              number alone.
+            */}
+            เป็นการประมาณตามธรรมเนียมการอ่านกราฟ ยังไม่ได้ทดสอบย้อนหลัง
+          </dd>
+        </div>
+      )}
+      {riskReward === null ? null : (
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <dt className="text-slate-500">ระยะเป้าต่อระยะเสี่ยง</dt>
+          <dd className="font-mono text-white">{riskReward}</dd>
+          <dd className="text-slate-400">
+            {riskReward < 1 ? 'ระยะถึงจุดที่โซนจบไกลกว่าระยะถึงเป้า' : 'ระยะถึงเป้าไกลกว่าระยะถึงจุดที่โซนจบ'}
+            {/*
+              Said on the row, not in a footnote. A big ratio here comes from a
+              tiny denominator — price sitting on its own invalidation — and the
+              measurements say those signals are no better than any other.
+            */}
+            {actionable.notes.includes('risk_leg_inside_noise')
+              ? ' · ราคาปิดอยู่ชิดจุดที่โซนจะจบ ตัวเลขนี้จึงแกว่งแรงในแต่ละวันและไม่ได้แปลว่าโอกาสดีกว่า'
+              : ''}
+          </dd>
+        </div>
+      )}
+    </dl>
   );
 }
 

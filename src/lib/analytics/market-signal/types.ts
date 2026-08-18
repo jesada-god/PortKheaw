@@ -31,12 +31,17 @@ export type MarketSignalFlag =
   | 'pending_breakout'
   | 'pending_breakdown'
   | 'stale_zone'
-  | 'narrow_range';
+  | 'narrow_range'
+  // P3 (`SIGNAL_ACTIONABLE`). Never emitted while the flag is off.
+  | 'unfavorable_risk_reward'
+  | 'risk_leg_inside_noise';
 
 /** Which rollout phases the caller has turned on for this calculation. */
 export interface MarketSignalFeatures {
   gate: boolean;
   zones: boolean;
+  /** P3 reads the zone frame, so it does nothing unless `zones` is on too. */
+  actionable: boolean;
 }
 
 /**
@@ -74,8 +79,39 @@ export type MarketSignalZoneMode = 'structural' | 'atr_band';
  * "sideways" was doing the work of two very different sentences — QQQ 0.05 ATR
  * below its trigger and CL-F 4.9 ATR from the nearest one both read as the same
  * word, which told a reader nothing about which one was about to matter.
+ *
+ * What it does NOT mean, measured in P4a: it is not a reliability ranking.
+ * Directional accuracy is indistinguishable across all three bands at every
+ * horizon. What it predicts is how long the LABEL lasts, and only over about
+ * five bars — 64.8% of `near_trigger` zones are something else five bars later
+ * against 51.4% of `deep_range` ones. By twenty bars the gap is 1.5pp and
+ * `mid_range` is the least durable of the three.
  */
 export type MarketSignalZoneProximity = 'near_trigger' | 'mid_range' | 'deep_range';
+
+/**
+ * The frame the CURRENT zone was entered by breaking.
+ *
+ * Captured at the moment of the break rather than reconstructed afterwards,
+ * because the frame re-anchors on that same bar: by the time the walk finishes,
+ * the boundaries that were crossed no longer exist anywhere in the result. P3
+ * measures its target from here, so this is the difference between a target with
+ * a provenance and a number.
+ *
+ * `height` is `null` when the broken frame was an ATR band. That is not missing
+ * data — it is the rule that a band's height is a volatility multiple, so
+ * projecting it would produce exactly the invented-looking-calculated number the
+ * actionable layer refuses to publish.
+ */
+export interface MarketSignalZoneEntry {
+  /** The level price closed through: the broken frame's edge, before the buffer. */
+  level: number;
+  /** The broken frame's height, or `null` when it was an ATR band. */
+  height: number | null;
+  mode: MarketSignalZoneMode;
+  /** Finalized bars since the break. */
+  barsAgo: number;
+}
 
 export interface MarketSignalZones {
   mode: MarketSignalZoneMode;
@@ -115,6 +151,8 @@ export interface MarketSignalZones {
   /** A close is beyond a trigger but has not met the confirmation rule yet. */
   pendingBreakout: boolean;
   pendingBreakdown: boolean;
+  /** What was broken to enter the current zone; `null` in a sideways zone. */
+  entry: MarketSignalZoneEntry | null;
   /** The close the whole zone is measured from, and the bar it belongs to. */
   referenceClose: number;
   referenceDate: string;
@@ -145,6 +183,74 @@ export interface MarketSignalGate {
     conflict: number;
     earnings: number;
   };
+}
+
+/**
+ * Which edge of the zone the invalidation is.
+ *
+ * `zone_floor` is the level an uptrend stands on; `zone_ceiling` is the one a
+ * downtrend hangs from. They are the frame edges the engine's OWN hysteresis
+ * reads to decide the zone has ended — see `calculateActionable` for why that,
+ * and not the far side of the frame, is what "invalidated" means here.
+ */
+export type MarketSignalInvalidationBasis = 'zone_floor' | 'zone_ceiling';
+
+/** The only target derivation the engine will publish. See `calculateActionable`. */
+export type MarketSignalTargetBasis = 'measured_move';
+
+/**
+ * Why a number is missing, in machine-readable form.
+ *
+ * Every one of these is a reason the actionable layer declined to publish a
+ * figure. They exist as codes rather than as prose so a test can assert WHICH
+ * refusal happened, and so the UI can hide the right row instead of printing an
+ * em dash where a price should be.
+ */
+export type MarketSignalActionableNote =
+  /** A sideways zone claims no direction, so nothing about it can be invalidated. */
+  | 'no_direction_to_invalidate'
+  /** The frame is an ATR envelope, not levels the market traded against. */
+  | 'atr_band_fallback'
+  /** The zone's own edge is on the wrong side of the close; it cannot be a stop. */
+  | 'invalidation_behind_close'
+  /** Nothing with a measurable height was broken to enter this zone. */
+  | 'no_measurable_frame'
+  /** The projection has already been reached, so it is no longer ahead of price. */
+  | 'measured_move_reached'
+  /** The close sits so near its own invalidation that the ratio is dominated by noise. */
+  | 'risk_leg_inside_noise';
+
+/**
+ * The two numbers a reader would need before the card means anything.
+ *
+ * Present only when `SIGNAL_ACTIONABLE` is on AND a zone exists; absent — not
+ * null — otherwise. Inside it, `null` is a first-class answer and appears
+ * wherever structure does not support a figure, which on the current corpus is
+ * most of the time. That is the design: the alternative is manufacturing a level
+ * from an ATR multiple, which reads to a user as a derived number and is not one.
+ */
+export interface MarketSignalActionable {
+  /** Price at which the published zone stops being the zone. */
+  invalidation: number | null;
+  /** Absolute distance from the reference close, in ATR and in percent. */
+  invalidationAtr: number | null;
+  invalidationPct: number | null;
+  invalidationBasis: MarketSignalInvalidationBasis | null;
+  target: number | null;
+  targetAtr: number | null;
+  targetBasis: MarketSignalTargetBasis | null;
+  /**
+   * True whenever a target is published, and it is always true today.
+   *
+   * A measured move is a charting CONVENTION — the claim that a broken range
+   * tends to travel its own height again. It is not a measured property of these
+   * instruments, and nothing in this repo has tested it yet; P4a's harness is
+   * what turns it into a falsifiable claim. Until then the UI has to say so, and
+   * this is the field it reads to know it must.
+   */
+  targetIsConvention: boolean;
+  riskReward: number | null;
+  notes: MarketSignalActionableNote[];
 }
 
 export interface MarketSignalCandle extends HistoricalPrice {
@@ -229,6 +335,8 @@ interface MarketSignalBase {
   gate?: MarketSignalGate;
   /** P2 only. Omitted entirely when `SIGNAL_ZONES` is off, or when ATR is unavailable. */
   zones?: MarketSignalZones;
+  /** P3 only. Omitted entirely when `SIGNAL_ACTIONABLE` is off, or when there is no zone. */
+  actionable?: MarketSignalActionable;
 }
 
 export type MarketSignalResult = MarketSignalBase & ({
@@ -236,15 +344,38 @@ export type MarketSignalResult = MarketSignalBase & ({
   state: MarketSignalState;
   bias: MarketSignalBias;
   score: number;
+  /**
+   * @deprecated Read `evidenceAgreement`. Identical value, honest name.
+   *
+   * The word was wrong and P4a proved how wrong. This number measures how well
+   * the engine's own evidence agrees with itself; a reader sees a percentage
+   * beside a direction and reads a probability. Measured against outcomes, the
+   * 90-99 band hits 53-55% — the same as the 20-29 band — so as a probability it
+   * is off by up to 40 points and carries no ranking information below the
+   * 20-bar horizon. Kept, unchanged, because removing a field is not additive.
+   */
   confidence: number;
+  /** @deprecated Read `evidenceAgreementLabel`. */
   confidenceLabel: Exclude<MarketSignalConfidenceLabel, 'Insufficient'>;
+  /**
+   * How well the five evidence components agree with each other, 0-100.
+   *
+   * NOT a probability that price will do anything. Same value as `confidence`,
+   * which it replaces; both are emitted while callers migrate.
+   */
+  evidenceAgreement: number;
+  evidenceAgreementLabel: Exclude<MarketSignalConfidenceLabel, 'Insufficient'>;
 } | {
   status: 'insufficient-data';
   state: null;
   bias: null;
   score: null;
+  /** @deprecated Read `evidenceAgreement`. */
   confidence: 0;
+  /** @deprecated Read `evidenceAgreementLabel`. */
   confidenceLabel: 'Insufficient';
+  evidenceAgreement: 0;
+  evidenceAgreementLabel: 'Insufficient';
   reason: string;
 });
 
