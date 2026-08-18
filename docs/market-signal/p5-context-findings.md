@@ -3,11 +3,13 @@
 `npm run signal:context` · `scripts/signal-context-probe.ts` · 108 instruments,
 14,154 sampled days, same window / stride / horizons / split as the P4a run.
 
-The instrument list is read from run `20260818T092020Z`'s own manifest rather
-than from the corpus directory, which is a cache that grows: another probe
-fetching its own list added a 109th instrument mid-session, and a run that
-quietly measured 109 while calling itself comparable to a 108-instrument run
-would be two different things under one heading.
+The instrument list is read from the calibration manifest named by
+`MARKET_SIGNAL_MEASURED.runId` rather than from the corpus directory, which is a
+cache that grows: another probe fetching its own list added a 109th instrument
+mid-session, and a run that quietly measured 109 while calling itself comparable
+to a 108-instrument run would be two different things under one heading. The
+figures below were produced against `20260818T092020Z` and reproduce identically
+against the P4b re-run `20260818T113633Z`, which pins the same 108 instruments.
 
 **Outcome: nothing was built.** All four candidates fail the bar the brief set,
 and `SIGNAL_CONTEXT` stays off with nothing behind it. This document is the

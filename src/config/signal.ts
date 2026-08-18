@@ -343,7 +343,18 @@ export const MARKET_SIGNAL_ZONE = {
  * making a claim nobody can check.
  */
 export const MARKET_SIGNAL_MEASURED = {
-  runId: '20260818T092020Z',
+  /*
+   * P4b, and it is the P4a run again.
+   *
+   * The harness was re-run against the engine as it stands after P3, P4.5 and
+   * P5 — pinned with `--like=20260818T092020Z` to the identical 108 instruments,
+   * because `__golden__/corpus/` is a cache that grew by one instrument during
+   * P5 and two runs over different corpora are not comparable. The report came
+   * back BYTE-IDENTICAL to P4a's, every figure and every bucket. The engine's
+   * directional behaviour did not move, the harness is deterministic, and there
+   * was nothing to calibrate. See `docs/market-signal/p4b-findings.md`.
+   */
+  runId: '20260818T113633Z',
   corpusInstruments: 108,
   /*
    * The window the corpus covers, bound here so the card can say it.

@@ -1,7 +1,8 @@
 # Technical Outlook · Market Signal — what changed
 
 **Status: DRAFT.** Wording not approved. Figures come from calibration run
-`20260818T092020Z` over 108 instruments, 2023-04-09 to 2026-07-27.
+`20260818T113633Z` over 108 instruments, 2023-04-09 to 2026-07-27 — the P4b
+re-run, which reproduced its P4a predecessor byte for byte.
 
 ---
 
