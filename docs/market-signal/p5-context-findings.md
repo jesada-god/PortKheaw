@@ -100,18 +100,85 @@ no provider in the project backfills one, so there is no way to compute what an
 expected-move band would have said on 2024-03-15 and no way to score it. The
 other three failed a test; this one could not be given the test.
 
-Three honest options, none of which is "build it and see":
+**DECIDED: nothing is built.** No historical chain means it cannot be tested,
+and an untestable feature does not get made. The flag stays off and there is no
+code behind it.
 
-* **Leave it.** Nothing is lost that was ever measured.
-* **Record forward.** Snapshot the chain daily and revisit in a year. Cheap,
-  slow, and the only route to an actual answer.
-* **Ship it as disclosure, never as a signal** — the market's implied range,
-  labelled as the market's opinion rather than the product's, entitled to Elite
-  as specified. It would make no directional claim, so it needs no edge to
-  justify it, and it must not be allowed to move a label or a score.
+That leaves only the question of whether it is worth starting to COLLECT, so the
+question becomes answerable later. The arithmetic below is what that would cost
+in time, and it is worse than "revisit in a year".
 
-The third is defensible; it is a different product decision from the one P5 was
-scoped to make, and it is yours.
+### How long before a forward-collected chain could answer anything
+
+To conclude anything, the 95% interval has to exclude zero, so the interval's
+half-width must be smaller than the edge being looked for. On a rate near 50%
+that is `n > 0.96 / d²` INDEPENDENT observations, where `d` is the edge in
+decimal.
+
+```
+edge to detect | independent observations needed
+---------------|--------------------------------
+        2.0pp  |   2,401
+        1.0pp  |   9,604      <- the bar P5 actually used
+```
+
+Independent means non-overlapping outcome windows, which is `252 / horizon` per
+instrument per year — 50 at 5 bars, 25 at 10, 12.6 at 20. Of the 108 instruments
+in the corpus, roughly 85 have options liquid enough to quote a usable expected
+move (the three futures contracts, the crypto pairs and the thinner ETFs drop
+out). So one year of daily collection buys about:
+
+```
+horizon | independent observations per year
+--------|----------------------------------
+      5 |  ~4,300
+     10 |  ~2,100
+     20 |  ~1,070
+```
+
+Which gives:
+
+```
+                        | 5 bars | 10 bars | 20 bars
+------------------------|--------|---------|--------
+detect a 2pp edge       |  ~7 mo |  ~14 mo |  ~27 mo
+detect a 1pp edge (P5)  | ~27 mo |  ~55 mo | ~110 mo
+```
+
+**Read the bottom-right corner before deciding anything.** P5's criterion
+requires the edge to hold at every horizon, so the binding number is the 20-bar
+column: roughly **three years** of daily collection before a 2pp effect could be
+established across all three, and something like a decade for the 1pp bar this
+programme actually used.
+
+And that is only the sampling arithmetic. The regime rule from P4a applies on top:
+a collection window that spans one market state cannot satisfy "same sign on both
+halves of a split", so three years of a single rising market would fail the test
+even with the observations in hand.
+
+### What to do with that
+
+**The first honest look is at about twelve months, at the 5-bar horizon only, and
+it can only ever be suggestive.** Anything earlier is a number with an interval
+wider than any effect worth having.
+
+That is an argument for collecting cheaply and forgetting about it, not for
+planning a project around it. A daily row per symbol — spot, front-month expiry,
+days to it, ATM implied volatility, and the implied move it prices — is enough to
+reconstruct the signal later and is a few kilobytes a day. Nothing has to be
+built now, nothing has to be shown to anybody, and the decision to measure can be
+made in a year by somebody who has the data rather than by somebody estimating.
+
+If that collection is not started, this stays permanently unanswerable, which is
+also a legitimate choice — it is the current state and it has cost nothing.
+
+### The one thing that would NOT need any of this
+
+Shipping the market's implied range as **disclosure** — labelled as the market's
+opinion rather than the product's, Elite-entitled as specified — makes no
+directional claim, so it needs no edge to justify it. It would have to be barred
+from moving a label, a score or a threshold, and it is a different product
+decision from the one P5 was scoped to make. Still open, still yours.
 
 ## The verdicts as the script prints them
 
@@ -147,6 +214,91 @@ Two consequences, both load-bearing:
 2. **P4b inherits a train half in which the signal underperformed.** Fitting on
    that half and verifying on this test half would produce a flattering number by
    construction. This has to be said out loud wherever a P4b figure is quoted.
+
+---
+
+# OPEN QUESTION — the sign flip, and what "edge = 0" might be hiding
+
+**INTERNAL ONLY. This section must never reach the card, the changelog, the
+pricing page or any other reader-facing surface.** It is a hypothesis with no
+measurement behind it, and the distance between "we have not tested this" and "we
+found something" is exactly the distance this whole programme exists to keep.
+Nothing here weakens the not-a-forecast line: that line reports what WAS
+measured, and this is a note about what was not.
+
+## What was observed
+
+Four features that share no construction — relative strength against an index,
+a volume-profile location, a 20-bar price move, and the engine's own zone
+structure — are negative on the train half and positive on the test half, at
+every horizon, with the flip landing on the same date.
+
+Unrelated signals do not independently change sign on the same day. Something
+about the two periods differs systematically, and it acts on anything that leans
+on trend continuation. **The features are not broken. The halves are different.**
+
+## Why that matters more than it first appears
+
+The headline figure for every one of them, and for the engine, is the
+FULL-SAMPLE average of the two halves. If the two halves are two different
+market states in which the same signal genuinely behaves differently — helpful
+in one, harmful in the other — then an average near zero is not the absence of a
+signal. It is two signals of opposite sign cancelling.
+
+Those are very different statements about the product:
+
+* **"No signal"** — the engine's direction carries no information, and the card
+  is right to say so.
+* **"Two states cancelling"** — the direction carries information CONDITIONAL on
+  something not currently in the model, and the unconditional average hides it.
+
+P4a and P5 measured the first and cannot distinguish it from the second. The
+regime split by SPY's 200-day average is not that distinction either: it splits
+by a definition chosen in advance, and the flip does not line up with it — the
+`down` regime rows are small, noisy and inconsistent in sign at different
+horizons.
+
+## Why it has NOT been tested, and why testing it is dangerous
+
+This hypothesis has the shape that produces false discoveries most reliably:
+
+* the split point is **already known** from having looked at the data — any test
+  that uses the 2025-06-30 boundary is testing a boundary chosen because it
+  worked;
+* "find the conditioning variable that makes the edge appear" is a search over
+  an unbounded space of variables, and something always fits;
+* two halves means one degree of freedom and roughly 1,800 independent
+  observations per half at the 20-bar horizon, which is not enough to establish a
+  conditional effect that the unconditional test could not see;
+* a conditional model that works is indistinguishable, on this corpus, from a
+  model that has learned the dates.
+
+So the requirements for taking it seriously are stricter than P5's, not looser:
+
+1. the conditioning variable must be **named and defined in advance**, from
+   economic reasoning rather than from inspecting the split;
+2. it must be computable **at the as-of bar** with no look-ahead — a regime label
+   that needs to see the following month is not a feature, it is the answer;
+3. it must be tested on a **third period** the corpus does not currently contain,
+   because both existing halves have been looked at;
+4. the effect must survive with the split point moved — if it only exists at
+   2025-06-30, it is that date and not a regime;
+5. a stated correction for the number of conditioning variables tried, since the
+   whole risk here is that trying enough of them guarantees one.
+
+Until all five are met, the product's position is unchanged and is the one on the
+card: **no edge was found.** That statement remains true and is not softened by
+this note — "we did not find one" is exactly what it says, and this is a note
+about a place nobody has looked yet.
+
+## What would actually settle it
+
+More corpus, not more cleverness. The corpus covers 2023-04 to 2026-07 and is
+mostly one rising market. A backwards extension through 2020-2022 would supply a
+genuine drawdown and a genuine recovery, and would let the question be asked with
+the split defined before the data is seen. That is a data-collection task, not a
+modelling one, and it is the only version of this that could produce an answer
+worth acting on.
 
 ## `completeness` is still inert, as predicted
 

@@ -20,6 +20,7 @@ record what was measured and what the product is therefore allowed to say:
 | `p5-context-findings.md` | Whether any of the four context features beats the base rate. None does; none was built. |
 | `p6-history-findings.md` | Whether a label that has stood longer is a more accurate one. It is not, which is what makes the history strip a disclosure and forbids it from ranking. |
 | `p4b-findings.md` | Whether there is anything to calibrate. There is not, and the reliability table is not even monotone, so a remap would restore the misreading P4.5 removed. |
+| `prediction-language-audit.md` | Every place in the app that describes this feature with a word implying prediction, with proposed replacements. **Awaiting the owner — nothing changed.** |
 
 And one operational note:
 
