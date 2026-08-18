@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
 import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
@@ -785,6 +785,19 @@ const THAI_COMBINING = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/;
 
 /** `px-1.5` on both sides of a chip, which is what the padding costs. */
 const CHIP_PADDING_PX = 12;
+/** `px-1` on both sides of a field's name. */
+const NAME_PADDING_PX = 8;
+/**
+ * How each kind of caption is drawn, in one place, because the invisible copy
+ * that gets measured has to be drawn the same way as the caption it stands for.
+ * A copy in a different face measures a different width, and a width that is
+ * wrong is a caption placed somewhere its own box is not.
+ */
+const CAPTION_STYLE = {
+  price: 'px-1.5 py-0.5 text-[10px] font-semibold',
+  level: 'font-mono text-[10px]',
+  name: 'px-1 text-[10px] font-semibold tracking-wide',
+} as const;
 
 export function estimateLabelWidth(text: string, { padding = 0, mono = false } = {}): number {
   let width = padding;
@@ -814,17 +827,6 @@ export const LABEL_BIAS = { centre: 0.5, growLeft: 1, growRight: 0 } as const;
 /** A caption, and everything needed to place it: `at` is a percent of the track. */
 export interface FloatingLabel { at: number; width: number; bias: number }
 
-/**
- * The narrowest track the bar is ever measured on.
- *
- * 320px of viewport leaves the card 220px of track (`qa:signal-zone-bar`
- * measures 220/260/290 at its three widths), and 216 keeps a couple of pixels
- * in hand. It is used ONLY to decide whether two labels would collide, never to
- * position one: the collision rule has to give the same answer at every width
- * or the bar would rearrange itself between two phones, and answering it on the
- * narrowest track is the answer that is safe on all of them.
- */
-const MIN_TRACK_PX = 216;
 /** Closer than this and two captions read as one run of text. */
 const LABEL_MIN_GAP_PX = 4;
 
@@ -837,12 +839,19 @@ function labelLeftPx(track: number, label: FloatingLabel): number {
 /**
  * Would these two labels touch?
  *
- * Answered on the narrowest track by default, because a label's width does not
- * shrink with the phone but the distance between two marks does: the crowded
- * case is always the narrow one, and a bar that merges captions at 320px and
- * splits them at 390px is two different pictures of the same fact.
+ * Answered on the track the reader actually has, which is why `track` is a
+ * required argument rather than a constant. The version this replaced answered
+ * it on a hypothetical 216px track at every width, so a 640px bar with 90px of
+ * clear air between two captions merged them anyway — and a merged caption is
+ * strictly worse than two, because "ปิด 44.9 · สด 42.14" over two marks a
+ * centimetre apart no longer says which number belongs to which line.
+ *
+ * The two boxes are the whole rule. Not the distance between the prices, not a
+ * percentage of the frame, not a threshold: where the two captions are actually
+ * drawn, and whether those rectangles touch. `ZoneBar` feeds this the widths it
+ * measured off the rendered spans, so the answer is the one a reader can see.
  */
-export function labelsCollide(a: FloatingLabel, b: FloatingLabel, track: number = MIN_TRACK_PX): boolean {
+export function labelsCollide(a: FloatingLabel, b: FloatingLabel, track: number): boolean {
   const aLeft = labelLeftPx(track, a);
   const bLeft = labelLeftPx(track, b);
   return aLeft < bLeft + b.width + LABEL_MIN_GAP_PX && bLeft < aLeft + a.width + LABEL_MIN_GAP_PX;
@@ -922,7 +931,7 @@ function caption(
   text: string,
   at: number,
   marks: Array<{ key: string; at: number }>,
-  mono = false,
+  { mono = false, width }: { mono?: boolean; width?: number } = {},
 ): Caption {
   return {
     key,
@@ -931,7 +940,10 @@ function caption(
     marks,
     mono,
     bias: LABEL_BIAS.centre,
-    width: estimateLabelWidth(text, mono ? { mono: true } : { padding: CHIP_PADDING_PX }),
+    // The measured width when the browser has given one, the estimate until
+    // then. The estimate exists for the first paint and for the server; it is
+    // not what the collision rule runs on once there is a real box to read.
+    width: width ?? estimateLabelWidth(text, mono ? { mono: true } : { padding: CHIP_PADDING_PX }),
   };
 }
 
@@ -944,31 +956,43 @@ function caption(
  * labels can have while both still sit on the line they name. `null` means even
  * that is not enough, and the caller has to say both things in one caption.
  *
- * The answer is computed on the narrowest track (see `labelsCollide`), so the
- * arrangement is the same on every phone. Returned in left-to-right order.
+ * The answer is computed on the track passed in — the measured one — so a wide
+ * bar keeps two captions that a phone has to collapse. Left-to-right order.
  */
-export function spreadLabels<T extends FloatingLabel>(a: T, b: T): [T, T] | null {
+export function spreadLabels<T extends FloatingLabel>(a: T, b: T, track: number): [T, T] | null {
   const [left, right] = a.at <= b.at ? [a, b] : [b, a];
-  if (!labelsCollide(left, right)) return [left, right];
+  if (!labelsCollide(left, right, track)) return [left, right];
   const grown: [T, T] = [
     { ...left, bias: LABEL_BIAS.growLeft },
     { ...right, bias: LABEL_BIAS.growRight },
   ];
-  return labelsCollide(grown[0], grown[1]) ? null : grown;
+  return labelsCollide(grown[0], grown[1], track) ? null : grown;
 }
 
 /**
  * Where a field writes its own name, given where the price marker is standing.
  *
- * Centred, unless the marker is standing in this field — then the name moves to
- * whichever half the marker is not in. The marker is the one mark a reader has
- * to find and the name is the one word that explains the field, so letting a
- * 6px bar sit across the first glyph costs both of them for no reason.
+ * Against the cut it is about, not in the middle of its own field. "ขาลง" is
+ * the name of everything BELOW the lower trigger, and the trigger is that
+ * field's right-hand edge; "ขาขึ้น" is everything above the upper one, whose
+ * edge is on its left. Centring put each name as far from the line that defines
+ * it as the field allowed — on a wide bar that was 200px of empty red before
+ * the word that explained the red — so each name now sits on its own boundary
+ * and the middle field, which is bounded on both sides, stays centred.
+ *
+ * The marker still wins the tie. It is the one mark a reader has to find, and
+ * letting a 6px bar sit across the first glyph costs both of them for no
+ * reason, so a name whose end of the field is occupied moves to the other end.
  */
 function nameAlignment(segment: { id: string; left: number; width: number }, markerAt: number): string {
+  const preferred = segment.id === 'downtrend' ? 'justify-end'
+    : segment.id === 'uptrend' ? 'justify-start'
+      : 'justify-center';
   const inside = segment.width > 0 && markerAt >= segment.left && markerAt <= segment.left + segment.width;
-  if (!inside) return 'justify-center';
-  return (markerAt - segment.left) / segment.width < 0.5 ? 'justify-end' : 'justify-start';
+  if (!inside) return preferred;
+  const occupied = (markerAt - segment.left) / segment.width < 0.5 ? 'justify-start' : 'justify-end';
+  const away = occupied === 'justify-start' ? 'justify-end' : 'justify-start';
+  return preferred === 'justify-center' || preferred === occupied ? away : preferred;
 }
 
 const priceText = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -985,6 +1009,82 @@ const priceText = (value: number) => value.toLocaleString('en-US', { maximumFrac
  */
 const markerPriceText = (value: number) =>
   value.toLocaleString('en-US', { maximumFractionDigits: Math.abs(value) >= 1000 ? 0 : 2 });
+
+/**
+ * What the browser says the zone block actually measures.
+ *
+ * Every placement decision on this bar is a question about two rectangles —
+ * does this caption still fit beside that one — and until this hook there was
+ * nothing on the page answering it. The layout ran on `estimateLabelWidth`
+ * against a hypothetical 216px track, which is the narrowest phone; on a 640px
+ * bar that answered "these two captions collide" about captions with 90px of
+ * clear air between them, and merged two labels that had room to stand apart.
+ *
+ * So the widths are read off the rendered spans and the track is read off the
+ * row itself. The estimate stays for the first paint and for the server render,
+ * where there is no browser to ask, and a track of 0 means exactly that — not
+ * measured — never "no room".
+ *
+ * The captions are measured on invisible COPIES rather than on the drawn
+ * labels, because the drawn ones depend on the decision: once two captions have
+ * merged, the two separate boxes no longer exist to be measured, and the bar
+ * could never discover that a wider window had made room for them again. The
+ * copies carry every caption the bar might draw, so the same measurement
+ * answers the question in both directions and the arrangement follows the
+ * window instead of latching.
+ */
+interface ZoneMetrics { track: number; widths: Record<string, number> }
+
+/**
+ * Measured before the browser paints, so the corrected arrangement is the first
+ * one a reader sees — and `useEffect` on the server, where React warns that a
+ * layout effect can do nothing and is right.
+ */
+const useMeasureEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+function useZoneMetrics(probeKey: string): [ZoneMetrics | null, React.RefObject<HTMLDivElement | null>] {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [metrics, setMetrics] = useState<ZoneMetrics | null>(null);
+
+  const read = useCallback(() => {
+    const node = trackRef.current;
+    if (!node) return;
+    const track = node.getBoundingClientRect().width;
+    if (!(track > 0)) return;
+    const widths: Record<string, number> = {};
+    for (const probe of node.querySelectorAll<HTMLElement>('[data-measure]')) {
+      const key = probe.dataset.measure;
+      if (key) widths[key] = probe.getBoundingClientRect().width;
+    }
+    setMetrics((previous) => {
+      // Re-rendering on a subpixel wobble would put the bar in a resize loop
+      // for no visible gain, so an unchanged reading returns the same object.
+      const unchanged = previous !== null
+        && Math.abs(previous.track - track) < 0.5
+        && Object.keys(widths).length === Object.keys(previous.widths).length
+        && Object.entries(widths).every(([key, value]) => Math.abs((previous.widths[key] ?? -1) - value) < 0.5);
+      return unchanged ? previous : { track, widths };
+    });
+  }, []);
+
+  useMeasureEffect(() => {
+    const node = trackRef.current;
+    if (!node) return;
+    read();
+    // jsdom has no ResizeObserver and no layout either, so there is nothing for
+    // it to observe; the one-shot read above is the whole contract there.
+    if (typeof ResizeObserver === 'undefined') return;
+    // The track for the window changing, and each copy for the FONT changing:
+    // a webfont that arrives after first paint makes every caption wider
+    // without moving the row it sits in.
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    for (const probe of node.querySelectorAll('[data-measure]')) observer.observe(probe);
+    return () => observer.disconnect();
+  }, [read, probeKey]);
+
+  return [metrics, trackRef];
+}
 
 /**
  * The zone bar.
@@ -1087,53 +1187,119 @@ function ZoneBar({ zones, livePrice, actionable }: {
    * it, and neither row can grow into the other.
    */
   const closeText = `ตอนนี้ ${markerPriceText(referenceClose)}`;
-  const closeCaption = caption('close', closeText, closeAt, [{ key: 'close', at: closeAt }]);
-  const liveCaption = liveAt === null
-    ? null
-    : caption('live', `สด ${markerPriceText(livePrice as number)}`, liveAt, [{ key: 'live', at: liveAt }]);
+  const liveText = liveAt === null ? null : `สด ${markerPriceText(livePrice as number)}`;
+  const mergedText = liveText === null
+    ? ''
+    : `ปิด ${markerPriceText(referenceClose)} · สด ${markerPriceText(livePrice as number)}`;
+  const lowerText = markerPriceText(lowerTrigger);
+  const upperText = markerPriceText(upperTrigger);
+  const edgesText = `${lowerText} · ${upperText}`;
+
   /*
-   * One caption for two prices, when two captions will not fit.
+   * Every caption this bar could draw, drawn once where nobody can see it.
    *
-   * `spreadLabels` gets first refusal: centred, then each caption grown away
-   * from the other so it starts or ends on its own mark. Only when even that
-   * overlaps do the two collapse into a single caption naming both prices in
-   * reading order, anchored between the marks with a leader to each of them —
-   * which is the case where the live price is sitting on the close or on the
-   * trigger beside it, and where moving the captions apart would be a lie about
-   * where the marks are.
+   * The merged forms are in here beside the split ones on purpose: the decision
+   * between them needs both widths, and the one it did not choose is not in the
+   * document to be measured. See `useZoneMetrics`.
+   */
+  const probes: Array<{ key: string; text: string; style: keyof typeof CAPTION_STYLE }> = [
+    { key: 'close', text: closeText, style: 'price' },
+    ...(liveText === null ? [] : [
+      { key: 'live', text: liveText, style: 'price' as const },
+      { key: 'prices', text: mergedText, style: 'price' as const },
+    ]),
+    ...(hasFrame ? [
+      { key: 'edge-lower', text: lowerText, style: 'level' as const },
+      { key: 'edge-upper', text: upperText, style: 'level' as const },
+      { key: 'edges', text: edgesText, style: 'level' as const },
+    ] : []),
+    ...(Object.keys(ZONE_SEGMENT_COPY) as Array<keyof typeof ZONE_SEGMENT_COPY>).map((id) => ({
+      key: `zone-${id}`,
+      text: ZONE_SEGMENT_COPY[id],
+      style: 'name' as const,
+    })),
+  ];
+  const [metrics, trackRef] = useZoneMetrics(probes.map((probe) => probe.text).join('|'));
+  const track = metrics?.track ?? 0;
+  const measured = (key: string) => metrics?.widths[key];
+
+  const closeCaption = caption('close', closeText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('close') });
+  const liveCaption = liveAt === null || liveText === null
+    ? null
+    : caption('live', liveText, liveAt, [{ key: 'live', at: liveAt }], { width: measured('live') });
+  /*
+   * One caption for two prices, and only when the two boxes genuinely overlap.
+   *
+   * TWO captions is the normal arrangement and the one this tries hardest to
+   * keep: each one names one price and has a leader down to its own mark, which
+   * is the only version where a reader can tell which number belongs to which
+   * line. `spreadLabels` gets first refusal on the MEASURED track — centred,
+   * then each caption grown away from the other so it starts or ends on its own
+   * mark — and merging happens only when even that leaves the two rectangles
+   * touching. Before the browser has measured anything the answer is two
+   * captions, because merging is a concession and a concession made without a
+   * measurement is a guess.
+   *
+   * The merged caption is anchored on the CLOSE and leads to the close mark
+   * alone. It used to sit at the midpoint with a leader to each mark, which put
+   * "ปิด 44.9 · สด 42.14" between two lines while pointing at both — a reader
+   * who cannot pair a number with a line is worse off than one who has to look
+   * up a second number. The close is the mark that gets the caption because it
+   * is the price every figure on this card is measured from; the live mark is
+   * still drawn, and the sentence under the bar still states the live price in
+   * full.
    *
    * What does NOT collapse is the marks. Two prices are always two lines on the
    * bar, because the lines are the fact and the caption is only the reading.
    */
-  const spreadCaptions = liveCaption === null ? null : spreadLabels(closeCaption, liveCaption);
-  const mergedText = liveCaption === null
-    ? ''
-    : `ปิด ${markerPriceText(referenceClose)} · สด ${markerPriceText(livePrice as number)}`;
-  const captions = liveCaption === null
-    ? [closeCaption]
-    : spreadCaptions ?? [caption(
-      'prices',
-      mergedText,
-      (closeCaption.at + liveCaption.at) / 2,
-      [closeCaption.marks[0], liveCaption.marks[0]],
-    )];
+  const captions = ((): Caption[] => {
+    if (liveCaption === null) return [closeCaption];
+    if (track === 0) return [closeCaption, liveCaption];
+    const spread = spreadLabels(closeCaption, liveCaption, track);
+    if (spread) return spread;
+    return [caption('prices', mergedText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('prices') })];
+  })();
 
   /*
-   * The edge prices, laid out by the same three rules. A pair that cannot be
-   * spread merges the same way the price captions do — both levels in one
-   * caption between the two cuts — rather than being drawn on top of each other
-   * or quietly dropped.
+   * The edge prices, laid out by the same three rules. The two cuts are the two
+   * ends of the frame, so on any track wide enough to read they never come to
+   * this — but a pair that truly cannot be spread merges into one caption
+   * between the cuts, in reading order and with a leader to each, rather than
+   * being drawn on top of each other or quietly dropped.
    */
-  const lowerEdge = caption('edge-lower', markerPriceText(lowerTrigger), lowerAt, [{ key: 'lower', at: lowerAt }], true);
-  const upperEdge = caption('edge-upper', markerPriceText(upperTrigger), upperAt, [{ key: 'upper', at: upperAt }], true);
-  const spreadEdges = spreadLabels(lowerEdge, upperEdge);
-  const edges = !hasFrame ? [] : spreadEdges ?? [caption(
-    'edges',
-    `${markerPriceText(lowerTrigger)} · ${markerPriceText(upperTrigger)}`,
-    (lowerAt + upperAt) / 2,
-    [lowerEdge.marks[0], upperEdge.marks[0]],
-    true,
-  )];
+  const lowerEdge = caption('edge-lower', lowerText, lowerAt, [{ key: 'lower', at: lowerAt }], { mono: true, width: measured('edge-lower') });
+  const upperEdge = caption('edge-upper', upperText, upperAt, [{ key: 'upper', at: upperAt }], { mono: true, width: measured('edge-upper') });
+  const edges = ((): Caption[] => {
+    if (!hasFrame) return [];
+    if (track === 0) return [lowerEdge, upperEdge];
+    return spreadLabels(lowerEdge, upperEdge, track) ?? [caption(
+      'edges',
+      edgesText,
+      (lowerAt + upperAt) / 2,
+      [lowerEdge.marks[0], upperEdge.marks[0]],
+      { mono: true, width: measured('edges') },
+    )];
+  })();
+
+  /*
+   * Whether a field is wide enough to carry its own name.
+   *
+   * The rule used to be "at least 12% of the track", which is a percentage
+   * standing in for a width: 12% of a 220px phone track is 26px and "ขาลง" is
+   * 38px, so the word was drawn a pixel into the field beside it and named the
+   * wrong thing. Measured, the question is the one actually being asked — is
+   * this field wider than this word — and the 12% rule survives only as the
+   * answer for the first paint, where nothing has been measured yet.
+   *
+   * A field that cannot carry its name is drawn without one. Nothing is lost:
+   * the fields are still coloured in the same order, and the zone the price is
+   * standing in is named in words above the bar.
+   */
+  const nameWidth = (id: keyof typeof ZONE_SEGMENT_COPY) => measured(`zone-${id}`)
+    ?? estimateLabelWidth(ZONE_SEGMENT_COPY[id], { padding: NAME_PADDING_PX });
+  const fitsItsName = (id: keyof typeof ZONE_SEGMENT_COPY, width: number) => (
+    track === 0 ? width >= 12 : (width / 100) * track >= nameWidth(id) + 2
+  );
 
   const segments = [
     {
@@ -1163,8 +1329,25 @@ function ZoneBar({ zones, livePrice, actionable }: {
   ];
 
   return (
-    <div className="mt-4 rounded-xl border border-current/20 p-3" data-testid="signal-zone-bar">
-      <p className="text-sm font-semibold">
+    /*
+      A reading width, not the width of the screen.
+
+      The bar used to stretch the whole card — about 1,500px on a desktop — and
+      everything on it paid for that. Two marks a percent apart were flung a
+      hand's width apart, each field's name floated in the middle of an ocean of
+      its own colour, and the eye had to travel the full width of the window to
+      carry a caption back to the line it named. None of that is a font-size
+      problem; it is a measure problem, the same one that stops body text from
+      running the width of a page.
+
+      640px is the whole zone block — bar, captions, edge prices and every line
+      under them — so the block reads as one object and the QA rule that every
+      row lines up with the ends of the track has one width to check against. On
+      a phone `max-w` never binds and the block is as wide as the card, which is
+      where it was already right.
+    */
+    <div className="mx-auto mt-4 w-full max-w-[640px] rounded-xl border border-current/20 p-3" data-testid="signal-zone-bar">
+      <p className="text-sm font-semibold" data-zone-row="headline">
         {ZONE_COPY[zone]}
         {freshlyFormed ? <span className="font-normal text-slate-300"> แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย</span> : null}
       </p>
@@ -1187,14 +1370,14 @@ function ZoneBar({ zones, livePrice, actionable }: {
         because it is not one.
       */}
       {zones.proximity === 'near_trigger' ? (
-        <p className="mt-1 text-[11px] leading-5 text-slate-400">
+        <p className="mt-1 text-[11px] leading-5 text-slate-400" data-zone-row="proximity">
           {zones.nearestTriggerAtr < 0
             ? 'ราคาเลยขอบกรอบมาแล้ว'
             : `ราคาใกล้ขอบกรอบแล้ว (ห่างอีก ${percentText(nearestDistance, referenceClose)})`}
           {' โซนนี้จึงเปลี่ยนได้ในไม่กี่วันทำการ'}
         </p>
       ) : zones.proximity === 'deep_range' ? (
-        <p className="mt-1 text-[11px] leading-5 text-slate-400">
+        <p className="mt-1 text-[11px] leading-5 text-slate-400" data-zone-row="proximity">
           {'ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด '}{percentText(nearestDistance, referenceClose)}
         </p>
       ) : null}
@@ -1204,7 +1387,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
         on it is stated again in the list underneath, which is the version a
         screen reader can actually walk.
       */}
-      <div className="mt-3" aria-hidden="true">
+      <div className="mt-3" aria-hidden="true" data-zone-row="picture">
         {/*
           ROW ONE — the prices, each caption on its own mark.
 
@@ -1213,7 +1396,22 @@ function ZoneBar({ zones, livePrice, actionable }: {
           caption is painted over them rather than under them, and they carry no
           text, which is how `qa:signal-zone-bar` tells a label from a line.
         */}
-        <div className="relative h-7" data-track="prices">
+        <div className="relative h-7" data-track="prices" data-zone-row="prices" ref={trackRef}>
+          {/*
+            The measuring copies: one per caption the bar could draw, invisible,
+            out of the flow, and never read by anybody. `visibility:hidden` and
+            not `display:none` because a box with no display has no width to
+            measure, which is the entire reason they are here.
+          */}
+          {probes.map((probe) => (
+            <span
+              key={`measure-${probe.key}`}
+              data-measure={probe.key}
+              className={`pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap ${CAPTION_STYLE[probe.style]}`}
+            >
+              {probe.text}
+            </span>
+          ))}
           {captions.flatMap((price) => price.marks.map((mark) => (
             <div
               key={`leader-${price.key}-${mark.key}`}
@@ -1245,7 +1443,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
           ))}
         </div>
 
-        <div className="relative h-9" data-track="bar">
+        <div className="relative h-9" data-track="bar" data-zone-row="bar">
           {segments.map((segment) => (
             <div
               key={segment.id}
@@ -1254,10 +1452,8 @@ function ZoneBar({ zones, livePrice, actionable }: {
               className={`absolute inset-y-0 flex items-center ${nameAlignment(segment, closeAt)} ${segment.round} ${zone === segment.id ? segment.activeTone : segment.tone}`}
               style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
             >
-              {/* Below this width the name would spill into the next field. The
-                  list underneath still names both directions, so nothing is lost. */}
-              {segment.width >= 12 ? (
-                <span data-label={`zone-${segment.id}`} className="px-1 text-[10px] font-semibold tracking-wide">
+              {fitsItsName(segment.id, segment.width) ? (
+                <span data-label={`zone-${segment.id}`} className={CAPTION_STYLE.name}>
                   {ZONE_SEGMENT_COPY[segment.id]}
                 </span>
               ) : null}
@@ -1307,7 +1503,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
           reading as part of "สด 42.59". Each one now has a stem up to its own cut
           and a leader for the case where it had to move off it.
         */}
-        <div className="relative mt-1 h-6" data-track="edges">
+        <div className="relative mt-1 h-6" data-track="edges" data-zone-row="edges">
           {edges.flatMap((edge) => edge.marks.map((mark) => (
             <div
               key={`stem-${edge.key}-${mark.key}`}
@@ -1338,23 +1534,24 @@ function ZoneBar({ zones, livePrice, actionable }: {
         </div>
       </div>
 
-      {/* Down on the left, up on the right — the same order as the bar. */}
-      <dl className="mt-2 grid gap-x-4 gap-y-2 text-[11px] text-slate-300 sm:grid-cols-2">
-        <ZoneRow
-          label="ถ้าปิดต่ำกว่า"
-          value={lowerTrigger}
-          relative={relativeCopy(zones.lowerDistance, referenceClose, 'below')}
-          note="ถือว่าเข้าโซนขาลง"
-          dotClass="bg-red-400/70"
-        />
-        <ZoneRow
-          label="ถ้าปิดเหนือ"
-          value={upperTrigger}
-          relative={relativeCopy(zones.upperDistance, referenceClose, 'above')}
-          note="ถือว่าเข้าโซนขาขึ้น"
-          dotClass="bg-emerald-400/70"
-        />
-      </dl>
+      {/*
+        The two trigger rows are gone, and nothing went with them.
+
+        "ถ้าปิดต่ำกว่า 38.26 · ต่ำกว่าตอนนี้ 13.2% · ถือว่าเข้าโซนขาลง" said in a
+        sentence what the drawing two rows above it draws: the number is printed
+        under its own cut, the field beyond the cut is coloured and named, and
+        the proximity line already carries the distance to the nearest one. It
+        was the same fact a third time, in the reader's least favourite form,
+        and it cost two of the eight lines under a bar that has to be read in
+        ten seconds. The colour is kept — it is on the fields themselves, which
+        is where it belongs.
+
+        It was also the row that broke the block's alignment: a two-column grid
+        whose right cell started at 50% and ran to about 70%, so the up
+        condition ended in the middle of nowhere with a third of the block empty
+        beside it. Whatever replaces a row here goes full width, and
+        `qa:signal-zone-bar` now fails any row in this block that does not.
+      */}
 
       {/*
         The live price said as a status, and weighted by whether it matters.
@@ -1370,6 +1567,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
       {hasLive ? (
         <p
           data-testid="signal-live-price"
+          data-zone-row="live"
           data-diverges={liveDiverges ? 'true' : 'false'}
           className={`mt-2 text-[11px] leading-5 ${liveDiverges ? 'font-semibold text-amber-200' : 'text-slate-400'}`}
         >
@@ -1384,10 +1582,15 @@ function ZoneBar({ zones, livePrice, actionable }: {
 
       {actionable ? <ActionableRows zones={zones} actionable={actionable} /> : null}
 
-      <p className="mt-2 text-[11px] leading-5 text-slate-500">
-        ตัวเลขทั้งหมดวัดจากราคาปิด {priceText(referenceClose)} วันที่ {zones.referenceDate}
+      {/*
+        Both provenance sentences on one line, because they are one fact: which
+        price every number here came from, and what counts as that price. Two
+        greyed lines at the bottom of a card read as boilerplate and get skipped
+        together; one reads as a footnote and gets read.
+      */}
+      <p className="mt-2 text-[11px] leading-5 text-slate-500" data-zone-row="source">
+        ตัวเลขทั้งหมดวัดจากราคาปิด {priceText(referenceClose)} วันที่ {zones.referenceDate} · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน
       </p>
-      <p className="text-[11px] leading-5 text-slate-500">นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน</p>
     </div>
   );
 }
@@ -1429,7 +1632,7 @@ function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actio
     : relativeCopy(Math.abs(target - close), close, target > close ? 'above' : 'below');
 
   return (
-    <dl className="mt-3 space-y-2 border-t border-current/15 pt-2 text-[11px] leading-5 text-slate-300" data-testid="signal-actionable">
+    <dl className="mt-3 space-y-2 border-t border-current/15 pt-2 text-[11px] leading-5 text-slate-300" data-testid="signal-actionable" data-zone-row="actionable">
       {invalidation === null ? null : (
         <div className="flex flex-wrap items-baseline gap-x-2">
           <dt className="text-slate-400">ถ้า{ends}</dt>
@@ -1468,29 +1671,6 @@ function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actio
         beginner's surface at all; it needs to be findable, and it is.
       */}
     </dl>
-  );
-}
-
-function ZoneRow({ label, value, relative, note, dotClass }: {
-  label: string;
-  value: number | null;
-  relative: string;
-  note: string;
-  dotClass: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-2 py-0.5">
-      <dt className="flex items-center gap-1.5 text-slate-400">
-        <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />
-        {label}
-      </dt>
-      <dd className="font-mono text-white">{value === null ? '—' : priceText(value)}</dd>
-      {value === null ? (
-        <dd className="text-slate-500">ยังไม่มีขอบกรอบฝั่งนี้</dd>
-      ) : (
-        <dd className="text-slate-500">{relative ? `${relative} · ` : ''}{note}</dd>
-      )}
-    </div>
   );
 }
 
