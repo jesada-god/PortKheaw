@@ -286,6 +286,29 @@ export const MARKET_SIGNAL_ZONE = {
    */
   anchor: {
     lookbackBars: 120,
+    /*
+     * The third way a frame can move, and the one that stops a wide frame from
+     * outliving its usefulness.
+     *
+     * A frame only re-anchors on a confirmed break or on a pivot forming
+     * outside it — and a WIDE frame is self-perpetuating under those two rules,
+     * because almost nothing forms outside it. CL-F sat on a 56-wide frame that
+     * price had not come near in 110 bars, permanently 9.4 ATR from its own
+     * trigger. Once neither edge has been tested for this many bars the frame
+     * has stopped describing anything and is rebuilt from current structure,
+     * without waiting for a pivot to give permission.
+     */
+    untestedReanchorBars: 60,
+  },
+  /*
+   * Two instruments can both be "sideways" and mean completely different
+   * things: QQQ sat 0.05 ATR under its trigger while CL-F sat 4.9 ATR from the
+   * nearest one. Same word, opposite situations. These split the state for
+   * DESCRIPTION only — they change no label and no rule.
+   */
+  proximity: {
+    nearTriggerAtr: 0.5,
+    deepRangeAtr: 3,
   },
   /*
    * How far back the zone walk starts — the window over which the frame is

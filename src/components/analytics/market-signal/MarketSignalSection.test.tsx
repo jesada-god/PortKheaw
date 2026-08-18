@@ -264,6 +264,8 @@ describe('MarketSignalSection', () => {
         lowerDistance: 5.8017,
         lowerDistanceAtr: 1.43,
         frameAgeBars: 12,
+        proximity: 'near_trigger',
+        nearestTriggerAtr: 0.78,
         zoneAgeBars: 9,
         lastTestedBarsAgo: 0,
         triggerCrossings: 14,

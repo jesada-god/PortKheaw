@@ -67,6 +67,16 @@ export type MarketSignalZoneName = 'uptrend' | 'sideways' | 'downtrend';
  */
 export type MarketSignalZoneMode = 'structural' | 'atr_band';
 
+/**
+ * How close price is to the nearest edge of its frame.
+ *
+ * Descriptive only: it changes no label and no rule. It exists because
+ * "sideways" was doing the work of two very different sentences — QQQ 0.05 ATR
+ * below its trigger and CL-F 4.9 ATR from the nearest one both read as the same
+ * word, which told a reader nothing about which one was about to matter.
+ */
+export type MarketSignalZoneProximity = 'near_trigger' | 'mid_range' | 'deep_range';
+
 export interface MarketSignalZones {
   mode: MarketSignalZoneMode;
   /** The zone the latest FINALIZED close sits in, after confirmation and hysteresis. */
@@ -87,6 +97,10 @@ export interface MarketSignalZones {
   lowerDistanceAtr: number;
   /** Bars since the frame was last anchored or re-anchored. */
   frameAgeBars: number;
+  /** Descriptive split of the zone; changes no label. */
+  proximity: MarketSignalZoneProximity;
+  /** ATR to the nearest trigger. Negative once price is through one. */
+  nearestTriggerAtr: number;
   /** How many finalized bars price has held this zone under today's boundaries. */
   zoneAgeBars: number;
   /** Bars since a bar's range last reached either level; `null` if never within the walk. */

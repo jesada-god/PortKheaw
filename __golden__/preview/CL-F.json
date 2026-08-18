@@ -1,30 +1,47 @@
 {
   "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 69,
+  "confidence": 42,
   "confidenceBreakdown": {
-    "agreement": 93,
-    "completeness": 93,
+    "agreement": 70,
+    "completeness": 100,
     "conflictPenalty": 15,
-    "evidenceStrength": 37,
+    "evidenceStrength": 32,
     "regimeClarity": 60,
-    "volumeConfirmation": 50
+    "volumeConfirmation": 80
   },
-  "confidenceLabel": "Medium",
+  "confidenceLabel": "Low",
   "dataPoints": {
     "finalized": 1256,
     "received": 1257
   },
   "flags": [
-    "bullish_divergence",
     "weak_confirmation",
-    "stale_zone"
+    "conflicting_evidence",
+    "low_volume_confirmation"
   ],
   "freshness": {
     "asOf": "2026-08-17T04:00:00.000Z",
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
+  },
+  "gate": {
+    "band": "neutral",
+    "confidenceFactors": {
+      "agreement": 0.85,
+      "base": 72.9,
+      "completeness": 1,
+      "conflict": 0.85,
+      "earnings": 1,
+      "regimeClarity": 0.8
+    },
+    "conflicts": [
+      "structure_vs_momentum"
+    ],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-14",
   "metrics": {
@@ -85,16 +102,16 @@
       "text": "OBV มีแนวโน้มสูงขึ้น"
     },
     {
+      "id": "component-conflict",
+      "impact": 7,
+      "polarity": "caution",
+      "text": "ทิศทางของ Price Structure กับ Momentum ขัดกัน จึงยังไม่สรุปเป็นขาขึ้นหรือขาลง"
+    },
+    {
       "id": "ema200-slope",
       "impact": 6.73,
       "polarity": "positive",
       "text": "EMA200 ชันขึ้น 0.9%"
-    },
-    {
-      "id": "bullish-divergence",
-      "impact": 4,
-      "polarity": "caution",
-      "text": "พบ Bullish divergence จาก confirmed historical pivots"
     },
     {
       "id": "macd-histogram",
@@ -119,9 +136,15 @@
       "impact": 0.83,
       "polarity": "positive",
       "text": "RSI14 อยู่ที่ 52.5"
+    },
+    {
+      "id": "bullish-divergence",
+      "impact": 0.8,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 52.5 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
     }
   ],
-  "score": 7,
+  "score": 2,
   "scoreBreakdown": {
     "emaTrend": {
       "available": true,
@@ -160,8 +183,8 @@
       "coverage": 1,
       "factorsUsed": 2,
       "maxPoints": 15,
-      "normalizedScore": 0.5,
-      "points": 8
+      "normalizedScore": 0.2,
+      "points": 3
     }
   },
   "source": "yahoo-finance-chart",
@@ -170,27 +193,30 @@
   "symbol": "CL-F",
   "timeframe": "1D",
   "warnings": [
-    "หลักฐานบางหมวดขัดแย้งกัน"
+    "หลักฐานบางหมวดขัดแย้งกัน",
+    "Relative Volume 0.88× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
   ],
   "zones": {
-    "frameAgeBars": 107,
-    "lastTestedBarsAgo": 110,
-    "lowerDistance": 19.8089,
-    "lowerDistanceAtr": 4.91,
-    "lowerTrigger": 62.5911,
+    "frameAgeBars": 27,
+    "lastTestedBarsAgo": 29,
+    "lowerDistance": 16.3689,
+    "lowerDistanceAtr": 4.06,
+    "lowerTrigger": 66.0311,
     "mode": "structural",
+    "nearestTriggerAtr": 3.87,
     "pendingBreakdown": false,
     "pendingBreakout": false,
-    "positionPct": 33.6,
+    "positionPct": 51.3,
+    "proximity": "deep_range",
     "referenceClose": 82.4000015258789,
     "referenceDate": "2026-08-14",
-    "resistance": 119.48,
-    "support": 63.6,
-    "triggerCrossings": 9,
-    "upperDistance": 38.0889,
-    "upperDistanceAtr": 9.44,
-    "upperTrigger": 120.4889,
+    "resistance": 97,
+    "support": 67.04,
+    "triggerCrossings": 11,
+    "upperDistance": 15.6089,
+    "upperDistanceAtr": 3.87,
+    "upperTrigger": 98.0089,
     "zone": "sideways",
-    "zoneAgeBars": 106
+    "zoneAgeBars": 26
   }
 }

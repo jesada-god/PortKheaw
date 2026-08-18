@@ -1,28 +1,43 @@
 {
   "bias": "bullish",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 63,
+  "confidence": 51,
   "confidenceBreakdown": {
-    "agreement": 44,
-    "completeness": 93,
+    "agreement": 70,
+    "completeness": 100,
     "conflictPenalty": 3,
-    "evidenceStrength": 47,
-    "regimeClarity": 68,
-    "volumeConfirmation": 50
+    "evidenceStrength": 43,
+    "regimeClarity": 60,
+    "volumeConfirmation": 20
   },
-  "confidenceLabel": "Medium",
+  "confidenceLabel": "Low",
   "dataPoints": {
     "finalized": 1256,
     "received": 1257
   },
   "flags": [
-    "bullish_divergence"
+    "low_volume_confirmation"
   ],
   "freshness": {
     "asOf": "2026-08-17T04:00:00.000Z",
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
+  },
+  "gate": {
+    "band": "weak",
+    "confidenceFactors": {
+      "agreement": 0.85,
+      "base": 77.12,
+      "completeness": 1,
+      "conflict": 0.9676,
+      "earnings": 1,
+      "regimeClarity": 0.8
+    },
+    "conflicts": [],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-14",
   "metrics": {
@@ -101,12 +116,6 @@
       "text": "MACD Histogram เป็นบวกแต่หดตัว"
     },
     {
-      "id": "bullish-divergence",
-      "impact": 4,
-      "polarity": "caution",
-      "text": "พบ Bullish divergence จาก confirmed historical pivots"
-    },
-    {
       "id": "rsi14",
       "impact": 3.62,
       "polarity": "positive",
@@ -119,13 +128,19 @@
       "text": "ราคาและ EMA เรียงตัวเอนลง"
     },
     {
+      "id": "bullish-divergence",
+      "impact": 0.8,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 60.9 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
+    },
+    {
       "id": "ema50-slope",
       "impact": 0.74,
       "polarity": "negative",
       "text": "EMA50 ชันลง -0.1%"
     }
   ],
-  "score": 41,
+  "score": 36,
   "scoreBreakdown": {
     "emaTrend": {
       "available": true,
@@ -164,8 +179,8 @@
       "coverage": 1,
       "factorsUsed": 2,
       "maxPoints": 15,
-      "normalizedScore": 0.5,
-      "points": 8
+      "normalizedScore": 0.2,
+      "points": 3
     }
   },
   "source": "yahoo-finance-chart",
@@ -173,7 +188,9 @@
   "status": "available",
   "symbol": "SI-F",
   "timeframe": "1D",
-  "warnings": [],
+  "warnings": [
+    "Relative Volume 0.01× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
+  ],
   "zones": {
     "frameAgeBars": 5,
     "lastTestedBarsAgo": 0,
@@ -181,9 +198,11 @@
     "lowerDistanceAtr": 5.34,
     "lowerTrigger": 56.8437,
     "mode": "structural",
+    "nearestTriggerAtr": -3.01,
     "pendingBreakdown": false,
     "pendingBreakout": false,
     "positionPct": 277.8,
+    "proximity": "deep_range",
     "referenceClose": 64.98799896240234,
     "referenceDate": "2026-08-14",
     "resistance": 60.019,

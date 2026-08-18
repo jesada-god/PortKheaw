@@ -463,8 +463,17 @@ function ZoneBar({ zones, score, livePrice }: {
   const low = Math.min(...candidates);
   const high = Math.max(...candidates);
   const span = high - low;
-  const at = (value: number) => span > 0 ? ((value - low) / span) * 100 : 50;
+  /*
+   * Clamped for DRAWING only. `positionPct` is reported unclamped on purpose —
+   * IREN reads 113.7% and that is the fact that matters — but a marker placed
+   * at 113.7% of the track would sit outside the bar it belongs to. The extent
+   * already spans every value the card mentions, so this only guards against a
+   * live price arriving from outside that set.
+   */
+  const at = (value: number) => span > 0 ? Math.min(100, Math.max(0, ((value - low) / span) * 100)) : 50;
 
+  const nearestDistance = Math.abs(zones.upperDistance) <= Math.abs(zones.lowerDistance)
+    ? zones.upperDistance : zones.lowerDistance;
   const liveCrossedUp = livePrice !== null && upperTrigger !== null && livePrice > upperTrigger;
   const liveCrossedDown = livePrice !== null && lowerTrigger !== null && livePrice < lowerTrigger;
 
@@ -473,6 +482,22 @@ function ZoneBar({ zones, score, livePrice }: {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="text-sm font-semibold">
           {ZONE_COPY[zones.zone]} · {tiltCopy(score)}
+          {/*
+            "Sideways" was doing the work of two very different sentences: QQQ
+            0.05 ATR under its trigger and CL-F 4.9 ATR from the nearest one read
+            identically. This says which, in words rather than as another chip.
+          */}
+          {zones.proximity === 'near_trigger' ? (
+            <span className="ml-1 font-normal text-slate-300">
+              · {zones.nearestTriggerAtr < 0 ? 'เลยแนวใกล้สุดมา' : 'ห่างแนวใกล้สุด'}
+              {' '}{Math.abs(nearestDistance).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+              {' '}({Math.abs(zones.nearestTriggerAtr)} ATR)
+            </span>
+          ) : zones.proximity === 'deep_range' ? (
+            <span className="ml-1 font-normal text-slate-400">
+              · อยู่ห่างจากทุกแนว {Math.abs(zones.nearestTriggerAtr)} ATR
+            </span>
+          ) : null}
         </p>
         <p className="text-[11px] text-slate-400">
           อิงราคาปิด {referenceClose.toLocaleString('en-US', { maximumFractionDigits: 2 })} ({zones.referenceDate})

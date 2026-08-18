@@ -226,13 +226,17 @@ describe('the frame is sticky', () => {
 });
 
 describe('a range too narrow to break', () => {
-  it('falls back to an ATR band around EMA20 and says so', () => {
-    // A flat series produces pivots within pennies of each other, so the frame
-    // they would define is narrower than a normal day's movement.
-    const flat = Array.from({ length: 80 }, (_, index) => 100 + Math.sin(index / 2) * 0.02);
-    const zones = zonesOf(flat);
+  it('falls back to an ATR band around EMA20 when no swing pair is usable', () => {
+    // A monotonic advance confirms no pivot at all — there is no high to anchor
+    // against and no low to anchor against, which is the same dead end as a pair
+    // too narrow to break.
+    const monotonic = Array.from({ length: 80 }, (_, index) => 100 + index * 0.5);
+    const zones = zonesOf(monotonic);
     expect(zones.mode).toBe('atr_band');
-    expect(zones.resistance - zones.support).toBeGreaterThan(0);
+    expect(zones.resistance).toBeGreaterThan(zones.support);
+    // The band is a volatility envelope, so it is symmetric about EMA20.
+    const ema20 = ema(bars(monotonic).map((candle) => candle.close), 20).at(-1)!;
+    expect((zones.support + zones.resistance) / 2).toBeCloseTo(ema20, 4);
   });
 
   it('keeps the structural frame when the swings are wide enough to mean something', () => {
@@ -293,5 +297,97 @@ describe('the flag is the rollout contract', () => {
 
   it('keeps the anchor lookback in config rather than in the engine', () => {
     expect(MARKET_SIGNAL_ZONE.anchor.lookbackBars).toBe(120);
+  });
+});
+
+describe('label precedence when both phases are on', () => {
+  /*
+   * The zone answers "where has price actually got to", which is a fact. The
+   * gate answers "how well does the evidence support it", which is a quality.
+   * A conflict must not erase the direction — it forbids STRONG and damps
+   * confidence, and the card shows both readings side by side.
+   *
+   * Measured across 108 instruments with both flags on: 3 of them (2.8%) have a
+   * directional zone AND a gate conflict, well under the 30% at which the rule
+   * would have been the wrong one. IREN is one of the three.
+   */
+  const both = (symbol: string) => {
+    const frozen = capture(symbol);
+    return calculateMarketSignal(frozen.candles, {
+      symbol,
+      source: frozen.source,
+      freshness: frozen.freshness,
+      calculatedAt: '2026-01-01T00:00:00.000Z',
+      features: { gate: true, zones: true },
+    });
+  };
+
+  it('keeps the direction the zone found, and says the evidence disagrees', () => {
+    const result = both('IREN');
+    expect(result.zones?.zone).toBe('uptrend');
+    expect(result.gate?.conflicts.length).toBeGreaterThan(0);
+    // The direction survives...
+    expect(result.state).toBe('BULLISH');
+    expect(result.bias).toBe('bullish');
+    // ...and the disagreement is visible rather than silently overwriting it.
+    expect(result.flags).toContain('conflicting_evidence');
+    expect(result.confidence).toBeLessThan(both('IREN').gate!.confidenceFactors.base);
+  });
+
+  it('never publishes STRONG while the evidence conflicts', () => {
+    SYMBOLS.forEach((symbol) => {
+      const result = both(symbol);
+      if (result.gate?.conflicts.length) {
+        expect(result.state).not.toBe('STRONG_BULLISH');
+        expect(result.state).not.toBe('STRONG_BEARISH');
+      }
+    });
+  });
+});
+
+describe('sideways is two different situations', () => {
+  /*
+   * QQQ sat 0.05 ATR below its trigger and CL-F 4.9 ATR from the nearest one.
+   * Both read "sideways", which told a reader nothing about which was about to
+   * matter. This splits the description without touching any label rule.
+   */
+  it('marks a near-trigger zone', () => {
+    const zones = zonesOf([...swings(6), 110.5]);
+    expect(zones.zone).toBe('sideways');
+    expect(zones.nearestTriggerAtr).toBeLessThan(MARKET_SIGNAL_ZONE.proximity.nearTriggerAtr);
+    expect(zones.proximity).toBe('near_trigger');
+  });
+
+  it('marks a zone sitting deep inside its frame', () => {
+    const zones = zonesOf([...swings(6), 100]);
+    expect(zones.proximity === 'mid_range' || zones.proximity === 'deep_range').toBe(true);
+    expect(zones.nearestTriggerAtr).toBeGreaterThan(0);
+  });
+
+  it('changes no label', () => {
+    const near = zonesOf([...swings(6), 110.5]);
+    const middle = zonesOf([...swings(6), 100]);
+    expect(near.zone).toBe(middle.zone);
+  });
+});
+
+describe('a frame nobody has traded against rebuilds itself', () => {
+  /*
+   * A wide frame is self-perpetuating under the break and fresh-pivot rules
+   * alone, because almost nothing forms outside it. CL-F sat 9.4 ATR from its
+   * own trigger on a frame untested for 110 bars. Across the corpus this rule
+   * takes the count of frames untested beyond the window from one to zero.
+   */
+  it('leaves no committed capture stranded on an untested frame', () => {
+    SYMBOLS.forEach((symbol) => {
+      const zones = run(symbol, true).zones!;
+      expect(zones.lastTestedBarsAgo).not.toBeNull();
+      expect(zones.lastTestedBarsAgo as number)
+        .toBeLessThanOrEqual(MARKET_SIGNAL_ZONE.anchor.untestedReanchorBars + MARKET_SIGNAL_ZONE.walkbackBars);
+    });
+  });
+
+  it('keeps the re-anchor window in config', () => {
+    expect(MARKET_SIGNAL_ZONE.anchor.untestedReanchorBars).toBe(60);
   });
 });

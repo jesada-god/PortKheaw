@@ -26,6 +26,7 @@ import type {
   MarketSignalScoreComponent,
   MarketSignalState,
   MarketSignalZoneName,
+  MarketSignalZoneProximity,
   MarketSignalZones,
 } from './types';
 
@@ -712,6 +713,7 @@ export function calculateTrendZones(input: {
   let zone: MarketSignalZoneName = 'sideways';
   let zoneSince = from;
   let crossings = 0;
+  let lastTouch = from;
 
   for (let index = from; index < candles.length; index += 1) {
     const atr = atrSeries[index] ?? atrLatest;
@@ -750,7 +752,20 @@ export function calculateTrendZones(input: {
      */
     const freshPivot = pivots.some((pivot) => pivot.confirmedAtIndex === index
       && (pivot.price > frame.resistance || pivot.price < frame.support));
-    if (reanchor || freshPivot) frame = frameAt(index);
+    const touchTolerance = MARKET_SIGNAL_ZONE.expiry.touchToleranceAtrMultiple * atr;
+    if (candles[index].high >= frame.resistance - touchTolerance
+      || candles[index].low <= frame.support + touchTolerance) {
+      lastTouch = index;
+    }
+    // A wide frame is self-perpetuating under the first two rules alone,
+    // because almost no pivot forms outside it. Once neither edge has been
+    // tested for this long it has stopped describing the market, so rebuild it
+    // from current structure rather than waiting for permission.
+    const untested = index - lastTouch > MARKET_SIGNAL_ZONE.anchor.untestedReanchorBars;
+    if (reanchor || freshPivot || untested) {
+      frame = frameAt(index);
+      if (untested) lastTouch = index;
+    }
 
     if (zone !== previous) zoneSince = index;
   }
@@ -771,9 +786,25 @@ export function calculateTrendZones(input: {
     }
   }
 
+  /*
+   * Signed, so a reader can tell "0.2 ATR short of the trigger" from "0.2 ATR
+   * past it" — but the BAND is taken on the absolute distance, because what it
+   * describes is how fragile the current label is. Within half an ATR of a
+   * boundary the label can change on any close, either side of it; three ATR
+   * from every boundary it is going nowhere. Silver sitting 3 ATR beyond its
+   * trigger is firmly in its zone, not near one.
+   */
+  const nearestTriggerAtr = Math.min((upperTrigger - close) / atr, (close - lowerTrigger) / atr);
+  const distanceFromBoundary = Math.abs(nearestTriggerAtr);
+  const proximity: MarketSignalZoneProximity = distanceFromBoundary < MARKET_SIGNAL_ZONE.proximity.nearTriggerAtr
+    ? 'near_trigger'
+    : distanceFromBoundary > MARKET_SIGNAL_ZONE.proximity.deepRangeAtr ? 'deep_range' : 'mid_range';
+
   const width = frame.resistance - frame.support;
   return {
     mode: frame.mode,
+    proximity,
+    nearestTriggerAtr: round(nearestTriggerAtr, 2),
     zone,
     support: round(frame.support, 4),
     resistance: round(frame.resistance, 4),
@@ -1133,13 +1164,26 @@ export function calculateMarketSignal(
       relativeVolume: metrics.relativeVolume20,
     })
     : null;
+  /*
+   * Precedence when both phases are on.
+   *
+   * The zone answers "where has price actually got to", which is a fact. The
+   * gate answers "how well does the evidence support it", which is a quality.
+   * Those are different questions and the card should show both rather than let
+   * one erase the other — so a conflict no longer overwrites the direction. It
+   * does two narrower things instead: it forbids a STRONG label, and it keeps
+   * damping confidence through the same multiplicative formula. A reader sees
+   * the direction price is in AND that the evidence behind it disagrees.
+   */
+  const demoteStrong = (state: MarketSignalState): MarketSignalState => state === 'STRONG_BULLISH' ? 'BULLISH'
+    : state === 'STRONG_BEARISH' ? 'BEARISH' : state;
   const zoneBias: MarketSignalBias | null = zones
     ? (zones.zone === 'uptrend' ? 'bullish' : zones.zone === 'downtrend' ? 'bearish' : 'neutral')
     : null;
   const gateVetoes = gateOn && conflicts.length > 0;
 
   const state = zoneState !== null
-    ? (gateVetoes && zoneState !== 'SQUEEZE' && zoneState !== 'OVEREXTENDED' ? 'SIDEWAYS' : zoneState)
+    ? (gateVetoes ? demoteStrong(zoneState) : zoneState)
     : gateOn
       ? gatedPresentationState({
         score,
@@ -1161,9 +1205,8 @@ export function calculateMarketSignal(
     : null;
   const confidenceResult = gatedConfidenceResult ?? calculateSignalConfidence(scoreBreakdown, bias, regimeClarity);
   const confidenceLabel = confidenceLabelFromValue(confidenceResult.confidence);
-  const effectiveBias = zoneBias !== null
-    ? (gateVetoes ? 'neutral' : zoneBias)
-    : gateOn ? gatedBiasValue : bias;
+  // The bias follows the zone even under a conflict: price is where it is.
+  const effectiveBias = zoneBias !== null ? zoneBias : gateOn ? gatedBiasValue : bias;
 
   // A divergence in the middle of the RSI range is not worth a chip of its own;
   // it stays a written caution, which is also what keeps one fact from being
