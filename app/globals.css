@@ -216,10 +216,12 @@
    */
   html[data-appearance="light"] {
     .text-emerald-100, .text-emerald-200, .text-emerald-300, .text-green-300,
-    [class~="text-emerald-300/80"] { color: var(--positive) !important; }
+    [class~="text-emerald-300/80"],
+    [class~="text-emerald-200/80"] { color: var(--positive) !important; }
 
-    .text-red-200, .text-red-300, .text-rose-300, .text-rose-400,
-    [class~="text-rose-300/80"] { color: var(--negative) !important; }
+    .text-red-100, .text-red-200, .text-red-300, .text-rose-300, .text-rose-400,
+    [class~="text-rose-300/80"],
+    [class~="text-red-200/80"] { color: var(--negative) !important; }
 
     .text-amber-100, .text-amber-200, .text-amber-300, .text-orange-200,
     [class~="text-amber-100/80"],
@@ -303,7 +305,22 @@
   [class~="hover:bg-slate-800/70"]:hover { background-color: color-mix(in srgb, var(--surface-hover) 65%, transparent) !important; }
   [class~="bg-slate-500/5"],
   [class~="bg-slate-500/10"],
-  [class~="bg-slate-500/15"] { background-color: color-mix(in srgb, var(--text-muted) 12%, transparent) !important; }
+  [class~="bg-slate-500/15"],
+  [class~="bg-slate-500/20"] { background-color: color-mix(in srgb, var(--text-muted) 12%, transparent) !important; }
+  /* The Market Signal zone bar's middle field when price is inside its frame:
+     the same neutral, one step stronger, so the selected field still reads as
+     the selected one on the light surface. */
+  [class~="bg-slate-400/35"] { background-color: color-mix(in srgb, var(--text-muted) 26%, transparent) !important; }
+  /*
+   * Translucent whites. On a near-black card these are a lift; on the light
+   * surface they are invisible, which on the zone bar would take the price
+   * marker and both cut lines off the picture entirely. They invert to a
+   * translucent INK so the same elements keep the same job.
+   */
+  [class~="bg-white/15"] { background-color: color-mix(in srgb, var(--text) 12%, transparent) !important; }
+  [class~="bg-white/90"] { background-color: var(--text) !important; }
+  [class~="bg-white/40"],
+  [class~="bg-white/45"] { background-color: color-mix(in srgb, var(--text) 45%, transparent) !important; }
   [class~="border-slate-800/50"],
   [class~="border-slate-800/60"],
   [class~="border-slate-800/70"],
