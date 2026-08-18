@@ -23,6 +23,7 @@
     "probe:options-signal": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/probe-options-signal.ts",
     "probe:news": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-news.ts",
     "probe:header-price": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/probe-header-price.ts",
+    "snapshot:signal": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/snapshot-signal.ts",
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
     "clean": "next clean",
@@ -38,7 +39,15 @@
     "qa:phase2-ops": "node --env-file-if-exists=.env.local scripts/qa/phase2-ops-qa.mjs",
     "qa:admin-overview": "node --env-file-if-exists=.env.local scripts/qa/admin-overview-qa.mjs",
     "qa:ui-redesign": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-responsive-qa.mjs",
-    "qa:ui-redesign-auth": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-authenticated-qa.mjs"
+    "qa:ui-redesign-auth": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-authenticated-qa.mjs",
+    "signal:sensitivity": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sensitivity.ts",
+    "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts",
+    "signal:htf-probe": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-htf-probe.ts",
+    "signal:actionable": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-actionable-probe.ts",
+    "signal:lookback": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-lookback-sensitivity.ts",
+    "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts",
+    "signal:context": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-context-probe.ts",
+    "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

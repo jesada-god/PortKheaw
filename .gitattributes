@@ -1,0 +1,7 @@
+# The Market Signal golden snapshots are compared BYTE FOR BYTE by
+# `npm run snapshot:signal -- --check`, which is the pre-deploy gate for the
+# whole signal build. The generator writes LF, so a checkout that converted
+# these to CRLF (this repo is developed with core.autocrlf=true on Windows)
+# would fail the gate on every symbol for a reason that has nothing to do with
+# the engine. Pin them.
+__golden__/** text eol=lf

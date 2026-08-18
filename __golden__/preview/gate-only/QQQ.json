@@ -1,0 +1,185 @@
+{
+  "bias": "bullish",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 61,
+  "confidenceBreakdown": {
+    "agreement": 70,
+    "completeness": 100,
+    "conflictPenalty": 0,
+    "evidenceStrength": 49,
+    "regimeClarity": 82,
+    "volumeConfirmation": 20
+  },
+  "confidenceLabel": "Medium",
+  "dataPoints": {
+    "finalized": 1254,
+    "received": 1255
+  },
+  "evidenceAgreement": 61,
+  "evidenceAgreementLabel": "Medium",
+  "flags": [
+    "bearish_divergence",
+    "low_volume_confirmation"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T13:30:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "gate": {
+    "band": "moderate",
+    "confidenceFactors": {
+      "agreement": 0.85,
+      "base": 79.48,
+      "completeness": 1,
+      "conflict": 1,
+      "earnings": 1,
+      "regimeClarity": 0.9083
+    },
+    "conflicts": [],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
+  },
+  "latestCandleAt": "2026-08-14",
+  "metrics": {
+    "adx14": 16.069066979844045,
+    "atr14": 12.64907633952183,
+    "atrNormalizedDistance": 1.4406585071105686,
+    "bollingerLower": 664.5224131460911,
+    "bollingerMiddle": 704.1254974365235,
+    "bollingerUpper": 743.7285817269558,
+    "close": 731.0700073242188,
+    "divergence": "bearish",
+    "ema20": 712.8470078885956,
+    "ema200": 655.3576736048072,
+    "ema200SlopePct": 1.7029,
+    "ema20DeviationPct": 2.5563689310555464,
+    "ema20SlopePct": 1.2049,
+    "ema50": 706.7387447001938,
+    "ema50SlopePct": 1.0208,
+    "emaCompressionRatio": 0.078637,
+    "keltnerLower": 693.7019318875111,
+    "keltnerMiddle": 712.6755463967938,
+    "keltnerUpper": 731.6491609060765,
+    "macd": 5.5622066070250185,
+    "macdHistogram": 4.363765214146286,
+    "macdSignal": 1.1984413928787323,
+    "minusDi14": 22.922685347862686,
+    "nearestResistance": 743.710167,
+    "nearestSupport": 725.389134,
+    "obvTrend": "rising",
+    "plusDi14": 28.048617667337254,
+    "relativeVolume20": 0.5825474209005691,
+    "rsi14": 59.597626899153994,
+    "squeezeOn": false
+  },
+  "reasons": [
+    {
+      "id": "macd-signal",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD อยู่เหนือ Signal"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "ราคาและ EMA เรียงตัวเอนขึ้น"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA20 ชันขึ้น 1.2%"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA200 ชันขึ้น 1.7%"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA50 ชันขึ้น 1.02%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "OBV มีแนวโน้มสูงขึ้น"
+    },
+    {
+      "id": "macd-histogram",
+      "impact": 4.17,
+      "polarity": "positive",
+      "text": "MACD Histogram เป็นบวกแต่หดตัว"
+    },
+    {
+      "id": "rsi14",
+      "impact": 3.2,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 59.6"
+    },
+    {
+      "id": "bearish-divergence",
+      "impact": 2.03,
+      "polarity": "caution",
+      "text": "พบ Bearish divergence จาก confirmed historical pivots"
+    }
+  ],
+  "score": 49,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": 1,
+      "points": 30
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": 0.628,
+      "points": 16
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": 0.2,
+      "points": 3
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "BULLISH",
+  "status": "available",
+  "symbol": "QQQ",
+  "timeframe": "1D",
+  "warnings": [
+    "Relative Volume 0.58× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
+  ]
+}

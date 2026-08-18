@@ -1,0 +1,168 @@
+{
+  "bias": "bullish",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 73,
+  "confidenceBreakdown": {
+    "agreement": 58,
+    "completeness": 93,
+    "conflictPenalty": 0,
+    "evidenceStrength": 58,
+    "regimeClarity": 97,
+    "volumeConfirmation": 50
+  },
+  "confidenceLabel": "Medium",
+  "dataPoints": {
+    "finalized": 1254,
+    "received": 1255
+  },
+  "evidenceAgreement": 73,
+  "evidenceAgreementLabel": "Medium",
+  "flags": [
+    "bearish_divergence",
+    "strong_momentum"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T13:30:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "latestCandleAt": "2026-08-14",
+  "metrics": {
+    "adx14": 14.493924927654817,
+    "atr14": 3.786724367899364,
+    "atrNormalizedDistance": 1.7482251563398419,
+    "bollingerLower": 287.11415510993777,
+    "bollingerMiddle": 296.71600036621095,
+    "bollingerUpper": 306.3178456224841,
+    "close": 305.0899963378906,
+    "divergence": "bearish",
+    "ema20": 298.46994953780387,
+    "ema200": 270.5136675266124,
+    "ema200SlopePct": 2.2111,
+    "ema20DeviationPct": 2.2179944112759893,
+    "ema20SlopePct": 0.9307,
+    "ema50": 293.72910054091614,
+    "ema50SlopePct": 1.2682,
+    "emaCompressionRatio": 0.091633,
+    "keltnerLower": 292.7284066424464,
+    "keltnerMiddle": 298.40849319429543,
+    "keltnerUpper": 304.0885797461445,
+    "macd": 2.644596071359672,
+    "macdHistogram": 0.8852349478540114,
+    "macdSignal": 1.7593611235056605,
+    "minusDi14": 15.277559787434749,
+    "nearestResistance": null,
+    "nearestSupport": 302.426666,
+    "obvTrend": "rising",
+    "plusDi14": 23.351279226216793,
+    "relativeVolume20": 0.6325307869392766,
+    "rsi14": 63.44521122350759,
+    "squeezeOn": false
+  },
+  "reasons": [
+    {
+      "id": "macd-histogram",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD Histogram เป็นบวกและขยายตัว"
+    },
+    {
+      "id": "macd-signal",
+      "impact": 8.33,
+      "polarity": "positive",
+      "text": "MACD อยู่เหนือ Signal"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "ราคาและ EMA เรียงตัวเอนขึ้น"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA200 ชันขึ้น 2.21%"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "EMA50 ชันขึ้น 1.27%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "positive",
+      "text": "OBV มีแนวโน้มสูงขึ้น"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 6.98,
+      "polarity": "positive",
+      "text": "EMA20 ชันขึ้น 0.93%"
+    },
+    {
+      "id": "rsi14",
+      "impact": 4.48,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 63.4"
+    },
+    {
+      "id": "bearish-divergence",
+      "impact": 4,
+      "polarity": "caution",
+      "text": "พบ Bearish divergence จาก confirmed historical pivots"
+    }
+  ],
+  "score": 58,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": 0.9827,
+      "points": 29
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": 0.8459,
+      "points": 21
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": 0.5,
+      "points": 8
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "BULLISH",
+  "status": "available",
+  "symbol": "IWM",
+  "timeframe": "1D",
+  "warnings": []
+}

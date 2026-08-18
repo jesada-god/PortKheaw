@@ -308,17 +308,50 @@ export default async function AdminDashboardPage({
                 nobody is currently asking about costs the same reading time as a
                 figure and answers nothing.
               */}
+              {/*
+                Why "กำลังทดลองใช้" can honestly read 0. The card asks about this
+                instant, so it returns zero both when no free week has ever been
+                granted and when every one of them has ended — and nothing on the
+                card tells those apart, which is how a correct number starts
+                reading as a broken one.
+
+                The two figures in the disclosure separate them: "เคยเริ่มทั้งหมด"
+                is zero only if the grant path has never worked, and "หมดอายุแล้ว"
+                says where the people who did trial are counted now. They belong
+                there rather than in the row because the row sums to
+                ผู้ใช้งานทั้งหมด and both of them overlap it — the lapsed ones are
+                inside Basic, and the historical one is not a current state at all.
+              */}
               <StatGroup
                 title="ตอนนี้"
                 columns="sm:grid-cols-4"
                 featureFirst
                 note="สถานะปัจจุบัน ไม่เปลี่ยนตามช่วงเวลาที่เลือก"
+                helpSummary="ทดลองใช้: เคยเริ่มทั้งหมด · หมดอายุแล้ว"
                 help={(
-                  <ul className="list-disc space-y-1 pl-4">
-                    <li>ผู้ที่อยู่ระหว่างทดลองใช้ถูกนับในช่อง “กำลังทดลองใช้” เท่านั้น ไม่ถูกนับซ้ำใน Elite</li>
-                    <li>Elite นับเฉพาะแพ็กเกจเสียเงิน</li>
-                    <li>Basic Pro Elite และกำลังทดลองใช้ รวมกันเท่ากับผู้ใช้งานทั้งหมด</li>
-                  </ul>
+                  <>
+                    <Figures
+                      items={[
+                        {
+                          label: 'เคยเริ่มทดลองใช้ทั้งหมด (ทุกช่วงเวลา)',
+                          value: formatCount(stats.trial_starts_total),
+                        },
+                        {
+                          label: 'ทดลองใช้หมดอายุแล้ว (นับรวมอยู่ใน Basic)',
+                          value: formatCount(stats.expired_trial_members),
+                        },
+                      ]}
+                    />
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      <li>ผู้ที่อยู่ระหว่างทดลองใช้ถูกนับในช่อง “กำลังทดลองใช้” เท่านั้น ไม่ถูกนับซ้ำใน Elite</li>
+                      <li>Elite นับเฉพาะแพ็กเกจเสียเงิน</li>
+                      <li>Basic Pro Elite และกำลังทดลองใช้ รวมกันเท่ากับผู้ใช้งานทั้งหมด</li>
+                      <li>
+                        เมื่อ Trial หมดอายุ บัญชีจะถูกนับเป็น Basic ทันทีตามสิทธิ์ที่ใช้ได้จริง
+                        โดยไม่มีการลบประวัติการทดลองใช้
+                      </li>
+                    </ul>
+                  </>
                 )}
               >
                 <StatCard

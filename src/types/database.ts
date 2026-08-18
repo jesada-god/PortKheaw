@@ -925,12 +925,40 @@ export interface Database {
         >>;
         Relationships: [];
       };
+      /**
+       * P6. What the Market Signal card published, one row per symbol per day.
+       *
+       * Service-role only — RLS is on with no policy, so `anon` and
+       * `authenticated` read and write nothing. The entitlement deciding who
+       * may see any of this lives in `loadEntitledMarketSignal`, not here.
+       */
+      market_signal_history: {
+        Row: {
+          symbol: string; as_of: string;
+          state: string; bias: string; zone: string | null;
+          score: number | null; evidence_agreement: number | null;
+          flags: string[]; features: Record<string, boolean>; recorded_at: string;
+        };
+        Insert: {
+          symbol: string; as_of: string;
+          state: string; bias: string; zone?: string | null;
+          score?: number | null; evidence_agreement?: number | null;
+          flags?: string[]; features?: Record<string, boolean>; recorded_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['market_signal_history']['Insert']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
       delete_own_account: {
         Args: Record<PropertyKey, never>;
         Returns: undefined;
+      };
+      /** P6 retention. `apply => false` counts what is due and deletes nothing. */
+      sweep_market_signal_history: {
+        Args: { retention_days: number; apply?: boolean };
+        Returns: Array<{ due: number; deleted: number }>;
       };
       get_or_create_default_watchlist: {
         Args: Record<PropertyKey, never>;
@@ -1367,6 +1395,10 @@ export interface Database {
           open_ticket_count: number;
           open_refund_count: number;
           database_now: string;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          /** Whether that trial is running at `database_now` — not whether one was ever had. */
+          trial_active: boolean;
         }>;
       };
       admin_account_invoices: {
@@ -1857,6 +1889,10 @@ export interface Database {
           trial_starts_7d: number;
           /** Accounts whose first settled invoice fell in the last seven Bangkok days. */
           paid_conversions_7d: number;
+          /** Accounts that have ever started a trial, at any time. No window, no tier. */
+          trial_starts_total: number;
+          /** Lapsed trials, counted where they now are — strictly inside `basic_members`. */
+          expired_trial_members: number;
         }>;
       };
       admin_recent_billing_activity: {

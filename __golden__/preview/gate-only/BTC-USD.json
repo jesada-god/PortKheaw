@@ -1,0 +1,197 @@
+{
+  "bias": "neutral",
+  "calculatedAt": "2026-01-01T00:00:00.000Z",
+  "confidence": 56,
+  "confidenceBreakdown": {
+    "agreement": 70,
+    "completeness": 100,
+    "conflictPenalty": 15,
+    "evidenceStrength": 42,
+    "regimeClarity": 100,
+    "volumeConfirmation": 50
+  },
+  "confidenceLabel": "Low",
+  "dataPoints": {
+    "finalized": 1827,
+    "received": 1827
+  },
+  "evidenceAgreement": 56,
+  "evidenceAgreementLabel": "Low",
+  "flags": [
+    "squeeze",
+    "weak_confirmation"
+  ],
+  "freshness": {
+    "asOf": "2026-08-17T00:00:00.000Z",
+    "maxAgeSeconds": 21600,
+    "staleWhileRevalidateSeconds": 604800,
+    "status": "end-of-day"
+  },
+  "gate": {
+    "band": "neutral",
+    "confidenceFactors": {
+      "agreement": 0.85,
+      "base": 76.92,
+      "completeness": 1,
+      "conflict": 0.85,
+      "earnings": 1,
+      "regimeClarity": 1
+    },
+    "conflicts": [],
+    "daysToEarnings": null,
+    "earningsProximity": "unknown",
+    "forcedNeutral": false
+  },
+  "latestCandleAt": "2026-08-17",
+  "metrics": {
+    "adx14": 13.86115961971875,
+    "atr14": 1211.6060397466645,
+    "atrNormalizedDistance": 0.24587765524489505,
+    "bollingerLower": 62362.108964539795,
+    "bollingerMiddle": 63792.2767578125,
+    "bollingerUpper": 65222.4445510852,
+    "close": 64061.12890625,
+    "divergence": "bullish",
+    "ema20": 63763.22205411654,
+    "ema200": 71583.34717705994,
+    "ema200SlopePct": -2.3554,
+    "ema20DeviationPct": 0.46720796493098515,
+    "ema20SlopePct": -0.4871,
+    "ema50": 64286.86105625798,
+    "ema50SlopePct": -0.4953,
+    "emaCompressionRatio": 0.122073,
+    "keltnerLower": 61953.13813763148,
+    "keltnerMiddle": 63770.54719725148,
+    "keltnerUpper": 65587.95625687148,
+    "macd": -190.14781998733088,
+    "macdHistogram": -84.7597097877007,
+    "macdSignal": -105.38811019963018,
+    "minusDi14": 21.1279450558685,
+    "nearestResistance": 64572.063477,
+    "nearestSupport": 59201.236243,
+    "obvTrend": "falling",
+    "plusDi14": 17.496078088884616,
+    "relativeVolume20": 0.9032870676789394,
+    "rsi14": 51.72157296136429,
+    "squeezeOn": true
+  },
+  "reasons": [
+    {
+      "id": "swing-structure",
+      "impact": 15,
+      "polarity": "positive",
+      "text": "Swing price ยกสูงขึ้น"
+    },
+    {
+      "id": "ema200-slope",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "EMA200 ชันลง -2.36%"
+    },
+    {
+      "id": "obv-trend",
+      "impact": 7.5,
+      "polarity": "negative",
+      "text": "OBV มีแนวโน้มลดลง"
+    },
+    {
+      "id": "squeeze-on",
+      "impact": 6,
+      "polarity": "caution",
+      "text": "Bollinger Bands อยู่ภายใน Keltner Channels: ความผันผวนกำลังบีบตัว"
+    },
+    {
+      "id": "ema50-slope",
+      "impact": 3.71,
+      "polarity": "negative",
+      "text": "EMA50 ชันลง -0.5%"
+    },
+    {
+      "id": "ema20-slope",
+      "impact": 3.65,
+      "polarity": "negative",
+      "text": "EMA20 ชันลง -0.49%"
+    },
+    {
+      "id": "macd-signal",
+      "impact": 2.91,
+      "polarity": "negative",
+      "text": "MACD อยู่ต่ำกว่า Signal"
+    },
+    {
+      "id": "ema-structure",
+      "impact": 2.5,
+      "polarity": "negative",
+      "text": "ราคาและ EMA เรียงตัวเอนลง"
+    },
+    {
+      "id": "bullish-divergence",
+      "impact": 0.8,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 51.7 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
+    },
+    {
+      "id": "rsi14",
+      "impact": 0.57,
+      "polarity": "positive",
+      "text": "RSI14 อยู่ที่ 51.7"
+    },
+    {
+      "id": "macd-histogram",
+      "impact": 0.1,
+      "polarity": "negative",
+      "text": "MACD Histogram เป็นลบและขยายตัว"
+    }
+  ],
+  "score": -12,
+  "scoreBreakdown": {
+    "emaTrend": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 4,
+      "maxPoints": 30,
+      "normalizedScore": -0.5789,
+      "points": -17
+    },
+    "momentum": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 3,
+      "maxPoints": 25,
+      "normalizedScore": -0.0978,
+      "points": -2
+    },
+    "priceStructure": {
+      "available": true,
+      "coverage": 0.5,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 1,
+      "points": 15
+    },
+    "trendStrength": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 1,
+      "maxPoints": 15,
+      "normalizedScore": 0,
+      "points": 0
+    },
+    "volume": {
+      "available": true,
+      "coverage": 1,
+      "factorsUsed": 2,
+      "maxPoints": 15,
+      "normalizedScore": -0.5,
+      "points": -8
+    }
+  },
+  "source": "yahoo-finance-chart",
+  "state": "SQUEEZE",
+  "status": "available",
+  "symbol": "BTC-USD",
+  "timeframe": "1D",
+  "warnings": [
+    "หลักฐานบางหมวดขัดแย้งกัน"
+  ]
+}

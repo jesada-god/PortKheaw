@@ -24,6 +24,8 @@ function signal(nearestSupport: number | null, nearestResistance: number | null)
     score: 60,
     confidence: 70,
     confidenceLabel: 'Medium',
+    evidenceAgreement: 70,
+    evidenceAgreementLabel: 'Medium',
   };
 }
 
