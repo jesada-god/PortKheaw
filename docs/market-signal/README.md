@@ -28,6 +28,7 @@ And one operational note:
 | --- | --- |
 | `rollout-order.md` | The order to turn the five flags on, what to watch at each step, and the one step that touches the database. |
 | `open-work.md` | What is known, decided and not done — including the second signal engine nobody has measured. |
+| `expected-move-collection.md` | Why a table with no reader exists, and the twelve months before it is worth opening. |
 
 **The wording is yours.** These are drafts written to a brief — "a seller who
 measured their own product and is telling the truth, not a system that gave up".

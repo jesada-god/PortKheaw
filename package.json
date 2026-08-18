@@ -47,7 +47,8 @@
     "signal:lookback": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-lookback-sensitivity.ts",
     "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts",
     "signal:context": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-context-probe.ts",
-    "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts"
+    "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts",
+    "collect:expected-move": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/collect-expected-move.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

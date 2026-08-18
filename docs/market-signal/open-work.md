@@ -61,10 +61,10 @@ needs the same treatment as the four copy fixes.
 
 ## 3. Expected Move — collecting, not building · SEPARATE BRANCH
 
-Decided: nothing is built, and collection starts. **None of it is on this
-branch.** The migration, the collector, the derivation and its tests live on
-`wip/expected-move-collection`, held back from the deploy that ships the copy
-fixes.
+Decided: nothing is built, and collection starts. **This is that branch.** The
+migration, the collector, the derivation and its tests live here and nowhere
+else; they were held back from the deploy that shipped the copy fixes and have
+never been on `main`.
 
 The reason is the one thing in that work nobody can check later: `derive.ts`
 picks the expiry — nearest at least 7 days out — and writes the result into rows

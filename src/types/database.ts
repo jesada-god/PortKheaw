@@ -948,6 +948,31 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_signal_history']['Insert']>;
         Relationships: [];
       };
+      /**
+       * Daily ATM implied volatility and expected move per symbol.
+       *
+       * A collection table with no reader: it exists so that a question P5
+       * could not answer becomes answerable later. Service-role only, written
+       * by `scripts/collect-expected-move.ts` and by nothing else.
+       */
+      expected_move_observations: {
+        Row: {
+          symbol: string; as_of: string; spot: number;
+          expiration: string; days_to_expiry: number;
+          atm_iv: number; atm_strike: number;
+          implied_move: number; implied_move_pct: number;
+          provider: string; recorded_at: string;
+        };
+        Insert: {
+          symbol: string; as_of: string; spot: number;
+          expiration: string; days_to_expiry: number;
+          atm_iv: number; atm_strike: number;
+          implied_move: number; implied_move_pct: number;
+          provider: string; recorded_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['expected_move_observations']['Insert']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {

@@ -99,6 +99,24 @@ select * from public.sweep_market_signal_history(400);   -- counts, deletes noth
 Scheduling it is a separate migration and a separate decision, and there is over
 a year before it matters.
 
+## 5b. The expected-move collection — a second migration, independent of everything
+
+```
+supabase/migrations/202608180002_expected_move_collection.sql
+```
+
+Unrelated to the flags and safe to apply at any point, including before step 1 or
+long after. It creates one table nobody reads and schedules nothing; the
+collector is `npm run collect:expected-move`, run once per trading day after the
+US close.
+
+There is no flag and no UI, on purpose. `expected-move-collection.md` explains
+why it exists and why it should not be opened for about twelve months — the
+collector prints the remaining days on every run.
+
+**This section describes this branch only.** None of it is on
+`feat/market-signal-v2` or in the deploy that shipped the copy fixes.
+
 ## 6. `SIGNAL_CONTEXT` — nothing to turn on
 
 The flag exists and has no code behind it. All four candidates failed the P5
