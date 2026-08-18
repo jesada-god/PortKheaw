@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
-import type { MarketSignalBias, MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/market-signal/types';
+import type { MarketSignalBias, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
@@ -75,6 +75,8 @@ export const MARKET_SIGNAL_PRESENTATION = {
  * the raw flag list exactly as it did before P1.
  */
 const FLAG_COPY: Record<string, string> = {
+  pending_breakout: 'รอปิดยืนยันเบรกขึ้น',
+  pending_breakdown: 'รอปิดยืนยันหลุดลง',
   conflicting_evidence: 'หลักฐานขัดแย้งกัน',
   stale_or_partial_data: 'ข้อมูลไม่สดหรือไม่ครบ',
   earnings_imminent: 'ใกล้ประกาศงบมาก',
@@ -82,6 +84,8 @@ const FLAG_COPY: Record<string, string> = {
   pre_earnings_breakout: 'เบรกก่อนงบ',
   low_volume_confirmation: 'วอลุ่มไม่ยืนยัน',
   weak_confirmation: 'ยังยืนยันไม่ชัด',
+  stale_zone: 'ไม่มีการแตะแนวมานาน',
+  narrow_range: 'กรอบแคบกว่า 1 ATR',
   overextended: 'ราคาไกลค่าเฉลี่ย',
   squeeze: 'ความผันผวนบีบตัว',
   bearish_divergence: 'Bearish divergence',
@@ -133,9 +137,12 @@ const BREAKDOWN_COPY = {
 export function MarketSignalSection({
   result,
   capability = 'technical.outlook',
+  livePrice = null,
 }: {
   result: MarketSignalResult | null;
   capability?: SubscriptionCapability;
+  /** The page's accepted marking price, for the second marker on the zone bar. */
+  livePrice?: number | null;
 }) {
   const { can } = useEntitlement();
   const entitled = can(capability);
@@ -145,14 +152,16 @@ export function MarketSignalSection({
       result={result}
       entitled={entitled}
       capability={capability}
+      livePrice={livePrice}
     />
   );
 }
 
-function MarketSignalContent({ result, entitled, capability }: {
+function MarketSignalContent({ result, entitled, capability, livePrice }: {
   result: MarketSignalResult | null;
   entitled: boolean;
   capability: SubscriptionCapability;
+  livePrice: number | null;
 }) {
   const [open, setOpen] = useState(false);
   if (!entitled) {
@@ -215,6 +224,12 @@ function MarketSignalContent({ result, entitled, capability }: {
   const unconfirmed = result.warnings;
   const biasLabel = result.bias === 'bullish' ? 'Bullish Bias' : result.bias === 'bearish' ? 'Bearish Bias' : 'Neutral Bias';
   const beginnerDescription = descriptionFor(result.state, result.bias, presentation.description);
+  /*
+   * Thai wording and the four-chip cap arrive with the first phase that adds
+   * flags. Without a phase on, the card keeps the raw list it has always drawn,
+   * so a reader with every flag off sees the pixels they saw yesterday.
+   */
+  const chipsOrdered = Boolean(result.gate ?? result.zones);
 
   return (
     <section aria-label="Technical Outlook" data-state={result.state} className={`rounded-2xl border p-5 ${presentation.tone}`}>
@@ -254,17 +269,18 @@ function MarketSignalContent({ result, entitled, capability }: {
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2" aria-label="Signal flags">
-        {(result.gate ? orderedFlags(result.flags).slice(0, MAX_FLAG_CHIPS) : result.flags).map((flag) => (
+        {(chipsOrdered ? orderedFlags(result.flags).slice(0, MAX_FLAG_CHIPS) : result.flags).map((flag) => (
           <span key={flag} className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold">
-            {result.gate ? flagLabel(flag) : flag.replaceAll('_', ' ')}
+            {chipsOrdered ? flagLabel(flag) : flag.replaceAll('_', ' ')}
           </span>
         ))}
-        {result.gate && result.flags.length > MAX_FLAG_CHIPS ? (
+        {chipsOrdered && result.flags.length > MAX_FLAG_CHIPS ? (
           <span className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold text-slate-400">
             +{result.flags.length - MAX_FLAG_CHIPS} ใน “ทำไม?”
           </span>
         ) : null}
       </div>
+      {result.zones ? <ZoneBar zones={result.zones} score={result.score} livePrice={livePrice} /> : null}
       <p className="mt-3 text-xs leading-5 text-slate-400">{DISCLAIMER}</p>
 
       <ResponsiveDialog
@@ -398,6 +414,159 @@ function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallba
   }
   if (state === 'SIDEWAYS' && bias === 'neutral') return 'แรงซื้อและแรงขายใกล้เคียงกัน ระบบยังไม่พบฝั่งที่ได้เปรียบชัดเจน';
   return fallback;
+}
+
+
+const ZONE_COPY = {
+  uptrend: 'อยู่เหนือโครงสร้างที่ยืนยันแล้ว',
+  sideways: 'อยู่ในกรอบระหว่างแนวรับและแนวต้าน',
+  downtrend: 'อยู่ใต้โครงสร้างที่ยืนยันแล้ว',
+} as const;
+
+const ZONE_MODE_COPY = {
+  structural: 'อิงแนวรับ/แนวต้านที่ยืนยันแล้ว',
+  open_above: 'ไม่เหลือแนวต้านที่ยืนยันแล้วเหนือราคา',
+  open_below: 'ไม่เหลือแนวรับที่ยืนยันแล้วใต้ราคา',
+  atr_band: 'แนวรับและแนวต้านชิดกันเกินไป จึงใช้กรอบ ATR รอบ EMA20',
+} as const;
+
+/** A tilt inside a zone, worded as a lean rather than as a direction. */
+function tiltCopy(score: number): string {
+  const magnitude = Math.abs(score);
+  if (magnitude < 15) return 'ยังไม่เอียงไปทางไหน';
+  const direction = score > 0 ? 'ขึ้น' : 'ลง';
+  return magnitude >= 40 ? `เอียง${direction}ชัด (${signed(score)})` : `เอียง${direction}เล็กน้อย (${signed(score)})`;
+}
+
+/**
+ * The zone bar.
+ *
+ * Two markers, never one. The signal is computed from the last FINALIZED close;
+ * the header is showing a live price that on an open market is a different
+ * number. Drawing only the close would quietly invite a reader to compare a
+ * trigger against the price they can see at the top of the screen, which is not
+ * the price the trigger was measured from. So both are drawn, both are labelled,
+ * and when the live price has crossed a trigger the card says so explicitly
+ * instead of leaving the reader to notice.
+ *
+ * Every distance is stated in price AND in ATR, because "3.18 away" means
+ * nothing without knowing that this instrument moves 4.06 on an average day.
+ */
+function ZoneBar({ zones, score, livePrice }: {
+  zones: MarketSignalZones;
+  score: number;
+  livePrice: number | null;
+}) {
+  const { support, resistance, upperTrigger, lowerTrigger, referenceClose } = zones;
+  // The drawn extent always covers both markers and both triggers, so nothing
+  // the card talks about falls off the end of the bar it is drawn on.
+  const candidates = [referenceClose, livePrice, support, resistance, upperTrigger, lowerTrigger]
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const low = Math.min(...candidates);
+  const high = Math.max(...candidates);
+  const span = high - low;
+  const at = (value: number) => span > 0 ? ((value - low) / span) * 100 : 50;
+
+  const liveCrossedUp = livePrice !== null && upperTrigger !== null && livePrice > upperTrigger;
+  const liveCrossedDown = livePrice !== null && lowerTrigger !== null && livePrice < lowerTrigger;
+
+  return (
+    <div className="mt-4 rounded-xl border border-current/20 p-3" data-testid="signal-zone-bar">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-sm font-semibold">
+          {ZONE_COPY[zones.zone]} · {tiltCopy(score)}
+        </p>
+        <p className="text-[11px] text-slate-400">
+          อิงราคาปิด {referenceClose.toLocaleString('en-US', { maximumFractionDigits: 2 })} ({zones.referenceDate})
+        </p>
+      </div>
+
+      <div className="relative mt-3 h-8" aria-hidden="true">
+        <div className="absolute inset-x-0 top-3 h-2 rounded-full bg-slate-700/60" />
+        {lowerTrigger !== null && upperTrigger !== null ? (
+          <div
+            className="absolute top-3 h-2 rounded-full bg-current/25"
+            style={{ left: `${at(lowerTrigger)}%`, width: `${Math.max(0, at(upperTrigger) - at(lowerTrigger))}%` }}
+          />
+        ) : null}
+        {[lowerTrigger, upperTrigger].map((trigger) => trigger === null ? null : (
+          <div key={trigger} className="absolute top-1 h-6 w-px bg-current/60" style={{ left: `${at(trigger)}%` }} />
+        ))}
+        {livePrice !== null && Number.isFinite(livePrice) ? (
+          <div
+            className="absolute top-2 h-4 w-1 -translate-x-1/2 rounded-full bg-current/40"
+            style={{ left: `${at(livePrice)}%` }}
+          />
+        ) : null}
+        <div
+          className="absolute top-1 h-6 w-1.5 -translate-x-1/2 rounded-full bg-current"
+          style={{ left: `${at(referenceClose)}%` }}
+        />
+      </div>
+
+      <dl className="mt-3 grid gap-x-4 gap-y-1 text-[11px] text-slate-300 sm:grid-cols-2">
+        <ZoneRow
+          label="ถ้าปิดเหนือ"
+          value={upperTrigger}
+          distance={zones.upperDistance}
+          distanceAtr={zones.upperDistanceAtr}
+          note="จะเข้าเงื่อนไขโซนขาขึ้น"
+        />
+        <ZoneRow
+          label="ถ้าปิดต่ำกว่า"
+          value={lowerTrigger}
+          distance={zones.lowerDistance}
+          distanceAtr={zones.lowerDistanceAtr}
+          note="จะเข้าเงื่อนไขโซนขาลง"
+        />
+      </dl>
+
+      <p className="mt-2 text-[11px] leading-5 text-slate-400">
+        {zones.positionPct === null
+          ? ZONE_MODE_COPY[zones.mode]
+          : `อยู่ที่ ${zones.positionPct}% ของกรอบ · ${ZONE_MODE_COPY[zones.mode]}`}
+        {' · '}
+        โซนนี้ยืนมา {zones.zoneAgeBars} แท่ง
+        {zones.lastTestedBarsAgo === null ? '' : ` · แตะแนวล่าสุดเมื่อ ${zones.lastTestedBarsAgo} แท่งก่อน`}
+      </p>
+
+      {livePrice !== null && Number.isFinite(livePrice) ? (
+        <p className="mt-1 text-[11px] leading-5 text-slate-400">
+          ราคาสด {livePrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          {liveCrossedUp || liveCrossedDown
+            ? ` ผ่านแนว${liveCrossedUp ? 'บน' : 'ล่าง'}ไปแล้ว — รอปิดแท่งยืนยัน`
+            : ' (ยังไม่ผ่านแนวทั้งสองฝั่ง)'}
+        </p>
+      ) : null}
+
+      <p className="mt-1 text-[11px] leading-5 text-slate-500">ใช้ราคาปิดยืนยันเท่านั้น ไส้เทียนที่ทะลุแนวไม่นับ</p>
+    </div>
+  );
+}
+
+function ZoneRow({ label, value, distance, distanceAtr, note }: {
+  label: string;
+  value: number | null;
+  distance: number | null;
+  distanceAtr: number | null;
+  note: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 py-0.5">
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="font-mono text-white">
+        {value === null ? '—' : value.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+      </dd>
+      {value === null ? (
+        <span className="text-slate-500">ไม่มีแนวที่ยืนยันแล้วฝั่งนี้</span>
+      ) : (
+        <span className="text-slate-500">
+          ({distance === null ? '—' : distance.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          {distanceAtr === null ? '' : ` · ${distanceAtr} ATR`}) {note}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function ReasonList({ title, reasons, empty }: { title: string; reasons: MarketSignalResult['reasons']; empty: string }) {

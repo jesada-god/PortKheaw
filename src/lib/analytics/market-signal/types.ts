@@ -26,11 +26,17 @@ export type MarketSignalFlag =
   | 'stale_or_partial_data'
   | 'earnings_imminent'
   | 'earnings_soon'
-  | 'pre_earnings_breakout';
+  | 'pre_earnings_breakout'
+  // P2 (`SIGNAL_ZONES`). Never emitted while the flag is off.
+  | 'pending_breakout'
+  | 'pending_breakdown'
+  | 'stale_zone'
+  | 'narrow_range';
 
 /** Which rollout phases the caller has turned on for this calculation. */
 export interface MarketSignalFeatures {
   gate: boolean;
+  zones: boolean;
 }
 
 /**
@@ -45,6 +51,66 @@ export interface MarketSignalEarningsContext {
 }
 
 export type MarketSignalBand = 'neutral' | 'weak' | 'moderate' | 'strong';
+
+/** Which side of its structure price is closing on. */
+export type MarketSignalZoneName = 'uptrend' | 'sideways' | 'downtrend';
+
+/**
+ * Where the boundaries came from — and this distinction is the whole phase.
+ *
+ * The engine's `nearestSupport`/`nearestResistance` are, by construction, the
+ * confirmed levels immediately below and above the CURRENT price. So whenever
+ * both exist, price is inside them and cannot be closing beyond either: a zone
+ * built only from that pair would read `sideways` forever and the label would be
+ * a constant. What actually distinguishes a trending instrument is that one side
+ * has no confirmed level left at all.
+ *
+ *   `structural`  Both levels exist and are more than an ATR apart. Price is
+ *                 inside a range it has traded against, so the zone is sideways
+ *                 and `positionPct` carries the lean.
+ *   `open_above`  No confirmed resistance remains above price. It is beyond
+ *                 every level anyone has defended — the real breakout state.
+ *   `open_below`  The mirror: no confirmed support left beneath.
+ *   `atr_band`    Both levels missing, or closer together than one ATR, which is
+ *                 a "range" narrower than a normal day's movement and cannot be
+ *                 broken meaningfully. Falls back to a band around EMA20, and
+ *                 every number in it is a volatility envelope rather than a
+ *                 level anybody has traded against.
+ *
+ * On an open side there is no boundary and no trigger, so those fields are
+ * `null` rather than a projected number that would read as a real level.
+ */
+export type MarketSignalZoneMode = 'structural' | 'open_above' | 'open_below' | 'atr_band';
+
+export interface MarketSignalZones {
+  mode: MarketSignalZoneMode;
+  /** The zone the latest FINALIZED close sits in, after confirmation and hysteresis. */
+  zone: MarketSignalZoneName;
+  /** `null` on an open side: there is no confirmed level there to name. */
+  support: number | null;
+  resistance: number | null;
+  /** Close above this enters the upper zone; falling back below `resistance` leaves it. */
+  upperTrigger: number | null;
+  /** Close below this enters the lower zone; recovering above `support` leaves it. */
+  lowerTrigger: number | null;
+  /** Where the close sits between support and resistance; `null` when a side is open. */
+  positionPct: number | null;
+  /** Distance from the close to each trigger, in price and in ATR. */
+  upperDistance: number | null;
+  upperDistanceAtr: number | null;
+  lowerDistance: number | null;
+  lowerDistanceAtr: number | null;
+  /** How many finalized bars price has held this zone under today's boundaries. */
+  zoneAgeBars: number;
+  /** Bars since a bar's range last reached either level; `null` if never within the walk. */
+  lastTestedBarsAgo: number | null;
+  /** A close is beyond a trigger but has not met the confirmation rule yet. */
+  pendingBreakout: boolean;
+  pendingBreakdown: boolean;
+  /** The close the whole zone is measured from, and the bar it belongs to. */
+  referenceClose: number;
+  referenceDate: string;
+}
 export type MarketSignalConflict = 'ema_vs_momentum' | 'structure_vs_momentum';
 export type MarketSignalEarningsProximity = 'imminent' | 'soon' | 'clear' | 'unknown';
 
@@ -153,6 +219,8 @@ interface MarketSignalBase {
   confidenceBreakdown: MarketSignalConfidenceBreakdown;
   /** P1 only. Omitted entirely when `SIGNAL_GATE` is off. */
   gate?: MarketSignalGate;
+  /** P2 only. Omitted entirely when `SIGNAL_ZONES` is off, or when ATR is unavailable. */
+  zones?: MarketSignalZones;
 }
 
 export type MarketSignalResult = MarketSignalBase & ({

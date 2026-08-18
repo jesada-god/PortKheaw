@@ -734,6 +734,14 @@ export function StockDetailClient({
               <MarketSignalSection
                 result={marketSignal}
                 capability={presentation.technicalOutlookCapability}
+                /*
+                 * The page's accepted marking price, the same one the header
+                 * shows. The signal is computed from the last FINALIZED close,
+                 * which on an open market is a different number — the zone bar
+                 * draws both and labels which is which rather than letting a
+                 * reader assume they are the same.
+                 */
+                livePrice={analyticalSpotPrice}
               />
               {presentation.showKeyStatistics && keyStatisticsEnabled && (
                 <KeyStatisticsSection symbol={symbol} />

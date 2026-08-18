@@ -95,10 +95,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(value: MarketSignalResult | null = result, tier: SubscriptionTier = 'elite') {
+async function render(
+  value: MarketSignalResult | null = result,
+  tier: SubscriptionTier = 'elite',
+  livePrice: number | null = null,
+) {
   await act(async () => root.render(
     <EntitlementProvider tier={tier} authenticated trialOffer="used">
-      <MarketSignalSection result={value} />
+      <MarketSignalSection result={value} livePrice={livePrice} />
     </EntitlementProvider>,
   ));
 }
@@ -235,6 +239,118 @@ describe('MarketSignalSection', () => {
     expect(captured.macd - captured.macdSignal).toBeCloseTo(captured.macdHistogram, 12);
   });
 
+
+  /*
+   * P2 rendering is keyed off `result.zones`, which the engine only produces
+   * when `SIGNAL_ZONES` is on. The zone bar sits BELOW score and confidence and
+   * adds nothing above them, so the existing layout is untouched.
+   */
+  describe('with trend zones on', () => {
+    const zoned: MarketSignalResult = {
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      score: 16,
+      zones: {
+        mode: 'structural',
+        zone: 'sideways',
+        support: 39.2727,
+        resistance: 46.2297,
+        upperTrigger: 47.244,
+        lowerTrigger: 38.2583,
+        positionPct: 68.8,
+        upperDistance: 3.184,
+        upperDistanceAtr: 0.78,
+        lowerDistance: 5.8017,
+        lowerDistanceAtr: 1.43,
+        zoneAgeBars: 9,
+        lastTestedBarsAgo: 0,
+        pendingBreakout: false,
+        pendingBreakdown: false,
+        referenceClose: 44.06,
+        referenceDate: '2026-08-14',
+      },
+    };
+
+    it('says which close every number is measured from', async () => {
+      await render(zoned);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('อิงราคาปิด 44.06 (2026-08-14)');
+      expect(bar.textContent).toContain('ใช้ราคาปิดยืนยันเท่านั้น');
+    });
+
+    it('states both triggers with their distance in price and in ATR', async () => {
+      await render(zoned);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('47.24');
+      expect(bar.textContent).toContain('0.78 ATR');
+      expect(bar.textContent).toContain('38.26');
+      expect(bar.textContent).toContain('1.43 ATR');
+      expect(bar.textContent).toContain('68.8% ของกรอบ');
+      expect(bar.textContent).toContain('โซนนี้ยืนมา 9 แท่ง');
+    });
+
+    it('words the triggers as conditions, never as instructions', async () => {
+      await render(zoned);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('ถ้าปิดเหนือ');
+      expect(bar.textContent).toContain('จะเข้าเงื่อนไขโซนขาขึ้น');
+      expect(bar.textContent).not.toMatch(/ซื้อเมื่อ|ขายเมื่อ|ควรซื้อ|ควรขาย|แนะนำให้/);
+    });
+
+    it('draws the live price as its own marker and says it has not crossed', async () => {
+      await render(zoned, 'elite', 46.31);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('ราคาสด 46.31');
+      expect(bar.textContent).toContain('ยังไม่ผ่านแนวทั้งสองฝั่ง');
+    });
+
+    /*
+     * The case the brief called out: the header shows a live price that has
+     * already cleared the trigger while the signal still reads from a close
+     * below it. Saying nothing invites a reader to conclude the card is stale.
+     */
+    it('says so out loud when the live price has crossed a trigger', async () => {
+      await render(zoned, 'elite', 47.9);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('ผ่านแนวบนไปแล้ว — รอปิดแท่งยืนยัน');
+    });
+
+    it('names an open side rather than drawing a level nobody defended', async () => {
+      const open: MarketSignalResult = {
+        ...zoned,
+        state: 'BULLISH',
+        bias: 'bullish',
+        zones: {
+          ...zoned.zones!,
+          mode: 'open_above',
+          zone: 'uptrend',
+          resistance: null,
+          upperTrigger: null,
+          positionPct: null,
+          upperDistance: null,
+          upperDistanceAtr: null,
+        },
+      };
+      await render(open);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('ไม่มีแนวที่ยืนยันแล้วฝั่งนี้');
+      expect(bar.textContent).toContain('ไม่เหลือแนวต้านที่ยืนยันแล้วเหนือราคา');
+      expect(bar.textContent).not.toContain('% ของกรอบ');
+    });
+
+    it('reports the score as a lean inside the zone, not as a direction', async () => {
+      await render(zoned);
+      const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+      expect(bar.textContent).toContain('อยู่ในกรอบระหว่างแนวรับและแนวต้าน');
+      expect(bar.textContent).toContain('เอียงขึ้นเล็กน้อย (+16)');
+    });
+
+    it('draws no zone bar at all when the flag is off', async () => {
+      await render(result);
+      expect(container.querySelector('[data-testid="signal-zone-bar"]')).toBeNull();
+    });
+  });
   /*
    * P1 rendering is keyed off `result.gate`, which the engine only produces when
    * `SIGNAL_GATE` is on. Everything above this block is the flags-OFF card and

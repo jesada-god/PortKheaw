@@ -1,22 +1,23 @@
 {
   "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 56,
+  "confidence": 74,
   "confidenceBreakdown": {
-    "agreement": 70,
-    "completeness": 100,
+    "agreement": 88,
+    "completeness": 93,
     "conflictPenalty": 15,
     "evidenceStrength": 42,
     "regimeClarity": 100,
     "volumeConfirmation": 50
   },
-  "confidenceLabel": "Low",
+  "confidenceLabel": "Medium",
   "dataPoints": {
     "finalized": 1827,
     "received": 1827
   },
   "flags": [
     "squeeze",
+    "bullish_divergence",
     "weak_confirmation"
   ],
   "freshness": {
@@ -24,21 +25,6 @@
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
-  },
-  "gate": {
-    "band": "neutral",
-    "confidenceFactors": {
-      "agreement": 0.85,
-      "base": 76.92,
-      "completeness": 1,
-      "conflict": 0.85,
-      "earnings": 1,
-      "regimeClarity": 1
-    },
-    "conflicts": [],
-    "daysToEarnings": null,
-    "earningsProximity": "unknown",
-    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-17",
   "metrics": {
@@ -99,6 +85,12 @@
       "text": "Bollinger Bands อยู่ภายใน Keltner Channels: ความผันผวนกำลังบีบตัว"
     },
     {
+      "id": "bullish-divergence",
+      "impact": 4,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots"
+    },
+    {
       "id": "ema50-slope",
       "impact": 3.71,
       "polarity": "negative",
@@ -121,12 +113,6 @@
       "impact": 2.5,
       "polarity": "negative",
       "text": "ราคาและ EMA เรียงตัวเอนลง"
-    },
-    {
-      "id": "bullish-divergence",
-      "impact": 0.8,
-      "polarity": "caution",
-      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 51.7 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
     },
     {
       "id": "rsi14",
@@ -191,5 +177,24 @@
   "timeframe": "1D",
   "warnings": [
     "หลักฐานบางหมวดขัดแย้งกัน"
-  ]
+  ],
+  "zones": {
+    "lastTestedBarsAgo": 5,
+    "lowerDistance": 5162.7942,
+    "lowerDistanceAtr": 4.26,
+    "lowerTrigger": 58898.3347,
+    "mode": "structural",
+    "pendingBreakdown": false,
+    "pendingBreakout": false,
+    "positionPct": 90.5,
+    "referenceClose": 64061.12890625,
+    "referenceDate": "2026-08-17",
+    "resistance": 64572.0635,
+    "support": 59201.2362,
+    "upperDistance": 813.8361,
+    "upperDistanceAtr": 0.67,
+    "upperTrigger": 64874.965,
+    "zone": "sideways",
+    "zoneAgeBars": 7
+  }
 }

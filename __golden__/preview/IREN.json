@@ -1,47 +1,29 @@
 {
   "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 27,
+  "confidence": 61,
   "confidenceBreakdown": {
-    "agreement": 40,
-    "completeness": 100,
+    "agreement": 84,
+    "completeness": 93,
     "conflictPenalty": 10,
-    "evidenceStrength": 32,
+    "evidenceStrength": 36,
     "regimeClarity": 20,
-    "volumeConfirmation": 80
+    "volumeConfirmation": 50
   },
-  "confidenceLabel": "Low",
+  "confidenceLabel": "Medium",
   "dataPoints": {
     "finalized": 1189,
     "received": 1190
   },
   "flags": [
-    "strong_momentum",
-    "conflicting_evidence",
-    "low_volume_confirmation"
+    "bullish_divergence",
+    "strong_momentum"
   ],
   "freshness": {
     "asOf": "2026-08-17T13:30:00.000Z",
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
-  },
-  "gate": {
-    "band": "neutral",
-    "confidenceFactors": {
-      "agreement": 0.7,
-      "base": 72.66,
-      "completeness": 1,
-      "conflict": 0.9,
-      "earnings": 1,
-      "regimeClarity": 0.6
-    },
-    "conflicts": [
-      "ema_vs_momentum"
-    ],
-    "daysToEarnings": null,
-    "earningsProximity": "unknown",
-    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-14",
   "metrics": {
@@ -114,10 +96,10 @@
       "text": "OBV มีแนวโน้มสูงขึ้น"
     },
     {
-      "id": "component-conflict",
-      "impact": 7,
+      "id": "bullish-divergence",
+      "impact": 4,
       "polarity": "caution",
-      "text": "ทิศทางของ EMA/Trend กับ Momentum ขัดกัน จึงยังไม่สรุปเป็นขาขึ้นหรือขาลง"
+      "text": "พบ Bullish divergence จาก confirmed historical pivots"
     },
     {
       "id": "ema-structure",
@@ -132,19 +114,13 @@
       "text": "RSI14 อยู่ที่ 54.9"
     },
     {
-      "id": "bullish-divergence",
-      "impact": 0.8,
-      "polarity": "caution",
-      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 54.9 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
-    },
-    {
       "id": "adx-dmi",
       "impact": 0.36,
       "polarity": "positive",
       "text": "ADX 20.5 โดย +DI เหนือ -DI"
     }
   ],
-  "score": 11,
+  "score": 16,
   "scoreBreakdown": {
     "emaTrend": {
       "available": true,
@@ -183,8 +159,8 @@
       "coverage": 1,
       "factorsUsed": 2,
       "maxPoints": 15,
-      "normalizedScore": 0.2,
-      "points": 3
+      "normalizedScore": 0.5,
+      "points": 8
     }
   },
   "source": "yahoo-finance-chart",
@@ -192,7 +168,24 @@
   "status": "available",
   "symbol": "IREN",
   "timeframe": "1D",
-  "warnings": [
-    "Relative Volume 0.84× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
-  ]
+  "warnings": [],
+  "zones": {
+    "lastTestedBarsAgo": 0,
+    "lowerDistance": 5.8017,
+    "lowerDistanceAtr": 1.43,
+    "lowerTrigger": 38.2583,
+    "mode": "structural",
+    "pendingBreakdown": false,
+    "pendingBreakout": false,
+    "positionPct": 68.8,
+    "referenceClose": 44.060001373291016,
+    "referenceDate": "2026-08-14",
+    "resistance": 46.2297,
+    "support": 39.2727,
+    "upperDistance": 3.184,
+    "upperDistanceAtr": 0.78,
+    "upperTrigger": 47.244,
+    "zone": "sideways",
+    "zoneAgeBars": 9
+  }
 }

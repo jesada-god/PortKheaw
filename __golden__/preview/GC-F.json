@@ -1,43 +1,28 @@
 {
-  "bias": "bullish",
+  "bias": "neutral",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 71,
+  "confidence": 59,
   "confidenceBreakdown": {
-    "agreement": 100,
-    "completeness": 100,
+    "agreement": 53,
+    "completeness": 93,
     "conflictPenalty": 0,
-    "evidenceStrength": 48,
-    "regimeClarity": 80,
-    "volumeConfirmation": 20
+    "evidenceStrength": 53,
+    "regimeClarity": 20,
+    "volumeConfirmation": 50
   },
-  "confidenceLabel": "Medium",
+  "confidenceLabel": "Low",
   "dataPoints": {
     "finalized": 1256,
     "received": 1257
   },
   "flags": [
-    "low_volume_confirmation"
+    "bullish_divergence"
   ],
   "freshness": {
     "asOf": "2026-08-17T04:00:00.000Z",
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
-  },
-  "gate": {
-    "band": "moderate",
-    "confidenceFactors": {
-      "agreement": 1,
-      "base": 79.22,
-      "completeness": 1,
-      "conflict": 1,
-      "earnings": 1,
-      "regimeClarity": 0.9
-    },
-    "conflicts": [],
-    "daysToEarnings": null,
-    "earningsProximity": "unknown",
-    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-14",
   "metrics": {
@@ -122,6 +107,12 @@
       "text": "MACD Histogram เป็นบวกแต่หดตัว"
     },
     {
+      "id": "bullish-divergence",
+      "impact": 4,
+      "polarity": "caution",
+      "text": "พบ Bullish divergence จาก confirmed historical pivots"
+    },
+    {
       "id": "ema200-slope",
       "impact": 3.89,
       "polarity": "negative",
@@ -132,15 +123,9 @@
       "impact": 2.5,
       "polarity": "negative",
       "text": "ราคาและ EMA เรียงตัวเอนลง"
-    },
-    {
-      "id": "bullish-divergence",
-      "impact": 0.8,
-      "polarity": "caution",
-      "text": "พบ Bullish divergence จาก confirmed historical pivots (RSI 64.6 อยู่กลางโซน จึงถ่วงน้ำหนักต่ำ)"
     }
   ],
-  "score": 48,
+  "score": 53,
   "scoreBreakdown": {
     "emaTrend": {
       "available": true,
@@ -179,16 +164,33 @@
       "coverage": 1,
       "factorsUsed": 2,
       "maxPoints": 15,
-      "normalizedScore": 0.2,
-      "points": 3
+      "normalizedScore": 0.5,
+      "points": 8
     }
   },
   "source": "yahoo-finance-chart",
-  "state": "BULLISH",
+  "state": "SIDEWAYS",
   "status": "available",
   "symbol": "GC-F",
   "timeframe": "1D",
-  "warnings": [
-    "Relative Volume 0.25× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
-  ]
+  "warnings": [],
+  "zones": {
+    "lastTestedBarsAgo": 0,
+    "lowerDistance": 131.6108,
+    "lowerDistanceAtr": 1.75,
+    "lowerTrigger": 4248.7891,
+    "mode": "structural",
+    "pendingBreakdown": false,
+    "pendingBreakout": false,
+    "positionPct": 94.9,
+    "referenceClose": 4380.39990234375,
+    "referenceDate": "2026-08-14",
+    "resistance": 4386.4334,
+    "support": 4267.6001,
+    "upperDistance": 24.8445,
+    "upperDistanceAtr": 0.33,
+    "upperTrigger": 4405.2444,
+    "zone": "sideways",
+    "zoneAgeBars": 5
+  }
 }

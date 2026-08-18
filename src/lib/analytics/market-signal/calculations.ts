@@ -6,6 +6,7 @@ import {
   MARKET_SIGNAL_GATE,
   MARKET_SIGNAL_SCORE_WEIGHTS,
   MARKET_SIGNAL_THRESHOLDS,
+  MARKET_SIGNAL_ZONE,
 } from '@/src/config/signal';
 import type {
   MarketSignalBand,
@@ -24,6 +25,8 @@ import type {
   MarketSignalScoreBreakdown,
   MarketSignalScoreComponent,
   MarketSignalState,
+  MarketSignalZoneName,
+  MarketSignalZones,
 } from './types';
 
 interface Factor {
@@ -599,6 +602,212 @@ export function duplicatedReasonTags(reasons: readonly MarketSignalReason[]): st
   return [...polarities.entries()].filter(([, seen]) => seen.size > 1).map(([id]) => id).sort();
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * P2 trend zones (`SIGNAL_ZONES`)
+ * ---------------------------------------------------------------------------
+ * The card published a direction and, a few centimetres below it, a support and
+ * a resistance showing price sitting in the middle of its own range. Only one of
+ * those can be the headline. Here the structure decides the label and the score
+ * is demoted to describing the lean INSIDE the zone.
+ */
+
+/** Relative volume for one bar against the twenty bars before it. */
+function relativeVolumeAt(candles: readonly Omit<MarketSignalCandle, 'finalized'>[], index: number): number | null {
+  if (index < 20) return null;
+  const trailing = candles.slice(index - 20, index).map((candle) => candle.volume);
+  if (!trailing.every((volume): volume is number => volume !== null)) return null;
+  const average = trailing.reduce((sum, volume) => sum + volume, 0) / 20;
+  const current = candles[index].volume;
+  return average > 0 && current !== null ? current / average : null;
+}
+
+/**
+ * Does a close beyond a trigger count as a break yet?
+ *
+ * One close is enough when the day carried real volume; otherwise the break has
+ * to hold for two consecutive closes. Everything is measured on CLOSES — an
+ * intraday spike through a level is not a break of it, and treating it as one is
+ * how a zone bar starts flickering.
+ */
+function breakConfirmed(
+  candles: readonly Omit<MarketSignalCandle, 'finalized'>[],
+  index: number,
+  beyond: (close: number) => boolean,
+): boolean {
+  if (!beyond(candles[index].close)) return false;
+  const volume = relativeVolumeAt(candles, index);
+  if (volume !== null && volume >= MARKET_SIGNAL_ZONE.confirmation.highVolumeRelative) return true;
+  for (let back = 1; back < MARKET_SIGNAL_ZONE.confirmation.barsWithoutVolume; back += 1) {
+    const previous = candles[index - back];
+    if (!previous || !beyond(previous.close)) return false;
+  }
+  return true;
+}
+
+/**
+ * Which zone the latest close sits in, and how it got there.
+ *
+ * Returns `null` rather than throwing whenever the inputs cannot support a zone
+ * — no ATR, no levels, no EMA20 to fall back to. A card missing its zone bar is
+ * a smaller failure than a card that invents one.
+ *
+ * The walk applies TODAY's boundaries to the last `walkbackBars` bars. That is
+ * deliberately not a replay of where the boundaries used to be: the question
+ * `zoneAgeBars` answers is "how long has price been on this side of the lines we
+ * are drawing now", which is what a reader looking at the bar is asking.
+ */
+export function calculateTrendZones(input: {
+  candles: readonly Omit<MarketSignalCandle, 'finalized'>[];
+  support: number | null;
+  resistance: number | null;
+  atr14: number | null;
+  ema20: number | null;
+}): MarketSignalZones | null {
+  const { candles, atr14, ema20 } = input;
+  const latest = candles.at(-1);
+  if (!latest || atr14 === null || !Number.isFinite(atr14) || atr14 <= 0) return null;
+
+  const finite = (value: number | null) => value !== null && Number.isFinite(value) ? value : null;
+  const rawSupport = finite(input.support);
+  const rawResistance = finite(input.resistance);
+  const buffer = MARKET_SIGNAL_ZONE.triggerAtrMultiple * atr14;
+  const close = latest.close;
+
+  let mode: MarketSignalZones['mode'];
+  let support: number | null;
+  let resistance: number | null;
+  if (rawSupport !== null && rawResistance !== null) {
+    if (rawResistance - rawSupport >= MARKET_SIGNAL_ZONE.narrowRange.minimumAtrWidth * atr14) {
+      mode = 'structural';
+      support = rawSupport;
+      resistance = rawResistance;
+    } else {
+      // A "range" narrower than one day's normal movement describes no boundary
+      // anyone could break, so stop presenting it as one.
+      mode = 'atr_band';
+      support = (ema20 ?? close) - MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
+      resistance = (ema20 ?? close) + MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
+    }
+  } else if (rawSupport !== null) {
+    mode = 'open_above';
+    support = rawSupport;
+    resistance = null;
+  } else if (rawResistance !== null) {
+    mode = 'open_below';
+    support = null;
+    resistance = rawResistance;
+  } else if (ema20 !== null && Number.isFinite(ema20)) {
+    mode = 'atr_band';
+    support = ema20 - MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
+    resistance = ema20 + MARKET_SIGNAL_ZONE.narrowRange.atrBandMultiplier * atr14;
+  } else {
+    return null;
+  }
+
+  const upperTrigger = resistance === null ? null : resistance + buffer;
+  const lowerTrigger = support === null ? null : support - buffer;
+
+  /*
+   * The walk applies TODAY's boundaries to the last `walkbackBars` bars. It is
+   * deliberately not a replay of where the boundaries used to be: the question
+   * `zoneAgeBars` answers is "how long has price been on this side of the lines
+   * we are drawing now", which is what a reader looking at the bar is asking.
+   *
+   * Entry always needs a confirmed close past `level + buffer`; leaving needs
+   * only a close back inside the level itself. Without that asymmetry a price
+   * oscillating around one number relabels the card every other day, which
+   * teaches a reader the label is noise.
+   */
+  const from = Math.max(1, candles.length - MARKET_SIGNAL_ZONE.walkbackBars);
+  let zone: MarketSignalZoneName = mode === 'open_above' ? 'uptrend'
+    : mode === 'open_below' ? 'downtrend' : 'sideways';
+  let zoneSince = from;
+  for (let index = from; index < candles.length; index += 1) {
+    const bar = candles[index].close;
+    const previous: MarketSignalZoneName = zone;
+    if (zone === 'uptrend' && support !== null && resistance === null) {
+      // Open above: the support is the only structure left, so losing it is what
+      // ends the move rather than re-entering a range from the top.
+      if (bar < support) zone = 'sideways';
+    } else if (zone === 'uptrend' && resistance !== null) {
+      if (bar < resistance) zone = 'sideways';
+    } else if (zone === 'downtrend' && resistance !== null && support === null) {
+      if (bar > resistance) zone = 'sideways';
+    } else if (zone === 'downtrend' && support !== null) {
+      if (bar > support) zone = 'sideways';
+    }
+    if (zone === 'sideways') {
+      const upper = upperTrigger ?? (support === null ? null : support + buffer);
+      const lower = lowerTrigger ?? (resistance === null ? null : resistance - buffer);
+      if (upper !== null && breakConfirmed(candles, index, (value) => value > upper)) zone = 'uptrend';
+      else if (lower !== null && breakConfirmed(candles, index, (value) => value < lower)) zone = 'downtrend';
+    }
+    if (zone !== previous) zoneSince = index;
+  }
+
+  const tolerance = MARKET_SIGNAL_ZONE.expiry.touchToleranceAtrMultiple * atr14;
+  let lastTestedBarsAgo: number | null = null;
+  for (let index = candles.length - 1; index >= from; index -= 1) {
+    const bar = candles[index];
+    const touchedUpper = resistance !== null && bar.high >= resistance - tolerance;
+    const touchedLower = support !== null && bar.low <= support + tolerance;
+    if (touchedUpper || touchedLower) {
+      lastTestedBarsAgo = candles.length - 1 - index;
+      break;
+    }
+  }
+
+  const width = support !== null && resistance !== null ? resistance - support : null;
+  return {
+    mode,
+    zone,
+    support: support === null ? null : round(support, 4),
+    resistance: resistance === null ? null : round(resistance, 4),
+    upperTrigger: upperTrigger === null ? null : round(upperTrigger, 4),
+    lowerTrigger: lowerTrigger === null ? null : round(lowerTrigger, 4),
+    positionPct: width !== null && width > 0 ? round(((close - (support as number)) / width) * 100, 1) : null,
+    upperDistance: upperTrigger === null ? null : round(upperTrigger - close, 4),
+    upperDistanceAtr: upperTrigger === null ? null : round((upperTrigger - close) / atr14, 2),
+    lowerDistance: lowerTrigger === null ? null : round(close - lowerTrigger, 4),
+    lowerDistanceAtr: lowerTrigger === null ? null : round((close - lowerTrigger) / atr14, 2),
+    zoneAgeBars: candles.length - 1 - zoneSince,
+    lastTestedBarsAgo,
+    // "Pending" is the honest state between a close clearing a trigger and the
+    // confirmation rule accepting it: the zone has not moved, and the reader is
+    // told why it has not moved yet rather than being shown nothing.
+    pendingBreakout: zone !== 'uptrend' && upperTrigger !== null && close > upperTrigger,
+    pendingBreakdown: zone !== 'downtrend' && lowerTrigger !== null && close < lowerTrigger,
+    referenceClose: close,
+    referenceDate: latest.date,
+  };
+}
+
+/**
+ * The label a zone implies.
+ *
+ * Regime states still win. A squeeze is a statement about volatility that a
+ * zone does not contradict, and "coiling" serves a reader better than
+ * "sideways" when both are true.
+ */
+export function zonePresentationState(input: {
+  zone: MarketSignalZoneName;
+  regime: RegimeEvidence;
+  score: number;
+  scoreBreakdown: MarketSignalScoreBreakdown;
+  adx: number | null;
+  relativeVolume: number | null;
+}): MarketSignalState {
+  const { zone, regime, score, scoreBreakdown, adx, relativeVolume } = input;
+  if (regime.squeeze) return 'SQUEEZE';
+  if (regime.overextended) return 'OVEREXTENDED';
+  if (zone === 'sideways') return 'SIDEWAYS';
+  const bias: MarketSignalBias = zone === 'uptrend' ? 'bullish' : 'bearish';
+  const confirmed = presentationState(score, bias, regime, scoreBreakdown, adx, relativeVolume);
+  if (confirmed === 'STRONG_BULLISH' || confirmed === 'STRONG_BEARISH') return confirmed;
+  return zone === 'uptrend' ? 'BULLISH' : 'BEARISH';
+}
+
 export function presentationState(
   score: number,
   bias: MarketSignalBias,
@@ -807,6 +1016,7 @@ export function calculateMarketSignal(
   if (breakout || breakdown) structureFactors.push({ id: breakout ? 'structure-breakout' : 'structure-breakdown', score: breakout ? 1 : -1, text: `${breakout ? 'Breakout แนวต้าน' : 'Breakdown แนวรับ'} จาก confirmed pivot` });
 
   const gateOn = context.features?.gate === true;
+  const zonesOn = context.features?.zones === true;
   const lowVolume = capLowVolumeComponent(component('volume', volumeFactors), relativeVolume20);
   const volumeCapped = gateOn && lowVolume.capped;
   const scoreBreakdown: MarketSignalScoreBreakdown = {
@@ -880,18 +1090,50 @@ export function calculateMarketSignal(
   const dataDegraded = gateOn && isDegradedFreshness(context.freshness.status);
   const gatedBiasValue = gateOn ? gatedBias(score, band as MarketSignalBand, conflicts) : bias;
 
-  const state = gateOn
-    ? gatedPresentationState({
-      score,
-      bias: gatedBiasValue,
+  /*
+   * P2. Zones are built from the SAME `nearestSupport`/`nearestResistance` the
+   * summary card at the top of the page already prints, so the two can never
+   * quote different levels for the same instrument.
+   */
+  const zones = zonesOn
+    ? calculateTrendZones({ candles: finalized, support: nearestSupport, resistance: nearestResistance, atr14, ema20 })
+    : null;
+
+  /*
+   * When zones are on, STRUCTURE names the label and the score is demoted to
+   * describing the lean inside it. The gate keeps its veto: a conflict is a
+   * statement that the evidence cannot be read, which survives price being on
+   * one side of a line.
+   */
+  const zoneState = zones
+    ? zonePresentationState({
+      zone: zones.zone,
       regime,
+      score,
       scoreBreakdown,
       adx: metrics.adx14,
       relativeVolume: metrics.relativeVolume20,
-      band: band as MarketSignalBand,
-      earningsProximity,
     })
-    : presentationState(score, bias, regime, scoreBreakdown, metrics.adx14, metrics.relativeVolume20);
+    : null;
+  const zoneBias: MarketSignalBias | null = zones
+    ? (zones.zone === 'uptrend' ? 'bullish' : zones.zone === 'downtrend' ? 'bearish' : 'neutral')
+    : null;
+  const gateVetoes = gateOn && conflicts.length > 0;
+
+  const state = zoneState !== null
+    ? (gateVetoes && zoneState !== 'SQUEEZE' && zoneState !== 'OVEREXTENDED' ? 'SIDEWAYS' : zoneState)
+    : gateOn
+      ? gatedPresentationState({
+        score,
+        bias: gatedBiasValue,
+        regime,
+        scoreBreakdown,
+        adx: metrics.adx14,
+        relativeVolume: metrics.relativeVolume20,
+        band: band as MarketSignalBand,
+        earningsProximity,
+      })
+      : presentationState(score, bias, regime, scoreBreakdown, metrics.adx14, metrics.relativeVolume20);
   const regimeClarity = regime.squeeze ? 1
     : regime.overextended ? clamp(regime.overextensionEvidence / 3, 0, 1)
       : state === 'SIDEWAYS' ? clamp(regime.sidewaysTrue / Math.max(regime.sidewaysAvailable, 1), 0, 1)
@@ -901,7 +1143,9 @@ export function calculateMarketSignal(
     : null;
   const confidenceResult = gatedConfidenceResult ?? calculateSignalConfidence(scoreBreakdown, bias, regimeClarity);
   const confidenceLabel = confidenceLabelFromValue(confidenceResult.confidence);
-  const effectiveBias = gateOn ? gatedBiasValue : bias;
+  const effectiveBias = zoneBias !== null
+    ? (gateVetoes ? 'neutral' : zoneBias)
+    : gateOn ? gatedBiasValue : bias;
 
   // A divergence in the middle of the RSI range is not worth a chip of its own;
   // it stays a written caution, which is also what keeps one fact from being
@@ -920,6 +1164,15 @@ export function calculateMarketSignal(
   const hasConflict = confidenceResult.breakdown.conflictPenalty >= 15;
   const weakVolume = scoreBreakdown.volume.normalizedScore === null || Math.abs(scoreBreakdown.volume.normalizedScore) < 0.2;
   if (hasConflict || weakVolume) flags.push('weak_confirmation');
+  if (zones) {
+    if (zones.pendingBreakout) flags.push('pending_breakout');
+    if (zones.pendingBreakdown) flags.push('pending_breakdown');
+    if (zones.mode === 'atr_band') flags.push('narrow_range');
+    if (zones.lastTestedBarsAgo === null
+      || zones.lastTestedBarsAgo > MARKET_SIGNAL_ZONE.expiry.maximumUntestedBars) {
+      flags.push('stale_zone');
+    }
+  }
   if (gateOn) {
     if (conflicts.length) flags.push('conflicting_evidence');
     if (volumeCapped) flags.push('low_volume_confirmation');
@@ -962,6 +1215,22 @@ export function calculateMarketSignal(
       polarity: 'caution',
       text: `อีก ${context.earnings?.daysToNextReport} วันจะประกาศงบ ซึ่งเป็นเหตุการณ์ที่กราฟยังมองไม่เห็น`,
       impact: earningsProximity === 'imminent' ? 8 : 5,
+    });
+  }
+  if (zones && (zones.pendingBreakout || zones.pendingBreakdown)) {
+    supplementalReasons.push({
+      id: 'pending-zone-break',
+      polarity: 'caution',
+      text: `ราคาปิดผ่านแนว${zones.pendingBreakout ? 'ต้าน' : 'รับ'}แล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังไม่เปลี่ยนโซน`,
+      impact: 6,
+    });
+  }
+  if (zones && zones.mode === 'atr_band') {
+    supplementalReasons.push({
+      id: 'narrow-range-band',
+      polarity: 'information',
+      text: 'แนวรับและแนวต้านห่างกันน้อยกว่า 1 ATR จึงใช้กรอบ ATR รอบ EMA20 แทน',
+      impact: 2,
     });
   }
   if ((breakout || breakdown) && !hasVolumeConfirmation(relativeVolume20)) {
@@ -1019,5 +1288,6 @@ export function calculateMarketSignal(
     // the flag off — `JSON.stringify` keeps an explicit `undefined` out too, but
     // deep-equality assertions and the golden gate both see the difference.
     ...(gate ? { gate } : {}),
+    ...(zones ? { zones } : {}),
   };
 }

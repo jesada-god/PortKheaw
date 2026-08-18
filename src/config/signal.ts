@@ -163,6 +163,29 @@ export const MARKET_SIGNAL_GATE = {
    * drive confidence to zero on its own, but a genuinely bad one does real
    * damage. They are the obvious calibration surface for P4.
    */
+  /*
+   * Measured over 108 real instruments at the close of P1.5:
+   *
+   *   base          median 0.778   (min 0.636)
+   *   completeness  median 1.000   INERT — every instrument had all five
+   *                                components and fresh provider data
+   *   agreement     median 0.850   (min 0.575)  <- the heaviest live term
+   *   regimeClarity median 0.800   (min 0.500, i.e. its floor)
+   *   conflict      median 0.970   (min 0.743)  deliberately UNFLOORED
+   *   earnings      median 1.000   INERT — the dev calendar has no entitlement
+   *
+   * So the product has four live terms today, not six. That is a known state,
+   * not a defect: `completeness` wakes up in P5 when optional context sources
+   * start being genuinely absent, and `earnings` wakes up wherever the calendar
+   * is entitled. Re-run `npm run signal:sensitivity -- --confidence` at the end
+   * of P5 and compare against those medians.
+   *
+   * `conflict` has no floor ON PURPOSE. It is the term that should be able to
+   * take confidence all the way down, because evidence pointing two ways is the
+   * one condition under which a number here is worthless. A test watches for it
+   * dropping below 0.3 so that the day it starts happening is a thing we learn
+   * rather than a thing a floor hides.
+   */
   confidence: {
     evidenceFloor: 0.6,
     completenessFloor: 0.6,
@@ -170,6 +193,8 @@ export const MARKET_SIGNAL_GATE = {
     regimeClarityFloor: 0.5,
     /** Provider data that is stale, cached or unknown is not 100% complete. */
     degradedDataFactor: 0.7,
+    /** Not a clamp — the level at which the conflict term becomes worth reporting. */
+    conflictFactorWatchLevel: 0.3,
   },
   /*
    * Event risk. A technical read across an earnings print is a read across a
@@ -196,3 +221,58 @@ export const MARKET_SIGNAL_EXPECTED_FACTORS = {
 
 export const MARKET_SIGNAL_TOTAL_WEIGHT = Object.values(MARKET_SIGNAL_SCORE_WEIGHTS)
   .reduce((sum, weight) => sum + weight, 0);
+
+/**
+ * P2 trend zones — read only when `SIGNAL_ZONES` is on.
+ *
+ * The card used to publish a directional label and, a few centimetres away, a
+ * support and a resistance that said price was sitting in the middle of its
+ * range. A zone makes the second thing decide the first: a label is a statement
+ * about where price is relative to structure, not about a score.
+ */
+export const MARKET_SIGNAL_ZONE = {
+  /*
+   * How far past a level price has to close before the level counts as broken.
+   * A quarter of ATR is small enough that a real break clears it on the day and
+   * wide enough that a wick and a fill do not.
+   */
+  triggerAtrMultiple: 0.25,
+  /*
+   * Leaving a zone is easier than entering it, on purpose.
+   *
+   * Entry needs a close beyond `level + 0.25 ATR`; exit only needs a close back
+   * inside the level itself. Without the gap a price oscillating around one
+   * number flips the label on alternate days, which is worse than useless — it
+   * teaches a reader the label is noise. Both sides use the same asymmetry.
+   */
+  confirmation: {
+    /** One close beyond the trigger is enough when the day carried real volume. */
+    highVolumeRelative: 1.2,
+    /** Otherwise the break has to hold for this many consecutive closes. */
+    barsWithoutVolume: 2,
+  },
+  /*
+   * When support and resistance sit closer together than a single ATR, the
+   * "range" is narrower than one day's normal movement and a break of it means
+   * nothing. Fall back to a band around EMA20 and say so in `mode`.
+   */
+  narrowRange: {
+    minimumAtrWidth: 1,
+    atrBandMultiplier: 1.5,
+  },
+  /*
+   * A level nobody has traded against in months is a line on a chart, not a
+   * boundary. `lastTestedBarsAgo` past this many bars raises `stale_zone`.
+   */
+  expiry: {
+    maximumUntestedBars: 60,
+    touchToleranceAtrMultiple: 0.25,
+  },
+  /*
+   * How far back the zone walk starts. The walk applies TODAY's boundaries to
+   * past bars to answer "how long has price been on this side of them" — it is
+   * deliberately not a replay of what the boundaries used to be, which would be
+   * a different question and a far more expensive one.
+   */
+  walkbackBars: 120,
+} as const;

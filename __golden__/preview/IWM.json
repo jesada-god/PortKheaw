@@ -1,14 +1,14 @@
 {
   "bias": "bullish",
   "calculatedAt": "2026-01-01T00:00:00.000Z",
-  "confidence": 65,
+  "confidence": 73,
   "confidenceBreakdown": {
-    "agreement": 70,
-    "completeness": 100,
+    "agreement": 58,
+    "completeness": 93,
     "conflictPenalty": 0,
-    "evidenceStrength": 54,
-    "regimeClarity": 88,
-    "volumeConfirmation": 20
+    "evidenceStrength": 58,
+    "regimeClarity": 97,
+    "volumeConfirmation": 50
   },
   "confidenceLabel": "Medium",
   "dataPoints": {
@@ -17,29 +17,13 @@
   },
   "flags": [
     "bearish_divergence",
-    "strong_momentum",
-    "low_volume_confirmation"
+    "strong_momentum"
   ],
   "freshness": {
     "asOf": "2026-08-17T13:30:00.000Z",
     "maxAgeSeconds": 21600,
     "staleWhileRevalidateSeconds": 604800,
     "status": "end-of-day"
-  },
-  "gate": {
-    "band": "moderate",
-    "confidenceFactors": {
-      "agreement": 0.85,
-      "base": 81.45,
-      "completeness": 1,
-      "conflict": 1,
-      "earnings": 1,
-      "regimeClarity": 0.9417
-    },
-    "conflicts": [],
-    "daysToEarnings": null,
-    "earningsProximity": "unknown",
-    "forcedNeutral": false
   },
   "latestCandleAt": "2026-08-14",
   "metrics": {
@@ -125,12 +109,12 @@
     },
     {
       "id": "bearish-divergence",
-      "impact": 2.52,
+      "impact": 4,
       "polarity": "caution",
       "text": "พบ Bearish divergence จาก confirmed historical pivots"
     }
   ],
-  "score": 53,
+  "score": 58,
   "scoreBreakdown": {
     "emaTrend": {
       "available": true,
@@ -169,8 +153,8 @@
       "coverage": 1,
       "factorsUsed": 2,
       "maxPoints": 15,
-      "normalizedScore": 0.2,
-      "points": 3
+      "normalizedScore": 0.5,
+      "points": 8
     }
   },
   "source": "yahoo-finance-chart",
@@ -178,7 +162,24 @@
   "status": "available",
   "symbol": "IWM",
   "timeframe": "1D",
-  "warnings": [
-    "Relative Volume 0.63× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume"
-  ]
+  "warnings": [],
+  "zones": {
+    "lastTestedBarsAgo": 0,
+    "lowerDistance": 3.61,
+    "lowerDistanceAtr": 0.95,
+    "lowerTrigger": 301.48,
+    "mode": "open_above",
+    "pendingBreakdown": false,
+    "pendingBreakout": false,
+    "positionPct": null,
+    "referenceClose": 305.0899963378906,
+    "referenceDate": "2026-08-14",
+    "resistance": null,
+    "support": 302.4267,
+    "upperDistance": null,
+    "upperDistanceAtr": null,
+    "upperTrigger": null,
+    "zone": "uptrend",
+    "zoneAgeBars": 0
+  }
 }
