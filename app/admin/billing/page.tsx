@@ -65,6 +65,32 @@ const ISSUE_LABEL: Readonly<Record<string, string>> = {
   dead_letter_event: 'Webhook ล้มเหลวถาวร (dead letter)',
 };
 
+/**
+ * The trial, said out loud.
+ *
+ * A lapsed trial is never rewritten — the row still says `trialing · elite` a
+ * month after the week ended, deliberately, because the record of the free week
+ * is what stops a second one being taken. So the stored status is shown as
+ * stored, and this adds the half of the sentence the operator would otherwise
+ * have to work out from the chip beside it: whether it is still running, and
+ * when it ended if it is not.
+ */
+function trialLine(account: {
+  trial_active: boolean;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
+}): string {
+  /*
+   * A deployment whose database is a migration behind returns none of these
+   * columns. "Never trialled" would then be a claim about a reader made out of a
+   * missing column, so the absent case says nothing instead.
+   */
+  if (typeof account.trial_active !== 'boolean') return '—';
+  if (account.trial_active) return `กำลังทดลองใช้ · สิ้นสุด ${when(account.trial_ends_at)}`;
+  if (!account.trial_started_at && !account.trial_ends_at) return 'ไม่เคยทดลองใช้';
+  return `หมดอายุแล้ว · สิ้นสุดเมื่อ ${when(account.trial_ends_at)}`;
+}
+
 const INVOICE_STATUS_LABEL: Readonly<Record<string, string>> = {
   open: 'รอชำระ',
   paid: 'ชำระแล้ว',
@@ -185,7 +211,8 @@ export default async function AdminBillingPage({
                   </div>
                   <dl className="mt-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
                     <Row label="แพ็กเกจที่บันทึกไว้" value={account.billing_plan_key ? billingPlans[account.billing_plan_key]?.name ?? account.billing_plan_key : '—'} />
-                    <Row label="สถานะ" value={`${account.status} · ${account.tier}`} />
+                    <Row label="สถานะที่บันทึกไว้" value={`${account.status} · ${account.tier}`} />
+                    <Row label="ทดลองใช้" value={trialLine(account)} />
                     <Row label="ช่องทางชำระ" value={account.billing_collection_method ? RAIL_LABEL[account.billing_collection_method] ?? account.billing_collection_method : '—'} />
                     <Row label="โหมดผู้ให้บริการ" value={account.billing_provider_mode ?? '—'} />
                     <Row label="สิ้นสุดรอบปัจจุบัน" value={when(account.current_period_end)} />

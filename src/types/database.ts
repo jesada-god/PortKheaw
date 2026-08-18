@@ -1367,6 +1367,10 @@ export interface Database {
           open_ticket_count: number;
           open_refund_count: number;
           database_now: string;
+          trial_started_at: string | null;
+          trial_ends_at: string | null;
+          /** Whether that trial is running at `database_now` — not whether one was ever had. */
+          trial_active: boolean;
         }>;
       };
       admin_account_invoices: {
@@ -1857,6 +1861,10 @@ export interface Database {
           trial_starts_7d: number;
           /** Accounts whose first settled invoice fell in the last seven Bangkok days. */
           paid_conversions_7d: number;
+          /** Accounts that have ever started a trial, at any time. No window, no tier. */
+          trial_starts_total: number;
+          /** Lapsed trials, counted where they now are — strictly inside `basic_members`. */
+          expired_trial_members: number;
         }>;
       };
       admin_recent_billing_activity: {
