@@ -509,12 +509,32 @@ describe('MarketSignalSection', () => {
       expect(labels.indexOf('ถ้าปิดต่ำกว่า')).toBeLessThan(labels.indexOf('ถ้าปิดเหนือ'));
     });
 
-    it('draws the live price as its own marker and says it has not crossed', async () => {
+    /*
+     * The live price is the number on screen, and the one the reader's eye is
+     * already on. It gets a mark on the bar, a caption of its own, and a line
+     * that names the FIELD it is standing in — "ยังไม่ผ่านขอบกรอบทั้งสองฝั่ง"
+     * was the same sentence for a price in the middle of the frame and for one
+     * a hair under the trigger, which is to say it was not a status at all.
+     */
+    it('draws the live price as its own marker, captioned, beside the close', async () => {
       await render(zoned, 'elite', 46.31);
       expect(zoneBar().textContent).toContain('ราคาสด 46.31');
-      expect(zoneBar().textContent).toContain('ยังไม่ผ่านขอบกรอบทั้งสองฝั่ง');
+      expect(zoneBar().textContent).toContain('ยังอยู่ในกรอบเดิมเหมือนราคาปิด');
+      // The caption ON the bar, so the thin mark is identifiable without the
+      // sentence underneath it.
+      expect(zoneBar().textContent).toContain('สด 46.31');
+      expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
       // And it is not the price the percentages are measured from.
       expect(zoneBar().textContent).toContain('ตอนนี้ 44.06');
+    });
+
+    it('never drops the live marker, whatever the caption does', async () => {
+      // Live and close a hair apart: the two captions are in rows of their own
+      // precisely so neither has to be dropped here.
+      await render(zoned, 'elite', 44.07);
+      expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+      expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
+      expect(zoneBar().textContent).toContain('สด 44.07');
     });
 
     /*
@@ -522,9 +542,85 @@ describe('MarketSignalSection', () => {
      * already cleared the trigger while the signal still reads from a close
      * below it. Saying nothing invites a reader to conclude the card is stale.
      */
-    it('says so out loud when the live price has crossed a trigger', async () => {
+    it('says so out loud when the live price has left the close’s field', async () => {
       await render(zoned, 'elite', 47.9);
-      expect(zoneBar().textContent).toContain('ผ่านขอบบนไปแล้ว — ต้องรอราคาปิดยืนยันก่อน');
+      expect(zoneBar().textContent).toContain('ราคาสด 47.9 ขึ้นไปเหนือกรอบเดิมแล้ว');
+      expect(zoneBar().textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
+    });
+
+    /*
+     * IREN, 2026-08-18: upper trigger 43.25, close 44.06, live 42.38. The
+     * headline reads BULLISH off a close above the frame while the number on
+     * screen has already fallen back inside it. One marker at 44.06 in a green
+     * field is a reader concluding the move is still on.
+     *
+     * The sides are read off the TRIGGERS, not off `zones.zone` — the engine's
+     * label is a statement about a finalized close after hysteresis, and the
+     * live price has been through neither.
+     */
+    describe('when the live price is in a different field from the close', () => {
+      const crossedBack: MarketSignalResult = {
+        ...zoned,
+        state: 'BULLISH',
+        bias: 'bullish',
+        score: 34,
+        zones: {
+          ...zoned.zones!,
+          zone: 'uptrend',
+          upperTrigger: 43.25,
+          lowerTrigger: 38.2583,
+          referenceClose: 44.06,
+          upperDistance: -0.81,
+          upperDistanceAtr: -0.2,
+          nearestTriggerAtr: -0.2,
+        },
+      };
+
+      it('says the live price fell back inside the frame, and what would change the zone', async () => {
+        await render(crossedBack, 'elite', 42.38);
+        const line = container.querySelector('[data-testid="signal-live-price"]')!;
+        expect(line.textContent).toContain('ราคาสด 42.38 ตกกลับเข้ากรอบเดิมแล้ว');
+        expect(line.textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
+      });
+
+      it('weights that line harder than the rest of the box', async () => {
+        await render(crossedBack, 'elite', 42.38);
+        const line = container.querySelector('[data-testid="signal-live-price"]')!;
+        expect(line.getAttribute('data-diverges')).toBe('true');
+        expect(line.className).toContain('font-semibold');
+        expect(line.className).toContain('text-amber-200');
+        expect(line.className).not.toContain('text-slate-400');
+      });
+
+      it('leaves the line in the ordinary weight when both marks are in one field', async () => {
+        await render(crossedBack, 'elite', 44.2);
+        const line = container.querySelector('[data-testid="signal-live-price"]')!;
+        expect(line.getAttribute('data-diverges')).toBe('false');
+        expect(line.className).toContain('text-slate-400');
+        expect(line.className).not.toContain('font-semibold');
+        expect(line.textContent).toContain('ยังอยู่เหนือกรอบเดิมเหมือนราคาปิด');
+      });
+
+      it('draws the two marks apart, the live one thinner than the close', async () => {
+        await render(crossedBack, 'elite', 42.38);
+        const live = zoneBar().querySelector<HTMLElement>('[data-marker="live"]')!;
+        const close = zoneBar().querySelector<HTMLElement>('[data-marker="close"]')!;
+        const at = (node: HTMLElement) => Number.parseFloat(node.style.left);
+        // 42.38 is below 44.06, and left is low on this bar.
+        expect(at(live)).toBeLessThan(at(close));
+        // Thinner and fainter: the label moves on closes, not on the live tick.
+        expect(live.className).toContain('w-1 ');
+        expect(close.className).toContain('w-1.5');
+        expect(live.className).toContain('bg-white/45');
+        expect(close.className).toContain('bg-white/90');
+      });
+
+      it('says the other direction when the live price breaks out of the frame', async () => {
+        await render({ ...zoned, zones: { ...zoned.zones!, zone: 'sideways' } }, 'elite', 37.1);
+        const line = container.querySelector('[data-testid="signal-live-price"]')!;
+        expect(line.textContent).toContain('ราคาสด 37.1 หลุดลงใต้กรอบเดิมแล้ว');
+        expect(line.getAttribute('data-diverges')).toBe('true');
+      });
     });
 
     it('says a broken-out zone in words, and keeps the percentage off the frame', async () => {
@@ -540,10 +636,32 @@ describe('MarketSignalSection', () => {
       expect(zoneBar().textContent).not.toContain('113.7');
     });
 
-    it('reports the score as a lean inside the zone, not as a direction', async () => {
+    /*
+     * The contradiction this removes: the headline read "BULLISH · Bullish
+     * Bias" and the zone box, three lines below it, opened with "ยังไม่เอียงไป
+     * ทางไหน". Two sentences a thumb-length apart saying opposite things, and
+     * the one a fast reader believes is the big one at the top. Direction is
+     * the headline's job and the chips' job; the box below is about WHERE
+     * price is. The score itself is untouched and still on the card above.
+     */
+    it('says nothing about direction inside the zone box', async () => {
       await render(zoned);
-      expect(zoneBar().textContent).toContain('ราคายังอยู่ในกรอบเดิม');
-      expect(zoneBar().textContent).toContain('เอียงขึ้นเล็กน้อย (+16)');
+      const text = zoneBar().textContent ?? '';
+      expect(text).toContain('ราคายังอยู่ในกรอบเดิม');
+      for (const banned of ['ยังไม่เอียงไปทางไหน', 'เอียงขึ้น', 'เอียงลง', '(+16)']) {
+        expect(text, `"${banned}" is back in the zone box`).not.toContain(banned);
+      }
+      // Still on the card, above the box, where direction belongs.
+      expect(container.textContent).toContain('+16 / 100');
+    });
+
+    it('keeps the position line, which is what that line is now for', async () => {
+      await render(zoned);
+      expect(zoneBar().textContent).toContain('ราคาใกล้ขอบกรอบแล้ว');
+      await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'deep_range' } });
+      expect(zoneBar().textContent).toContain('ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด');
+      await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'mid_range' } });
+      expect(zoneBar().textContent).not.toContain('ห่างขอบที่ใกล้ที่สุด');
     });
 
     it('draws no zone bar at all when the flag is off', async () => {
@@ -682,37 +800,52 @@ describe('MarketSignalSection', () => {
        * of edge, so the card says which leg is longer and the digits move into
        * the dialog beside the two distances they came from.
        */
-      it('reads the ratio out in words and keeps the digits off the card', async () => {
+      it('keeps the ratio off the card entirely, words and digits alike', async () => {
         await render(actionable);
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
-        expect(rows.textContent).toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ');
         expect(rows.textContent).not.toContain('7.94');
+        expect(rows.textContent).not.toContain('เทียบระยะสองฝั่ง');
+        expect(rows.textContent).not.toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ');
+        expect(zoneBar().textContent).not.toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่า');
 
         await act(async () => buttonContaining('ทำไม?').click());
         const details = document.querySelector('[data-testid="signal-zone-details"]')!;
         expect(details.textContent).toContain('7.94');
         expect(details.textContent).toContain('0.45 ATR');
         expect(details.textContent).toContain('3.56 ATR');
+        // The whole block moved, not just the number: the reading of the
+        // quotient is now beside the quotient.
+        expect(details.textContent).toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ');
       });
 
-      it('reads a ratio under one the other way round', async () => {
+      it('reads a ratio under one the other way round, in the dialog', async () => {
         await render({ ...actionable, actionable: { ...actionable.actionable!, riskReward: 0.6 } });
-        const rows = container.querySelector('[data-testid="signal-actionable"]')!;
-        expect(rows.textContent).toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า');
+        await act(async () => buttonContaining('ทำไม?').click());
+        const details = document.querySelector('[data-testid="signal-zone-details"]')!;
+        expect(details.textContent).toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า');
       });
 
       /*
        * A big ratio built on a tiny risk leg is arithmetically correct and
        * unstable. P4a measured those signals at +0.5 / +0.5 / -0.8pp of edge, so
-       * the row has to say the number is not a sign of a better trade.
+       * the caveat travels with the number into the dialog.
        */
-      it('says on the row when the ratio rests on a risk leg inside the noise', async () => {
+      it('says beside the number when the ratio rests on a risk leg inside the noise', async () => {
         await render({
           ...actionable,
           actionable: { ...actionable.actionable!, notes: ['risk_leg_inside_noise'] },
         });
-        const rows = container.querySelector('[data-testid="signal-actionable"]')!;
-        expect(rows.textContent).toContain('ไม่ได้แปลว่าโอกาสดีกว่า');
+        expect(container.querySelector('[data-testid="signal-actionable"]')!.textContent)
+          .not.toContain('ไม่ได้แปลว่าโอกาสดีกว่า');
+        await act(async () => buttonContaining('ทำไม?').click());
+        const details = document.querySelector('[data-testid="signal-zone-details"]')!;
+        expect(details.textContent).toContain('ไม่ได้แปลว่าโอกาสดีกว่า');
+      });
+
+      it('drops the note with the number when there is no ratio', async () => {
+        await render({ ...actionable, actionable: { ...actionable.actionable!, riskReward: null } });
+        await act(async () => buttonContaining('ทำไม?').click());
+        expect(document.querySelector('[data-testid="signal-risk-reward-note"]')).toBeNull();
       });
 
       /*

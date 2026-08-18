@@ -21,6 +21,14 @@
  *      fully inside the track it is positioned against
  *   4. no element is clipping its own text (`scrollWidth > clientWidth`)
  *   5. the document never scrolls sideways
+ *   6. both price markers are drawn, and each one is actually VISIBLE against
+ *      the field it stands on — composited through every translucent ancestor,
+ *      in both appearances. This is the `bg-white` failure that got through
+ *      last time: in the light appearance that class is mapped to the SURFACE
+ *      colour, so the marker was painted the same colour as the thing behind it
+ *      and vanished without any box moving anywhere.
+ *   7. where the two prices sit in different fields of the frame, the two
+ *      markers are far enough apart to read as two marks rather than one
  */
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -129,7 +137,14 @@ const zones: MarketSignalZones = {
  * one of them: marker in the middle, marker jammed against each end, a live
  * price beside the close, a five-digit instrument, and the fully loaded card.
  */
-const CASES: Array<{ name: string; result: MarketSignalResult; livePrice: number | null }> = [
+const CASES: Array<{
+  name: string;
+  result: MarketSignalResult;
+  livePrice: number | null;
+  /** The live price is in a different field from the close, so the two marks
+      have to read as two marks at every width and in both appearances. */
+  markersApart?: boolean;
+}> = [
   {
     name: 'sideways-mid-frame',
     result: { ...base, state: 'SIDEWAYS', bias: 'neutral', score: 16, zones },
@@ -139,6 +154,7 @@ const CASES: Array<{ name: string; result: MarketSignalResult; livePrice: number
     name: 'live-price-crossed-up',
     result: { ...base, zones: { ...zones, zone: 'uptrend' } },
     livePrice: 47.9,
+    markersApart: true,
   },
   {
     name: 'close-pinned-to-the-low-end',
@@ -181,6 +197,40 @@ const CASES: Array<{ name: string; result: MarketSignalResult; livePrice: number
     },
     livePrice: 122_401.9,
   },
+  /*
+   * IREN, 2026-08-18 — the case the bar was rebuilt for.
+   *
+   * Upper trigger 43.25, close 44.06, live 42.38: the headline reads BULLISH
+   * off a close above the frame while the price on screen has already fallen
+   * back inside it. One marker in a green field is a reader concluding the move
+   * is still on, so both marks have to be drawn, both have to be visible in
+   * both appearances, and they have to be far enough apart to read as two.
+   */
+  {
+    name: 'live-price-back-inside-the-frame',
+    result: {
+      ...base,
+      zones: {
+        ...zones,
+        zone: 'uptrend',
+        upperTrigger: 43.25,
+        lowerTrigger: 38.2583,
+        referenceClose: 44.06,
+        upperDistance: -0.81,
+        upperDistanceAtr: -0.2,
+        lowerDistance: 5.8017,
+        nearestTriggerAtr: -0.2,
+        positionPct: 116.2,
+      },
+      actionable: {
+        invalidation: 43.25, invalidationAtr: 0.2, invalidationPct: 1.84, invalidationBasis: 'zone_floor',
+        target: 48.24, targetAtr: 1.23, targetBasis: 'measured_move', targetIsConvention: true,
+        riskReward: 5.16, notes: ['risk_leg_inside_noise'],
+      },
+    },
+    livePrice: 42.38,
+    markersApart: true,
+  },
   {
     name: 'actionable-with-every-row',
     result: {
@@ -215,7 +265,7 @@ function markup(entry: (typeof CASES)[number]): string {
 
 function page(css: string, width: number, appearance: (typeof APPEARANCES)[number]): string {
   const cards = CASES.map((entry) => `
-    <section data-case="${entry.name}" style="width:${width}px;padding:0 ${PAGE_PADDING}px;margin:0 auto 24px;">
+    <section data-case="${entry.name}" data-markers-apart="${entry.markersApart ? 'true' : 'false'}" data-live="${entry.livePrice === null ? 'false' : 'true'}" style="width:${width}px;padding:0 ${PAGE_PADDING}px;margin:0 auto 24px;">
       <p style="font:12px monospace;color:#64748b;margin:0 0 6px;">${entry.name} @ ${width}px</p>
       ${markup(entry)}
     </section>`).join('');
@@ -236,12 +286,92 @@ function page(css: string, width: number, appearance: (typeof APPEARANCES)[numbe
  * screen. A 0.5px tolerance absorbs subpixel rounding on percentage widths.
  */
 interface ZoneBarProblem { case: string; kind: string; detail: string }
-interface ZoneBarReport { problems: ZoneBarProblem[]; documentScrollWidth: number }
+interface MarkerReading { case: string; marker: string; contrast: number; gap: number | null }
+interface ZoneBarReport { problems: ZoneBarProblem[]; markers: MarkerReading[]; documentScrollWidth: number }
+
+/**
+ * The contrast a price marker has to clear against whatever is behind it.
+ *
+ * Both marks are translucent ink over a translucent field over the card, so
+ * "is it visible" cannot be read off one computed style — the whole stack has
+ * to be composited. 1.8 is well under what either marker measures when its
+ * class is mapped (the faint live mark reads around 3 in both appearances) and
+ * well over the 1.0 an unmapped `bg-white` produces on the light surface,
+ * where the marker is painted in the colour of the thing behind it.
+ */
+const MARKER_MIN_CONTRAST = 1.8;
+/** Two marks closer than this on a phone read as one thick mark. */
+const MARKER_MIN_GAP = 2;
 
 const PROBE = `() => {
   const TOLERANCE = 0.5;
+  const MARKER_MIN_CONTRAST = ${MARKER_MIN_CONTRAST};
+  const MARKER_MIN_GAP = ${MARKER_MIN_GAP};
   const problems = [];
+  const markers = [];
   const note = (caseName, kind, detail) => problems.push({ case: caseName, kind, detail });
+
+  /*
+   * Colour, composited the way the screen composites it.
+   *
+   * A marker's own background is translucent, and so is the zone field under
+   * it, and so is the card under that. Reading one computed value tells you
+   * nothing about whether a human can see the mark — the light-mode regression
+   * this exists to catch had a perfectly valid colour on the marker that
+   * happened to be identical to the surface it was painted on.
+   */
+  const parseColor = (value) => {
+    const text = value || '';
+    /*
+     * Two formats, because the compat layer produces the second one. Chrome
+     * computes \`color-mix(in srgb, ...)\` — which is how every translucent
+     * mapping in globals.css is written — to \`color(srgb r g b / a)\` with
+     * channels in 0..1, not to \`rgba()\`. A parser that only knows rgba reads
+     * every mapped element as having no colour at all, which is a probe that
+     * fails on exactly the elements it was written to check.
+     */
+    const srgb = /color\\(\\s*srgb\\s+([^)]+)\\)/.exec(text);
+    if (srgb) {
+      const parts = srgb[1].split(/[\\s\\/]+/).filter(Boolean).map(Number);
+      if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return null;
+      return { r: parts[0] * 255, g: parts[1] * 255, b: parts[2] * 255, a: parts.length > 3 ? parts[3] : 1 };
+    }
+    const match = /rgba?\\(([^)]+)\\)/.exec(text);
+    if (!match) return null;
+    const parts = match[1].split(/[\\s,\\/]+/).filter(Boolean).map(Number);
+    if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return null;
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  };
+  const over = (top, bottom) => ({
+    r: top.r * top.a + bottom.r * (1 - top.a),
+    g: top.g * top.a + bottom.g * (1 - top.a),
+    b: top.b * top.a + bottom.b * (1 - top.a),
+    a: 1,
+  });
+  const groundOf = (node) => {
+    const stack = [];
+    for (let el = node.parentElement; el; el = el.parentElement) {
+      const color = parseColor(getComputedStyle(el).backgroundColor);
+      if (!color || color.a === 0) continue;
+      stack.push(color);
+      if (color.a === 1) break;
+    }
+    let ground = stack.length && stack[stack.length - 1].a === 1 ? stack.pop() : { r: 255, g: 255, b: 255, a: 1 };
+    while (stack.length) ground = over(stack.pop(), ground);
+    return ground;
+  };
+  const luminance = (color) => {
+    const channel = (value) => {
+      const scaled = value / 255;
+      return scaled <= 0.03928 ? scaled / 12.92 : Math.pow((scaled + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+  };
+  const contrast = (a, b) => {
+    const high = Math.max(luminance(a), luminance(b));
+    const low = Math.min(luminance(a), luminance(b));
+    return (high + 0.05) / (low + 0.05);
+  };
 
   for (const section of document.querySelectorAll('[data-case]')) {
     const name = section.getAttribute('data-case');
@@ -308,9 +438,52 @@ const PROBE = `() => {
         note(name, 'edge-prices-collide', left.text + ' ends at ' + left.box.right.toFixed(1) + ', ' + right.text + ' starts at ' + right.box.left.toFixed(1));
       }
     }
+
+    /*
+     * The two price markers. The close is what every number on the card is
+     * measured from; the live one is the number the reader can see at the top
+     * of the screen. Drawing only one of them is how a card says "still going
+     * up" about a price that has already come back.
+     */
+    const close = bar.querySelector('[data-marker="close"]');
+    const live = bar.querySelector('[data-marker="live"]');
+    const hasLive = section.getAttribute('data-live') === 'true';
+    if (!close) note(name, 'marker-missing', 'the close marker is not drawn');
+    if (hasLive && !live) note(name, 'marker-missing', 'the live price was given but no live marker is drawn');
+
+    for (const marker of [close, live]) {
+      if (!marker) continue;
+      const which = marker.getAttribute('data-marker');
+      const box = marker.getBoundingClientRect();
+      if (box.width < 1 || box.height < 1) {
+        note(name, 'marker-has-no-size', which + ' is ' + box.width.toFixed(1) + 'x' + box.height.toFixed(1));
+        continue;
+      }
+      const own = parseColor(getComputedStyle(marker).backgroundColor);
+      if (!own || own.a === 0) { note(name, 'marker-invisible', which + ' has no background colour'); continue; }
+      const ground = groundOf(marker);
+      const painted = over(own, ground);
+      const ratio = contrast(painted, ground);
+      markers.push({ case: name, marker: which, contrast: Number(ratio.toFixed(2)), gap: null });
+      if (ratio < MARKER_MIN_CONTRAST) {
+        note(name, 'marker-invisible', which + ' reads ' + ratio.toFixed(2) + ':1 against what is behind it');
+      }
+    }
+
+    // Two marks that are genuinely in different fields of the frame must read
+    // as two marks, at every width and in both appearances.
+    if (close && live && section.getAttribute('data-markers-apart') === 'true') {
+      const closeBox = close.getBoundingClientRect();
+      const liveBox = live.getBoundingClientRect();
+      const gap = Math.max(closeBox.left, liveBox.left) - Math.min(closeBox.right, liveBox.right);
+      markers.push({ case: name, marker: 'gap', contrast: 0, gap: Number(gap.toFixed(1)) });
+      if (gap < MARKER_MIN_GAP) {
+        note(name, 'markers-collide', 'close and live are ' + gap.toFixed(1) + 'px apart');
+      }
+    }
   }
 
-  return { problems, documentScrollWidth: document.documentElement.scrollWidth };
+  return { problems, markers, documentScrollWidth: document.documentElement.scrollWidth };
 }`;
 
 async function main(): Promise<void> {
@@ -318,6 +491,7 @@ async function main(): Promise<void> {
   const css = await stylesheet();
   const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
   const failures: string[] = [];
+  const readings: Array<MarkerReading & { at: string }> = [];
 
   try {
     for (const appearance of APPEARANCES) {
@@ -350,7 +524,19 @@ async function main(): Promise<void> {
       for (const problem of report.problems) {
         failures.push(`${tag} · ${problem.case} · ${problem.kind} · ${problem.detail}`);
       }
-      console.log(`${appearance} ${width}x844 · ${report.problems.length === 0 ? 'clean' : `${report.problems.length} problem(s)`} · scrollWidth ${report.documentScrollWidth}`);
+      // The marker readings are printed, not just asserted: a threshold nobody
+      // can see the margin on is a threshold that gets loosened by whoever
+      // trips it next.
+      const worst = report.markers.filter((entry) => entry.marker !== 'gap')
+        .sort((a, b) => a.contrast - b.contrast)[0];
+      const gaps = report.markers.filter((entry) => entry.gap !== null);
+      console.log(
+        `${appearance} ${width}x844 · ${report.problems.length === 0 ? 'clean' : `${report.problems.length} problem(s)`}`
+        + ` · scrollWidth ${report.documentScrollWidth}`
+        + (worst ? ` · faintest marker ${worst.contrast}:1 (${worst.case} ${worst.marker})` : '')
+        + (gaps.length ? ` · marker gap ${gaps.map((entry) => `${entry.gap}px`).join(', ')}` : ''),
+      );
+      readings.push(...report.markers.map((entry) => ({ ...entry, at: tag })));
       await context.close();
     }
     }
@@ -358,7 +544,15 @@ async function main(): Promise<void> {
     await browser.close();
   }
 
-  writeFileSync(path.join(OUT_DIR, 'report.json'), JSON.stringify({ widths: WIDTHS, appearances: APPEARANCES, cases: CASES.map((entry) => entry.name), failures }, null, 2), 'utf8');
+  writeFileSync(path.join(OUT_DIR, 'report.json'), JSON.stringify({
+    widths: WIDTHS,
+    appearances: APPEARANCES,
+    cases: CASES.map((entry) => entry.name),
+    markerMinContrast: MARKER_MIN_CONTRAST,
+    markerMinGap: MARKER_MIN_GAP,
+    markers: readings,
+    failures,
+  }, null, 2), 'utf8');
 
   if (failures.length) {
     console.error(`\nFAILED · ${failures.length} problem(s)`);

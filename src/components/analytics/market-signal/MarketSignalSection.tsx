@@ -379,7 +379,6 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
       {result.zones ? (
         <ZoneBar
           zones={result.zones}
-          score={result.score}
           livePrice={livePrice}
           actionable={result.actionable ?? null}
         />
@@ -670,12 +669,50 @@ const ZONE_MODE_COPY = {
   atr_band: 'ยังไม่มี swing ที่ใช้ได้ จึงใช้กรอบ ATR รอบ EMA20',
 } as const;
 
-/** A tilt inside a zone, worded as a lean rather than as a direction. */
-function tiltCopy(score: number): string {
-  const magnitude = Math.abs(score);
-  if (magnitude < 15) return 'ยังไม่เอียงไปทางไหน';
-  const direction = score > 0 ? 'ขึ้น' : 'ลง';
-  return magnitude >= 40 ? `เอียง${direction}ชัด (${signed(score)})` : `เอียง${direction}เล็กน้อย (${signed(score)})`;
+/**
+ * Which of the bar's three fields a price is standing in.
+ *
+ * This is NOT `zones.zone`. The engine's label is the zone of the last
+ * FINALIZED close after confirmation and hysteresis, and neither of those
+ * applies to a price that is still moving. What the bar draws is geometry —
+ * which side of which cut a mark is on — so the sentence about the live price
+ * is derived the same way, off the same two triggers the picture is cut with.
+ */
+type ZoneSide = 'below' | 'inside' | 'above';
+
+function sideOf(price: number, lowerTrigger: number, upperTrigger: number): ZoneSide {
+  if (Number.isFinite(upperTrigger) && price > upperTrigger) return 'above';
+  if (Number.isFinite(lowerTrigger) && price < lowerTrigger) return 'below';
+  return 'inside';
+}
+
+/**
+ * The live price, when it is standing where the close is standing.
+ *
+ * The line this replaced said "ยังไม่ผ่านขอบกรอบทั้งสองฝั่ง", which is true of a
+ * price sitting in the middle of the frame and equally true of one sitting a
+ * hair under the trigger, and says nothing about the case that matters — a live
+ * price in a different field from the close. These name the field instead.
+ */
+const LIVE_SAME_SIDE_COPY = {
+  above: 'ยังอยู่เหนือกรอบเดิมเหมือนราคาปิด',
+  inside: 'ยังอยู่ในกรอบเดิมเหมือนราคาปิด',
+  below: 'ยังอยู่ใต้กรอบเดิมเหมือนราคาปิด',
+} as const;
+
+/**
+ * The live price, when it has left the field the close is in.
+ *
+ * Said as the move that happened rather than as a crossing, because "ผ่านขอบบน
+ * ไปแล้ว" reads as an event the card is endorsing. The second half is the rule
+ * that actually governs the label, and it is on this line rather than in a
+ * footnote because this line is the one a reader lands on when the two numbers
+ * disagree.
+ */
+function liveMoveCopy(live: ZoneSide, close: ZoneSide): string {
+  if (live === 'above') return 'ขึ้นไปเหนือกรอบเดิมแล้ว';
+  if (live === 'below') return 'หลุดลงใต้กรอบเดิมแล้ว';
+  return close === 'above' ? 'ตกกลับเข้ากรอบเดิมแล้ว' : 'ขึ้นกลับเข้ากรอบเดิมแล้ว';
 }
 
 /** How fresh a zone or frame has to be before the card says so out loud. */
@@ -790,9 +827,8 @@ const markerPriceText = (value: number) =>
  * "ตอนนี้", because it is the price every percentage on this card is measured
  * from; the live one is labelled as live and is never the base of a percentage.
  */
-function ZoneBar({ zones, score, livePrice, actionable }: {
+function ZoneBar({ zones, livePrice, actionable }: {
   zones: MarketSignalZones;
-  score: number;
   livePrice: number | null;
   actionable: MarketSignalActionable | null;
 }) {
@@ -824,8 +860,20 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
 
   const nearestDistance = Math.abs(zones.upperDistance) <= Math.abs(zones.lowerDistance)
     ? zones.upperDistance : zones.lowerDistance;
-  const liveCrossedUp = livePrice !== null && upperTrigger !== null && livePrice > upperTrigger;
-  const liveCrossedDown = livePrice !== null && lowerTrigger !== null && livePrice < lowerTrigger;
+  /*
+   * The live price, and the one comparison the card has to make with it.
+   *
+   * A live price in a DIFFERENT field from the close is the case this whole
+   * pair of marks exists for: the header says BULLISH off a close above the
+   * frame while the price on screen has already fallen back inside it. Both
+   * sides are read off the two triggers, never off `zones.zone`, so the
+   * sentence and the picture can never disagree.
+   */
+  const hasLive = livePrice !== null && Number.isFinite(livePrice);
+  const liveAt = hasLive ? at(livePrice as number) : null;
+  const liveSide = hasLive ? sideOf(livePrice as number, lowerTrigger, upperTrigger) : null;
+  const closeSide = sideOf(referenceClose, lowerTrigger, upperTrigger);
+  const liveDiverges = hasFrame && liveSide !== null && liveSide !== closeSide;
   /*
    * P4.5, said in words instead of in two bar counts.
    *
@@ -873,28 +921,36 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
         {ZONE_COPY[zone]}
         {freshlyFormed ? <span className="font-normal text-slate-300"> แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย</span> : null}
       </p>
-      <p className="mt-1 text-[11px] leading-5 text-slate-400">
-        {tiltCopy(score)}
-        {/*
-          Scoped to what P4a actually measured. The band predicts how long the
-          LABEL lasts over about five bars and nothing else: directional
-          accuracy is indistinguishable across all three bands at every horizon.
-          So `near_trigger` says the label may not last, and `deep_range` says
-          only where price is — it must NOT read as the more trustworthy
-          signal, because it is not one.
-        */}
-        {zones.proximity === 'near_trigger' ? (
-          <>
-            {' · '}
-            {zones.nearestTriggerAtr < 0
-              ? 'ราคาเลยขอบกรอบมาแล้ว'
-              : `ราคาใกล้ขอบกรอบแล้ว (ห่างอีก ${percentText(nearestDistance, referenceClose)})`}
-            {' โซนนี้จึงเปลี่ยนได้ในไม่กี่วันทำการ'}
-          </>
-        ) : zones.proximity === 'deep_range' ? (
-          <>{' · ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด '}{percentText(nearestDistance, referenceClose)}</>
-        ) : null}
-      </p>
+      {/*
+        Position only, and no direction at all.
+
+        This line used to open with the tilt — "ยังไม่เอียงไปทางไหน" on a card
+        whose headline three lines above it reads "BULLISH · Bullish Bias". Two
+        sentences a thumb-length apart said opposite things, and the one a fast
+        reader believes is the big one at the top. Direction is the headline's
+        job and the chips' job; the score itself is still on the card, above,
+        as "Score +16 / 100". What is left here is where price is STANDING,
+        which is the one thing the bar underneath is drawing.
+
+        Scoped to what P4a actually measured. The band predicts how long the
+        LABEL lasts over about five bars and nothing else: directional accuracy
+        is indistinguishable across all three bands at every horizon. So
+        `near_trigger` says the label may not last, and `deep_range` says only
+        where price is — it must NOT read as the more trustworthy signal,
+        because it is not one.
+      */}
+      {zones.proximity === 'near_trigger' ? (
+        <p className="mt-1 text-[11px] leading-5 text-slate-400">
+          {zones.nearestTriggerAtr < 0
+            ? 'ราคาเลยขอบกรอบมาแล้ว'
+            : `ราคาใกล้ขอบกรอบแล้ว (ห่างอีก ${percentText(nearestDistance, referenceClose)})`}
+          {' โซนนี้จึงเปลี่ยนได้ในไม่กี่วันทำการ'}
+        </p>
+      ) : zones.proximity === 'deep_range' ? (
+        <p className="mt-1 text-[11px] leading-5 text-slate-400">
+          {'ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด '}{percentText(nearestDistance, referenceClose)}
+        </p>
+      ) : null}
 
       {/*
         The picture, hidden from assistive tech on purpose: every number drawn
@@ -935,10 +991,19 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
           {hasFrame ? [lowerAt, upperAt].map((position) => (
             <div key={position} className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${position}%` }} />
           )) : null}
-          {livePrice !== null && Number.isFinite(livePrice) ? (
+          {/*
+            The live price, drawn thinner and fainter than the close because it
+            is the softer fact: the label moves on closes, not on this. Faint is
+            not the same as absent, though — `bg-white/45` is re-pointed to a
+            translucent INK for the light appearance, the same mapping the close
+            marker needs, because a literal white here is the surface colour and
+            the mark disappears into the field it is standing on.
+          */}
+          {liveAt !== null ? (
             <div
+              data-marker="live"
               className="absolute top-1 h-7 w-1 -translate-x-1/2 rounded-full bg-white/45"
-              style={{ left: `${at(livePrice)}%` }}
+              style={{ left: `${liveAt}%` }}
             />
           ) : null}
           {/*
@@ -948,6 +1013,7 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
             marker into a white bar on a white field.
           */}
           <div
+            data-marker="close"
             className="absolute -top-0.5 h-10 w-1.5 -translate-x-1/2 rounded-full bg-white/90"
             style={{ left: `${closeAt}%` }}
           />
@@ -970,6 +1036,26 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
             </>
           ) : null}
         </div>
+
+        {/*
+          The live price's caption, in a row of its own.
+          It cannot share the top row with "ตอนนี้" or this row with the edge
+          prices: the interesting case is the one where the live price is a
+          little way off the close or sitting right on a trigger, which is
+          exactly when two captions in one row land on top of each other. A row
+          to itself means the caption never has to be dropped to keep the
+          picture readable — and the marker on the bar is there either way.
+        */}
+        {liveAt !== null ? (
+          <div className="relative mt-0.5 h-4">
+            <span
+              className="absolute top-0 whitespace-nowrap text-[10px] font-semibold text-slate-300"
+              style={zoneLabelStyle(liveAt)}
+            >
+              สด {markerPriceText(livePrice as number)}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Down on the left, up on the right — the same order as the bar. */}
@@ -990,12 +1076,29 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
         />
       </dl>
 
-      {livePrice !== null && Number.isFinite(livePrice) ? (
-        <p className="mt-2 text-[11px] leading-5 text-slate-400">
-          ราคาสด {priceText(livePrice)}
-          {liveCrossedUp || liveCrossedDown
-            ? ` ผ่าน${liveCrossedUp ? 'ขอบบน' : 'ขอบล่าง'}ไปแล้ว — ต้องรอราคาปิดยืนยันก่อน`
-            : ' — ยังไม่ผ่านขอบกรอบทั้งสองฝั่ง'}
+      {/*
+        The live price said as a status, and weighted by whether it matters.
+
+        "ราคาสด 42.38 — ยังไม่ผ่านขอบกรอบทั้งสองฝั่ง" was the same sentence for a
+        price in the middle of the frame and for one that had just fallen back
+        into it from above, which is the case a reader needs to catch: the
+        headline is BULLISH off a close above the frame, and the number on
+        screen is no longer up there. When the two marks are in different
+        fields this line is the correction to the headline, so it is drawn in
+        the warning weight rather than in the same grey as everything else.
+      */}
+      {hasLive ? (
+        <p
+          data-testid="signal-live-price"
+          data-diverges={liveDiverges ? 'true' : 'false'}
+          className={`mt-2 text-[11px] leading-5 ${liveDiverges ? 'font-semibold text-amber-200' : 'text-slate-400'}`}
+        >
+          ราคาสด {priceText(livePrice as number)}
+          {!hasFrame || liveSide === null
+            ? ''
+            : liveDiverges
+              ? ` ${liveMoveCopy(liveSide, closeSide)} · โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้`
+              : ` ${LIVE_SAME_SIDE_COPY[liveSide]}`}
         </p>
       ) : null}
 
@@ -1030,7 +1133,7 @@ function ZoneBar({ zones, score, livePrice, actionable }: {
  * itself is in "ทำไม?" beside the two distances it came from.
  */
 function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actionable: MarketSignalActionable }) {
-  const { invalidation, invalidationPct, invalidationBasis, target, riskReward } = actionable;
+  const { invalidation, invalidationPct, invalidationBasis, target } = actionable;
   if (invalidation === null && target === null) return null;
   const close = zones.referenceClose;
   const ends = zones.zone === 'uptrend' ? 'ปิดต่ำกว่า' : 'ปิดสูงกว่า';
@@ -1076,24 +1179,14 @@ function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actio
           </dd>
         </div>
       )}
-      {riskReward === null ? null : (
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <dt className="text-slate-400">เทียบระยะสองฝั่ง</dt>
-          <dd className="text-slate-500">
-            {riskReward < 1
-              ? 'ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า'
-              : 'ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ'}
-            {/*
-              Said on the row, not in a footnote. A big ratio here comes from a
-              tiny denominator — price sitting on its own invalidation — and the
-              measurements say those signals are no better than any other.
-            */}
-            {actionable.notes.includes('risk_leg_inside_noise')
-              ? ' · แต่ตอนนี้ราคาอยู่ชิดจุดที่โซนจะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
-              : ''}
-          </dd>
-        </div>
-      )}
+      {/*
+        "เทียบระยะสองฝั่ง" is not here any more — it is in "ทำไม?" beside the
+        quotient it was a reading of. It took two lines on the card to say which
+        leg was longer and then to say that a long leg is not a better trade,
+        which is a row that spends its whole length telling the reader not to
+        trust it. A number nobody should act on does not need to be on the
+        beginner's surface at all; it needs to be findable, and it is.
+      */}
     </dl>
   );
 }
@@ -1219,6 +1312,24 @@ function ZoneDetails({ zones, actionable, atr }: {
           </>
         )}
       </dl>
+      {/*
+        The reading of that quotient, moved here whole from the card.
+        On the card it was two lines: one saying which leg is longer, one saying
+        that a longer leg is not a better trade. A reader who has to be warned
+        off a number that hard is better served by not being shown it in the
+        first place — so both lines live here, next to the digits and next to
+        the two distances they were divided from.
+      */}
+      {actionable === null || actionable.riskReward === null ? null : (
+        <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-risk-reward-note">
+          {actionable.riskReward < 1
+            ? 'ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า'
+            : 'ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ'}
+          {actionable.notes.includes('risk_leg_inside_noise')
+            ? ' · แต่ตอนนี้ราคาอยู่ชิดจุดที่โซนจะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
+            : ''}
+        </p>
+      )}
     </section>
   );
 }
