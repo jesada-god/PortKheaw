@@ -104,18 +104,31 @@ export function signedPoints(points: number | null): string {
  * and the realized-volatility fallback names the window it actually used rather
  * than claiming a year it may not have measured.
  */
+/**
+ * The basis, and the HORIZON the implied volatility was read at.
+ *
+ * The DTE is not a detail that belongs in the modal alone. An IV without its
+ * expiration is a number nobody can place: 103.4% on a two-day contract that
+ * holds an earnings report whole and 68.1% on a forty-four-day one that
+ * amortises the same report are the same stock on the same afternoon, and only
+ * the second is on the horizon this card's realized-volatility window and its
+ * own suggested 30-60 day setup are written for. Where the horizon chain cannot
+ * be resolved the card falls back to the front expiration, and then this label
+ * is the only thing that says so.
+ */
 export function ivBasisLabel(
   basis: IvPricingInput['basis'] | null,
   realizedWindowDays: number | null = null,
+  dte: number | null = null,
 ): string {
-  if (basis === 'iv-rank') return 'IV Rank';
-  if (basis === 'iv-percentile') return 'IV Percentile (เทียบตัวเอง)';
+  const contract = dte === null ? '' : ` สัญญา ${dte} วัน`;
+  if (basis === 'iv-rank') return `IV Rank${contract}`;
+  if (basis === 'iv-percentile') return `IV Percentile (เทียบตัวเอง)${contract}`;
   if (basis === 'iv-vs-realized') {
-    return realizedWindowDays === null
-      ? 'IV เทียบความผันผวนจริง'
-      : `IV เทียบความผันผวนจริง ${realizedWindowDays} วัน`;
+    const window = realizedWindowDays === null ? '' : ` ${realizedWindowDays} วัน`;
+    return `IV${contract} เทียบความผันผวนจริง${window}`;
   }
-  return 'IV Rank';
+  return `IV Rank${contract}`;
 }
 
 /**

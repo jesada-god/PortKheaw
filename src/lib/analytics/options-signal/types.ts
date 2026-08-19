@@ -68,12 +68,25 @@ export interface MomentumInput {
  * volatility over a window matched to the contract's DTE — and is always
  * disclosed as such, window included.
  */
+/**
+ * Every basis carries `dte`, and it is not decoration.
+ *
+ * An implied volatility is a statement about ONE expiration. 103% on a contract
+ * with two days left and 68% on one with forty-four are not a high reading and a
+ * lower one — they are two different measurements, the first of them holding an
+ * earnings report the second amortises over six weeks. A number that arrives
+ * without the horizon it was read at cannot be compared with anything, including
+ * the realized volatility beside it and the 30-60 day contract the card's own
+ * setup section recommends.
+ */
 export type IvPricingInput =
   | {
     basis: 'iv-rank';
     ivRank: number;
     impliedVolatility: number | null;
     observations: number;
+    /** Calendar days to the expiration the IV was read from, when known. */
+    dte: number | null;
   }
   | {
     basis: 'iv-percentile';
@@ -81,6 +94,8 @@ export type IvPricingInput =
     ivPercentile: number;
     impliedVolatility: number;
     observations: number;
+    /** Calendar days to the expiration the IV was read from, when known. */
+    dte: number | null;
   }
   | {
     basis: 'iv-vs-realized';

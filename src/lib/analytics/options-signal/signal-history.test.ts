@@ -213,9 +213,38 @@ describe('history falls back to the buffer on an outage, never on an empty answe
       point('2026-06-02', 0.3),
     ];
     const resilient = createResilientHistoryStore(stub(async () => mixed), createSignalHistoryLog());
-    expect((await readOwnHistory('TEST', resilient)).atmIv).toEqual([0.2, 0.3]);
-    expect((await readOwnHistory('TEST', resilient, { configVersion: OPTIONS_SIGNAL_CONFIG_VERSION })).atmIv)
-      .toEqual([0.3]);
+    // Put/Call is a provider measurement no threshold change moves, so the
+    // default keeps every revision of it and the switch is what narrows it.
+    expect((await readOwnHistory('TEST', resilient)).putCallRatio).toEqual([1.1, 1.1]);
+    expect((await readOwnHistory('TEST', resilient, { configVersion: OPTIONS_SIGNAL_CONFIG_VERSION })).putCallRatio)
+      .toEqual([1.1]);
+  });
+
+  /*
+   * The IV series is narrower than the switch above, and always.
+   *
+   * Moving the ATM IV onto the horizon expiration changed WHICH CONTRACT the
+   * number describes — often a two-day one carrying an earnings report whole,
+   * against a forty-four-day one that amortises it. Ranking today's reading
+   * against a series of the older kind would rank a stock against an instrument
+   * it never traded, so the cutoff applies whether or not a caller asked for the
+   * version filter.
+   */
+  it('never ranks a horizon IV against readings taken off the front chain', async () => {
+    const cutoff = OPTIONS_SIGNAL_CONFIG.iv.horizonBasisFromConfigVersion;
+    const mixed: OptionsSignalHistoryPoint[] = [
+      { ...point('2026-06-01', 0.2), configVersion: '2020.01.01' },
+      { ...point('2026-06-02', 0.25), configVersion: '2026.08.19b' },
+      { ...point('2026-06-03', 0.3), configVersion: cutoff },
+      { ...point('2026-06-04', 0.35), configVersion: '2026.09.01' },
+    ];
+    const resilient = createResilientHistoryStore(stub(async () => mixed), createSignalHistoryLog());
+    const own = await readOwnHistory('TEST', resilient);
+    // The cutoff version itself is IN, and so is everything after it: a later
+    // unrelated bump must not throw the series away and restart the countdown.
+    expect(own.atmIv).toEqual([0.3, 0.35]);
+    // And the Put/Call series, which that change did not touch, keeps all four.
+    expect(own.putCallRatio).toHaveLength(4);
   });
 
   it('never lets a history failure become a page failure', async () => {

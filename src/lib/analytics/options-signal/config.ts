@@ -19,9 +19,10 @@
  *
  * The suffix letter exists because two changes can land on one day and a date
  * alone would then describe two different models. `2026.08.19b` is the momentum
- * saturation widening from 1.0 to 3.5 ATR; `2026.08.19` is everything before it.
+ * saturation widening from 1.0 to 3.5 ATR; `2026.08.19` is everything before it;
+ * `2026.08.19c` moved the implied volatility onto the horizon chain.
  */
-export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19b';
+export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19c';
 
 export const OPTIONS_SIGNAL_WEIGHTS = {
   macro: 15,
@@ -239,6 +240,24 @@ export const OPTIONS_SIGNAL_CONFIG = {
     /** Recorded ATM IV readings needed before a percentile may be published. */
     percentileLookbackDays: 60,
     minimumPercentileObservations: 60,
+    /**
+     * The first config version whose recorded ATM IV was read at the HORIZON
+     * expiration rather than the front one, and therefore the oldest reading an
+     * IV percentile may compare today's against.
+     *
+     * `readOwnHistory` keeps rows across config versions on purpose: IV and
+     * Put/Call are provider measurements, not engine output, and no threshold
+     * change moves them. This one did move them. A percentile mixing 2-day
+     * readings with 44-day readings would rank a stock against a series of a
+     * different instrument, and would do it silently, because the two are the
+     * same field under the same name.
+     *
+     * A CUTOFF rather than an equality test: readings taken from this version on
+     * are all on the same basis, so a later unrelated bump must not throw the
+     * series away and restart a 60-day countdown for nothing. Version strings are
+     * date-first and compare lexicographically for exactly this.
+     */
+    horizonBasisFromConfigVersion: '2026.08.19c',
     percentile: { normalFrom: 30, highAbove: 50, extremeFrom: 70 },
   },
 

@@ -307,7 +307,7 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
       <dl className="mt-4 space-y-1.5 border-t border-white/10 pt-3 text-sm">
         <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1">
           <dt className="flex items-center gap-1.5 text-slate-300">
-            {ivBasisLabel(iv.basis)}
+            {ivBasisLabel(iv.basis, null, iv.dte)}
             <InfoHint term="ivRank" />
           </dt>
           <dd className="flex items-center gap-2 font-mono text-white">
@@ -642,7 +642,7 @@ function DetailBody({ breakdown, summary }: {
       <section>
         <h3 className="font-semibold text-white">4. ราคาพรีเมียม (IV) และ Put/Call</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
-          <Detail label="เกณฑ์ที่ใช้" value={ivBasisLabel(iv.basis, iv.realizedWindowDays)} />
+          <Detail label="เกณฑ์ที่ใช้" value={ivBasisLabel(iv.basis, iv.realizedWindowDays, iv.dte)} />
           <Detail label="IV Rank" value={iv.ivRank === null ? 'ไม่พร้อมใช้งาน' : String(iv.ivRank)} />
           {/*
             * "ไม่พร้อมใช้งาน" was the wrong word for a series that fills itself

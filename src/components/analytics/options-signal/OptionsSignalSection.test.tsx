@@ -416,6 +416,34 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(confidenceGroup?.textContent).not.toContain('คะแนนทิศทาง');
   });
 
+  /*
+   * The IV never appears without the contract it came off.
+   *
+   * It is now read at the ~45-day horizon rather than the front expiration,
+   * because the pricing verdict is a comparison — against realized volatility
+   * and against the 30-60 day setup the card recommends — and both sides of a
+   * comparison have to share a horizon. Where the horizon chain cannot be
+   * resolved the card falls back to the front expiration, and then this label is
+   * the only thing that says which one a reader is looking at. Either way it has
+   * to be printed, which is what this asserts.
+   */
+  it('names the contract horizon the IV was read at, on the card and in the dialog', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+
+    // The fixture's IV is read at 24 DTE against a 30-day realized window.
+    expect(container.textContent).toContain('IV สัญญา 24 วัน เทียบความผันผวนจริง');
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const modal = document.body.querySelector('[role="dialog"]');
+    // The dialog names both horizons: the contract's, and the window it is held
+    // against. Two different numbers of days that used to look like one.
+    expect(modal?.textContent).toContain('IV สัญญา 24 วัน เทียบความผันผวนจริง 30 วัน');
+    expect(modal?.textContent).toContain('อายุสัญญาที่ใช้เทียบ (DTE)');
+  });
+
   it('shows the card score to a Pro reader who has no breakdown at all', async () => {
     await renderFor('pro');
     // The score lives in the SUMMARY precisely so this reader still sees it.

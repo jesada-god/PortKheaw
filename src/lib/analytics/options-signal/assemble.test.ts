@@ -26,12 +26,13 @@ function contract(overrides: {
   strike: number;
   impliedVolatility?: number | null;
   openInterest?: number | null;
+  expiration?: string;
 }): OptionContract {
   return {
     contractSymbol: `${overrides.type}-${overrides.strike}`,
     underlyingSymbol: 'TEST',
     type: overrides.type,
-    expiration: '2026-08-21',
+    expiration: overrides.expiration ?? '2026-08-21',
     strike: overrides.strike,
     bid: 1, ask: 1.2, last: null, mark: null,
     volume: 10,
@@ -167,6 +168,138 @@ describe('buildPricingSlot', () => {
 
   it('is unavailable while the chain has not loaded', () => {
     expect(buildPricingSlot({ chain: null, optionsSr: null }, realized).status).toBe('unavailable');
+  });
+
+  /*
+   * THE HORIZON, and why the implied volatility had to follow the expected move
+   * onto it.
+   *
+   * The front chain on RKLB was two days out and priced at 103.4%. Almost all of
+   * that is an earnings report eight days later — a report that contract does not
+   * live to see and therefore cannot amortise. The card then divided it by 20-day
+   * realized volatility and called the premium cheap, one paragraph above a setup
+   * section recommending a 30-60 day contract and an expected move already read
+   * at 44 days. Three horizons, one verdict.
+   *
+   * Liquidity and positioning stay on the front chain, because they are facts
+   * ABOUT the book a reader is looking at. Pricing is not a fact about a book, it
+   * is a comparison, and both of its sides have to be on one horizon.
+   */
+  const horizonChain = (impliedVolatility: number | null): OptionsChain => ({
+    ...chain(impliedVolatility),
+    expiration: '2026-09-10',
+    expirations: ['2026-09-10'],
+    calls: [95, 100, 105].map((strike) => contract({ type: 'call', strike, impliedVolatility, expiration: '2026-09-10' })),
+    puts: [95, 100, 105].map((strike) => contract({ type: 'put', strike, impliedVolatility, expiration: '2026-09-10' })),
+  });
+
+  it('reads the implied volatility off the horizon chain, and says which horizon', () => {
+    const slot = buildPricingSlot(
+      { chain: chain(1.034), optionsSr: availableSr, expectedMoveChain: horizonChain(0.62) },
+      realized,
+    );
+    if (slot.status !== 'available' || slot.value.basis !== 'iv-vs-realized') throw new Error('expected the realized basis');
+    expect(slot.value.impliedVolatility).toBeCloseTo(0.62, 6);
+    // 2026-07-27 to 2026-09-10 — the horizon chain's own life, not the front
+    // chain's 25 days.
+    expect(slot.value.dte).toBe(45);
+    expect(slot.value.ratio).toBeCloseTo(0.62 / 0.32, 6);
+  });
+
+  it('takes a pre-derived horizon reading over a second chain, and over the front one', () => {
+    const fromChain = buildPricingSlot(
+      { chain: chain(1.034), optionsSr: availableSr, expectedMoveChain: horizonChain(0.62) },
+      realized,
+    );
+    const fromCache = buildPricingSlot(
+      { chain: chain(1.034), optionsSr: availableSr, horizonIv: { iv: 0.62, dte: 45 } },
+      realized,
+    );
+    if (fromChain.status !== 'available' || fromCache.status !== 'available') throw new Error('expected both');
+    // The two paths cannot drift: whatever the chain path derives, the
+    // pre-derived path must be able to state.
+    expect(fromCache.value.impliedVolatility).toBeCloseTo(fromChain.value.impliedVolatility as number, 6);
+    expect(fromCache.value.dte).toBe(fromChain.value.dte);
+
+    // And it WINS over the chain, or the cache would be decorative.
+    const overridden = buildPricingSlot(
+      {
+        chain: chain(1.034),
+        optionsSr: availableSr,
+        expectedMoveChain: horizonChain(0.62),
+        horizonIv: { iv: 0.7, dte: 60 },
+      },
+      realized,
+    );
+    if (overridden.status !== 'available') throw new Error('expected a reading');
+    expect(overridden.value.impliedVolatility).toBeCloseTo(0.7, 6);
+    expect(overridden.value.dte).toBe(60);
+  });
+
+  it('falls back to the front chain, and to the DTE of the front chain, when no horizon reading resolves', () => {
+    for (const horizon of [null, { iv: null, dte: 45 }, { iv: 0, dte: 45 }]) {
+      const slot = buildPricingSlot(
+        { chain: chain(1.034), optionsSr: availableSr, horizonIv: horizon },
+        realized,
+      );
+      if (slot.status !== 'available') throw new Error('expected a reading');
+      expect(slot.value.impliedVolatility).toBeCloseTo(1.034, 6);
+      // The front chain's own 25 days, published so the card can say so rather
+      // than leaving the horizon unstated.
+      expect(slot.value.dte).toBe(25);
+    }
+  });
+
+  /*
+   * The realized window is chosen FROM the DTE, so moving the IV moves what it
+   * is compared against too — which is the whole point. A two-day contract was
+   * being held against 20-day realized volatility; a forty-five-day one is held
+   * against the long window.
+   */
+  it('picks the realized window from the horizon it actually read', () => {
+    const windows = {
+      near: { value: 0.5, observations: 20 },
+      far: { value: 0.4, observations: 30 },
+      long: { value: 0.32, observations: 250 },
+    };
+    const front = buildPricingSlot(
+      { chain: chain(1.034), optionsSr: availableSr },
+      realized,
+      windows,
+    );
+    const horizon = buildPricingSlot(
+      { chain: chain(1.034), optionsSr: availableSr, horizonIv: { iv: 0.62, dte: 45 } },
+      realized,
+      windows,
+    );
+    if (front.status !== 'available' || front.value.basis !== 'iv-vs-realized') throw new Error('expected the realized basis');
+    if (horizon.status !== 'available' || horizon.value.basis !== 'iv-vs-realized') throw new Error('expected the realized basis');
+    /*
+     * The front chain's 25 days is at `nearWindowDteThreshold`, so it is judged
+     * against the 20-day window; 45 days is at `shortDatedDteThreshold`, which is
+     * where the comparison leaves the short windows for the long one. Same IV,
+     * same stock, two different denominators — which is exactly why an IV
+     * published without its horizon cannot be read.
+     */
+    expect(front.value.realizedWindowDays).toBe(20);
+    expect(horizon.value.realizedWindowDays).toBe(OPTIONS_SIGNAL_CONFIG.iv.realizedWindowDays);
+    expect(front.value.realizedVolatility).toBe(0.5);
+    expect(horizon.value.realizedVolatility).toBe(0.32);
+  });
+
+  it('carries the horizon onto the IV Rank basis too, where a rank alone says nothing about the contract', () => {
+    const slot = buildPricingSlot(
+      {
+        chain: chain(1.034),
+        optionsSr: availableSr,
+        ivRank: { ivRank: 24, observations: 252 },
+        horizonIv: { iv: 0.62, dte: 45 },
+      },
+      realized,
+    );
+    if (slot.status !== 'available' || slot.value.basis !== 'iv-rank') throw new Error('expected the rank basis');
+    expect(slot.value.impliedVolatility).toBeCloseTo(0.62, 6);
+    expect(slot.value.dte).toBe(45);
   });
 });
 

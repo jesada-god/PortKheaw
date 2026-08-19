@@ -4,6 +4,7 @@ import { computeOptionsSupportResistance, type OptionsSrResult } from '@/src/lib
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
+import { calculateAtmIv } from '@/src/lib/market-data/options/analytics';
 import { assembleOptionsSignalInput, atmStraddleExpectedMove, chainDte } from './assemble';
 import { calculateOptionsSignal } from './calculations';
 import { OPTIONS_SIGNAL_CONFIG } from './config';
@@ -39,10 +40,27 @@ function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
-/** The two numbers a horizon chain contributes. Nothing else survives the fetch. */
-interface ExpectedMoveReading {
+/**
+ * The three numbers a horizon chain contributes. Nothing else survives the fetch.
+ *
+ * It was two — the straddle and its DTE — until the implied volatility followed
+ * the expected move onto the same expiration. It comes off the chain that is
+ * already in hand at that moment, so it is the one number here that costs
+ * nothing at all: no second request, no third, no new cache.
+ */
+interface HorizonChainReading {
+  /** ATM straddle price: the expected move to THIS expiration. */
   move: number | null;
   dte: number | null;
+  /** Robust median near-ATM implied volatility, as a decimal. */
+  iv: number | null;
+  /**
+   * When this chain was captured — kept because the reading is cached for
+   * fifteen minutes and the card prints a fetch time under the IV. Stamping it
+   * with the front chain's timestamp would advertise a freshness the number does
+   * not have.
+   */
+  asOf: string | null;
 }
 
 /**
@@ -55,9 +73,10 @@ interface ExpectedMoveReading {
  * holds a chain fresh for 60 seconds, so every card opened more than a minute
  * apart paid that second fetch again.
  *
- * Only two numbers survive that fetch: the ATM straddle price and the DTE it was
- * read at. They are what is cached here, keyed by symbol, so the fetch happens
- * once per window instead of once per reader.
+ * Three numbers survive that fetch: the ATM straddle price, the DTE it was read
+ * at, and the ATM implied volatility of the same chain. They are what is cached
+ * here, keyed by symbol, so the fetch happens once per window instead of once
+ * per reader.
  *
  * FIFTEEN MINUTES, not hours. A 45-day straddle is genuinely slow — it reprices
  * with the underlying, not with the tick — and it is used here as a coarse
@@ -67,17 +86,17 @@ interface ExpectedMoveReading {
  * the engine's own `staleMixHours` and well inside the resolution of the
  * comparison it feeds.
  */
-const EXPECTED_MOVE_CACHE_POLICY = {
+const HORIZON_CHAIN_CACHE_POLICY = {
   freshMs: 15 * 60_000,
   staleMs: 2 * 60 * 60_000,
   errorMs: 60_000,
 } as const;
 
-const expectedMoveCache = new SharedRequestCache();
+const horizonChainCache = new SharedRequestCache();
 
 async function loadNearestChain(
   symbol: string,
-): Promise<{ chain: OptionsChain; result: OptionsSrResult; expectedMove: ExpectedMoveReading | null } | null> {
+): Promise<{ chain: OptionsChain; result: OptionsSrResult; horizon: HorizonChainReading | null } | null> {
   try {
     const service = getOptionsMarketDataService();
     const expirations = await service.getExpirations(symbol);
@@ -90,49 +109,59 @@ async function loadNearestChain(
 
     /*
      * A SECOND expiration, near the horizon the card's own SETUP section
-     * recommends, read only for the expected move.
+     * recommends, read for the two numbers that have to be quoted on a horizon.
      *
-     * Every other options factor stays on the front chain: that is the book a
-     * reader is looking at, and its liquidity, positioning and implied
-     * volatility are facts about it. The expected move is different — it is the
-     * yardstick the confirmed daily support and resistance are held against, and
-     * a 0-DTE straddle is simply the wrong ruler for a swing level. Reading it
-     * at the front expiration made the "further than this option can reach"
-     * warning fire on 24 of 30 tickers; at the recommended horizon, 3.
+     * Liquidity and positioning stay on the front chain, and that is not a
+     * compromise: they are facts ABOUT the book a reader is looking at. The
+     * expected move and the implied volatility are not facts about a book, they
+     * are COMPARISONS — the move against confirmed daily support and resistance,
+     * the volatility against realized volatility and against the 30-60 day
+     * contract this card recommends — and a comparison is worth nothing unless
+     * both of its sides are on one horizon. Reading the move at the front
+     * expiration made "further than this option can reach" fire on 24 of 30
+     * tickers; at the recommended horizon, 3.
      */
-    const horizon = OPTIONS_SIGNAL_CONFIG.expectedMove.horizonDays;
-    const expectedMoveExpiration = future.length
+    const horizonDays = OPTIONS_SIGNAL_CONFIG.expectedMove.horizonDays;
+    const horizonExpiration = future.length
       ? future.reduce((best, value) => (
-        Math.abs(daysBetween(today, value) - horizon) < Math.abs(daysBetween(today, best) - horizon) ? value : best
+        Math.abs(daysBetween(today, value) - horizonDays) < Math.abs(daysBetween(today, best) - horizonDays) ? value : best
       ), future[0])
       : null;
 
     const chainResult = await service.getChain(symbol, nearest);
     const chain = chainResult.data;
     /*
-     * Failing to resolve it costs the expected-move comparison, never the card:
-     * the risk/reward factor already reports its distances in ATR and in percent
-     * without one. `null` here means "use the front chain", which is what the
-     * assembler falls back to.
+     * Failing to resolve it costs the two comparisons, never the card: the
+     * risk/reward factor already reports its distances in ATR and in percent
+     * without an expected move, and the pricing factor falls back to the front
+     * chain's own implied volatility. `null` here means "use the front chain",
+     * which is what the assembler falls back to — and the DTE it publishes then
+     * says so on the card rather than leaving the horizon unstated.
      *
      * Keyed on the EXPIRATION as well as the symbol, so the day the horizon
      * rolls to the next monthly the cache does not serve yesterday's contract
      * under today's DTE.
      */
-    const expectedMove = expectedMoveExpiration === null || expectedMoveExpiration === nearest
+    const horizon = horizonExpiration === null || horizonExpiration === nearest
       ? null
-      : await expectedMoveCache.resolve<ExpectedMoveReading>(
-        `options-expected-move:${symbol.toUpperCase()}:${expectedMoveExpiration}`,
+      : await horizonChainCache.resolve<HorizonChainReading>(
+        `options-horizon-chain:${symbol.toUpperCase()}:${horizonExpiration}`,
         async () => {
-          const horizonChain = (await service.getChain(symbol, expectedMoveExpiration)).data;
-          return { move: atmStraddleExpectedMove(horizonChain), dte: chainDte(horizonChain) };
+          const horizonChain = (await service.getChain(symbol, horizonExpiration)).data;
+          const atm = calculateAtmIv(horizonChain);
+          return {
+            move: atmStraddleExpectedMove(horizonChain),
+            dte: chainDte(horizonChain),
+            iv: atm.status === 'available' ? atm.iv : null,
+            asOf: horizonChain.asOf,
+          };
         },
-        EXPECTED_MOVE_CACHE_POLICY,
+        HORIZON_CHAIN_CACHE_POLICY,
       ).then((resolution) => resolution.value).catch(() => null);
 
     return {
       chain,
-      expectedMove,
+      horizon,
       result: computeOptionsSupportResistance({
         symbol: chain.underlyingSymbol,
         expiration: chain.expiration,
@@ -174,7 +203,17 @@ export async function computeServerOptionsSignal(symbol: string): Promise<Server
     chain: options?.chain ?? null,
     optionsSr: options?.result ?? null,
     acceptedPrice: options?.chain.spot ?? null,
-    expectedMove: options?.expectedMove ?? null,
+    expectedMove: options?.horizon ? { move: options.horizon.move, dte: options.horizon.dte } : null,
+    /*
+     * The same chain, the same fetch, the same fifteen-minute window. Read here
+     * rather than off the front expiration because the pricing verdict is a
+     * COMPARISON — against realized volatility, and against the 30-60 day
+     * contract the setup section recommends — and a two-day contract carrying an
+     * earnings report whole is not on either of those horizons.
+     */
+    horizonIv: options?.horizon
+      ? { iv: options.horizon.iv, dte: options.horizon.dte, asOf: options.horizon.asOf }
+      : null,
     // This symbol's own recorded readings are what make a raw IV or a raw
     // Put/Call comparable at all.
     ownHistory,

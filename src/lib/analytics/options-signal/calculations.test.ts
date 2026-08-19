@@ -286,7 +286,7 @@ describe('factor scoring', () => {
   });
 
   it('classifies IV Rank exactly on the documented boundaries', () => {
-    const rank = (ivRank: number): IvPricingInput => ({ basis: 'iv-rank', ivRank, impliedVolatility: 0.3, observations: 252 });
+    const rank = (ivRank: number): IvPricingInput => ({ basis: 'iv-rank', ivRank, impliedVolatility: 0.3, observations: 252, dte: 45 });
     expect(classifyIvLevel(rank(29.9))).toBe('low');
     expect(classifyIvLevel(rank(30))).toBe('normal');
     expect(classifyIvLevel(rank(50))).toBe('normal');
