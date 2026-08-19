@@ -63,44 +63,44 @@ function SignalFooter({ tone }: { tone: string }) {
 
 export const MARKET_SIGNAL_PRESENTATION = {
   STRONG_BULLISH: {
-    thai: 'ขาขึ้นแข็งแรง',
-    description: 'ขาขึ้นแข็งแรง • ราคาและโมเมนตัมไปทางเดียวกัน มีแรงซื้อสนับสนุน',
+    thai: 'กำลังขึ้นอย่างแข็งแรง',
+    description: 'ราคากำลังขึ้นอย่างแข็งแรง • ทั้งตัวราคาและแรงส่งของราคาไปทางเดียวกัน และมีแรงซื้อหนุนอยู่',
     icon: TrendingUp,
     tone: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300',
   },
   BULLISH: {
-    thai: 'แนวโน้มขาขึ้น',
-    description: 'แนวโน้มเป็นขาขึ้น • แต่ยังควรดูแรงยืนยันและจังหวะของราคา',
+    thai: 'แนวโน้มกำลังขึ้น',
+    description: 'แนวโน้มโดยรวมกำลังขึ้น • แต่ยังไม่มีอะไรยืนยันหนักแน่น ควรดูต่ออีกสักพัก',
     icon: TrendingUp,
     tone: 'border-green-500/35 bg-green-500/10 text-green-300',
   },
   SIDEWAYS: {
-    thai: 'ตลาดพักตัว / ยังไม่เลือกทาง',
-    description: 'ตลาดกำลังพักตัว • ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน',
+    thai: 'ราคายังไม่ไปทางไหนชัด',
+    description: 'ราคายังไม่ไปทางไหนชัดเจน • ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง',
     icon: Minus,
     tone: 'border-sky-500/30 bg-slate-500/10 text-sky-200',
   },
   SQUEEZE: {
-    thai: 'สะสมพลัง / เตรียมเลือกทาง',
-    description: 'ความผันผวนกำลังหดตัว • ราคาอาจกำลังเตรียมเลือกทิศทางครั้งใหม่',
+    thai: 'ราคาแกว่งแคบลงกว่าปกติ',
+    description: 'ช่วงที่ราคาแกว่งในแต่ละวันแคบลงกว่าปกติ • ยังบอกไม่ได้ว่าจะออกทางไหน',
     icon: Zap,
     tone: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
   },
   OVEREXTENDED: {
     thai: 'ราคาไกลจากค่าเฉลี่ย',
-    description: 'ราคาอยู่ห่างจากค่าเฉลี่ยมากกว่าปกติ • มีโอกาสพักตัวหรือแกว่งกลับ',
+    description: 'ราคาอยู่ห่างจากค่าเฉลี่ยของตัวเองมากกว่าปกติ • ยังไม่ได้แปลว่าจะกลับ แต่ระยะห่างนี้ผิดจากที่เคยเป็น',
     icon: TriangleAlert,
     tone: 'border-orange-400/40 bg-orange-500/10 text-orange-200',
   },
   BEARISH: {
-    thai: 'แนวโน้มขาลง',
-    description: 'แนวโน้มเป็นขาลง • แรงขายยังมีอิทธิพลมากกว่าแรงซื้อ',
+    thai: 'แนวโน้มกำลังลง',
+    description: 'แนวโน้มโดยรวมกำลังลง • แรงขายยังมีมากกว่าแรงซื้อ',
     icon: TrendingDown,
     tone: 'border-red-500/35 bg-red-500/10 text-red-300',
   },
   STRONG_BEARISH: {
-    thai: 'ขาลงแข็งแรง',
-    description: 'ขาลงแข็งแรง • ราคา โมเมนตัม และแรงขายไปในทิศทางเดียวกัน',
+    thai: 'กำลังลงอย่างแข็งแรง',
+    description: 'ราคากำลังลงอย่างแข็งแรง • ทั้งตัวราคา แรงส่งของราคา และแรงขายไปทางเดียวกัน',
     icon: TrendingDown,
     tone: 'border-red-700/50 bg-red-950/40 text-red-300',
   },
@@ -144,16 +144,16 @@ export const MARKET_SIGNAL_PRESENTATION = {
  */
 const FLAG_COPY: Record<string, string> = {
   conflicting_evidence: 'หลักฐานขัดแย้งกัน',
-  low_volume_confirmation: 'วอลุ่มไม่ยืนยัน',
-  pending_breakout: 'ผ่านขอบกรอบ ยังไม่ยืนยัน',
-  pending_breakdown: 'หลุดขอบกรอบ ยังไม่ยืนยัน',
+  low_volume_confirmation: 'ปริมาณซื้อขายน้อย',
+  pending_breakout: 'ปิดเหนือกรอบ รอครบเกณฑ์',
+  pending_breakdown: 'ปิดใต้กรอบ รอครบเกณฑ์',
   stale_or_partial_data: 'ข้อมูลไม่สดหรือไม่ครบ',
   earnings_imminent: 'ใกล้ประกาศงบมาก',
   earnings_soon: 'ใกล้ประกาศงบ',
-  pre_earnings_breakout: 'เบรกก่อนงบ',
+  pre_earnings_breakout: 'ออกนอกกรอบก่อนงบ',
   weak_confirmation: 'ยังยืนยันไม่ชัด',
   unfavorable_risk_reward: 'ระยะเสี่ยงมากกว่าระยะเป้า',
-  risk_leg_inside_noise: 'ราคาชิดจุดที่โซนจะจบ',
+  risk_leg_inside_noise: 'ราคาชิดจุดที่รอบนี้จะจบ',
   recent_flip: 'ป้ายเพิ่งเปลี่ยน',
   stale_zone: 'ไม่มีการแตะขอบกรอบมานาน',
   narrow_range: 'กรอบแคบผิดปกติ',
@@ -161,8 +161,8 @@ const FLAG_COPY: Record<string, string> = {
   squeeze: 'ความผันผวนบีบตัว',
   bearish_divergence: 'ราคาขึ้นแต่แรงเริ่มหมด',
   bullish_divergence: 'ราคาลงแต่แรงขายเริ่มหมด',
-  strong_momentum: 'โมเมนตัมแรง',
-  high_volume: 'วอลุ่มสูง',
+  strong_momentum: 'ราคามีแรงส่ง',
+  high_volume: 'ปริมาณซื้อขายสูง',
 };
 const FLAG_ORDER = Object.keys(FLAG_COPY);
 /*
@@ -215,7 +215,7 @@ const BREAKDOWN_COPY = {
   momentum: { label: 'Momentum', helper: 'ดูว่าแรงของการเคลื่อนไหวยังเพิ่มขึ้นหรือเริ่มอ่อนลง' },
   trendStrength: { label: 'Trend Strength', helper: 'ดูว่าแนวโน้มปัจจุบันแข็งแรงแค่ไหน' },
   volume: { label: 'Volume', helper: 'ดูว่าปริมาณการซื้อขายสนับสนุนการเคลื่อนไหวหรือไม่' },
-  priceStructure: { label: 'Price Structure', helper: 'ดูโครงสร้างราคาและการยืนยันจากแนวรับ/แนวต้าน' },
+  priceStructure: { label: 'Price Structure', helper: 'ดูว่าจุดสูงและจุดต่ำของราคาขยับไปทางไหน และผ่านแนวสำคัญไปแล้วหรือยัง' },
 } as const;
 
 /**
@@ -306,7 +306,22 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <Info aria-hidden="true" size={18} />
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
-        <p className="mt-3 text-sm text-slate-400">ข้อมูลไม่เพียงพอ · {result.reason}</p>
+        {/*
+          The plain sentence first, the engine's own words underneath.
+
+          `result.reason` is payload — it is what the engine recorded about its
+          own refusal, in the engine's vocabulary ("ต้องมี finalized 1D candles
+          อย่างน้อย 60 แท่ง"), and it is snapshotted, so it cannot be reworded
+          here without moving a gate that has nothing to do with copy. What it
+          CAN stop being is the whole message: a reader who does not know what a
+          finalized candle is now learns what happened from the first line, and
+          the engine's sentence is kept below it, labelled as detail, for
+          whoever the exact count is useful to.
+        */}
+        <p className="mt-3 text-sm leading-6 text-slate-400" data-testid="signal-insufficient-summary">
+          ยังมีข้อมูลราคาไม่พอจะสรุปอะไรได้ ระบบจึงไม่แสดงผลที่เดาขึ้นเอง
+        </p>
+        <p className="mt-2 text-xs leading-5 text-slate-500" data-testid="signal-insufficient-detail">รายละเอียด: {result.reason}</p>
         {result.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-300">{warning}</p>)}
         <SignalFooter tone="text-slate-500" />
       </section>
@@ -606,16 +621,16 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
 function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallback: string): string {
   if (state === 'SQUEEZE') {
-    if (bias === 'bullish') return 'ยังไม่ยืนยันการเบรก แต่โครงสร้างปัจจุบันเอนเอียงไปทางขาขึ้น';
-    if (bias === 'bearish') return 'ยังไม่ยืนยันการเบรก แต่โครงสร้างปัจจุบันเอนเอียงไปทางขาลง';
-    return 'ความผันผวนกำลังบีบตัว แต่ระบบยังไม่พบฝั่งที่ได้เปรียบชัดเจน';
+    if (bias === 'bullish') return 'ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า';
+    if (bias === 'bearish') return 'ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางลงมากกว่า';
+    return 'ช่วงที่ราคาแกว่งแคบลงกว่าปกติ และหลักฐานยังไม่เอนไปทางขึ้นหรือทางลง';
   }
   if (state === 'OVEREXTENDED') {
-    if (bias === 'bullish') return 'แนวโน้มหลักยังขึ้น แต่ราคาวิ่งไกลจากค่าเฉลี่ย ระวังการพักตัว';
-    if (bias === 'bearish') return 'แนวโน้มหลักยังลง แต่ราคาลงไกลจากค่าเฉลี่ย ระวังการเด้งกลับ';
+    if (bias === 'bullish') return 'แนวโน้มโดยรวมยังขึ้น แต่ราคาวิ่งไกลจากค่าเฉลี่ยของตัวเองมาก';
+    if (bias === 'bearish') return 'แนวโน้มโดยรวมยังลง แต่ราคาลงไกลจากค่าเฉลี่ยของตัวเองมาก';
   }
   if (state === 'SIDEWAYS') {
-    if (bias === 'neutral') return 'แรงซื้อและแรงขายใกล้เคียงกัน ระบบยังไม่พบฝั่งที่ได้เปรียบชัดเจน';
+    if (bias === 'neutral') return 'แรงซื้อกับแรงขายใกล้เคียงกัน หลักฐานยังไม่เอนไปทางขึ้นหรือทางลง';
     /*
      * SIDEWAYS with a lean, which the fallback denied outright.
      *
@@ -626,8 +641,8 @@ function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallba
      * SQUEEZE already uses for exactly this situation.
      */
     return bias === 'bullish'
-      ? 'ตลาดกำลังพักตัว • ยังไม่เลือกทางชัดเจน แต่คะแนนรวมเอนไปทางขาขึ้น'
-      : 'ตลาดกำลังพักตัว • ยังไม่เลือกทางชัดเจน แต่คะแนนรวมเอนไปทางขาลง';
+      ? 'ราคายังไม่ไปทางไหนชัดเจน • แต่คะแนนรวมเอนไปทางขึ้น'
+      : 'ราคายังไม่ไปทางไหนชัดเจน • แต่คะแนนรวมเอนไปทางลง';
   }
   return fallback;
 }
@@ -722,10 +737,29 @@ function HistoryStrip({ history }: { history: MarketSignalHistory }) {
  * These three name the SAME three fields the bar is divided into, in the same
  * words, so the sentence and the picture teach each other.
  */
+/*
+ * ONE WORD FOR ONE THING, and the word is "กรอบ".
+ *
+ * The card used to run two vocabularies over one object: the bar was painted
+ * with "กรอบเดิม" while the three sentences around it said "โซน". They are the
+ * same rectangle. A reader who has never traded has no way to know that, and
+ * the two words a thumb-length apart read as two different measurements that
+ * happen to disagree. Everything in this block — headline, live row, change
+ * row, proximity row, and the names drawn ON the bar — now says "กรอบ", and
+ * `MarketSignalSection.test.tsx` fails the build if "โซน" comes back.
+ *
+ * "หลุด" went with it. It is the chartist's verb for leaving a level downward
+ * and it carries a verdict the payload does not support; "ลงไปอยู่ใต้กรอบ" is
+ * the same event with the judgement taken out.
+ *
+ * Each line also says what the state IS rather than naming it. "ราคายังอยู่ใน
+ * กรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ" is longer than "ไซด์เวย์" and it is the
+ * whole point: the reader finishes the sentence knowing what happened.
+ */
 const ZONE_COPY = {
-  uptrend: 'ราคาขึ้นมาเหนือกรอบเดิมแล้ว',
-  sideways: 'ราคายังอยู่ในกรอบเดิม',
-  downtrend: 'ราคาหลุดลงมาใต้กรอบเดิมแล้ว',
+  uptrend: 'ราคาขึ้นไปอยู่เหนือกรอบเดิมแล้ว',
+  sideways: 'ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ',
+  downtrend: 'ราคาลงไปอยู่ใต้กรอบเดิมแล้ว',
 } as const;
 
 /**
@@ -763,14 +797,49 @@ const ZONE_COPY = {
  * and inventing one here would be the card describing an engine it cannot see.
  */
 const PENDING_ZONE_COPY = {
-  up: 'ราคาปิดเลยขอบบนของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังนับเป็นโซนเดิม',
-  down: 'ราคาปิดหลุดขอบล่างของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังนับเป็นโซนเดิม',
+  up: 'ราคาปิดขึ้นไปเหนือกรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง จึงยังถือว่าอยู่ในกรอบเดิม',
+  down: 'ราคาปิดลงไปใต้กรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง จึงยังถือว่าอยู่ในกรอบเดิม',
 } as const;
 
+/*
+ * "พลิกกลับ" and "ยังไม่มีฝั่งไหนคุมได้" are both gone, for the same reason.
+ *
+ * The first is a trader's word for a reversal and says nothing a beginner can
+ * picture. The second is about buyers and sellers — "ฝั่ง" — which is a cast of
+ * characters this card has never introduced and does not measure. Both are now
+ * the concrete thing that would happen next: price coming back inside the
+ * rectangle drawn directly underneath the sentence.
+ *
+ * THERE IS DELIBERATELY NO CLAUSE FOR AN OLD FRAME. `docs/market-signal/
+ * p6-history-findings.md` measured whether an older label is a more accurate
+ * one and found nothing — no age bucket beat the base rate by more than its own
+ * sampling error. "กรอบนี้อยู่มานานแล้ว" would be read as reassurance, which is
+ * the single reading the evidence rules out, so the card says nothing at all.
+ */
 const FRESH_ZONE_COPY = {
-  uptrend: ' แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย',
-  downtrend: ' แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย',
-  sideways: ' และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้',
+  uptrend: ' · เพิ่งขึ้นไปได้ไม่กี่วัน ยังลงกลับเข้ากรอบได้ง่าย',
+  downtrend: ' · เพิ่งลงไปได้ไม่กี่วัน ยังขึ้นกลับเข้ากรอบได้ง่าย',
+  sideways: ' · กรอบนี้เพิ่งตั้งได้ไม่กี่วัน ยังไม่นิ่ง',
+} as const;
+
+/*
+ * The two things about the frame ITSELF that the card never said out loud.
+ *
+ * `atr_band` means no usable pivot existed, so the frame is a volatility
+ * envelope recomputed around EMA20 every bar rather than prices the market has
+ * actually traded against. That was dialog-only, which left the headline making
+ * the same claim on both kinds of frame — and it is precisely the reader who
+ * never opens "ทำไม?" who needs to know the rectangle is arithmetic rather than
+ * history. It is a clause on the headline, not a row of its own, so the
+ * four-line budget under the picture is untouched.
+ *
+ * The no-frame case is the other half: `hasFrame` false means there are no edge
+ * numbers at all, and until now the headline still spoke of "กรอบเดิม" over a
+ * bar with nothing cut into it.
+ */
+const ZONE_FRAME_NOTE_COPY = {
+  atrBand: ' · กรอบนี้คำนวณจากความเหวี่ยงของราคา ไม่ใช่ราคาที่ตลาดเคยชนจริง และขยับทุกวัน',
+  noFrame: ' · ข้อมูลยังไม่พอจะตีกรอบ ตัวเลขขอบจึงยังไม่มี',
 } as const;
 
 /**
@@ -782,10 +851,24 @@ const FRESH_ZONE_COPY = {
  * the left cell, so the bar said one thing and the labels under it said the
  * opposite.
  */
+/*
+ * AND THEY ARE THE SAME WORDS THE SENTENCES USE.
+ *
+ * They used to be "ขาลง / กรอบเดิม / ขาขึ้น": two trend names on the outside and
+ * a frame name in the middle, i.e. three fields of one picture labelled in two
+ * different vocabularies, neither of which matched the prose around it. A
+ * beginner reading "ราคาขึ้นไปอยู่เหนือกรอบเดิมแล้ว" then looking down at a
+ * field called "ขาขึ้น" has to be told those are the same claim.
+ *
+ * Now the three names are positions — where price is relative to the rectangle
+ * — which is the only thing the geometry actually encodes. `sideOf` reads the
+ * same three states off the same two triggers, so the name on the field, the
+ * headline and the live row cannot drift apart.
+ */
 const ZONE_SEGMENT_COPY = {
-  downtrend: 'ขาลง',
-  sideways: 'กรอบเดิม',
-  uptrend: 'ขาขึ้น',
+  downtrend: 'ใต้กรอบ',
+  sideways: 'ในกรอบ',
+  uptrend: 'เหนือกรอบ',
 } as const;
 
 /**
@@ -799,7 +882,7 @@ const AGREEMENT_COPY = {
   High: 'หลักฐานไปทางเดียวกันมาก',
   Medium: 'หลักฐานไปทางเดียวกันบ้าง',
   Low: 'หลักฐานยังกระจัดกระจาย',
-  Insufficient: 'ข้อมูลไม่พอ',
+  Insufficient: 'ข้อมูลยังไม่พอจะเทียบ',
 } as const;
 
 /*
@@ -811,8 +894,8 @@ const AGREEMENT_COPY = {
  * softened into something that no longer names the thing.
  */
 const ZONE_MODE_COPY = {
-  structural: 'กรอบยึดจาก swing high/low ล่าสุด',
-  atr_band: 'ยังไม่มี swing ที่ใช้ได้ จึงใช้กรอบ ATR รอบ EMA20',
+  structural: 'ขอบกรอบมาจากจุดที่ราคาเคยกลับตัวจริงล่าสุด',
+  atr_band: 'ไม่มีจุดกลับตัวที่ใช้ได้ จึงคำนวณกรอบจากความเหวี่ยงเฉลี่ยรอบเส้นค่าเฉลี่ย 20 วัน',
 } as const;
 
 /**
@@ -839,11 +922,19 @@ function sideOf(price: number, lowerTrigger: number, upperTrigger: number): Zone
  * price sitting in the middle of the frame and equally true of one sitting a
  * hair under the trigger, and says nothing about the case that matters — a live
  * price in a different field from the close. These name the field instead.
+ *
+ * "เหมือนราคาปิด" is gone from all three. It was there to say the two marks
+ * agree, and it reads two ways: that the two prices are EQUAL — which is false,
+ * and is the one reading a beginner reaches for when two numbers sit in one
+ * sentence — or that they are on the same side of the same line, which is what
+ * was meant. The distinction it was carrying is already drawn twice over: the
+ * bar shows both marks, and the divergent case is set in the warning weight
+ * while this one is not. An ambiguous clause is not worth a third telling.
  */
 const LIVE_SAME_SIDE_COPY = {
-  above: 'ยังอยู่เหนือกรอบเดิมเหมือนราคาปิด',
-  inside: 'ยังอยู่ในกรอบเดิมเหมือนราคาปิด',
-  below: 'ยังอยู่ใต้กรอบเดิมเหมือนราคาปิด',
+  above: 'ยังอยู่เหนือกรอบ',
+  inside: 'ยังไม่ออกจากกรอบ',
+  below: 'ยังอยู่ใต้กรอบ',
 } as const;
 
 /**
@@ -856,10 +947,22 @@ const LIVE_SAME_SIDE_COPY = {
  * disagree.
  */
 function liveMoveCopy(live: ZoneSide, close: ZoneSide): string {
-  if (live === 'above') return 'ขึ้นไปเหนือกรอบเดิมแล้ว';
-  if (live === 'below') return 'หลุดลงใต้กรอบเดิมแล้ว';
-  return close === 'above' ? 'ตกกลับเข้ากรอบเดิมแล้ว' : 'ขึ้นกลับเข้ากรอบเดิมแล้ว';
+  if (live === 'above') return 'ขึ้นไปเหนือกรอบแล้ว';
+  if (live === 'below') return 'ลงไปใต้กรอบแล้ว';
+  return close === 'above' ? 'ลงกลับเข้ากรอบแล้ว' : 'ขึ้นกลับเข้ากรอบแล้ว';
 }
+
+/*
+ * Why the price on screen does not move the label, said as the mechanism.
+ *
+ * It used to read "โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้" — a rule stated in the
+ * card's private vocabulary, which tells a reader what the engine does without
+ * telling them why the number they are looking at changed nothing. This is the
+ * same rule as the fact behind it: only a daily close is counted, and the price
+ * currently trading is not one. It is the same sentence the block's footnote
+ * already ends with, so the two agree by construction.
+ */
+const LIVE_INTRADAY_RULE = ' · แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ';
 
 /** How fresh a zone or frame has to be before the card says so out loud. */
 const FRESH_ZONE_BARS = 3;
@@ -892,8 +995,8 @@ function percentText(distance: number, reference: number): string {
  */
 function relativeCopy(distance: number | null, reference: number, side: 'above' | 'below'): string {
   if (distance === null || !Number.isFinite(distance) || !Number.isFinite(reference) || reference === 0) return '';
-  if (distance < 0) return side === 'above' ? 'ราคาผ่านขึ้นไปแล้ว' : 'ราคาหลุดลงมาแล้ว';
-  return `${side === 'above' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิด ${percentText(distance, reference)}`;
+  if (distance < 0) return side === 'above' ? 'ราคาขึ้นไปถึงแล้ว' : 'ราคาลงมาถึงแล้ว';
+  return `${side === 'above' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิดล่าสุด ${percentText(distance, reference)}`;
 }
 
 /**
@@ -1478,6 +1581,47 @@ function ZoneBar({ zones, livePrice, actionable }: {
   const pendingSide = zones.pendingBreakout ? 'up' as const : zones.pendingBreakdown ? 'down' as const : null;
 
   /*
+   * "WHAT WOULD CHANGE THIS?", on the two zones that were answering it only
+   * sometimes.
+   *
+   * `sideways` has had a row naming its two triggers since P5. `uptrend` and
+   * `downtrend` never had one — they had `ActionableRows`, which prints the
+   * SAME level ("ถ้าราคาปิดลงต่ำกว่า 42.24") whenever the engine publishes an
+   * invalidation. So the question was answered on those two zones by accident
+   * of another row existing, and went unanswered entirely on the cards where
+   * that row is withheld: an `atr_band` frame, or an edge the close has already
+   * gone past. On today's corpus that is most instruments.
+   *
+   * This is the fallback for exactly those cards, and it is drawn ONLY when
+   * `ActionableRows` will not draw the level itself. Printing both would be one
+   * price twice in four lines and would break the four-line budget the test
+   * below the picture enforces.
+   *
+   * The level is `resistance` / `support` — the frame's own anchors, which are
+   * what a zone is LEFT by closing back through, and the same two the engine
+   * hands to `calculateActionable`. The card computes nothing: it re-reads the
+   * payload's own numbers.
+   *
+   * `reentryAhead` is the engine's `invalidation_behind_close` refusal applied
+   * to the same geometry. A level the close is already past is not a condition
+   * a reader can wait for; it is an event, and stating it as a condition would
+   * have the card asking for something that already happened.
+   */
+  const reentryLevel = zone === 'uptrend' ? zones.resistance : zone === 'downtrend' ? zones.support : null;
+  const reentryAhead = reentryLevel !== null && Number.isFinite(reentryLevel)
+    && (zone === 'uptrend' ? referenceClose > reentryLevel : referenceClose < reentryLevel);
+  const invalidationDrawn = actionable !== null && actionable.invalidation !== null;
+  const changeCopy = !hasFrame ? null
+    : zone === 'sideways'
+      ? (pendingSide === null
+        ? `ราคาปิดต้องขึ้นเหนือ ${priceText(upperTrigger)} หรือลงต่ำกว่า ${priceText(lowerTrigger)} ถึงจะนับว่าออกจากกรอบ`
+        : 'ราคาปิดออกนอกกรอบไปแล้ว ต้องปิดแบบนี้ต่ออีกจนผ่านเกณฑ์ ถึงจะนับว่าออกจากกรอบจริง')
+      : invalidationDrawn || !reentryAhead || reentryLevel === null ? null
+        : zone === 'uptrend'
+          ? `ราคาปิดต้องลงต่ำกว่า ${priceText(reentryLevel)} ถึงจะนับว่ากลับเข้ากรอบ`
+          : `ราคาปิดต้องขึ้นเหนือ ${priceText(reentryLevel)} ถึงจะนับว่ากลับเข้ากรอบ`;
+
+  /*
    * The captions, in two rows that cannot reach each other.
    *
    * ROW ONE, above the bar: the prices, one caption per mark. ROW TWO, below it:
@@ -1770,6 +1914,14 @@ function ZoneBar({ zones, livePrice, actionable }: {
         {freshlyFormed && pendingSide === null
           ? <span className="font-normal text-slate-300">{FRESH_ZONE_COPY[zone]}</span>
           : null}
+        {/* What KIND of rectangle it is, when it is not the usual kind. Both
+            clauses are mutually exclusive with each other by construction: a
+            frame that could not be drawn has no mode worth reporting. */}
+        {!hasFrame
+          ? <span className="font-normal text-slate-300" data-zone-note="no-frame">{ZONE_FRAME_NOTE_COPY.noFrame}</span>
+          : zones.mode === 'atr_band'
+            ? <span className="font-normal text-slate-300" data-zone-note="atr-band">{ZONE_FRAME_NOTE_COPY.atrBand}</span>
+            : null}
       </p>
       {/*
         Position only, and no direction at all.
@@ -1791,14 +1943,17 @@ function ZoneBar({ zones, livePrice, actionable }: {
       */}
       {zones.proximity === 'near_trigger' ? (
         <p className={`mt-1 ${size.prose.note} text-slate-400`} data-zone-row="proximity">
+          {/* "ราคา" alone, in a block whose other rows say "ราคาตอนนี้", left
+              the reader to guess which of the two marks this distance was off.
+              Every figure here is measured from the close, and now says so. */}
           {zones.nearestTriggerAtr < 0
-            ? 'ราคาเลยขอบกรอบมาแล้ว'
-            : `ราคาใกล้ขอบกรอบแล้ว (ห่างอีก ${percentText(nearestDistance, referenceClose)})`}
-          {' โซนนี้จึงเปลี่ยนได้ในไม่กี่วันทำการ'}
+            ? 'ราคาปิดออกนอกขอบกรอบไปแล้ว'
+            : `ราคาปิดใกล้ขอบกรอบแล้ว เหลืออีก ${percentText(nearestDistance, referenceClose)}`}
+          {' · อีกไม่กี่วันทำการก็เปลี่ยนได้'}
         </p>
       ) : zones.proximity === 'deep_range' ? (
         <p className={`mt-1 ${size.prose.note} text-slate-400`} data-zone-row="proximity">
-          {'ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด '}{percentText(nearestDistance, referenceClose)}
+          {'ราคาปิดยังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด '}{percentText(nearestDistance, referenceClose)}
         </p>
       ) : null}
 
@@ -2013,12 +2168,15 @@ function ZoneBar({ zones, livePrice, actionable }: {
           {!hasFrame || liveSide === null
             ? ''
             : liveDiverges
-              ? ` ${liveMoveCopy(liveSide, closeSide)} · โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้`
+              ? ` ${liveMoveCopy(liveSide, closeSide)}${LIVE_INTRADAY_RULE}`
               : ` ${LIVE_SAME_SIDE_COPY[liveSide]}`}
           {/* Where the picture had to give the distinction up, the prose takes
               it: the two prices are still two prices and this row still states
               both, so nothing is lost except a line nobody could have seen. */}
-          {markersMerged ? ' · ห่างจากราคาปิดน้อยมาก บนแถบจึงวาดรวมเป็นเส้นเดียว' : ''}
+          {/* "ห่างจากราคาปิดน้อยมาก" reads as a distance the card is reporting;
+              what it is actually saying is that two figures are close enough
+              that one mark had to stand for both. */}
+          {markersMerged ? ' · ราคาทั้งสองต่างกันน้อยมาก บนแถบจึงวาดทับกันเป็นเส้นเดียว' : ''}
         </p>
       ) : null}
 
@@ -2039,18 +2197,17 @@ function ZoneBar({ zones, livePrice, actionable }: {
         the picture is cut with and the same two `sideOf` reads — so nothing is
         computed here. The wording is conditional and names no action.
       */}
-      {zone === 'sideways' && hasFrame ? (
+      {/* Naming the two prices is the answer ONLY while both are still ahead of
+          the close. Once one has been closed through, "ต้องขึ้นเหนือ 47.24" is a
+          condition the reader can see has already been met, and the row would be
+          telling them to wait for something that happened. What is left to wait
+          for is the confirmation rule. See `changeCopy` for the directional
+          zones' half of this. */}
+      {changeCopy === null ? null : (
         <p className={`mt-2 ${size.prose.note} text-slate-400`} data-testid="signal-zone-change" data-zone-row="change">
-          {/* Naming the two prices is the answer ONLY while both are still
-              ahead of the close. Once one has been closed through, "ต้องปิด
-              เหนือ 47.24" is a condition the reader can see has already been
-              met, and the row would be telling them to wait for something that
-              happened. What is left to wait for is the confirmation rule. */}
-          {pendingSide === null
-            ? `โซนจะเปลี่ยนก็ต่อเมื่อราคาปิดเหนือ ${priceText(upperTrigger)} หรือต่ำกว่า ${priceText(lowerTrigger)}`
-            : 'ราคาปิดเลยขอบกรอบไปแล้ว โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้จนผ่านเงื่อนไขยืนยัน'}
+          {changeCopy}
         </p>
-      ) : null}
+      )}
 
       {actionable ? <ActionableRows zones={zones} actionable={actionable} size={size} /> : null}
 
@@ -2069,7 +2226,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
         this line is read by a person and not by a machine.
       */}
       <p className={`mt-2 ${size.prose.note} text-slate-500`} data-zone-row="source">
-        วัดจากราคาปิดตลาดรอบล่าสุด {priceText(referenceClose)} ({formatThaiDateOnly(zones.referenceDate)}) · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน
+        ทุกตัวเลขในกล่องนี้วัดจากราคาปิดล่าสุด {priceText(referenceClose)} ({formatThaiDateOnly(zones.referenceDate)}) · นับเฉพาะราคาปิดของวัน ราคาที่แตะระหว่างวันไม่นับ
       </p>
     </div>
   );
@@ -2103,13 +2260,29 @@ function ActionableRows({ zones, actionable, size }: {
   const { invalidation, invalidationPct, invalidationBasis, target } = actionable;
   if (invalidation === null && target === null) return null;
   const close = zones.referenceClose;
-  const ends = zones.zone === 'uptrend' ? 'ปิดต่ำกว่า' : 'ปิดสูงกว่า';
+  const up = zones.zone === 'uptrend';
+  const ends = up ? 'ถ้าราคาปิดลงต่ำกว่า' : 'ถ้าราคาปิดขึ้นสูงกว่า';
+  /*
+   * THE LABEL THAT DID NOT KNOW WHICH WAY IT WAS POINTING.
+   *
+   * This was one constant string — "กรอบเดิมสูงเท่าไร ก็มักไปได้อีกเท่านั้น" —
+   * printed on both directional zones. On a `downtrend` card the projection is
+   * BELOW the close (`broken.level - broken.height`), so the row read "ก็มักไป
+   * ได้อีกเท่านั้น" beside a price lower than the one it was measured from, with
+   * the percentage underneath it correctly saying "ต่ำกว่าราคาปิดล่าสุด". The
+   * label and its own value disagreed about direction on every bearish card
+   * that reached this row. Both halves now come off `zones.zone`, which is the
+   * same field the projection itself was computed from.
+   */
+  const targetLabel = up
+    ? 'ถ้าขึ้นต่ออีกเท่ากับความสูงกรอบเดิม จะถึง'
+    : 'ถ้าลงต่ออีกเท่ากับความสูงกรอบเดิม จะถึง';
   // The percent the engine already reported, when it reported one; otherwise
   // the same quantity off the two prices, so the row is never blank.
   const invalidationRelative = invalidation === null
     ? ''
     : invalidationPct !== null
-      ? `${invalidationBasis === 'zone_ceiling' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิด ${Math.abs(invalidationPct).toFixed(1)}%`
+      ? `${invalidationBasis === 'zone_ceiling' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิดล่าสุด ${Math.abs(invalidationPct).toFixed(1)}%`
       : relativeCopy(Math.abs(invalidation - close), close, invalidation > close ? 'above' : 'below');
   const targetRelative = target === null
     ? ''
@@ -2119,19 +2292,26 @@ function ActionableRows({ zones, actionable, size }: {
     <dl className={`mt-3 space-y-2 border-t border-current/15 pt-2 ${size.prose.note} text-slate-300`} data-testid="signal-actionable" data-zone-row="actionable">
       {invalidation === null ? null : (
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <dt className="text-slate-400">ถ้า{ends}</dt>
+          <dt className="text-slate-400">{ends}</dt>
           <dd className="font-mono text-white">{priceText(invalidation)}</dd>
           <dd className="text-slate-500">
             {invalidationRelative ? `${invalidationRelative} · ` : ''}
-            ถือว่า{zones.zone === 'uptrend' ? 'ขาขึ้น' : 'ขาลง'}รอบนี้จบตามกฎเดิม
+            {/* This row IS the "what would change this?" answer on a directional
+                zone — see `changeCopy`, which fills in only where this row is
+                withheld — so it now says what changes rather than only that
+                something ends. "ขาขึ้น/ขาลง" went with it: the bar under this
+                list calls the same two states "เหนือกรอบ" and "ใต้กรอบ". */}
+            ถือว่าราคากลับเข้ากรอบ และการ{up ? 'ขึ้น' : 'ลง'}รอบนี้จบ
           </dd>
         </div>
       )}
       {target === null ? null : (
         <div className="flex flex-wrap items-baseline gap-x-2">
           {/* The measured move, said as the rule of thumb it is rather than as
-              "ระยะที่กรอบเดิมวัดได้", which named the arithmetic and not the idea. */}
-          <dt className="text-slate-400">กรอบเดิมสูงเท่าไร ก็มักไปได้อีกเท่านั้น</dt>
+              "ระยะที่กรอบเดิมวัดได้", which named the arithmetic and not the idea.
+              And said in the direction this card is actually pointing — see
+              `targetLabel`. */}
+          <dt className="text-slate-400">{targetLabel}</dt>
           <dd className="font-mono text-white">{priceText(target)}</dd>
           <dd className="text-slate-500">
             {targetRelative ? `${targetRelative} · ` : ''}
@@ -2142,7 +2322,7 @@ function ActionableRows({ zones, actionable, size }: {
               of this instrument that anything here has measured, and a reader
               has no way to tell those apart from the number alone.
             */}
-            เป็นการคาดคะเนตามธรรมเนียมการอ่านกราฟ ยังไม่เคยทดสอบว่าแม่นจริงไหม
+            เป็นแค่การคาดคะเนตามธรรมเนียมของคนอ่านกราฟ ยังไม่เคยทดสอบว่าแม่นจริงไหม
           </dd>
         </div>
       )}
@@ -2245,7 +2425,7 @@ function ZoneDetails({ zones, actionable, atr }: {
         row two below this one already prints.
       */}
       <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-frame-vs-levels">
-        ขอบกรอบสองเส้นนี้คือเส้นที่ใช้ตัดสินโซน — {ZONE_MODE_COPY[zones.mode]}
+        ขอบกรอบสองเส้นนี้คือเส้นที่ใช้ตัดสินว่าราคาออกจากกรอบหรือยัง — {ZONE_MODE_COPY[zones.mode]}
         {' · ส่วน “แนวรับ / แนวต้านที่ใกล้ราคาที่สุด” ในหัวข้อ Metrics เลือกจากระยะถึงราคาปัจจุบัน'}
         {' จึงเป็นคนละตัวกัน และตามปกติไม่เท่ากัน'}
       </p>
@@ -2254,8 +2434,8 @@ function ZoneDetails({ zones, actionable, atr }: {
             comparison with the metrics list can actually be made. */}
         {/* Entry cut and exit anchor, one above the other, because they are a
             buffer apart and the card shows both without naming the gap. */}
-        <Detail label="ขอบเข้าโซน ล่าง / บน (เส้นที่วาดบนแถบ)" value={joined(zones.lowerTrigger, zones.upperTrigger)} />
-        <Detail label="ขอบออกโซน ล่าง / บน (จุดยึดของกรอบ)" value={joined(zones.support, zones.resistance)} />
+        <Detail label="ขอบที่ใช้ตัดสินว่าออกจากกรอบ ล่าง / บน (เส้นที่วาดบนแถบ)" value={joined(zones.lowerTrigger, zones.upperTrigger)} />
+        <Detail label="ขอบที่ใช้ตัดสินว่ากลับเข้ากรอบ ล่าง / บน (จุดยึดของกรอบ)" value={joined(zones.support, zones.resistance)} />
         {/* Deliberately unclamped: past 100% means price has broken out. */}
         <Detail label="ตำแหน่งในกรอบ" value={`${zones.positionPct}%`} />
         <Detail label="ที่มาของกรอบ" value={ZONE_MODE_COPY[zones.mode]} />
@@ -2271,7 +2451,7 @@ function ZoneDetails({ zones, actionable, atr }: {
           card says "เพิ่งผ่านมาไม่นาน" off the smaller of these two; this is
           where a reader checks which one was smaller.
         */}
-        <Detail label="อายุโซน" value={`${zones.zoneAgeBars} แท่ง`} />
+        <Detail label="สถานะนี้อยู่มากี่แท่ง" value={`${zones.zoneAgeBars} แท่ง`} />
         <Detail label="อายุกรอบปัจจุบัน" value={`${zones.frameAgeBars} แท่ง`} />
         <Detail
           label="แตะขอบกรอบล่าสุด"
@@ -2283,7 +2463,7 @@ function ZoneDetails({ zones, actionable, atr }: {
         {actionable === null ? null : (
           <>
             <Detail
-              label="ระยะถึงจุดที่โซนจบ"
+              label="ระยะถึงจุดที่รอบนี้จบ"
               value={actionable.invalidationAtr === null
                 ? '—'
                 : `${number(actionable.invalidationAtr)} ATR · ${number(actionable.invalidationPct)}%`}
@@ -2318,7 +2498,7 @@ function ZoneDetails({ zones, actionable, atr }: {
         a printed level is exactly the reader who opens this dialog.
       */}
       <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-hysteresis-note">
-        เส้นที่ใช้เข้าโซนกับเส้นที่ใช้ออกจากโซนเป็นคนละราคาโดยตั้งใจ กันโซนสลับไปมาทุกวัน
+        เส้นที่ใช้ตัดสินว่าออกจากกรอบ กับเส้นที่ใช้ตัดสินว่ากลับเข้ากรอบ เป็นคนละราคาโดยตั้งใจ กันไม่ให้สถานะสลับไปมาทุกวัน
         ขอบที่วาดบนแถบคือเส้นเข้า ส่วนแถว “ถ้าปิด...” บนการ์ดใช้เส้นออก
       </p>
 
@@ -2333,10 +2513,10 @@ function ZoneDetails({ zones, actionable, atr }: {
       {actionable === null || actionable.riskReward === null ? null : (
         <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-risk-reward-note">
           {actionable.riskReward < 1
-            ? 'ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า'
-            : 'ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ'}
+            ? 'ระยะที่จะรู้ว่ารอบนี้จบ ยาวกว่าระยะไปถึงเป้า'
+            : 'ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่ารอบนี้จบ'}
           {actionable.notes.includes('risk_leg_inside_noise')
-            ? ' · แต่ราคาปิดอยู่ชิดจุดที่โซนจะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
+            ? ' · แต่ราคาปิดอยู่ชิดจุดที่รอบนี้จะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
             : ''}
         </p>
       )}

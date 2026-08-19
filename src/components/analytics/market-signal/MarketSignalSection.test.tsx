@@ -191,8 +191,8 @@ describe('MarketSignalSection', () => {
   it('shows state, independent bias, beginner copy, score, flags, and the exact disclaimer', async () => {
     await render();
     expect(container.textContent).toContain('SQUEEZE • Bullish Bias');
-    expect(container.textContent).toContain('สะสมพลัง / เตรียมเลือกทาง');
-    expect(container.textContent).toContain('ยังไม่ยืนยันการเบรก แต่โครงสร้างปัจจุบันเอนเอียงไปทางขาขึ้น');
+    expect(container.textContent).toContain('ราคาแกว่งแคบลงกว่าปกติ');
+    expect(container.textContent).toContain('ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า');
     expect(container.textContent).toContain('Score +31 / 100');
     expect(container.textContent).toContain('squeeze');
     expect(container.textContent).toContain('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
@@ -309,7 +309,7 @@ describe('MarketSignalSection', () => {
       reason: 'ต้องมี finalized candles เพิ่ม',
     };
     await render(insufficient);
-    expect(container.textContent).toContain('ข้อมูลไม่เพียงพอ');
+    expect(container.textContent).toContain('ยังมีข้อมูลราคาไม่พอจะสรุปอะไรได้');
     expect(container.textContent).toContain('ต้องมี finalized candles เพิ่ม');
     expect(container.textContent).not.toContain('SQUEEZE • Bullish Bias');
     expect(container.textContent).not.toContain('Score +31');
@@ -391,7 +391,7 @@ describe('MarketSignalSection', () => {
       await render(zoned);
       const source = zoneBar().querySelector('[data-zone-row="source"]')!;
       expect(source.textContent).toBe(
-        'วัดจากราคาปิดตลาดรอบล่าสุด 44.06 (14 ส.ค. 2569) · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน',
+        'ทุกตัวเลขในกล่องนี้วัดจากราคาปิดล่าสุด 44.06 (14 ส.ค. 2569) · นับเฉพาะราคาปิดของวัน ราคาที่แตะระหว่างวันไม่นับ',
       );
       // One footnote, not two greyed lines that get skipped as a pair.
       expect(zoneBar().querySelectorAll('[data-zone-row="source"]').length).toBe(1);
@@ -538,9 +538,9 @@ describe('MarketSignalSection', () => {
 
       it('names each field on the bar itself, not underneath it', async () => {
         await render(zoned);
-        expect(segment('downtrend').textContent).toBe('ขาลง');
-        expect(segment('sideways').textContent).toBe('กรอบเดิม');
-        expect(segment('uptrend').textContent).toBe('ขาขึ้น');
+        expect(segment('downtrend').textContent).toBe('ใต้กรอบ');
+        expect(segment('sideways').textContent).toBe('ในกรอบ');
+        expect(segment('uptrend').textContent).toBe('เหนือกรอบ');
       });
 
       it('marks the field the current label is in, and only that one', async () => {
@@ -806,7 +806,7 @@ describe('MarketSignalSection', () => {
         // The one line that still carries it is the provenance footnote, which
         // is saying which close every figure on the card was measured from.
         expect(zoneBar().querySelector('[data-zone-row="source"]')!.textContent)
-          .toContain('วัดจากราคาปิดตลาดรอบล่าสุด 42');
+          .toContain('ทุกตัวเลขในกล่องนี้วัดจากราคาปิดล่าสุด 42');
       });
 
       /*
@@ -1055,8 +1055,8 @@ describe('MarketSignalSection', () => {
           riskReward: 7.94, notes: [],
         },
       });
-      expect(zoneBar().textContent).toContain('ถ้าปิดต่ำกว่า');
-      expect(zoneBar().textContent).toContain('ถือว่าขาขึ้นรอบนี้จบตามกฎเดิม');
+      expect(zoneBar().textContent).toContain('ถ้าราคาปิดลงต่ำกว่า');
+      expect(zoneBar().textContent).toContain('ถือว่าราคากลับเข้ากรอบ และการขึ้นรอบนี้จบ');
       expect(zoneBar().textContent).not.toMatch(/ซื้อเมื่อ|ขายเมื่อ|ควรซื้อ|ควรขาย|แนะนำให้/);
     });
 
@@ -1069,8 +1069,8 @@ describe('MarketSignalSection', () => {
     it('draws down on the left and up on the right, each named on its own field', async () => {
       await render(zoned);
       expect(leftOf('downtrend')).toBeLessThan(leftOf('uptrend'));
-      expect(segment('downtrend').textContent).toBe('ขาลง');
-      expect(segment('uptrend').textContent).toBe('ขาขึ้น');
+      expect(segment('downtrend').textContent).toBe('ใต้กรอบ');
+      expect(segment('uptrend').textContent).toBe('เหนือกรอบ');
     });
 
     /*
@@ -1144,7 +1144,7 @@ describe('MarketSignalSection', () => {
     it('draws the live price as its own marker, captioned, beside the close', async () => {
       await render(zoned, 'elite', 46.31);
       expect(zoneBar().textContent).toContain('ราคาตอนนี้ 46.31');
-      expect(zoneBar().textContent).toContain('ยังอยู่ในกรอบเดิมเหมือนราคาปิด');
+      expect(zoneBar().textContent).toContain('ยังไม่ออกจากกรอบ');
       // The caption ON the bar, so the thin mark is identifiable without the
       // sentence underneath it. Asserted on the caption itself rather than on
       // the card's text: both now say "ราคาตอนนี้ 46.31", which is the point —
@@ -1171,8 +1171,8 @@ describe('MarketSignalSection', () => {
      */
     it('says so out loud when the live price has left the close’s field', async () => {
       await render(zoned, 'elite', 47.9);
-      expect(zoneBar().textContent).toContain('ราคาตอนนี้ 47.9 ขึ้นไปเหนือกรอบเดิมแล้ว');
-      expect(zoneBar().textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
+      expect(zoneBar().textContent).toContain('ราคาตอนนี้ 47.9 ขึ้นไปเหนือกรอบแล้ว');
+      expect(zoneBar().textContent).toContain('แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ');
     });
 
     /*
@@ -1206,8 +1206,8 @@ describe('MarketSignalSection', () => {
       it('says the live price fell back inside the frame, and what would change the zone', async () => {
         await render(crossedBack, 'elite', 42.38);
         const line = container.querySelector('[data-testid="signal-live-price"]')!;
-        expect(line.textContent).toContain('ราคาตอนนี้ 42.38 ตกกลับเข้ากรอบเดิมแล้ว');
-        expect(line.textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
+        expect(line.textContent).toContain('ราคาตอนนี้ 42.38 ลงกลับเข้ากรอบแล้ว');
+        expect(line.textContent).toContain('แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ');
       });
 
       it('weights that line harder than the rest of the box', async () => {
@@ -1225,7 +1225,7 @@ describe('MarketSignalSection', () => {
         expect(line.getAttribute('data-diverges')).toBe('false');
         expect(line.className).toContain('text-slate-400');
         expect(line.className).not.toContain('font-semibold');
-        expect(line.textContent).toContain('ยังอยู่เหนือกรอบเดิมเหมือนราคาปิด');
+        expect(line.textContent).toContain('ยังอยู่เหนือกรอบ');
       });
 
       it('draws the two marks apart, the live one thinner than the close', async () => {
@@ -1245,7 +1245,7 @@ describe('MarketSignalSection', () => {
       it('says the other direction when the live price breaks out of the frame', async () => {
         await render({ ...zoned, zones: { ...zoned.zones!, zone: 'sideways' } }, 'elite', 37.1);
         const line = container.querySelector('[data-testid="signal-live-price"]')!;
-        expect(line.textContent).toContain('ราคาตอนนี้ 37.1 หลุดลงใต้กรอบเดิมแล้ว');
+        expect(line.textContent).toContain('ราคาตอนนี้ 37.1 ลงไปใต้กรอบแล้ว');
         expect(line.getAttribute('data-diverges')).toBe('true');
       });
     });
@@ -1258,7 +1258,7 @@ describe('MarketSignalSection', () => {
         zones: { ...zoned.zones!, zone: 'uptrend', positionPct: 113.7, upperDistance: -0.81, upperDistanceAtr: -0.2 },
       };
       await render(broken);
-      expect(zoneBar().textContent).toContain('ราคาขึ้นมาเหนือกรอบเดิมแล้ว');
+      expect(zoneBar().textContent).toContain('ราคาขึ้นไปอยู่เหนือกรอบเดิมแล้ว');
       /*
        * "ราคาผ่านขึ้นไปแล้ว" was the second half of a trigger row, and the rows
        * are gone: the same fact is now the drawing's to make — the close marker
@@ -1280,7 +1280,7 @@ describe('MarketSignalSection', () => {
     it('says nothing about direction inside the zone box', async () => {
       await render(zoned);
       const text = zoneBar().textContent ?? '';
-      expect(text).toContain('ราคายังอยู่ในกรอบเดิม');
+      expect(text).toContain('ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ');
       for (const banned of ['ยังไม่เอียงไปทางไหน', 'เอียงขึ้น', 'เอียงลง', '(+16)']) {
         expect(text, `"${banned}" is back in the zone box`).not.toContain(banned);
       }
@@ -1290,9 +1290,9 @@ describe('MarketSignalSection', () => {
 
     it('keeps the position line, which is what that line is now for', async () => {
       await render(zoned);
-      expect(zoneBar().textContent).toContain('ราคาใกล้ขอบกรอบแล้ว');
+      expect(zoneBar().textContent).toContain('ราคาปิดใกล้ขอบกรอบแล้ว');
       await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'deep_range' } });
-      expect(zoneBar().textContent).toContain('ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด');
+      expect(zoneBar().textContent).toContain('ราคาปิดยังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด');
       await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'mid_range' } });
       expect(zoneBar().textContent).not.toContain('ห่างขอบที่ใกล้ที่สุด');
     });
@@ -1312,12 +1312,12 @@ describe('MarketSignalSection', () => {
      */
     it('warns that a zone standing on a new frame can still flip', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 45, frameAgeBars: 3 } });
-      expect(zoneBar().textContent).toContain('และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้');
+      expect(zoneBar().textContent).toContain('· กรอบนี้เพิ่งตั้งได้ไม่กี่วัน ยังไม่นิ่ง');
     });
 
     it('warns when the zone itself is the new thing', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 1, frameAgeBars: 40 } });
-      expect(zoneBar().textContent).toContain('และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้');
+      expect(zoneBar().textContent).toContain('· กรอบนี้เพิ่งตั้งได้ไม่กี่วัน ยังไม่นิ่ง');
     });
 
     /*
@@ -1332,13 +1332,23 @@ describe('MarketSignalSection', () => {
     it('never claims something was crossed on a zone where nothing was', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 1, frameAgeBars: 1 } });
       const text = zoneBar().textContent ?? '';
-      expect(text).toContain('ราคายังอยู่ในกรอบเดิม');
+      expect(text).toContain('ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ');
       expect(text).not.toContain('เพิ่งผ่านมาไม่นาน');
     });
 
-    it.each(['uptrend', 'downtrend'] as const)('keeps the crossing clause on %s, where something was crossed', async (zone) => {
+    /*
+     * And the clause now names the direction price would come BACK in. It used
+     * to be one string on both zones — "ยังพลิกกลับได้ง่าย" — which is a word a
+     * beginner has to be taught and which points nowhere. Saying "ยังลงกลับเข้า
+     * กรอบได้ง่าย" on a bearish card would point the wrong way, so the two are
+     * asserted apart rather than together.
+     */
+    it.each([
+      ['uptrend', '· เพิ่งขึ้นไปได้ไม่กี่วัน ยังลงกลับเข้ากรอบได้ง่าย'],
+      ['downtrend', '· เพิ่งลงไปได้ไม่กี่วัน ยังขึ้นกลับเข้ากรอบได้ง่าย'],
+    ] as const)('keeps the crossing clause on %s, pointing back into the frame', async (zone, clause) => {
       await render({ ...zoned, zones: { ...zoned.zones!, zone, zoneAgeBars: 1, frameAgeBars: 40 } });
-      expect(zoneBar().textContent).toContain('แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย');
+      expect(zoneBar().textContent).toContain(clause);
     });
 
     it('stays quiet when both the zone and its frame have stood a while', async () => {
@@ -1359,7 +1369,7 @@ describe('MarketSignalSection', () => {
     it('says what would change a sideways zone, in the rule the engine uses', async () => {
       await render(zoned);
       const line = zoneBar().querySelector('[data-testid="signal-zone-change"]')!;
-      expect(line.textContent).toBe('โซนจะเปลี่ยนก็ต่อเมื่อราคาปิดเหนือ 47.24 หรือต่ำกว่า 38.26');
+      expect(line.textContent).toBe('ราคาปิดต้องขึ้นเหนือ 47.24 หรือลงต่ำกว่า 38.26 ถึงจะนับว่าออกจากกรอบ');
       // Conditional, and naming no action: the row is a statement of the rule.
       for (const banned of ['ควร', 'น่าจะ', 'รอซื้อ', 'ตั้ง stop']) {
         expect(line.textContent, `"${banned}" is advice`).not.toContain(banned);
@@ -1399,14 +1409,14 @@ describe('MarketSignalSection', () => {
       it('never says price is still inside a frame it has closed through', async () => {
         await render(pendingUp);
         const text = zoneBar().textContent ?? '';
-        expect(text).toContain('ราคาปิดเลยขอบบนของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน');
-        expect(text).not.toContain('ราคายังอยู่ในกรอบเดิม');
+        expect(text).toContain('ราคาปิดขึ้นไปเหนือกรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง');
+        expect(text).not.toContain('ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ');
       });
 
       it('stops naming a price the close has already passed as the thing to wait for', async () => {
         await render(pendingUp);
         const line = zoneBar().querySelector('[data-testid="signal-zone-change"]')!;
-        expect(line.textContent).toBe('ราคาปิดเลยขอบกรอบไปแล้ว โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้จนผ่านเงื่อนไขยืนยัน');
+        expect(line.textContent).toBe('ราคาปิดออกนอกกรอบไปแล้ว ต้องปิดแบบนี้ต่ออีกจนผ่านเกณฑ์ ถึงจะนับว่าออกจากกรอบจริง');
         // The upper trigger must not be offered as a condition still ahead.
         expect(line.textContent).not.toContain('43.25');
       });
@@ -1421,7 +1431,7 @@ describe('MarketSignalSection', () => {
           ...zoned,
           zones: { ...zoned.zones!, zone: 'sideways', pendingBreakdown: true, referenceClose: 37.1 },
         });
-        expect(zoneBar().textContent).toContain('ราคาปิดหลุดขอบล่างของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน');
+        expect(zoneBar().textContent).toContain('ราคาปิดลงไปใต้กรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง');
       });
     });
 
@@ -1468,8 +1478,8 @@ describe('MarketSignalSection', () => {
     });
 
     it.each([
-      ['bullish', 'ขาขึ้น'],
-      ['bearish', 'ขาลง'],
+      ['bullish', 'ขึ้น'],
+      ['bearish', 'ลง'],
     ] as const)('does not deny a %s lean the headline is already showing', async (bias, direction) => {
       await render({ ...zoned, bias, score: bias === 'bullish' ? 22 : -22 });
       expect(container.textContent).toContain(`แต่คะแนนรวมเอนไปทาง${direction}`);
@@ -1484,13 +1494,13 @@ describe('MarketSignalSection', () => {
      */
     it('says near_trigger means the label may change, not that it is less accurate', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'near_trigger' } });
-      expect(zoneBar().textContent).toContain('โซนนี้จึงเปลี่ยนได้ในไม่กี่วันทำการ');
-      expect(zoneBar().textContent).toContain('ราคาใกล้ขอบกรอบแล้ว (ห่างอีก 7.2%)');
+      expect(zoneBar().textContent).toContain('· อีกไม่กี่วันทำการก็เปลี่ยนได้');
+      expect(zoneBar().textContent).toContain('ราคาปิดใกล้ขอบกรอบแล้ว เหลืออีก 7.2%');
     });
 
     it('never implies deep_range is the more trustworthy reading', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, proximity: 'deep_range', nearestTriggerAtr: 4.1 } });
-      expect(zoneBar().textContent).toContain('ราคายังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด 7.2%');
+      expect(zoneBar().textContent).toContain('ราคาปิดยังอยู่กลางกรอบ ห่างขอบที่ใกล้ที่สุด 7.2%');
       ['น่าเชื่อถือ', 'แม่นยำ', 'มั่นใจได้', 'ชัดเจนกว่า'].forEach((phrase) => {
         expect(zoneBar().textContent).not.toContain(phrase);
       });
@@ -1505,7 +1515,7 @@ describe('MarketSignalSection', () => {
       await act(async () => buttonContaining('ทำไม?').click());
       const details = document.querySelector('[data-testid="signal-zone-details"]')!;
       expect(details.textContent).toContain('68.8%');
-      expect(details.textContent).toContain('swing high/low');
+      expect(details.textContent).toContain('จุดที่ราคาเคยกลับตัวจริง');
       expect(details.textContent).toContain('0.78 ATR');
       expect(details.textContent).toContain('1.43 ATR');
       expect(details.textContent).toContain('45 แท่ง');
@@ -1552,10 +1562,10 @@ describe('MarketSignalSection', () => {
       it('states the invalidation as a condition, in percent, not as an instruction', async () => {
         await render(actionable);
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
-        expect(rows.textContent).toContain('ถ้าปิดต่ำกว่า');
+        expect(rows.textContent).toContain('ถ้าราคาปิดลงต่ำกว่า');
         expect(rows.textContent).toContain('42.24');
         // The brief's own example: "0.45 ATR · 4.13% จากราคาปิด" becomes this.
-        expect(rows.textContent).toContain('ต่ำกว่าราคาปิด 4.1%');
+        expect(rows.textContent).toContain('ต่ำกว่าราคาปิดล่าสุด 4.1%');
         expect(rows.textContent).not.toContain('ATR');
         // Nothing that tells a reader what to do with the number.
         ['ตั้ง stop', 'ควรซื้อ', 'ควรขาย', 'แนะนำ', 'เข้าซื้อ'].forEach((phrase) => {
@@ -1567,14 +1577,14 @@ describe('MarketSignalSection', () => {
         await render(actionable);
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
         expect(rows.textContent).toContain('58.51');
-        expect(rows.textContent).toContain('สูงกว่าราคาปิด 32.8%');
-        expect(rows.textContent).toContain('เป็นการคาดคะเนตามธรรมเนียมการอ่านกราฟ ยังไม่เคยทดสอบว่าแม่นจริงไหม');
+        expect(rows.textContent).toContain('สูงกว่าราคาปิดล่าสุด 32.8%');
+        expect(rows.textContent).toContain('เป็นแค่การคาดคะเนตามธรรมเนียมของคนอ่านกราฟ ยังไม่เคยทดสอบว่าแม่นจริงไหม');
       });
 
       it('says what the measured move IS, instead of naming the arithmetic', async () => {
         await render(actionable);
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
-        expect(rows.textContent).toContain('กรอบเดิมสูงเท่าไร ก็มักไปได้อีกเท่านั้น');
+        expect(rows.textContent).toContain('ถ้าขึ้นต่ออีกเท่ากับความสูงกรอบเดิม จะถึง');
         expect(rows.textContent).not.toContain('ระยะที่กรอบเดิมวัดได้');
       });
 
@@ -1589,7 +1599,7 @@ describe('MarketSignalSection', () => {
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
         expect(rows.textContent).not.toContain('7.94');
         expect(rows.textContent).not.toContain('เทียบระยะสองฝั่ง');
-        expect(rows.textContent).not.toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ');
+        expect(rows.textContent).not.toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่ารอบนี้จบ');
         expect(zoneBar().textContent).not.toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่า');
 
         await act(async () => buttonContaining('ทำไม?').click());
@@ -1599,14 +1609,14 @@ describe('MarketSignalSection', () => {
         expect(details.textContent).toContain('3.56 ATR');
         // The whole block moved, not just the number: the reading of the
         // quotient is now beside the quotient.
-        expect(details.textContent).toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ');
+        expect(details.textContent).toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่ารอบนี้จบ');
       });
 
       it('reads a ratio under one the other way round, in the dialog', async () => {
         await render({ ...actionable, actionable: { ...actionable.actionable!, riskReward: 0.6 } });
         await act(async () => buttonContaining('ทำไม?').click());
         const details = document.querySelector('[data-testid="signal-zone-details"]')!;
-        expect(details.textContent).toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า');
+        expect(details.textContent).toContain('ระยะที่จะรู้ว่ารอบนี้จบ ยาวกว่าระยะไปถึงเป้า');
       });
 
       /*
@@ -1652,7 +1662,7 @@ describe('MarketSignalSection', () => {
         });
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
         expect(rows.textContent).toContain('42.24');
-        expect(rows.textContent).not.toContain('กรอบเดิมสูงเท่าไร');
+        expect(rows.textContent).not.toContain('ถ้าขึ้นต่ออีกเท่ากับความสูงกรอบเดิม');
         expect(rows.textContent).not.toContain('เทียบระยะสองฝั่ง');
         expect(rows.textContent).not.toContain('—');
       });
@@ -1720,6 +1730,350 @@ describe('MarketSignalSection', () => {
     });
 
     /*
+     * EVERY STATE THIS BLOCK CAN BE IN, SAID OUT LOUD ONCE.
+     *
+     * The copy above grew one state at a time, and the states that never drew a
+     * complaint never drew an assertion either: the two `downtrend` headlines,
+     * the `atr_band` frame, a frame that could not be drawn, the bearish target
+     * label, and the change condition on a directional zone all shipped without
+     * a test naming the sentence a reader would see. That is how the target
+     * label managed to point upward on a bearish card for as long as it did.
+     *
+     * So this is the whole matrix, in one place, asserted on the exact string.
+     * `toBe` and not `toContain`: a containment check passes when a clause is
+     * appended that nobody meant to append, and appended clauses are precisely
+     * what went wrong here before.
+     */
+    describe('every zone state, in words a beginner already owns', () => {
+      const headline = () => zoneBar().querySelector('[data-zone-row="headline"]')!.textContent;
+      const liveRow = () => zoneBar().querySelector('[data-zone-row="live"]')?.textContent ?? null;
+      const changeRow = () => zoneBar().querySelector('[data-zone-row="change"]')?.textContent ?? null;
+      const withZones = (patch: Partial<NonNullable<MarketSignalResult['zones']>>): MarketSignalResult =>
+        ({ ...zoned, zones: { ...zoned.zones!, ...patch } });
+
+      // Ages that put the card either side of `FRESH_ZONE_BARS`, named so the
+      // cases below read as "fresh" and "settled" rather than as two numbers.
+      const fresh = { zoneAgeBars: 1, frameAgeBars: 40 };
+      const settled = { zoneAgeBars: 45, frameAgeBars: 40 };
+
+      it.each([
+        [
+          'inside, freshly framed',
+          { zone: 'sideways' as const, zoneAgeBars: 1, frameAgeBars: 1 },
+          'ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ · กรอบนี้เพิ่งตั้งได้ไม่กี่วัน ยังไม่นิ่ง',
+        ],
+        [
+          'inside, settled',
+          { zone: 'sideways' as const, ...settled },
+          'ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ',
+        ],
+        [
+          'above, freshly crossed',
+          { zone: 'uptrend' as const, ...fresh },
+          'ราคาขึ้นไปอยู่เหนือกรอบเดิมแล้ว · เพิ่งขึ้นไปได้ไม่กี่วัน ยังลงกลับเข้ากรอบได้ง่าย',
+        ],
+        [
+          'above, settled',
+          { zone: 'uptrend' as const, ...settled },
+          'ราคาขึ้นไปอยู่เหนือกรอบเดิมแล้ว',
+        ],
+        [
+          'below, freshly crossed',
+          { zone: 'downtrend' as const, ...fresh },
+          'ราคาลงไปอยู่ใต้กรอบเดิมแล้ว · เพิ่งลงไปได้ไม่กี่วัน ยังขึ้นกลับเข้ากรอบได้ง่าย',
+        ],
+        [
+          'below, settled',
+          { zone: 'downtrend' as const, ...settled },
+          'ราคาลงไปอยู่ใต้กรอบเดิมแล้ว',
+        ],
+        [
+          'closed above the edge, label not moved',
+          { zone: 'sideways' as const, ...settled, pendingBreakout: true },
+          'ราคาปิดขึ้นไปเหนือกรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง จึงยังถือว่าอยู่ในกรอบเดิม',
+        ],
+        [
+          'closed below the edge, label not moved',
+          { zone: 'sideways' as const, ...settled, pendingBreakdown: true },
+          'ราคาปิดลงไปใต้กรอบแล้ว แต่ยังไม่ผ่านเกณฑ์ที่จะนับว่าออกจากกรอบจริง จึงยังถือว่าอยู่ในกรอบเดิม',
+        ],
+        [
+          'a frame that is arithmetic rather than history',
+          { zone: 'sideways' as const, ...settled, mode: 'atr_band' as const },
+          'ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ · กรอบนี้คำนวณจากความเหวี่ยงของราคา ไม่ใช่ราคาที่ตลาดเคยชนจริง และขยับทุกวัน',
+        ],
+        [
+          'no frame at all',
+          { zone: 'sideways' as const, ...settled, lowerTrigger: 0, upperTrigger: 0 },
+          'ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ · ข้อมูลยังไม่พอจะตีกรอบ ตัวเลขขอบจึงยังไม่มี',
+        ],
+      ])('heads the block with %s', async (_name, patch, expected) => {
+        await render(withZones(patch));
+        expect(headline()).toBe(expected);
+      });
+
+      /*
+       * The live row, on both axes it varies over: which field the price on
+       * screen is standing in, and whether that is the field the close is in.
+       *
+       * The divergent cases all end in the same sentence, and that is the
+       * point — the reason the number on screen changed nothing is one rule,
+       * not four, and a reader who meets it once should recognise it again.
+       */
+      it.each([
+        ['standing where the close stands, inside', 40.82, 44.06, 'sideways' as const, 'ราคาตอนนี้ 40.82 ยังไม่ออกจากกรอบ'],
+        ['standing where the close stands, above', 49.2, 48, 'uptrend' as const, 'ราคาตอนนี้ 49.2 ยังอยู่เหนือกรอบ'],
+        ['standing where the close stands, below', 36.4, 37, 'downtrend' as const, 'ราคาตอนนี้ 36.4 ยังอยู่ใต้กรอบ'],
+        ['up through the edge since the close', 47.9, 44.06, 'sideways' as const, 'ราคาตอนนี้ 47.9 ขึ้นไปเหนือกรอบแล้ว · แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ'],
+        ['down through the edge since the close', 37.1, 44.06, 'sideways' as const, 'ราคาตอนนี้ 37.1 ลงไปใต้กรอบแล้ว · แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ'],
+        ['back down inside since the close', 42.01, 48, 'uptrend' as const, 'ราคาตอนนี้ 42.01 ลงกลับเข้ากรอบแล้ว · แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ'],
+        ['back up inside since the close', 40, 37, 'downtrend' as const, 'ราคาตอนนี้ 40 ขึ้นกลับเข้ากรอบแล้ว · แต่ต้องรอราคาปิดของวัน ราคาระหว่างวันยังไม่นับ'],
+      ])('says the live price %s', async (_name, live, close, zone, expected) => {
+        await render(withZones({ zone, referenceClose: close, ...settled }), 'elite', live);
+        expect(liveRow()).toBe(expected);
+      });
+
+      it('draws no live row at all when the two prices are the same price', async () => {
+        await render(zoned, 'elite', 44.06);
+        expect(liveRow()).toBeNull();
+      });
+
+      /*
+       * "ห่างจากราคาปิดน้อยมาก" read as a distance the card was reporting. What
+       * it says is that one mark had to stand for two prices, which is a fact
+       * about the drawing and not about the market.
+       */
+      it('says why one mark is standing for two prices', async () => {
+        measuring(280, SEVEN_PX_PER_GLYPH);
+        await render(zoned, 'elite', 43.85);
+        expect(liveRow()).toContain('· ราคาทั้งสองต่างกันน้อยมาก บนแถบจึงวาดทับกันเป็นเส้นเดียว');
+      });
+
+      /*
+       * "WHAT WOULD CHANGE THIS?" on all three zones.
+       *
+       * `sideways` has always had an answer. The directional zones had one only
+       * when `ActionableRows` happened to be drawing the level anyway, and were
+       * silent otherwise — which on today's corpus is most cards. These four
+       * cases are the whole rule: the two-trigger sentence while both edges are
+       * still ahead, the confirmation sentence once one is behind, the re-entry
+       * level on a directional zone with no actionable row, and nothing at all
+       * when the actionable row is already printing that same price.
+       */
+      it.each([
+        [
+          'inside, both edges still ahead',
+          zoned,
+          'ราคาปิดต้องขึ้นเหนือ 47.24 หรือลงต่ำกว่า 38.26 ถึงจะนับว่าออกจากกรอบ',
+        ],
+        [
+          'inside, one edge already closed through',
+          withZones({ pendingBreakout: true }),
+          'ราคาปิดออกนอกกรอบไปแล้ว ต้องปิดแบบนี้ต่ออีกจนผ่านเกณฑ์ ถึงจะนับว่าออกจากกรอบจริง',
+        ],
+        [
+          'above, with no actionable row to say it',
+          withZones({ zone: 'uptrend', referenceClose: 48, ...settled }),
+          'ราคาปิดต้องลงต่ำกว่า 46.23 ถึงจะนับว่ากลับเข้ากรอบ',
+        ],
+        [
+          'below, with no actionable row to say it',
+          withZones({ zone: 'downtrend', referenceClose: 37, ...settled }),
+          'ราคาปิดต้องขึ้นเหนือ 39.27 ถึงจะนับว่ากลับเข้ากรอบ',
+        ],
+      ])('answers what would change it when %s', async (_name, value, expected) => {
+        await render(value);
+        expect(changeRow()).toBe(expected);
+      });
+
+      /*
+       * And says it ONCE. The re-entry level and the invalidation level are the
+       * same price — the engine hands `resistance` to `calculateActionable` and
+       * gets it back as `invalidation` — so drawing both rows would print one
+       * number twice and spend a fifth line doing it.
+       */
+      it('leaves the answer to the actionable row when that row is drawn', async () => {
+        await render({
+          ...withZones({ zone: 'uptrend', referenceClose: 48, ...settled }),
+          actionable: {
+            invalidation: 46.23, invalidationAtr: 0.44, invalidationPct: 3.69, invalidationBasis: 'zone_floor',
+            target: 58.51, targetAtr: 2.62, targetBasis: 'measured_move', targetIsConvention: true,
+            riskReward: 5.94, notes: [],
+          },
+        });
+        expect(changeRow()).toBeNull();
+        expect(zoneBar().querySelector('[data-testid="signal-actionable"]')!.textContent)
+          .toContain('ถือว่าราคากลับเข้ากรอบ และการขึ้นรอบนี้จบ');
+      });
+
+      /*
+       * A level the close is already past is not a condition a reader can wait
+       * for. The engine refuses to publish it as an invalidation
+       * (`invalidation_behind_close`); the fallback row applies that same
+       * refusal to the same geometry rather than inventing a rule of its own.
+       */
+      it('does not ask for something that has already happened', async () => {
+        await render(withZones({ zone: 'uptrend', referenceClose: 44.06, ...settled }));
+        expect(changeRow()).toBeNull();
+      });
+
+      /*
+       * THE BUG THIS MATRIX WAS WRITTEN TO CATCH.
+       *
+       * The target label was one constant string on both directional zones,
+       * and the projection it labels is `level - height` on a bearish card. So
+       * the row read "ก็มักไปได้อีกเท่านั้น" over a price BELOW the one it was
+       * measured from, with its own percentage underneath correctly saying
+       * "ต่ำกว่าราคาปิดล่าสุด". Both halves now come off `zones.zone`.
+       */
+      it.each([
+        ['uptrend' as const, 48, 58.51, 'ถ้าขึ้นต่ออีกเท่ากับความสูงกรอบเดิม จะถึง', 'ถือว่าราคากลับเข้ากรอบ และการขึ้นรอบนี้จบ'],
+        ['downtrend' as const, 37, 28.4, 'ถ้าลงต่ออีกเท่ากับความสูงกรอบเดิม จะถึง', 'ถือว่าราคากลับเข้ากรอบ และการลงรอบนี้จบ'],
+      ])('points the target and end-of-leg rows the way a %s card is pointing', async (zone, close, target, label, ends) => {
+        await render({
+          ...withZones({ zone, referenceClose: close, ...settled }),
+          actionable: {
+            invalidation: zone === 'uptrend' ? 46.23 : 39.27,
+            invalidationAtr: 0.44,
+            invalidationPct: zone === 'uptrend' ? 3.69 : 6.14,
+            invalidationBasis: zone === 'uptrend' ? 'zone_floor' : 'zone_ceiling',
+            target, targetAtr: 2.62, targetBasis: 'measured_move', targetIsConvention: true,
+            riskReward: 5.94, notes: [],
+          },
+        });
+        const rows = zoneBar().querySelector('[data-testid="signal-actionable"]')!;
+        expect(rows.textContent).toContain(label);
+        expect(rows.textContent).toContain(ends);
+      });
+
+      /*
+       * The four-line budget, on every zone rather than on the one it was
+       * written against. A row added for `downtrend` alone would have shipped
+       * under the old test.
+       */
+      it.each(['sideways', 'uptrend', 'downtrend'] as const)('keeps %s inside the four-line budget', async (zone) => {
+        await render({
+          ...withZones({ zone, referenceClose: zone === 'downtrend' ? 37 : 48, ...settled }),
+          actionable: zone === 'sideways' ? undefined : {
+            invalidation: zone === 'uptrend' ? 46.23 : 39.27,
+            invalidationAtr: 0.44, invalidationPct: 3.69,
+            invalidationBasis: zone === 'uptrend' ? 'zone_floor' : 'zone_ceiling',
+            target: zone === 'uptrend' ? 58.51 : 28.4,
+            targetAtr: 2.62, targetBasis: 'measured_move', targetIsConvention: true,
+            riskReward: 5.94, notes: [],
+          },
+        }, 'elite', zone === 'downtrend' ? 36.4 : 47.2);
+        const rows = [...zoneBar().children];
+        const picture = rows.findIndex((node) => node.getAttribute('data-zone-row') === 'picture');
+        const lines = rows.slice(picture + 1).flatMap((node) => (
+          node.getAttribute('data-zone-row') === 'actionable' ? [...node.children] : [node]
+        ));
+        expect(lines.length, `${zone} spends more than four lines under the picture`).toBeLessThanOrEqual(4);
+      });
+    });
+
+    /*
+     * THE WORDS THE CARD IS NOT ALLOWED TO USE.
+     *
+     * Every one of these is a term of art a reader who has never traded would
+     * have to look up, and every one of them was on this card at some point.
+     * The list is a test rather than a comment because a banned word comes back
+     * the way it arrived the first time: somebody adds one clause, in the
+     * vocabulary they think in, to a card nobody re-reads whole.
+     *
+     * "โซน" is on it for a different reason from the rest. It is not jargon —
+     * it is an ordinary Thai word — but it was the card's SECOND name for the
+     * rectangle the bar draws, and the bar itself says "กรอบ". Two names for
+     * one object is the failure this list exists to prevent, so the unused one
+     * is banned outright.
+     *
+     * "ATR" and "swing" survive in `signal-zone-details`, which is the raw
+     * numbers block inside "ทำไม?" and says so in its own first paragraph. The
+     * sweep is scoped to the card, which is where the ten-second read happens.
+     */
+    const CARD_MUST_NOT_SAY = [
+      'โซน', 'ไซด์เวย์', 'เบรก', 'breakout', 'breakdown', 'sideways',
+      'หลุด', 'พลิกกลับ', 'ตกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง',
+      'swing', 'ATR', 'divergence', 'ของกรอบ', 'เงื่อนไขยืนยัน',
+    ];
+
+    it.each([
+      ['sideways' as const, false, false],
+      ['uptrend' as const, false, false],
+      ['downtrend' as const, false, false],
+      ['sideways' as const, true, false],
+      ['sideways' as const, false, true],
+    ])('keeps the %s block (pending %s, band %s) clear of every banned term', async (zone, pending, band) => {
+      await render({
+        ...zoned,
+        zones: {
+          ...zoned.zones!,
+          zone,
+          pendingBreakout: pending,
+          mode: band ? 'atr_band' : 'structural',
+          referenceClose: zone === 'downtrend' ? 37 : zone === 'uptrend' ? 48 : 44.06,
+        },
+        actionable: zone === 'sideways' ? undefined : {
+          invalidation: zone === 'uptrend' ? 46.23 : 39.27,
+          invalidationAtr: 0.44, invalidationPct: 3.69,
+          invalidationBasis: zone === 'uptrend' ? 'zone_floor' : 'zone_ceiling',
+          target: zone === 'uptrend' ? 58.51 : 28.4,
+          targetAtr: 2.62, targetBasis: 'measured_move', targetIsConvention: true,
+          riskReward: 5.94, notes: [],
+        },
+      }, 'elite', zone === 'downtrend' ? 36.4 : 47.2);
+      const text = zoneBar().textContent ?? '';
+      for (const banned of CARD_MUST_NOT_SAY) {
+        expect(text, `"${banned}" is on the zone block`).not.toContain(banned);
+      }
+    });
+
+    /*
+     * The same sweep over the card OUTSIDE the zone block — the state line, its
+     * Thai description, and the flag chips. A card that explains itself in
+     * plain words below the picture and in trading vocabulary above it has not
+     * been translated, it has been made bilingual, which is worse than either.
+     *
+     * The English STATE names and `Bullish Bias` are deliberately exempt: they
+     * are identifiers the payload carries and the history strip is keyed on,
+     * not prose. The Thai line directly under them is what this checks.
+     */
+    it('keeps the headline, its Thai description and the chips clear of the same terms', async () => {
+      await render({ ...zoned, flags: ['strong_momentum', 'high_volume', 'pre_earnings_breakout'] });
+      const whole = container.querySelector('[aria-label="Technical Outlook"]')!.textContent ?? '';
+      const outside = whole.replace(zoneBar().textContent ?? '', '');
+      for (const banned of CARD_MUST_NOT_SAY) {
+        expect(outside, `"${banned}" is on the card above the picture`).not.toContain(banned);
+      }
+    });
+
+    /*
+     * ONE NAME PER THING, CHECKED ACROSS THE LINES RATHER THAN WITHIN THEM.
+     *
+     * Each row of the block read fine on its own; what did not was reading two
+     * of them in sequence. The bar said "กรอบเดิม", the sentence above it said
+     * "กรอบ", and the two sentences below it said "โซน" — three rows, one
+     * rectangle, two vocabularies. This asserts the relationship rather than
+     * the strings: whatever the bar calls its three fields, the prose has to
+     * use those same words for those same three states.
+     */
+    it('calls the bar fields and the sentences around them by the same names', async () => {
+      await render(zoned, 'elite', 47.9);
+      const names = ['downtrend', 'sideways', 'uptrend'].map((id) => segment(id).textContent ?? '');
+      expect(names).toEqual(['ใต้กรอบ', 'ในกรอบ', 'เหนือกรอบ']);
+      const text = zoneBar().textContent ?? '';
+      // Every field name the bar draws is a phrase the prose actually uses, so a
+      // reader can carry a word from the picture to the sentence and back.
+      for (const name of names) {
+        expect(text, `the bar says "${name}" and no sentence does`).toContain(name);
+      }
+      // And the noun is the same one throughout: no row may reach for a synonym.
+      for (const synonym of ['ช่วงราคา', 'ระดับราคา', 'โซนราคา']) {
+        expect(text).not.toContain(synonym);
+      }
+    });
+
+    /*
      * P1 rendering is keyed off `result.gate`, which the engine only produces when
      * `SIGNAL_GATE` is on. Everything above this block is the flags-OFF card and
      * passes unchanged — that is the evidence that turning the flag off really
@@ -1755,7 +2109,7 @@ describe('MarketSignalSection', () => {
       await render(gated);
       const chips = [...container.querySelector('[aria-label="Signal flags"]')!.children].map((chip) => chip.textContent);
       expect(chips).toHaveLength(4);
-      expect(chips.slice(0, 3)).toEqual(['หลักฐานขัดแย้งกัน', 'วอลุ่มไม่ยืนยัน', 'ยังยืนยันไม่ชัด']);
+      expect(chips.slice(0, 3)).toEqual(['หลักฐานขัดแย้งกัน', 'ปริมาณซื้อขายน้อย', 'ยังยืนยันไม่ชัด']);
       expect(chips.at(-1)).toContain('+3');
       expect(chips.at(-1)).toContain('ทำไม?');
     });
@@ -1769,8 +2123,8 @@ describe('MarketSignalSection', () => {
       expect(explainer.textContent).toContain('อีก 10 วันจะประกาศงบ');
       // The overflow chips are listed rather than lost.
       expect(explainer.textContent).toContain('ความผันผวนบีบตัว');
-      expect(explainer.textContent).toContain('โมเมนตัมแรง');
-      expect(explainer.textContent).toContain('วอลุ่มสูง');
+      expect(explainer.textContent).toContain('ราคามีแรงส่ง');
+      expect(explainer.textContent).toContain('ปริมาณซื้อขายสูง');
     });
 
     it('shows confidence as the multipliers it actually is', async () => {
