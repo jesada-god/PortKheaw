@@ -1,7 +1,14 @@
-import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
+import {
+  OPTIONS_SIGNAL_CONFIG,
+  OPTIONS_SIGNAL_CONFIG_VERSION,
+  OPTIONS_SIGNAL_TOTAL_WEIGHT,
+  OPTIONS_SIGNAL_WEIGHTS,
+} from './config';
 import type {
   IvLevel,
   IvPricingInput,
+  LiquidityGrade,
+  LiquidityInput,
   MacroInput,
   MomentumInput,
   OptionsSignalDiagnostics,
@@ -9,8 +16,10 @@ import type {
   OptionsSignalFactorScore,
   OptionsSignalInput,
   OptionsSignalInputSlot,
+  OptionsSignalLiquidityDiagnostics,
   OptionsSignalPenalty,
   OptionsSignalProvenance,
+  OptionsSignalProvenanceSummary,
   OptionsSignalReason,
   OptionsSignalResult,
   OptionsSignalType,
@@ -22,8 +31,33 @@ import type {
 } from './types';
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
-const round = (value: number, digits = 2) => Number(value.toFixed(digits));
+
+/**
+ * The single guard between arithmetic and the UI.
+ *
+ * A provider that returns a zero price, an empty candle window or a `NaN` must
+ * reach the card as an honest `null` — an em dash the reader understands —
+ * rather than as `NaN`, `Infinity` or `undefined`, all of which render as
+ * garbage or crash a `toFixed`. Every number that leaves this module passes
+ * through here.
+ */
+const finite = (value: number | null | undefined): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const round = (value: number, digits = 2) => {
+  const safe = finite(value);
+  return safe === null ? 0 : Number(safe.toFixed(digits));
+};
+
+/** `round`, but an unusable input stays absent instead of collapsing to zero. */
+const roundOrNull = (value: number | null | undefined, digits = 2): number | null => {
+  const safe = finite(value);
+  return safe === null ? null : Number(safe.toFixed(digits));
+};
+
 const percent = (value: number) => `${value > 0 ? '+' : ''}${round(value, 2)}%`;
+
+const HOUR_MS = 3_600_000;
 
 const FACTOR_LABELS: Record<OptionsSignalFactorId, string> = {
   macro: 'Macro',
@@ -46,6 +80,9 @@ const DISCLAIMER_REASON: OptionsSignalReason = {
   text: 'Confidence คือความหนักแน่นของหลักฐาน ไม่ใช่ความน่าจะเป็นที่จะได้กำไร',
 };
 
+/** Open interest is a standing book, most of it hedges. Said every single time. */
+const OI_HEDGE_NOTE = 'Open Interest ส่วนมากเป็นการป้องกันความเสี่ยง (hedge) ไม่ใช่การเดิมพันทิศทาง';
+
 // ---------------------------------------------------------------------------
 // Factor scoring — each returns a signed value in [-1, 1] or null.
 // ---------------------------------------------------------------------------
@@ -62,10 +99,10 @@ export function scoreMacro(input: MacroInput): FactorOutcome & {
   const benchmarks = input.benchmarks.map((benchmark) => ({
     symbol: benchmark.symbol,
     close: benchmark.close,
-    ema20: benchmark.ema20,
-    aboveEma20: benchmark.ema20 === null ? null : benchmark.close > benchmark.ema20,
+    ema20: finite(benchmark.ema20),
+    aboveEma20: finite(benchmark.ema20) === null ? null : benchmark.close > (benchmark.ema20 as number),
   }));
-  const usable = benchmarks.filter((benchmark) => benchmark.ema20 !== null);
+  const usable = benchmarks.filter((benchmark) => benchmark.ema20 !== null && finite(benchmark.close) !== null);
   if (!usable.length) {
     return { normalized: null, detail: 'ไม่มีดัชนีอ้างอิงที่คำนวณ EMA20 ได้', partial: false, benchmarks };
   }
@@ -87,10 +124,13 @@ export function scoreMacro(input: MacroInput): FactorOutcome & {
 }
 
 export function scoreTrend(input: TrendInput): FactorOutcome {
+  const close = finite(input.close);
+  const ema20 = finite(input.ema20);
+  const ema50 = finite(input.ema50);
   const votes: number[] = [];
-  if (input.ema20 !== null) votes.push(Math.sign(input.close - input.ema20));
-  if (input.ema50 !== null) votes.push(Math.sign(input.close - input.ema50));
-  if (input.ema20 !== null && input.ema50 !== null) votes.push(Math.sign(input.ema20 - input.ema50));
+  if (close !== null && ema20 !== null) votes.push(Math.sign(close - ema20));
+  if (close !== null && ema50 !== null) votes.push(Math.sign(close - ema50));
+  if (ema20 !== null && ema50 !== null) votes.push(Math.sign(ema20 - ema50));
   if (!votes.length) {
     return { normalized: null, detail: 'คำนวณ EMA20/EMA50 จากแท่งที่ปิดแล้วไม่ได้', partial: false };
   }
@@ -100,21 +140,45 @@ export function scoreTrend(input: TrendInput): FactorOutcome {
     : normalized < 0
       ? 'ราคาอยู่ใต้เส้นค่าเฉลี่ยและ EMA เรียงตัวขาลง'
       : 'ราคากับเส้นค่าเฉลี่ยยังพันกัน ไม่มีทิศทางชัด';
-  return { normalized, detail, partial: input.ema50 === null };
+  return { normalized, detail, partial: ema50 === null };
 }
 
 export interface MomentumOutcome extends FactorOutcome {
   normalizedMomentum: number | null;
+  /** True when the raw |momentum ÷ ATR| exceeded 1 and the value shown is the clamp. */
+  normalizedMomentumCapped: boolean;
   confirmation: number | null;
+}
+
+/**
+ * RVOL confirmation as a continuous logistic curve centred on average volume.
+ *
+ * The old linear ramp started at exactly 1.0x, so 0.99x scored 0% and 1.01x
+ * scored 2% — a cliff placed precisely where a 20-day volume average is least
+ * meaningful, and the reason a perfectly ordinary 0.81x session was reported as
+ * "0% confirmation". This never reaches 0% or 100%, and 0.99x and 1.01x differ
+ * by about three points.
+ */
+export function rvolConfirmation(
+  relativeVolume: number,
+  config = OPTIONS_SIGNAL_CONFIG.momentum,
+): number {
+  const value = finite(relativeVolume);
+  if (value === null) return 0;
+  return 1 / (1 + Math.exp(-config.rvolSteepness * (value - config.rvolMidpoint)));
 }
 
 export function scoreMomentum(
   input: MomentumInput,
   config = OPTIONS_SIGNAL_CONFIG.momentum,
 ): MomentumOutcome {
-  const normalizedMomentum = input.squeezeMomentum !== null && input.atr !== null && input.atr > 0
-    ? clamp(input.squeezeMomentum / (input.atr * config.momentumAtrSaturation), -1, 1)
+  const squeezeMomentum = finite(input.squeezeMomentum);
+  const atr = finite(input.atr);
+  const rawNormalized = squeezeMomentum !== null && atr !== null && atr > 0
+    ? squeezeMomentum / (atr * config.momentumAtrSaturation)
     : null;
+  const normalizedMomentum = rawNormalized === null ? null : clamp(rawNormalized, -1, 1);
+  const normalizedMomentumCapped = rawNormalized !== null && Math.abs(rawNormalized) > 1;
 
   let base = normalizedMomentum;
   if (input.squeeze === 'ON' && base !== null) base *= config.squeezeOnDamping;
@@ -129,19 +193,15 @@ export function scoreMomentum(
       detail: 'คำนวณ TTM Squeeze Momentum จากแท่งที่ปิดแล้วไม่ได้',
       partial: false,
       normalizedMomentum,
+      normalizedMomentumCapped,
       confirmation: null,
     };
   }
 
   // Relative volume describes ACTIVITY, so it can only scale a direction that
   // already exists — it can never create or flip one.
-  const confirmation = input.relativeVolume === null
-    ? null
-    : clamp(
-      (input.relativeVolume - config.rvolFloor) / (config.rvolSaturation - config.rvolFloor),
-      0,
-      1,
-    );
+  const relativeVolume = finite(input.relativeVolume);
+  const confirmation = relativeVolume === null ? null : rvolConfirmation(relativeVolume, config);
   const multiplier = confirmation === null
     ? config.unconfirmedMultiplier
     : config.minimumConfirmation + (1 - config.minimumConfirmation) * confirmation;
@@ -153,47 +213,135 @@ export function scoreMomentum(
       : input.squeeze === 'FIRED_BEARISH'
         ? 'Squeeze ปลดล็อกลง'
         : 'ไม่มี Squeeze';
-  const volumeText = input.relativeVolume === null
+  const volumeText = relativeVolume === null
     ? 'ไม่มีข้อมูล RVOL ยืนยัน'
-    : `RVOL ${round(input.relativeVolume, 2)}×`;
+    : `RVOL ${round(relativeVolume, 2)}× · ยืนยัน ${Math.round((confirmation ?? 0) * 100)}%`;
 
   return {
     normalized: clamp(base * multiplier, -1, 1),
     detail: `${squeezeText} · ${volumeText}`,
-    partial: input.relativeVolume === null,
+    partial: relativeVolume === null,
     normalizedMomentum,
+    normalizedMomentumCapped,
     confirmation,
   };
 }
 
+/** Positioning read off the absolute Put/Call bands. Cross-symbol, so blunt. */
+function putCallBandScore(ratio: number, config = OPTIONS_SIGNAL_CONFIG.sentiment): number {
+  if (ratio <= config.bullishBelow) {
+    return clamp((config.bullishBelow - ratio) / (config.bullishBelow - config.bullishSaturation), 0, 1);
+  }
+  if (ratio >= config.bearishAbove) {
+    return -clamp((ratio - config.bearishAbove) / (config.bearishSaturation - config.bearishAbove), 0, 1);
+  }
+  return 0;
+}
+
+/** Positioning read against this symbol's OWN recent readings. The preferred basis. */
+function putCallPercentileScore(percentile: number, config = OPTIONS_SIGNAL_CONFIG.sentiment): number {
+  const value = clamp(percentile, 0, 1);
+  if (value <= config.percentileNeutralLow) {
+    return clamp((config.percentileNeutralLow - value) / config.percentileNeutralLow, 0, 1);
+  }
+  if (value >= config.percentileNeutralHigh) {
+    return -clamp((value - config.percentileNeutralHigh) / (1 - config.percentileNeutralHigh), 0, 1);
+  }
+  return 0;
+}
+
+/**
+ * Options positioning.
+ *
+ * A raw Put/Call of 1.51 is meaningless across symbols — it is routine on one
+ * ticker and an outlier on another — so the reading is expressed against this
+ * symbol's OWN recent history whenever enough of it has been recorded, and the
+ * absolute bands are used only as a disclosed fallback. Traded volume, when the
+ * chain carries it, is averaged in: open interest is an accumulated book, volume
+ * is today's flow, and they answer different questions.
+ */
 export function scoreSentiment(
   input: SentimentInput,
   config = OPTIONS_SIGNAL_CONFIG.sentiment,
 ): FactorOutcome {
-  const ratio = input.putCallRatio;
-  let normalized = 0;
-  if (ratio <= config.bullishBelow) {
-    normalized = clamp((config.bullishBelow - ratio) / (config.bullishBelow - config.bullishSaturation), 0, 1);
-  } else if (ratio >= config.bearishAbove) {
-    normalized = -clamp((ratio - config.bearishAbove) / (config.bearishSaturation - config.bearishAbove), 0, 1);
+  const ratio = finite(input.putCallRatio);
+  if (ratio === null) {
+    return { normalized: null, detail: 'Put/Call Ratio ที่ได้รับไม่ใช่ตัวเลขที่ใช้ได้', partial: false };
   }
-  const detail = normalized > 0
-    ? `Put/Call OI ${round(ratio, 2)} · ฝั่ง Call ถือครองมากกว่า`
-    : normalized < 0
-      ? `Put/Call OI ${round(ratio, 2)} · ฝั่ง Put ถือครองมากกว่า`
-      : `Put/Call OI ${round(ratio, 2)} · อยู่ในโซนปกติ`;
-  return { normalized, detail, partial: false };
+  const observations = input.percentileObservations ?? 0;
+  const percentile = observations >= config.minimumPercentileObservations
+    ? finite(input.ownPercentile)
+    : null;
+
+  const openInterestSignal = percentile === null
+    ? putCallBandScore(ratio, config)
+    : putCallPercentileScore(percentile, config);
+  const volumeRatio = finite(input.volumeRatio);
+  const volumeSignal = volumeRatio === null ? null : putCallBandScore(volumeRatio, config);
+  const normalized = volumeSignal === null
+    ? openInterestSignal
+    : (openInterestSignal + volumeSignal) / 2;
+
+  const basisText = percentile === null
+    ? `ยังเทียบเปอร์เซ็นไทล์ของตัวเองไม่ได้ (มีประวัติ ${observations}/${config.minimumPercentileObservations} วัน) จึงใช้เกณฑ์กลางไปก่อน`
+    : `เปอร์เซ็นไทล์ที่ ${Math.round(percentile * 100)} ของ ${observations} วันล่าสุดของหุ้นตัวนี้เอง`;
+  const positionText = percentile === null
+    ? ''
+    : percentile >= config.percentileNeutralHigh
+      ? ' · ฝั่ง Put หนากว่าที่หุ้นตัวนี้เคยเป็น'
+      : percentile <= config.percentileNeutralLow
+        ? ' · ฝั่ง Call หนากว่าที่หุ้นตัวนี้เคยเป็น'
+        : ' · อยู่ในช่วงปกติของหุ้นตัวนี้';
+  const volumeText = volumeRatio === null ? '' : ` · Put/Call Volume ${round(volumeRatio, 2)}`;
+
+  return {
+    normalized: clamp(normalized, -1, 1),
+    detail: `Put/Call OI ${round(ratio, 2)}${volumeText} · ${basisText}${positionText} · ${OI_HEDGE_NOTE}`,
+    // A reading without the symbol's own history is a reading on a weaker basis,
+    // and the card says so rather than presenting it as a complete measurement.
+    partial: percentile === null,
+  };
 }
+
+export type RiskRewardSide = 'call' | 'put' | null;
 
 export interface RiskRewardOutcome extends FactorOutcome {
   upsidePercent: number | null;
   downsidePercent: number | null;
   callRewardRisk: number | null;
   putRewardRisk: number | null;
+  scoredSide: RiskRewardSide;
+  setupQuality: number | null;
+  upsideAtr: number | null;
+  downsideAtr: number | null;
+  upsideExpectedMoves: number | null;
+  downsideExpectedMoves: number | null;
+  expectedMove: number | null;
 }
 
+/** How workable a side is on its own terms: 0 at 1:1, 1 at the saturation ratio. */
+function setupQualityOf(ratio: number | null, saturationRatio: number): number | null {
+  if (ratio === null || ratio <= 0) return null;
+  return clamp(Math.log(ratio) / Math.log(saturationRatio), 0, 1);
+}
+
+/**
+ * Score the geometry — for the side the rest of the evidence actually points at.
+ *
+ * The old version always measured the CALL side, so a chart with a 0.24 call R:R
+ * and a 4.23 put R:R took the full -15 even when nothing else was bearish and
+ * even when the put side was the excellent setup. Geometry is not a market
+ * opinion; it is the quality of a trade in a given direction, and it can only be
+ * scored once a direction exists:
+ *
+ *  - a direction from the other four factors -> score THAT side's reward:risk;
+ *  - no direction at all -> there is no side to score, so the factor reports the
+ *    quality of the best available side and contributes only a damped residual
+ *    tilt, never a full-weight vote.
+ */
 export function scoreRiskReward(
   input: RiskRewardInput,
+  options: { direction?: UnderlyingBias } = {},
   config = OPTIONS_SIGNAL_CONFIG.riskReward,
 ): RiskRewardOutcome {
   const empty: RiskRewardOutcome = {
@@ -204,12 +352,23 @@ export function scoreRiskReward(
     downsidePercent: null,
     callRewardRisk: null,
     putRewardRisk: null,
+    scoredSide: null,
+    setupQuality: null,
+    upsideAtr: null,
+    downsideAtr: null,
+    upsideExpectedMoves: null,
+    downsideExpectedMoves: null,
+    expectedMove: null,
   };
-  if (!Number.isFinite(input.price) || input.price <= 0) return empty;
-  if (input.support === null && input.resistance === null) return empty;
+  const price = finite(input.price);
+  if (price === null || price <= 0) return empty;
+  const support = finite(input.support);
+  const resistance = finite(input.resistance);
+  if (support === null && resistance === null) return empty;
 
-  const rawUpside = input.resistance === null ? null : (input.resistance - input.price) / input.price * 100;
-  const rawDownside = input.support === null ? null : (input.price - input.support) / input.price * 100;
+  const direction = options.direction ?? 'neutral';
+  const rawUpside = resistance === null ? null : (resistance - price) / price * 100;
+  const rawDownside = support === null ? null : (price - support) / price * 100;
   // A level the price is already sitting on is a touch, not a target.
   const upside = rawUpside === null ? null : Math.max(0, rawUpside < config.minimumDistancePercent ? 0 : rawUpside);
   const downside = rawDownside === null ? null : Math.max(0, rawDownside < config.minimumDistancePercent ? 0 : rawDownside);
@@ -217,43 +376,181 @@ export function scoreRiskReward(
   const callRewardRisk = upside !== null && downside !== null && downside > 0 ? upside / downside : null;
   const putRewardRisk = upside !== null && downside !== null && upside > 0 ? downside / upside : null;
 
-  let normalized: number;
-  let detail: string;
-  // A missing level on one side is unbounded on THAT side: no confirmed
-  // resistance overhead is clear runway up, and no confirmed support beneath is
-  // open downside. The two cases are exact mirrors of each other.
-  if (upside === null) {
-    normalized = 1;
-    detail = `ไม่พบแนวต้านเหนือราคา (ราคาอยู่บริเวณจุดสูงสุด) · ห่างแนวรับ ${percent(downside ?? 0)}`;
-  } else if (downside === null) {
-    normalized = -1;
-    detail = `ไม่พบแนวรับใต้ราคา · ความเสี่ยงฝั่งลงเปิดกว้าง แม้ห่างแนวต้าน ${percent(upside)}`;
-  } else if (upside === 0 && downside === 0) {
-    normalized = 0;
-    detail = 'ราคาติดทั้งแนวรับและแนวต้าน';
-  } else if (downside === 0) {
-    normalized = 1;
-    detail = `ราคาอยู่ที่แนวรับ ระยะถึงแนวต้าน ${percent(upside)}`;
-  } else if (upside === 0) {
-    normalized = -1;
-    detail = `ราคาอยู่ที่แนวต้าน ระยะถึงแนวรับ ${percent(downside)}`;
-  } else {
-    normalized = clamp(
-      Math.log(upside / downside) / Math.log(config.saturationRatio),
-      -1,
-      1,
-    );
-    detail = `ขึ้นถึงแนวต้าน ${percent(upside)} · ลงถึงแนวรับ ${percent(downside)} · R:R ฝั่ง Call ${round(upside / downside, 2)}`;
-  }
+  const atr = finite(input.atr);
+  const expectedMove = finite(input.expectedMove);
+  const inAtr = (distancePercent: number | null): number | null => (
+    distancePercent === null || atr === null || atr <= 0 ? null : distancePercent / 100 * price / atr
+  );
+  const inExpectedMoves = (distancePercent: number | null): number | null => (
+    distancePercent === null || expectedMove === null || expectedMove <= 0
+      ? null
+      : distancePercent / 100 * price / expectedMove
+  );
 
-  return {
-    normalized,
-    detail,
-    partial: upside === null || downside === null,
+  const geometry = {
     upsidePercent: upside,
     downsidePercent: downside,
     callRewardRisk,
     putRewardRisk,
+    upsideAtr: inAtr(upside),
+    downsideAtr: inAtr(downside),
+    upsideExpectedMoves: inExpectedMoves(upside),
+    downsideExpectedMoves: inExpectedMoves(downside),
+    expectedMove,
+    partial: upside === null || downside === null,
+  };
+
+  const distanceText = [
+    upside === null ? null : `ขึ้นถึงแนวต้าน ${percent(upside)}${geometry.upsideAtr === null ? '' : ` (${round(geometry.upsideAtr, 2)} ATR)`}`,
+    downside === null ? null : `ลงถึงแนวรับ ${percent(-downside)}${geometry.downsideAtr === null ? '' : ` (${round(geometry.downsideAtr, 2)} ATR)`}`,
+  ].filter((part): part is string => part !== null).join(' · ');
+
+  // A missing level on one side is unbounded on THAT side: no confirmed
+  // resistance overhead is clear runway up, and no confirmed support beneath is
+  // open downside. The two cases are exact mirrors of each other and no
+  // direction can change what an absent level means.
+  if (upside === null) {
+    return {
+      ...geometry,
+      normalized: 1,
+      detail: `ไม่พบแนวต้านเหนือราคา (ราคาอยู่บริเวณจุดสูงสุด) · ${distanceText}`,
+      scoredSide: 'call',
+      setupQuality: 1,
+    };
+  }
+  if (downside === null) {
+    return {
+      ...geometry,
+      normalized: -1,
+      detail: `ไม่พบแนวรับใต้ราคา · ความเสี่ยงฝั่งลงเปิดกว้าง · ${distanceText}`,
+      scoredSide: 'put',
+      setupQuality: 1,
+    };
+  }
+  if (upside === 0 && downside === 0) {
+    return { ...geometry, normalized: 0, detail: 'ราคาติดทั้งแนวรับและแนวต้าน', scoredSide: null, setupQuality: 0 };
+  }
+  if (downside === 0) {
+    return {
+      ...geometry,
+      normalized: 1,
+      detail: `ราคาอยู่ที่แนวรับ ระยะถึงแนวต้าน ${percent(upside)}`,
+      scoredSide: 'call',
+      setupQuality: 1,
+    };
+  }
+  if (upside === 0) {
+    return {
+      ...geometry,
+      normalized: -1,
+      detail: `ราคาอยู่ที่แนวต้าน ระยะถึงแนวรับ ${percent(downside)}`,
+      scoredSide: 'put',
+      setupQuality: 1,
+    };
+  }
+
+  const callQuality = setupQualityOf(callRewardRisk, config.saturationRatio);
+  const putQuality = setupQualityOf(putRewardRisk, config.saturationRatio);
+  const bestRatio = Math.max(callRewardRisk ?? 0, putRewardRisk ?? 0);
+  const bestQuality = Math.max(callQuality ?? 0, putQuality ?? 0);
+  const ratioText = `R:R Call ${round(callRewardRisk as number, 2)} · R:R Put ${round(putRewardRisk as number, 2)}`;
+  const expectedMoveText = geometry.upsideExpectedMoves === null || geometry.downsideExpectedMoves === null
+    ? ''
+    : ` · เทียบ Expected Move: ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
+
+  // The signed tilt of the geometry itself, on the call frame of reference.
+  const tilt = clamp(Math.log((callRewardRisk as number)) / Math.log(config.saturationRatio), -1, 1);
+
+  if (direction === 'bullish') {
+    return {
+      ...geometry,
+      normalized: tilt,
+      scoredSide: 'call',
+      setupQuality: callQuality,
+      detail: `หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · ${distanceText} · ${ratioText}${expectedMoveText}`,
+    };
+  }
+  if (direction === 'bearish') {
+    // Mirror image: a strong PUT reward:risk is strong evidence for the bearish
+    // thesis, and carries the same magnitude a strong call R:R would carry up.
+    const putTilt = clamp(Math.log((putRewardRisk as number)) / Math.log(config.saturationRatio), -1, 1);
+    return {
+      ...geometry,
+      normalized: -putTilt,
+      scoredSide: 'put',
+      setupQuality: putQuality,
+      detail: `หลักฐานอื่นชี้ขาลง จึงวัดจากฝั่ง Put · ${distanceText} · ${ratioText}${expectedMoveText}`,
+    };
+  }
+
+  /*
+   * No direction. Geometry alone cannot supply one, so the factor reports the
+   * quality of the BEST side and keeps only a damped residual of its tilt. A
+   * chart with one workable side (R:R at or above `workableRatio`) can therefore
+   * never take the full weight against the reader on the strength of the other,
+   * unusable side's ratio.
+   */
+  const workable = bestRatio >= config.workableRatio;
+  const qualityText = workable
+    ? `ฝั่งที่ใช้ได้คือ ${(putRewardRisk ?? 0) > (callRewardRisk ?? 0) ? 'Put' : 'Call'} (R:R ${round(bestRatio, 2)}) แต่หลักฐานอื่นยังไม่เลือกทาง จึงยังไม่นับเป็นคะแนนทิศทางเต็ม`
+    : 'ยังไม่มีฝั่งไหนที่ระยะทำกำไรคุ้มความเสี่ยง และหลักฐานอื่นยังไม่เลือกทาง';
+  return {
+    ...geometry,
+    normalized: tilt * config.sidewaysDamping,
+    scoredSide: null,
+    setupQuality: bestQuality,
+    detail: `${distanceText} · ${ratioText} · ${qualityText}${expectedMoveText}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity — a tradeability badge. Never a direction, never a weight.
+// ---------------------------------------------------------------------------
+
+export interface LiquidityOutcome {
+  grade: LiquidityGrade | null;
+  score: number | null;
+  detail: string;
+}
+
+export function gradeLiquidity(
+  input: LiquidityInput,
+  config = OPTIONS_SIGNAL_CONFIG.liquidity,
+): LiquidityOutcome {
+  const openInterest = finite(input.medianOpenInterest);
+  const volume = finite(input.medianVolume);
+  const spread = finite(input.medianSpreadPercent);
+
+  const parts: number[] = [];
+  if (openInterest !== null) parts.push(clamp(openInterest / config.openInterestGood, 0, 1));
+  if (volume !== null) parts.push(clamp(volume / config.volumeGood, 0, 1));
+  if (spread !== null) {
+    parts.push(clamp(
+      (config.spreadPoorPercent - spread) / (config.spreadPoorPercent - config.spreadGoodPercent),
+      0,
+      1,
+    ));
+  }
+  if (!parts.length || input.contractsExamined <= 0) {
+    return { grade: null, score: null, detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง' };
+  }
+
+  const score = round(parts.reduce((sum, part) => sum + part, 0) / parts.length * 100, 0);
+  const grade: LiquidityGrade = score >= config.goodFrom ? 'good' : score >= config.fairFrom ? 'fair' : 'thin';
+  const measured = [
+    openInterest === null ? null : `OI กลาง ${Math.round(openInterest).toLocaleString('en-US')}`,
+    volume === null ? null : `Volume กลาง ${Math.round(volume).toLocaleString('en-US')}`,
+    spread === null ? null : `ส่วนต่าง Bid/Ask ${round(spread, 1)}% ของราคากลาง`,
+  ].filter((part): part is string => part !== null).join(' · ');
+  const verdict = grade === 'good'
+    ? 'เข้า-ออกได้ตามปกติ'
+    : grade === 'fair'
+      ? 'พอเข้า-ออกได้ แต่ควรใช้คำสั่งจำกัดราคา'
+      : 'บาง เข้า-ออกยากและต้นทุนแฝงสูง';
+  return {
+    grade,
+    score,
+    detail: `${measured} · สัญญาใกล้ราคาปัจจุบัน ${input.contractsExamined} สัญญา · ${verdict}`,
   };
 }
 
@@ -266,6 +563,12 @@ export function classifyIvLevel(pricing: IvPricingInput, config = OPTIONS_SIGNAL
     if (pricing.ivRank >= config.rank.extremeFrom) return 'extreme';
     if (pricing.ivRank > config.rank.highAbove) return 'high';
     if (pricing.ivRank >= config.rank.normalFrom) return 'normal';
+    return 'low';
+  }
+  if (pricing.basis === 'iv-percentile') {
+    if (pricing.ivPercentile >= config.percentile.extremeFrom) return 'extreme';
+    if (pricing.ivPercentile > config.percentile.highAbove) return 'high';
+    if (pricing.ivPercentile >= config.percentile.normalFrom) return 'normal';
     return 'low';
   }
   if (pricing.ratio >= config.realized.extremeFrom) return 'extreme';
@@ -281,6 +584,91 @@ export function biasFromNormalizedScore(
   if (normalizedScore >= config.bullish) return 'bullish';
   if (normalizedScore <= config.bearish) return 'bearish';
   return 'neutral';
+}
+
+/**
+ * The one 0-100 direction number every surface shows.
+ *
+ * The card used to show confidence and the modal used to show the signed sum,
+ * so the same signal read "55/100" in one place and "+13/90 -> 14" in the other.
+ * There is now exactly one function that produces a published score, and both
+ * surfaces read its output.
+ */
+export function directionScoreOutOf100(rawScore: number, maximumAbsolute: number): number {
+  const raw = finite(rawScore) ?? 0;
+  const maxAbs = finite(maximumAbsolute) ?? 0;
+  if (maxAbs <= 0) return 50;
+  return round(clamp((raw + maxAbs) / (2 * maxAbs) * 100, 0, 100), 0);
+}
+
+/** The same conversion, written out for the reader. */
+export function directionScoreFormula(rawScore: number, maximumAbsolute: number): string {
+  const raw = round(finite(rawScore) ?? 0, 0);
+  const maxAbs = round(finite(maximumAbsolute) ?? 0, 0);
+  const signed = `${raw > 0 ? '+' : ''}${raw}`;
+  return `(${signed} + ${maxAbs}) ÷ (2 × ${maxAbs}) × 100 = ${directionScoreOutOf100(raw, maxAbs)}`;
+}
+
+/**
+ * Confidence as a weighted geometric mean of the three quality terms.
+ *
+ * Multiplicative, so a collapsed term cannot be bought back by the other two —
+ * which is exactly what the old weighted average allowed, publishing 62%
+ * confidence on 21% agreement.
+ */
+export function confidenceFromTerms(
+  terms: { coverage: number; agreement: number; strength: number },
+  config = OPTIONS_SIGNAL_CONFIG.confidence,
+): number {
+  const floor = (value: number) => Math.max(config.termFloor, clamp(finite(value) ?? 0, 0, 1));
+  const logSum = config.exponents.coverage * Math.log(floor(terms.coverage))
+    + config.exponents.agreement * Math.log(floor(terms.agreement))
+    + config.exponents.strength * Math.log(floor(terms.strength));
+  return clamp(Math.exp(logSum), 0, 1);
+}
+
+/**
+ * Fold every source timestamp into ONE published `asOf`, plus the honest spread.
+ *
+ * Sources genuinely disagree: the candle provider closes at one hour, the
+ * options chain at another, the earnings calendar is a date. Showing three
+ * timestamps and letting the reader pick invites them to believe the newest one.
+ * The published `asOf` is therefore the OLDEST — a signal is exactly as current
+ * as its stalest input — and a spread wider than the configured window raises
+ * `staleMix` so the card can say the mixture out loud.
+ */
+export function summariseProvenance(
+  slots: ReadonlyArray<{ id: string; slot: OptionsSignalInputSlot<unknown> | undefined }>,
+  config = OPTIONS_SIGNAL_CONFIG.provenance,
+): OptionsSignalProvenanceSummary {
+  const sources = slots
+    .filter((entry): entry is { id: string; slot: OptionsSignalInputSlot<unknown> } => Boolean(entry.slot))
+    .map((entry) => ({
+      id: entry.id,
+      provider: entry.slot.provider,
+      asOf: entry.slot.asOf,
+      usable: entry.slot.status === 'available' && Number.isFinite(Date.parse(entry.slot.asOf ?? '')),
+    }));
+
+  const stamps = sources
+    .filter((source) => source.usable && source.asOf !== null)
+    .map((source) => ({ asOf: source.asOf as string, ms: Date.parse(source.asOf as string) }))
+    .sort((left, right) => left.ms - right.ms);
+
+  const published = sources.map(({ id, provider, asOf }) => ({ id, provider, asOf }));
+  if (!stamps.length) {
+    return { asOf: null, newestAsOf: null, spreadHours: null, staleMix: false, sources: published };
+  }
+  const oldest = stamps[0];
+  const newest = stamps[stamps.length - 1];
+  const spreadHours = stamps.length > 1 ? round((newest.ms - oldest.ms) / HOUR_MS, 2) : null;
+  return {
+    asOf: oldest.asOf,
+    newestAsOf: newest.asOf,
+    spreadHours,
+    staleMix: spreadHours !== null && spreadHours > config.staleMixHours,
+    sources: published,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -317,13 +705,14 @@ function scoredFactor(
   slot: OptionsSignalInputSlot<unknown>,
   outcome: FactorOutcome,
 ): OptionsSignalFactorScore {
-  if (outcome.normalized === null) return unavailableFactor(id, slot, outcome.detail);
+  const normalized = finite(outcome.normalized);
+  if (normalized === null) return unavailableFactor(id, slot, outcome.detail);
   const maxPoints = OPTIONS_SIGNAL_WEIGHTS[id];
   return {
     id,
-    points: round(outcome.normalized * maxPoints, 0),
+    points: round(normalized * maxPoints, 0),
     maxPoints,
-    normalized: round(outcome.normalized, 4),
+    normalized: round(normalized, 4),
     state: slot.state,
     available: true,
     partial: outcome.partial,
@@ -334,10 +723,15 @@ function scoredFactor(
   };
 }
 
-function setupWarnings(daysToEarnings: number | null): string[] {
-  return daysToEarnings === null
-    ? [...SETUP_WARNINGS, 'ยังไม่ทราบวันประกาศงบ ให้ตรวจสอบปฏิทินของบริษัทเองก่อนเปิดสถานะ']
-    : [...SETUP_WARNINGS, `วันประกาศงบครั้งถัดไปอีก ${daysToEarnings} วัน`];
+function setupWarnings(daysToEarnings: number | null, liquidity: LiquidityOutcome | null): string[] {
+  const warnings = [...SETUP_WARNINGS];
+  if (liquidity?.grade === 'thin') {
+    warnings.push('สภาพคล่องของ chain นี้บาง การเข้า-ออกอาจเสียราคามากกว่าที่คิด');
+  }
+  warnings.push(daysToEarnings === null
+    ? 'ยังไม่ทราบวันประกาศงบ ให้ตรวจสอบปฏิทินของบริษัทเองก่อนเปิดสถานะ'
+    : `วันประกาศงบครั้งถัดไปอีก ${daysToEarnings} วัน`);
+  return warnings;
 }
 
 function buildSetup(
@@ -346,8 +740,9 @@ function buildSetup(
   ivLevel: IvLevel | null,
   ivReason: string | null,
   daysToEarnings: number | null,
+  liquidity: LiquidityOutcome | null,
 ): SuggestedOptionsSetup {
-  const warnings = setupWarnings(daysToEarnings);
+  const warnings = setupWarnings(daysToEarnings, liquidity);
   if (signalType === 'IV_WARNING') {
     return { status: 'not-recommended', reason: 'อยู่ในสถานะเตือนความเสี่ยง (IV สูงมาก หรือใกล้ประกาศงบ) จึงยังไม่เสนอรูปแบบสัญญา', warnings };
   }
@@ -375,6 +770,54 @@ function buildSetup(
   };
 }
 
+/** Every slot that carries provenance, in the order the modal lists them. */
+function provenanceSlots(input: OptionsSignalInput) {
+  return [
+    { id: 'macro', slot: input.macro },
+    { id: 'trend', slot: input.trend },
+    { id: 'momentum', slot: input.momentum },
+    { id: 'pricing', slot: input.pricing },
+    { id: 'sentiment', slot: input.sentiment },
+    { id: 'riskReward', slot: input.riskReward },
+    { id: 'event', slot: input.event },
+    { id: 'liquidity', slot: input.liquidity },
+  ] as const;
+}
+
+function liquidityDiagnostics(
+  slot: OptionsSignalInputSlot<LiquidityInput> | undefined,
+  outcome: LiquidityOutcome | null,
+): OptionsSignalLiquidityDiagnostics {
+  if (!slot) {
+    return {
+      grade: null, score: null, medianOpenInterest: null, medianVolume: null,
+      medianSpreadPercent: null, contractsExamined: null, expiration: null,
+      state: 'UNAVAILABLE', reason: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
+      detail: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
+    };
+  }
+  if (slot.status === 'unavailable' || !outcome) {
+    const reason = slot.status === 'unavailable' ? slot.reason : 'ประเมินสภาพคล่องไม่ได้';
+    return {
+      grade: null, score: null, medianOpenInterest: null, medianVolume: null,
+      medianSpreadPercent: null, contractsExamined: null, expiration: null,
+      state: 'UNAVAILABLE', reason, detail: reason,
+    };
+  }
+  return {
+    grade: outcome.grade,
+    score: outcome.score,
+    medianOpenInterest: roundOrNull(slot.value.medianOpenInterest, 0),
+    medianVolume: roundOrNull(slot.value.medianVolume, 0),
+    medianSpreadPercent: roundOrNull(slot.value.medianSpreadPercent, 2),
+    contractsExamined: slot.value.contractsExamined,
+    expiration: slot.value.expiration,
+    state: slot.state,
+    reason: outcome.grade === null ? outcome.detail : null,
+    detail: outcome.detail,
+  };
+}
+
 function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
   const factor = (id: OptionsSignalFactorId, slot: OptionsSignalInputSlot<unknown>): OptionsSignalFactorScore =>
     unavailableFactor(id, slot, slot.status === 'unavailable' ? slot.reason : 'ไม่ได้ใช้เพราะข้อมูลหลักไม่พอ');
@@ -390,6 +833,8 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     availableWeight: 0,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     normalizedScore: 0,
+    score: 50,
+    scoreFormula: 'ไม่มีปัจจัยที่มีข้อมูลพอจะแปลงเป็นคะแนน',
     coverage: 0,
     agreement: 0,
     evidenceStrength: 0,
@@ -400,21 +845,30 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     riskReward: {
       price: null, support: null, resistance: null, upsidePercent: null,
       downsidePercent: null, callRewardRisk: null, putRewardRisk: null,
+      scoredSide: null, setupQuality: null, upsideAtr: null, downsideAtr: null,
+      upsideExpectedMoves: null, downsideExpectedMoves: null, expectedMove: null,
       state: input.riskReward.state,
     },
     iv: {
-      level: null, basis: null, ivRank: null, impliedVolatility: null, realizedVolatility: null,
+      level: null, basis: null, ivRank: null, ivPercentile: null,
+      percentilePending: input.ivPercentilePending ?? null,
+      impliedVolatility: null, realizedVolatility: null, realizedWindowDays: null, dte: null,
       ratio: null, observations: null, state: input.pricing.state,
       reason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       source: input.pricing.provider, fetchedAt: input.pricing.asOf,
     },
+    liquidity: liquidityDiagnostics(input.liquidity, null),
     event: {
       reportDate: null, daysToEarnings: null, timeOfDay: null, state: input.event.state,
       reason: input.event.status === 'unavailable' ? input.event.reason : null,
       source: input.event.provider, fetchedAt: input.event.asOf,
     },
-    squeeze: { state: null, momentum: null, normalizedMomentum: null, relativeVolume: null, confirmation: null },
+    squeeze: {
+      state: null, momentum: null, normalizedMomentum: null,
+      normalizedMomentumCapped: false, relativeVolume: null, confirmation: null,
+    },
     macro: { benchmarks: [] },
+    provenance: summariseProvenance(provenanceSlots(input)),
     gates: { ivWarning: false, ivWarningReasons: [], downgrades: [] },
   };
 }
@@ -427,42 +881,58 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
  * replaced with a neutral zero that would quietly move the score.
  *
  * The three stages are strictly separated:
- *  1. **Direction** — only the five weighted directional factors.
+ *  1. **Direction** — only the five weighted directional factors. Risk/Reward is
+ *     scored in a second pass, against the direction the other four established,
+ *     because geometry is the quality of a trade in a direction and has no
+ *     opinion of its own.
  *  2. **Signal quality** — how much of that direction is actually evidenced.
  *  3. **Risk gate** — implied volatility and event risk, which can veto or
  *     downgrade a signal but can never create one.
  */
 export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignalResult {
   const config = OPTIONS_SIGNAL_CONFIG;
+  const provenance = summariseProvenance(provenanceSlots(input));
   const base = {
     symbol: input.symbol,
     timeframe: input.timeframe,
     calculatedAt: input.calculatedAt,
     latestCandleAt: input.latestCandleAt,
     finalizedCandles: input.finalizedCandles,
+    asOf: provenance.asOf,
+    staleMix: provenance.staleMix,
+    configVersion: OPTIONS_SIGNAL_CONFIG_VERSION,
   };
+
+  const liquidityOutcome = input.liquidity?.status === 'available'
+    ? gradeLiquidity(input.liquidity.value)
+    : null;
 
   const insufficient = (reason: string): OptionsSignalResult => ({
     ...base,
     status: 'insufficient-data',
     signalType: null,
+    score: null,
     confidenceScore: 0,
     underlyingBias: null,
+    liquidityGrade: null,
     reason,
     reasoning: [{ id: 'insufficient-data', polarity: 'caution', text: reason }, DISCLAIMER_REASON],
     suggestedOptionsSetup: {
       status: 'not-recommended',
       reason: 'ข้อมูลไม่พอสำหรับประเมินทิศทาง จึงไม่เสนอรูปแบบสัญญา',
-      warnings: setupWarnings(input.event.status === 'available' ? input.event.value.daysToEarnings : null),
+      warnings: setupWarnings(
+        input.event.status === 'available' ? finite(input.event.value.daysToEarnings) : null,
+        liquidityOutcome,
+      ),
     },
-    diagnostics: emptyDiagnostics(input),
+    diagnostics: { ...emptyDiagnostics(input), liquidity: liquidityDiagnostics(input.liquidity, liquidityOutcome) },
   });
 
   if (input.finalizedCandles < config.minimumFinalizedCandles) {
     return insufficient(`ต้องมีแท่งเทียน 1D ที่ปิดแล้วอย่างน้อย ${config.minimumFinalizedCandles} แท่ง แต่มี ${input.finalizedCandles} แท่ง`);
   }
 
-  // --- Stage 1: direction -------------------------------------------------
+  // --- Stage 1a: direction from the four opinion-bearing factors ----------
   const macroOutcome = input.macro.status === 'available'
     ? scoreMacro(input.macro.value)
     : { normalized: null, detail: input.macro.reason, partial: false, benchmarks: [] };
@@ -471,22 +941,39 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     : { normalized: null, detail: input.trend.reason, partial: false };
   const momentumOutcome = input.momentum.status === 'available'
     ? scoreMomentum(input.momentum.value)
-    : { normalized: null, detail: input.momentum.reason, partial: false, normalizedMomentum: null, confirmation: null };
+    : {
+      normalized: null, detail: input.momentum.reason, partial: false,
+      normalizedMomentum: null, normalizedMomentumCapped: false, confirmation: null,
+    };
   const sentimentOutcome = input.sentiment.status === 'available'
     ? scoreSentiment(input.sentiment.value)
     : { normalized: null, detail: input.sentiment.reason, partial: false };
-  const riskRewardOutcome = input.riskReward.status === 'available'
-    ? scoreRiskReward(input.riskReward.value)
-    : {
-      normalized: null, detail: input.riskReward.reason, partial: false, upsidePercent: null,
-      downsidePercent: null, callRewardRisk: null, putRewardRisk: null,
-    };
 
-  const factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore> = {
+  const leadFactors = {
     macro: scoredFactor('macro', input.macro, macroOutcome),
     trend: scoredFactor('trend', input.trend, trendOutcome),
     momentum: scoredFactor('momentum', input.momentum, momentumOutcome),
     sentiment: scoredFactor('sentiment', input.sentiment, sentimentOutcome),
+  };
+  const leadEntries = Object.values(leadFactors);
+  const leadWeight = leadEntries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
+  const leadScore = leadEntries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
+  const leadDirection = leadWeight > 0
+    ? biasFromNormalizedScore(clamp(leadScore / leadWeight * 100, -100, 100))
+    : 'neutral';
+
+  // --- Stage 1b: geometry, scored for the side that direction points at ---
+  const riskRewardOutcome = input.riskReward.status === 'available'
+    ? scoreRiskReward(input.riskReward.value, { direction: leadDirection })
+    : {
+      normalized: null, detail: input.riskReward.reason, partial: false, upsidePercent: null,
+      downsidePercent: null, callRewardRisk: null, putRewardRisk: null, scoredSide: null,
+      setupQuality: null, upsideAtr: null, downsideAtr: null,
+      upsideExpectedMoves: null, downsideExpectedMoves: null, expectedMove: null,
+    } satisfies RiskRewardOutcome;
+
+  const factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore> = {
+    ...leadFactors,
     riskReward: scoredFactor('riskReward', input.riskReward, riskRewardOutcome),
   };
 
@@ -503,6 +990,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const normalizedScore = availableWeight > 0
     ? round(clamp(directionScore / availableWeight * 100, -100, 100), 0)
     : 0;
+  const score = directionScoreOutOf100(directionScore, availableWeight);
+  const scoreFormula = directionScoreFormula(directionScore, availableWeight);
   const underlyingBias = biasFromNormalizedScore(normalizedScore);
 
   // --- Stage 2: signal quality -------------------------------------------
@@ -512,7 +1001,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
 
   const pricing = input.pricing.status === 'available' ? input.pricing.value : null;
   const ivLevel = pricing ? classifyIvLevel(pricing) : null;
-  const daysToEarnings = input.event.status === 'available' ? input.event.value.daysToEarnings : null;
+  const daysToEarnings = input.event.status === 'available' ? finite(input.event.value.daysToEarnings) : null;
 
   const penalties: OptionsSignalPenalty[] = [];
   const penaltyConfig = config.confidence.penalties;
@@ -545,9 +1034,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
   const penaltyTotal = round(penalties.reduce((sum, penalty) => sum + penalty.amount, 0), 4);
 
-  const confidenceBase = config.confidence.coverageWeight * coverage
-    + config.confidence.agreementWeight * agreement
-    + config.confidence.strengthWeight * evidenceStrength;
+  const confidenceBase = confidenceFromTerms({ coverage, agreement, strength: evidenceStrength });
   const confidenceScore = Math.round(clamp(confidenceBase - penaltyTotal, 0, 1) * 100);
 
   const primeBlockers: string[] = [];
@@ -602,6 +1089,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     availableWeight,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     normalizedScore,
+    score,
+    scoreFormula,
     coverage: round(coverage, 4),
     agreement: round(agreement, 4),
     evidenceStrength: round(evidenceStrength, 4),
@@ -615,28 +1104,40 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       primeBlockers,
     },
     riskReward: {
-      price: input.riskReward.status === 'available' ? input.riskReward.value.price : null,
-      support: input.riskReward.status === 'available' ? input.riskReward.value.support : null,
-      resistance: input.riskReward.status === 'available' ? input.riskReward.value.resistance : null,
-      upsidePercent: riskRewardOutcome.upsidePercent,
-      downsidePercent: riskRewardOutcome.downsidePercent,
-      callRewardRisk: riskRewardOutcome.callRewardRisk === null ? null : round(riskRewardOutcome.callRewardRisk, 2),
-      putRewardRisk: riskRewardOutcome.putRewardRisk === null ? null : round(riskRewardOutcome.putRewardRisk, 2),
+      price: input.riskReward.status === 'available' ? roundOrNull(input.riskReward.value.price, 4) : null,
+      support: input.riskReward.status === 'available' ? roundOrNull(input.riskReward.value.support, 4) : null,
+      resistance: input.riskReward.status === 'available' ? roundOrNull(input.riskReward.value.resistance, 4) : null,
+      upsidePercent: roundOrNull(riskRewardOutcome.upsidePercent, 2),
+      downsidePercent: roundOrNull(riskRewardOutcome.downsidePercent, 2),
+      callRewardRisk: roundOrNull(riskRewardOutcome.callRewardRisk, 2),
+      putRewardRisk: roundOrNull(riskRewardOutcome.putRewardRisk, 2),
+      scoredSide: riskRewardOutcome.scoredSide,
+      setupQuality: roundOrNull(riskRewardOutcome.setupQuality, 4),
+      upsideAtr: roundOrNull(riskRewardOutcome.upsideAtr, 2),
+      downsideAtr: roundOrNull(riskRewardOutcome.downsideAtr, 2),
+      upsideExpectedMoves: roundOrNull(riskRewardOutcome.upsideExpectedMoves, 2),
+      downsideExpectedMoves: roundOrNull(riskRewardOutcome.downsideExpectedMoves, 2),
+      expectedMove: roundOrNull(riskRewardOutcome.expectedMove, 4),
       state: input.riskReward.state,
     },
     iv: {
       level: ivLevel,
       basis: pricing?.basis ?? null,
-      ivRank: pricing?.basis === 'iv-rank' ? round(pricing.ivRank, 1) : null,
-      impliedVolatility: pricing?.impliedVolatility ?? null,
-      realizedVolatility: pricing?.basis === 'iv-vs-realized' ? round(pricing.realizedVolatility, 4) : null,
-      ratio: pricing?.basis === 'iv-vs-realized' ? round(pricing.ratio, 3) : null,
+      ivRank: pricing?.basis === 'iv-rank' ? roundOrNull(pricing.ivRank, 1) : null,
+      ivPercentile: pricing?.basis === 'iv-percentile' ? roundOrNull(pricing.ivPercentile, 1) : null,
+      percentilePending: input.ivPercentilePending ?? null,
+      impliedVolatility: roundOrNull(pricing?.impliedVolatility, 6),
+      realizedVolatility: pricing?.basis === 'iv-vs-realized' ? roundOrNull(pricing.realizedVolatility, 4) : null,
+      realizedWindowDays: pricing?.basis === 'iv-vs-realized' ? pricing.realizedWindowDays : null,
+      dte: pricing?.basis === 'iv-vs-realized' ? pricing.dte : null,
+      ratio: pricing?.basis === 'iv-vs-realized' ? roundOrNull(pricing.ratio, 3) : null,
       observations: pricing?.observations ?? null,
       state: input.pricing.state,
       reason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       source: input.pricing.provider,
       fetchedAt: input.pricing.asOf,
     },
+    liquidity: liquidityDiagnostics(input.liquidity, liquidityOutcome),
     event: {
       reportDate: input.event.status === 'available' ? input.event.value.reportDate : null,
       daysToEarnings,
@@ -648,12 +1149,14 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     },
     squeeze: {
       state: squeezeState,
-      momentum: input.momentum.status === 'available' ? input.momentum.value.squeezeMomentum : null,
-      normalizedMomentum: momentumOutcome.normalizedMomentum === null ? null : round(momentumOutcome.normalizedMomentum, 4),
-      relativeVolume: input.momentum.status === 'available' ? input.momentum.value.relativeVolume : null,
-      confirmation: momentumOutcome.confirmation === null ? null : round(momentumOutcome.confirmation, 4),
+      momentum: input.momentum.status === 'available' ? roundOrNull(input.momentum.value.squeezeMomentum, 4) : null,
+      normalizedMomentum: roundOrNull(momentumOutcome.normalizedMomentum, 3),
+      normalizedMomentumCapped: momentumOutcome.normalizedMomentumCapped,
+      relativeVolume: input.momentum.status === 'available' ? roundOrNull(input.momentum.value.relativeVolume, 4) : null,
+      confirmation: roundOrNull(momentumOutcome.confirmation, 4),
     },
     macro: { benchmarks: macroOutcome.benchmarks ?? [] },
+    provenance,
     gates: { ivWarning: ivWarningReasons.length > 0, ivWarningReasons, downgrades },
   };
 
@@ -661,8 +1164,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     ...base,
     status: 'available',
     signalType,
+    score,
     confidenceScore,
     underlyingBias,
+    liquidityGrade: liquidityOutcome?.grade ?? null,
     reasoning: buildReasoning({
       factors,
       signalType,
@@ -673,6 +1178,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       penalties,
       daysToEarnings,
       pricingReason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
+      percentilePending: input.ivPercentilePending ?? null,
+      liquidity: liquidityOutcome,
+      staleMix: provenance.staleMix,
+      spreadHours: provenance.spreadHours,
     }),
     suggestedOptionsSetup: buildSetup(
       signalType,
@@ -680,6 +1189,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       ivLevel,
       input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       daysToEarnings,
+      liquidityOutcome,
     ),
     diagnostics,
   };
@@ -695,6 +1205,10 @@ function buildReasoning(context: {
   penalties: OptionsSignalPenalty[];
   daysToEarnings: number | null;
   pricingReason: string | null;
+  percentilePending: OptionsSignalInput['ivPercentilePending'];
+  liquidity: LiquidityOutcome | null;
+  staleMix: boolean;
+  spreadHours: number | null;
 }): OptionsSignalReason[] {
   const reasons: OptionsSignalReason[] = [];
   const supportive = context.underlyingBias === 'bullish' ? 1 : context.underlyingBias === 'bearish' ? -1 : 0;
@@ -727,6 +1241,31 @@ function buildReasoning(context: {
     });
   } else if (context.pricingReason) {
     reasons.push({ id: 'iv-unavailable', polarity: 'information', text: `Implied Volatility: ${context.pricingReason}` });
+  }
+
+  // "Needs N more days" is a schedule, not a failure, and reads very differently.
+  if (context.percentilePending && context.percentilePending.missingDays > 0) {
+    reasons.push({
+      id: 'iv-percentile-pending',
+      polarity: 'information',
+      text: `IV Percentile ต้องการข้อมูลอีก ${context.percentilePending.missingDays} วัน (มีแล้ว ${context.percentilePending.observations}/${context.percentilePending.required} วัน) จึงยังใช้เกณฑ์เทียบความผันผวนจริงไปก่อน`,
+    });
+  }
+
+  if (context.liquidity?.grade) {
+    reasons.push({
+      id: 'liquidity',
+      polarity: context.liquidity.grade === 'thin' ? 'caution' : 'information',
+      text: `สภาพคล่องของ chain: ${context.liquidity.detail}`,
+    });
+  }
+
+  if (context.staleMix) {
+    reasons.push({
+      id: 'stale-mix',
+      polarity: 'caution',
+      text: `แหล่งข้อมูลของสัญญาณนี้ต่างเวลากันถึง ${context.spreadHours ?? 0} ชั่วโมง จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`,
+    });
   }
 
   for (const warning of context.ivWarningReasons) {

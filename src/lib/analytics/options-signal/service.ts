@@ -135,5 +135,6 @@ export async function loadOptionsSignalContext(
         asOf: null,
       },
     realizedVolatility: underlying.realizedVolatility,
+    realizedVolatilityWindows: underlying.realizedVolatilityWindows,
   };
 }
