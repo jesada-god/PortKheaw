@@ -251,6 +251,56 @@ describe('the engine treats the two sides identically', () => {
     expect(down.diagnostics.availableWeight).toBe(up.diagnostics.availableWeight);
   });
 
+  it('mirrors a signal whose TREND is the factor pointing the other way', () => {
+    /*
+     * The trend veto reads one factor's sign against the aggregate and presses
+     * the score for it, which is exactly the shape a side-specific bug hides in.
+     * Both sides get a trend that disagrees by the same one-vote-in-three, and
+     * the two answers have to be reflections.
+     */
+    const up = calculateOptionsSignal({
+      ...bullishSide,
+      trend: available<TrendInput>({ close: 100, ema20: 105, ema50: 104 }),
+    });
+    const down = calculateOptionsSignal({
+      ...bearishSide,
+      trend: available<TrendInput>({ close: 100, ema20: 95, ema50: 96 }),
+    });
+    if (up.status !== 'available' || down.status !== 'available') throw new Error('expected signals');
+
+    expect(up.diagnostics.trendVeto.applied).toBe(true);
+    expect(down.diagnostics.trendVeto.applied).toBe(true);
+    expect(down.diagnostics.trendVeto.opposition).toBeCloseTo(up.diagnostics.trendVeto.opposition, 6);
+    expect(down.diagnostics.trendVeto.multiplier).toBeCloseTo(up.diagnostics.trendVeto.multiplier, 6);
+    expect(down.diagnostics.trendVeto.pointsBeforeVeto).toBe(-up.diagnostics.trendVeto.pointsBeforeVeto);
+    expect(down.diagnostics.rawDirectionPoints).toBe(-up.diagnostics.rawDirectionPoints);
+    expect(Math.abs(up.diagnostics.directionScore0to100 - 50))
+      .toBeCloseTo(Math.abs(down.diagnostics.directionScore0to100 - 50), 6);
+  });
+
+  it('mirrors a geometry that sits beyond what the contract can reach', () => {
+    // The reachability scaling is applied per SIDE, so it is the other place a
+    // one-sided mistake would live.
+    const up = calculateOptionsSignal({
+      ...bullishSide,
+      riskReward: available<RiskRewardInput>({
+        price: 100, support: 95, resistance: 120, atr: 3, expectedMove: 2, expectedMoveDte: 45,
+      }),
+    });
+    const down = calculateOptionsSignal({
+      ...bearishSide,
+      riskReward: available<RiskRewardInput>({
+        price: 100, support: 80, resistance: 105, atr: 3, expectedMove: 2, expectedMoveDte: 45,
+      }),
+    });
+    if (up.status !== 'available' || down.status !== 'available') throw new Error('expected signals');
+    expect(up.diagnostics.riskReward.reachability).toBeLessThan(1);
+    expect(down.diagnostics.riskReward.reachability)
+      .toBeCloseTo(up.diagnostics.riskReward.reachability, 6);
+    expect(down.diagnostics.factors.riskReward.points)
+      .toBe(-(up.diagnostics.factors.riskReward.points as number));
+  });
+
   it('mirrors the published score about the midpoint, to the point', () => {
     const up = calculateOptionsSignal(bullishSide);
     const down = calculateOptionsSignal(bearishSide);

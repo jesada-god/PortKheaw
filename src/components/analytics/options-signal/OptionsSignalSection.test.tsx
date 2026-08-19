@@ -84,6 +84,7 @@ const eliteSignal: OptionsSignalDto = {
       warnings: ['จำกัดความเสี่ยงต่อสถานะ'],
     },
     diagnostics: {
+      trendVeto: { applied: false, opposition: 0, multiplier: 1, pointsBeforeVeto: 0 },
       factors: {
         macro: factor('macro', 12, 20, 'SPY และ QQQ อยู่เหนือ EMA20'),
         trend: factor('trend', 18, 25, 'ราคาอยู่เหนือ EMA20 และ EMA50'),
@@ -109,6 +110,7 @@ const eliteSignal: OptionsSignalDto = {
         primeBlockers: ['CONFIDENCE_BELOW_PRIME'],
       },
       riskReward: {
+        reachability: 1,
         price: 110,
         support: 105,
         resistance: 122,

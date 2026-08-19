@@ -391,6 +391,12 @@ export interface RiskRewardOutcome extends FactorOutcome {
   expectedMove: number | null;
   expectedMoveDte: number | null;
   expectedMoveHorizonWarning: string | null;
+  /**
+   * How much of the scored side's geometry survived the reachability test, in
+   * (0, 1]. 1 when the target sits inside the expected move, or when there is no
+   * expected move to judge it against.
+   */
+  reachability: number;
 }
 
 /** How workable a side is on its own terms: 0 at 1:1, 1 at the saturation ratio. */
@@ -436,6 +442,7 @@ export function scoreRiskReward(
     expectedMove: null,
     expectedMoveDte: null,
     expectedMoveHorizonWarning: null,
+    reachability: 1,
   };
   const price = finite(input.price);
   if (price === null || price <= 0) return empty;
@@ -482,10 +489,33 @@ export function scoreRiskReward(
       ? `แนวรับอยู่ไกล ${round(downsideExpectedMoves, 2)} เท่าของ Expected Move`
       : null,
   ].filter((part): part is string => part !== null);
+  /*
+   * The warning stays, and it now describes something that HAPPENED rather than
+   * something the reader has to correct for themselves. The old sentence said
+   * the ratio "ดูดีเกินจริง" beside a factor that had just published its full
+   * value anyway; the score is scaled for it below, so the sentence says that.
+   */
   const expectedMoveHorizonWarning = beyond.length === 0
     ? null
     : `${beyond.join(' และ ')} · สัญญาที่ใช้อ้างอิงเหลืออายุ ${expectedMoveDte ?? '—'} วัน `
-      + 'ราคาจึงมีโอกาสน้อยที่จะไปถึงก่อนหมดอายุ และ R:R ที่วัดจากระยะนี้จะดูดีเกินจริง';
+      + 'ราคาจึงมีโอกาสน้อยที่จะไปถึงก่อนหมดอายุ คะแนน R:R ฝั่งที่ใช้ตัดสินจึงถูกลดทอนตามสัดส่วนแล้ว';
+
+  /*
+   * How much of a side's geometry is actually reachable before expiry.
+   *
+   * `reachableWithin` expected moves is full weight; past it the contribution
+   * falls off as `reachableWithin / distance`, so a target 3 expected moves away
+   * carries half and one 15 away carries a tenth. It never reaches zero and it
+   * never changes a sign: the level is real, the ratio measured against it is
+   * real, and what is in doubt is whether this instrument lives long enough for
+   * either to matter.
+   *
+   * Same function for both sides, so the put and call frames stay mirrors.
+   */
+  const reachabilityOf = (distanceInExpectedMoves: number | null): number => {
+    if (distanceInExpectedMoves === null || distanceInExpectedMoves <= expectedMoveConfig.reachableWithin) return 1;
+    return clamp(expectedMoveConfig.reachableWithin / distanceInExpectedMoves, 0, 1);
+  };
 
   const geometry = {
     upsidePercent: upside,
@@ -518,6 +548,8 @@ export function scoreRiskReward(
       detail: `ไม่พบแนวต้านเหนือราคา (ราคาอยู่บริเวณจุดสูงสุด) · ${distanceText}`,
       scoredSide: 'call',
       setupQuality: 1,
+      // No level at all is not a level too far away; there is nothing to reach.
+      reachability: 1,
     };
   }
   if (downside === null) {
@@ -527,27 +559,30 @@ export function scoreRiskReward(
       detail: `ไม่พบแนวรับใต้ราคา · ความเสี่ยงฝั่งลงเปิดกว้าง · ${distanceText}`,
       scoredSide: 'put',
       setupQuality: 1,
+      reachability: 1,
     };
   }
   if (upside === 0 && downside === 0) {
-    return { ...geometry, normalized: 0, detail: 'ราคาติดทั้งแนวรับและแนวต้าน', scoredSide: null, setupQuality: 0 };
+    return { ...geometry, normalized: 0, detail: 'ราคาติดทั้งแนวรับและแนวต้าน', scoredSide: null, setupQuality: 0, reachability: 1 };
   }
   if (downside === 0) {
     return {
       ...geometry,
-      normalized: 1,
+      normalized: reachabilityOf(upsideExpectedMoves),
       detail: `ราคาอยู่ที่แนวรับ ระยะถึงแนวต้าน ${percent(upside)}`,
       scoredSide: 'call',
       setupQuality: 1,
+      reachability: reachabilityOf(upsideExpectedMoves),
     };
   }
   if (upside === 0) {
     return {
       ...geometry,
-      normalized: -1,
+      normalized: -reachabilityOf(downsideExpectedMoves),
       detail: `ราคาอยู่ที่แนวต้าน ระยะถึงแนวรับ ${percent(downside)}`,
       scoredSide: 'put',
       setupQuality: 1,
+      reachability: reachabilityOf(downsideExpectedMoves),
     };
   }
 
@@ -570,25 +605,39 @@ export function scoreRiskReward(
    */
   const tilt = clamp(Math.log((callRewardRisk as number)) / Math.log(config.tiltSaturationRatio), -1, 1);
 
+  /** Said once, in the factor's own sentence, whenever the scaling actually bit. */
+  const reachText = (reachability: number, distance: number | null) => (
+    reachability >= 1 || distance === null
+      ? ''
+      : ` · เป้าหมายอยู่ไกล ${round(distance, 2)} เท่าของ Expected Move `
+        + `จึงคิดคะแนน R:R เพียง ${Math.round(reachability * 100)}%`
+  );
+
   if (direction === 'bullish') {
+    const reachability = reachabilityOf(upsideExpectedMoves);
     return {
       ...geometry,
-      normalized: tilt,
+      normalized: tilt * reachability,
       scoredSide: 'call',
       setupQuality: callQuality,
-      detail: `หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · ${distanceText} · ${ratioText}${expectedMoveText}`,
+      reachability,
+      detail: `หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · ${distanceText} · ${ratioText}${expectedMoveText}`
+        + reachText(reachability, upsideExpectedMoves),
     };
   }
   if (direction === 'bearish') {
     // Mirror image: a strong PUT reward:risk is strong evidence for the bearish
     // thesis, and carries the same magnitude a strong call R:R would carry up.
     const putTilt = clamp(Math.log((putRewardRisk as number)) / Math.log(config.tiltSaturationRatio), -1, 1);
+    const reachability = reachabilityOf(downsideExpectedMoves);
     return {
       ...geometry,
-      normalized: -putTilt,
+      normalized: -putTilt * reachability,
       scoredSide: 'put',
       setupQuality: putQuality,
-      detail: `หลักฐานอื่นชี้ขาลง จึงวัดจากฝั่ง Put · ${distanceText} · ${ratioText}${expectedMoveText}`,
+      reachability,
+      detail: `หลักฐานอื่นชี้ขาลง จึงวัดจากฝั่ง Put · ${distanceText} · ${ratioText}${expectedMoveText}`
+        + reachText(reachability, downsideExpectedMoves),
     };
   }
 
@@ -603,12 +652,21 @@ export function scoreRiskReward(
   const qualityText = workable
     ? `ฝั่งที่ใช้ได้คือ ${(putRewardRisk ?? 0) > (callRewardRisk ?? 0) ? 'Put' : 'Call'} (R:R ${round(bestRatio, 2)}) แต่หลักฐานอื่นยังไม่เลือกทาง จึงยังไม่นับเป็นคะแนนทิศทางเต็ม`
     : 'ยังไม่มีฝั่งไหนที่ระยะทำกำไรคุ้มความเสี่ยง และหลักฐานอื่นยังไม่เลือกทาง';
+  /*
+   * No side was chosen, so the residual tilt is judged against the target it
+   * leans toward — the resistance when it leans up, the support when it leans
+   * down. Mirrored, like everything else on this path.
+   */
+  const residualDistance = tilt >= 0 ? upsideExpectedMoves : downsideExpectedMoves;
+  const reachability = reachabilityOf(residualDistance);
   return {
     ...geometry,
-    normalized: tilt * config.sidewaysDamping,
+    normalized: tilt * config.sidewaysDamping * reachability,
     scoredSide: null,
     setupQuality: bestQuality,
-    detail: `${distanceText} · ${ratioText} · ${qualityText}${expectedMoveText}`,
+    reachability,
+    detail: `${distanceText} · ${ratioText} · ${qualityText}${expectedMoveText}`
+      + reachText(reachability, residualDistance),
   };
 }
 
@@ -784,11 +842,42 @@ export function directionScoreOutOf100(rawScore: number, maximumAbsolute: number
 }
 
 /** The same conversion, written out for the reader. */
-export function directionScoreFormula(rawScore: number, maximumAbsolute: number): string {
+export function directionScoreFormula(
+  rawScore: number,
+  maximumAbsolute: number,
+  /**
+   * The trend veto, when one applied. Printed as its own step rather than folded
+   * into `rawScore`, because a reader who adds up the five factor rows on the
+   * card must land on the number this formula starts from — a formula that
+   * silently began from an already-attenuated total would be the second time
+   * this card printed arithmetic that does not reconcile with itself.
+   */
+  veto: { pointsBefore: number; multiplier: number } | null = null,
+): string {
   const raw = round(finite(rawScore) ?? 0, 0);
   const maxAbs = round(finite(maximumAbsolute) ?? 0, 0);
   const signed = `${raw > 0 ? '+' : ''}${raw}`;
-  return `(${signed} + ${maxAbs}) ÷ (2 × ${maxAbs}) × 100 = ${directionScoreOutOf100(raw, maxAbs)}`;
+  const conversion = `(${signed} + ${maxAbs}) ÷ (2 × ${maxAbs}) × 100 = ${directionScoreOutOf100(raw, maxAbs)}`;
+  if (!veto) return conversion;
+  const before = round(veto.pointsBefore, 0);
+  return `${before > 0 ? '+' : ''}${before} × ${round(veto.multiplier, 2)} (แนวโน้มสวนทาง) = ${signed} · ${conversion}`;
+}
+
+/**
+ * How hard the trend disagrees with a direction, in [0, 1].
+ *
+ * 0 when the trend agrees, is flat, or was not measured. 1 when it points fully
+ * the other way. Nothing else in the engine reads the trend's own sign against
+ * the aggregate, so this is the one place that comparison is written down.
+ */
+export function trendOppositionAgainst(
+  trend: { points: number | null; maxPoints: number },
+  bias: UnderlyingBias,
+): number {
+  if (bias === 'neutral' || trend.points === null || trend.points === 0 || trend.maxPoints <= 0) return 0;
+  const wanted = bias === 'bullish' ? 1 : -1;
+  if (Math.sign(trend.points) === wanted) return 0;
+  return clamp(Math.abs(trend.points) / trend.maxPoints, 0, 1);
 }
 
 /**
@@ -1019,6 +1108,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       riskReward: factor('riskReward', input.riskReward),
     },
     rawDirectionPoints: 0,
+    trendVeto: { applied: false, opposition: 0, multiplier: 1, pointsBeforeVeto: 0 },
     availableWeight: 0,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100: 50,
@@ -1031,6 +1121,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     penaltyTotal: 0,
     dataSufficiency: { passed: false, missing: [], primeEligible: false, primeBlockers: ['data-insufficient'] },
     riskReward: {
+      reachability: 1,
       price: null, support: null, resistance: null, upsidePercent: null,
       downsidePercent: null, callRewardRisk: null, putRewardRisk: null,
       scoredSide: null, setupQuality: null, upsideAtr: null, downsideAtr: null,
@@ -1169,7 +1260,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       downsidePercent: null, callRewardRisk: null, putRewardRisk: null, scoredSide: null,
       setupQuality: null, upsideAtr: null, downsideAtr: null,
       upsideExpectedMoves: null, downsideExpectedMoves: null, expectedMove: null,
-      expectedMoveDte: null, expectedMoveHorizonWarning: null,
+      expectedMoveDte: null, expectedMoveHorizonWarning: null, reachability: 1,
     } satisfies RiskRewardOutcome;
 
   const factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore> = {
@@ -1185,10 +1276,34 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
 
   const availableWeight = entries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
-  const directionScore = entries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
+  const summedPoints = entries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const absoluteScore = entries.reduce((sum, factor) => sum + Math.abs(factor.points ?? 0), 0);
+
+  /*
+   * --- The trend veto -----------------------------------------------------
+   *
+   * Two passes, and they cannot be collapsed into one: the veto asks whether the
+   * trend opposes the direction, and the direction is not known until the points
+   * have been summed. So the summed total names a PROVISIONAL bias, the veto is
+   * measured against that, and the attenuated total is what everything published
+   * is then computed from.
+   *
+   * The attenuation only ever shrinks the total toward zero, so the provisional
+   * bias and the final bias can never disagree about SIDE — only about whether
+   * there is enough left to call one at all. There is no second pass to run.
+   */
+  const provisionalBias = biasFromDirectionBalance(directionBalance(summedPoints, availableWeight));
+  const trendOpposition = trendOppositionAgainst(factors.trend, provisionalBias);
+  const vetoMultiplier = 1 - config.trendVeto.strength * trendOpposition;
+  const directionScore = summedPoints * vetoMultiplier;
+  const trendVetoApplied = trendOpposition > 0 && vetoMultiplier < 1;
+
   const directionScore0to100 = directionScoreOutOf100(directionScore, availableWeight);
-  const scoreFormula = directionScoreFormula(directionScore, availableWeight);
+  const scoreFormula = directionScoreFormula(
+    directionScore,
+    availableWeight,
+    trendVetoApplied ? { pointsBefore: summedPoints, multiplier: vetoMultiplier } : null,
+  );
   // Internal only. See `directionBalance`: the thresholds below are written on
   // this ruler and were not restated, so nothing about the gating changes here.
   const balance = directionBalance(directionScore, availableWeight);
@@ -1196,7 +1311,16 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
 
   // --- Stage 2: signal quality -------------------------------------------
   const coverage = availableWeight / OPTIONS_SIGNAL_TOTAL_WEIGHT;
-  const agreement = absoluteScore > 0 ? Math.abs(directionScore) / absoluteScore : 0;
+  /*
+   * Agreement is measured on the SUMMED points, before the veto.
+   *
+   * The veto is a statement about the headline, not a new piece of evidence, and
+   * running it through agreement would push it into confidence as well — where
+   * `macro-trend-conflict` already deducts for this same disagreement. One
+   * disagreement, two numbers, would be the double-count this change was
+   * explicitly not meant to introduce.
+   */
+  const agreement = absoluteScore > 0 ? Math.abs(summedPoints) / absoluteScore : 0;
   const evidenceStrength = availableWeight > 0 ? clamp(absoluteScore / availableWeight, 0, 1) : 0;
 
   const pricing = input.pricing.status === 'available' ? input.pricing.value : null;
@@ -1286,6 +1410,17 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const diagnostics: OptionsSignalDiagnostics = {
     factors,
     rawDirectionPoints: round(directionScore, 0),
+    /*
+     * The veto, stated whether or not it fired. A block that only appears when
+     * a score was pressed down is a block a reader cannot use to tell "the trend
+     * agreed" from "nobody checked".
+     */
+    trendVeto: {
+      applied: trendVetoApplied,
+      opposition: round(trendOpposition, 3),
+      multiplier: round(vetoMultiplier, 3),
+      pointsBeforeVeto: round(summedPoints, 0),
+    },
     availableWeight,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100,
@@ -1319,6 +1454,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       expectedMove: roundOrNull(riskRewardOutcome.expectedMove, 4),
       expectedMoveDte: riskRewardOutcome.expectedMoveDte,
       expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
+      reachability: round(riskRewardOutcome.reachability, 3),
       state: input.riskReward.state,
     },
     iv: {
@@ -1391,6 +1527,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       pricingReason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       percentilePending: input.ivPercentilePending ?? null,
       historyDegraded: input.historyDegraded === true,
+      trendVeto: { applied: trendVetoApplied, multiplier: vetoMultiplier },
       liquidity: liquidityOutcome,
       expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       staleMix: provenance.staleMix,
@@ -1420,6 +1557,7 @@ function buildReasoning(context: {
   pricingReason: string | null;
   percentilePending: OptionsSignalInput['ivPercentilePending'];
   historyDegraded: boolean;
+  trendVeto: { applied: boolean; multiplier: number } | null;
   liquidity: LiquidityOutcome | null;
   expectedMoveHorizonWarning: string | null;
   staleMix: boolean;
@@ -1475,6 +1613,16 @@ function buildReasoning(context: {
       id: 'iv-percentile-pending',
       polarity: 'information',
       text: `IV Percentile ต้องการข้อมูลอีก ${context.percentilePending.missingDays} วัน (มีแล้ว ${context.percentilePending.observations}/${context.percentilePending.required} วัน) จึงยังใช้เกณฑ์เทียบความผันผวนจริงไปก่อน`,
+    });
+  }
+
+  if (context.trendVeto?.applied) {
+    reasons.push({
+      id: 'trend-veto',
+      polarity: 'caution',
+      text: `แนวโน้มของหุ้น (${FACTOR_LABELS.trend}) สวนกับทิศทางที่ปัจจัยอื่นรวมกันชี้ `
+        + `จึงลดคะแนนทิศทางลงเหลือ ${Math.round(context.trendVeto.multiplier * 100)}% `
+        + 'ก่อนตัดสินป้ายกำกับ ไม่ได้ตัดทิ้งและไม่ได้กลับข้าง',
     });
   }
 

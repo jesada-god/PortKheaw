@@ -348,6 +348,20 @@ export interface OptionsSignalDiagnostics {
    * and `directionScore0to100` is those two put on the ruler every surface uses.
    */
   rawDirectionPoints: number;
+  /**
+   * The trend veto: how far the heaviest factor disagreed with the direction the
+   * others summed to, and what that did to the score.
+   *
+   * `pointsBeforeVeto × multiplier = rawDirectionPoints`. `opposition` is 0 when
+   * the trend agreed, was flat, or was not measured; `applied` distinguishes
+   * "checked, and the trend agreed" from "not checked".
+   */
+  trendVeto: {
+    applied: boolean;
+    opposition: number;
+    multiplier: number;
+    pointsBeforeVeto: number;
+  };
   availableWeight: number;
   totalWeight: number;
   /** `(rawDirectionPoints + availableWeight) / (2 * availableWeight) * 100`. */
@@ -393,6 +407,12 @@ export interface OptionsSignalDiagnostics {
      * measured against a target the instrument will not live to see.
      */
     expectedMoveHorizonWarning: string | null;
+    /**
+     * The fraction of the scored side's geometry that survived the reachability
+     * scaling, in (0, 1]. 1 when the target sits inside the expected move, or
+     * when no expected move was available to judge it against.
+     */
+    reachability: number;
     state: OptionsSignalDataState;
   };
   iv: {

@@ -346,17 +346,33 @@ const PRIME = new Set<OptionsSignalType>(['PRIME_CALL', 'PRIME_PUT']);
 // Run
 // ---------------------------------------------------------------------------
 
-async function loadNearestChain(symbol: string): Promise<{ chain: OptionsChain; result: OptionsSrResult } | null> {
+const daysBetween = (from: string, to: string) =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+async function loadNearestChain(
+  symbol: string,
+): Promise<{ chain: OptionsChain; result: OptionsSrResult; expectedMoveChain: OptionsChain | null } | null> {
   try {
     const service = getOptionsMarketDataService();
     const expirations = await service.getExpirations(symbol);
     const today = new Date().toISOString().slice(0, 10);
-    const nearest = [...new Set(expirations.data.expirations)].filter((value) => value >= today).sort()[0];
+    const future = [...new Set(expirations.data.expirations)].filter((value) => value >= today).sort();
+    const nearest = future[0];
     if (!nearest) return null;
     const chainResult = await service.getChain(symbol, nearest);
     const chain = chainResult.data;
+    // Same second chain the server reads the expected move from, or the run
+    // would be measuring a model the product does not ship.
+    const horizon = OPTIONS_SIGNAL_CONFIG.expectedMove.horizonDays;
+    const target = future.reduce((best, value) => (
+      Math.abs(daysBetween(today, value) - horizon) < Math.abs(daysBetween(today, best) - horizon) ? value : best
+    ), nearest);
+    const expectedMoveChain = target === nearest
+      ? null
+      : (await service.getChain(symbol, target).catch(() => null))?.data ?? null;
     return {
       chain,
+      expectedMoveChain,
       result: computeOptionsSupportResistance({
         symbol: chain.underlyingSymbol, expiration: chain.expiration, acceptedPrice: chain.spot,
         calls: chain.calls, puts: chain.puts, provider: chain.provider, asOf: chain.asOf, status: chain.status,
@@ -398,6 +414,7 @@ async function main() {
         chain: options?.chain ?? null,
         optionsSr: options?.result ?? null,
         acceptedPrice: options?.chain.spot ?? null,
+        expectedMoveChain: options?.expectedMoveChain ?? null,
         // No history yet by construction: this is the cold-start distribution,
         // which is the one that ships.
         ownHistory: { atmIv: [], putCallRatio: [] },

@@ -5,6 +5,7 @@ import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
 import { assembleOptionsSignalInput } from './assemble';
 import { calculateOptionsSignal } from './calculations';
+import { OPTIONS_SIGNAL_CONFIG } from './config';
 import { loadOptionsSignalContext } from './service';
 import { readOwnHistory, recordOptionsSignal } from './signal-history';
 import { getOptionsSignalHistoryHealth, getOptionsSignalHistoryStore } from './signal-history-repository';
@@ -32,20 +33,57 @@ export interface ServerOptionsSignal {
   expiration: string | null;
 }
 
-async function loadNearestChain(symbol: string): Promise<{ chain: OptionsChain; result: OptionsSrResult } | null> {
+/** Calendar days between two `YYYY-MM-DD` dates. */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+async function loadNearestChain(
+  symbol: string,
+): Promise<{ chain: OptionsChain; result: OptionsSrResult; expectedMoveChain: OptionsChain | null } | null> {
   try {
     const service = getOptionsMarketDataService();
     const expirations = await service.getExpirations(symbol);
     const today = new Date().toISOString().slice(0, 10);
-    const nearest = [...new Set(expirations.data.expirations)]
+    const future = [...new Set(expirations.data.expirations)]
       .filter((value) => value >= today)
-      .sort()[0];
+      .sort();
+    const nearest = future[0];
     if (!nearest) return null;
+
+    /*
+     * A SECOND expiration, near the horizon the card's own SETUP section
+     * recommends, read only for the expected move.
+     *
+     * Every other options factor stays on the front chain: that is the book a
+     * reader is looking at, and its liquidity, positioning and implied
+     * volatility are facts about it. The expected move is different — it is the
+     * yardstick the confirmed daily support and resistance are held against, and
+     * a 0-DTE straddle is simply the wrong ruler for a swing level. Reading it
+     * at the front expiration made the "further than this option can reach"
+     * warning fire on 24 of 30 tickers; at the recommended horizon, 3.
+     */
+    const horizon = OPTIONS_SIGNAL_CONFIG.expectedMove.horizonDays;
+    const expectedMoveExpiration = future.length
+      ? future.reduce((best, value) => (
+        Math.abs(daysBetween(today, value) - horizon) < Math.abs(daysBetween(today, best) - horizon) ? value : best
+      ), future[0])
+      : null;
 
     const chainResult = await service.getChain(symbol, nearest);
     const chain = chainResult.data;
+    /*
+     * Failing to resolve it costs the expected-move comparison, never the card:
+     * the risk/reward factor already reports its distances in ATR and in percent
+     * without one.
+     */
+    const expectedMoveChain = expectedMoveExpiration === null || expectedMoveExpiration === nearest
+      ? null
+      : (await service.getChain(symbol, expectedMoveExpiration).catch(() => null))?.data ?? null;
+
     return {
       chain,
+      expectedMoveChain,
       result: computeOptionsSupportResistance({
         symbol: chain.underlyingSymbol,
         expiration: chain.expiration,
@@ -87,6 +125,7 @@ export async function computeServerOptionsSignal(symbol: string): Promise<Server
     chain: options?.chain ?? null,
     optionsSr: options?.result ?? null,
     acceptedPrice: options?.chain.spot ?? null,
+    expectedMoveChain: options?.expectedMoveChain ?? null,
     // This symbol's own recorded readings are what make a raw IV or a raw
     // Put/Call comparable at all.
     ownHistory,
