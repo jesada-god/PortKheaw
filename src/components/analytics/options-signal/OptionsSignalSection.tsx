@@ -207,21 +207,43 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
           * modal was showing the signed sum. Both now come from the payload, the
           * direction score is the SAME field the modal renders, and each carries
           * the word for what it measures so no reader has to guess which is which.
+          *
+          * LABELLING THEM WAS NOT ENOUGH, and this is the second fix.
+          *
+          * The pair used to be two right-aligned blocks 16px apart, which put
+          * the two value runs on one line as `63 / 100  60 / 100` — a single
+          * strip of digits whose only break was smaller than the distance from
+          * either number to the word above it. Measured in Chrome at both 1280px
+          * and 380px: 16px between the groups against a 22px label-to-value
+          * distance inside each one, so by proximity alone the numbers belonged
+          * to each other more than to their own labels, and `63` read as
+          * Confidence's as easily as the score's.
+          *
+          * Each pair is now ONE column that centres its value under its own
+          * label (measured offset 0.0px, was 4.7px), the groups are separated by
+          * 33px AND a hairline rule, and the hint moved onto the word it
+          * explains so the value line is a clean number in both columns.
           */}
-        <div className="flex items-end gap-4">
-          <p className="text-right">
-            <span className="block text-[11px] font-normal text-slate-400">คะแนนทิศทาง</span>
-            <span className="font-mono text-lg font-bold text-white" data-testid="options-signal-score-card">
-              {summary.directionScore0to100 ?? '—'}
+        <div className="flex items-stretch text-center">
+          <p className="flex flex-col items-center gap-0.5 pr-4">
+            <span className="text-[11px] font-normal leading-tight text-slate-400">คะแนนทิศทาง</span>
+            <span className="font-mono leading-tight">
+              <span className="text-lg font-bold text-white" data-testid="options-signal-score-card">
+                {summary.directionScore0to100 ?? '—'}
+              </span>
+              <span className="text-sm font-normal text-slate-400"> / 100</span>
             </span>
-            <span className="text-sm font-normal text-slate-400"> / 100</span>
           </p>
-          <p className="text-right">
-            <span className="block text-[11px] font-normal text-slate-400">Confidence</span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="font-mono text-lg font-bold text-white">{summary.confidenceScore}</span>
-              <span className="text-sm font-normal text-slate-400">/ 100</span>
+          <p className="flex flex-col items-center gap-0.5 border-l border-white/15 pl-4">
+            <span className="inline-flex items-center gap-1 text-[11px] font-normal leading-tight text-slate-400">
+              Confidence
               <InfoHint term="optionsSignalConfidence" align="end" />
+            </span>
+            <span className="font-mono leading-tight">
+              <span className="text-lg font-bold text-white" data-testid="options-signal-confidence-card">
+                {summary.confidenceScore}
+              </span>
+              <span className="text-sm font-normal text-slate-400"> / 100</span>
             </span>
           </p>
         </div>
@@ -269,7 +291,7 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
       </dl>
 
       <dl className="mt-4 space-y-1.5 border-t border-white/10 pt-3 text-sm">
-        <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1">
           <dt className="flex items-center gap-1.5 text-slate-300">
             {ivBasisLabel(iv.basis)}
             <InfoHint term="ivRank" />
@@ -284,7 +306,7 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
             <DataStatusBadge status={displayStatusOf(iv.state)} />
           </dd>
         </div>
-        <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1">
           <dt className="flex items-center gap-1.5 text-slate-300">
             Earnings
             <InfoHint term="daysToEarnings" />
@@ -391,7 +413,7 @@ function Header({ timeframe }: { timeframe: string }) {
 function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
   const copy = FACTOR_COPY[factor.id];
   return (
-    <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+    <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
       <dt className="flex items-center gap-1.5 text-slate-300">
         {copy.label}
         {factor.partial && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}

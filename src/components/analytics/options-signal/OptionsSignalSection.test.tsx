@@ -378,6 +378,44 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(container.textContent).toContain('74');
   });
 
+  /*
+   * Labelling the two numbers was not enough to pair them.
+   *
+   * They used to be two right-aligned blocks 16px apart, which printed the value
+   * runs as one strip — `82 / 100  74 / 100` — whose only break was smaller than
+   * the distance from either number to the word above it. Chrome at 1280px and
+   * at 380px measured 16px between the groups against 22px inside each one, so
+   * by proximity the numbers belonged to each other rather than to their labels.
+   *
+   * Geometry is not assertable in jsdom, so what is asserted here is the
+   * STRUCTURE that produced it: each number and the word for it are inside one
+   * container that holds no OTHER label, which is the property a reader relies
+   * on and the one a future layout edit would have to break deliberately.
+   */
+  it('keeps each headline number inside a container that holds only its own label', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+
+    const scoreGroup = container
+      .querySelector('[data-testid="options-signal-score-card"]')
+      ?.closest('p');
+    const confidenceGroup = container
+      .querySelector('[data-testid="options-signal-confidence-card"]')
+      ?.closest('p');
+
+    expect(scoreGroup).not.toBeNull();
+    expect(confidenceGroup).not.toBeNull();
+    expect(scoreGroup).not.toBe(confidenceGroup);
+
+    expect(scoreGroup?.textContent).toContain('คะแนนทิศทาง');
+    expect(scoreGroup?.textContent).toContain('82');
+    expect(scoreGroup?.textContent).not.toContain('Confidence');
+
+    expect(confidenceGroup?.textContent).toContain('Confidence');
+    expect(confidenceGroup?.textContent).toContain('74');
+    expect(confidenceGroup?.textContent).not.toContain('คะแนนทิศทาง');
+  });
+
   it('shows the card score to a Pro reader who has no breakdown at all', async () => {
     await renderFor('pro');
     // The score lives in the SUMMARY precisely so this reader still sees it.
