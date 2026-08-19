@@ -99,6 +99,10 @@ interface Row {
   rrPut: number | null;
   supportAgeDays: number | null;
   resistanceAgeDays: number | null;
+  supportTouches: number | null;
+  resistanceTouches: number | null;
+  supportStrength: number | null;
+  resistanceStrength: number | null;
   dte: number | null;
 }
 
@@ -157,6 +161,10 @@ async function main() {
         rrPut: diagnostics.putRewardRisk,
         supportAgeDays: supportZone?.latestTouchAt ? daysBetween(supportZone.latestTouchAt, latestDate) : null,
         resistanceAgeDays: resistanceZone?.latestTouchAt ? daysBetween(resistanceZone.latestTouchAt, latestDate) : null,
+        supportTouches: supportZone?.touches ?? null,
+        resistanceTouches: resistanceZone?.touches ?? null,
+        supportStrength: supportZone?.strengthScore ?? null,
+        resistanceStrength: resistanceZone?.strengthScore ?? null,
         dte: chainInfo ? chainDte(chainInfo.chain) : null,
       });
       void atmStraddleExpectedMove;
@@ -169,14 +177,36 @@ async function main() {
   process.stderr.write('\n');
 
   console.log('## Per symbol\n');
-  console.log('| symbol | bars fed | up % | down % | up ATR | down ATR | up EM | down EM | rrCall | rrPut | support age (d) | resist age (d) | DTE |');
-  console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  console.log('| symbol | up % | down % | up ATR | down ATR | rrCall | sup age (d) | sup touches | sup strength | res age (d) | res touches | res strength |');
+  console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const row of rows) {
     const cell = (value: number | null) => value === null ? '—' : String(round(value, 2));
-    console.log(`| ${row.symbol} | ${row.barsFed} | ${cell(row.upsidePercent)} | ${cell(row.downsidePercent)} `
-      + `| ${cell(row.upsideAtr)} | ${cell(row.downsideAtr)} | ${cell(row.upsideEm)} | ${cell(row.downsideEm)} `
-      + `| ${cell(row.rrCall)} | ${cell(row.rrPut)} | ${cell(row.supportAgeDays)} | ${cell(row.resistanceAgeDays)} | ${cell(row.dte)} |`);
+    console.log(`| ${row.symbol} | ${cell(row.upsidePercent)} | ${cell(row.downsidePercent)} `
+      + `| ${cell(row.upsideAtr)} | ${cell(row.downsideAtr)} | ${cell(row.rrCall)} `
+      + `| ${cell(row.supportAgeDays)} | ${cell(row.supportTouches)} | ${cell(row.supportStrength)} `
+      + `| ${cell(row.resistanceAgeDays)} | ${cell(row.resistanceTouches)} | ${cell(row.resistanceStrength)} |`);
   }
+
+  /*
+   * The cohort that looks like the case this whole rework came from: a call
+   * reward:risk under 0.5, i.e. price much nearer its resistance than its
+   * support. The baseline test fixture is hand-built and has no symbol behind
+   * it, so this is the closest thing to asking "do real charts of that shape sit
+   * on stale levels?".
+   */
+  const lopsided = rows.filter((row) => row.rrCall !== null && row.rrCall < 0.5);
+  console.log('\n## Lopsided cohort (rrCall < 0.5) — the shape of the reported case\n');
+  console.log('| symbol | rrCall | down % | down ATR | sup age (d) | sup touches | sup strength | res age (d) |');
+  console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  for (const row of lopsided) {
+    const cell = (value: number | null) => value === null ? '—' : String(round(value, 2));
+    console.log(`| ${row.symbol} | ${cell(row.rrCall)} | ${cell(row.downsidePercent)} | ${cell(row.downsideAtr)} `
+      + `| ${cell(row.supportAgeDays)} | ${cell(row.supportTouches)} | ${cell(row.supportStrength)} `
+      + `| ${cell(row.resistanceAgeDays)} |`);
+  }
+  const lopsidedStale = lopsided.filter((row) => (row.supportAgeDays ?? 0) > 180 || (row.resistanceAgeDays ?? 0) > 180);
+  console.log(`\nof those, using a level older than 180 days: ${lopsidedStale.length}/${lopsided.length}`
+    + (lopsidedStale.length ? ` (${lopsidedStale.map((row) => row.symbol).join(', ')})` : ''));
 
   const usable = <K extends keyof Row>(key: K) =>
     rows.flatMap((row) => typeof row[key] === 'number' && Number.isFinite(row[key]) ? [row[key] as number] : []);
