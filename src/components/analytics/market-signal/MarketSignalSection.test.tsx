@@ -879,10 +879,20 @@ describe('MarketSignalSection', () => {
         expect(merged.textContent).toBe('ปิดล่าสุด 44.06 · ราคาตอนนี้ 43.85');
         expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
         expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
-        // The MARKS never collapse: the lines are the fact, the caption is the
-        // reading of it.
+        /*
+         * AND SO DO THE MARKS, at this width.
+         *
+         * These two prices put their marks 3.6px apart centre to centre on a
+         * 280px track, which is less than the marks are thick: the picture was
+         * drawing two lines that paint as one and telling the reader they were
+         * two. One mark, declared on the block, with both prices still named in
+         * the caption above it and in the sentence below.
+         */
         expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
-        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+        expect(zoneBar().querySelector('[data-marker="live"]')).toBeNull();
+        expect(zoneBar().getAttribute('data-markers-collapsed')).toBe('true');
+        expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
+          .toContain('ราคาตอนนี้ 43.85');
       });
 
       /*
@@ -908,18 +918,28 @@ describe('MarketSignalSection', () => {
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
         expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
         expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดล่าสุด 44.06');
-        // Both marks, still. Nothing about a caption that would not fit changes
-        // what the picture says happened.
+        // One mark at this width, for the same reason as the case above: 2.8px
+        // between two marks is one line. The close is the mark that survives,
+        // because it is the price every figure on the card is measured from.
         expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
-        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
-        // And the price the caption could not carry is in the sentence below.
+        expect(zoneBar().querySelector('[data-marker="live"]')).toBeNull();
+        // And the price neither the caption nor the picture could carry is in
+        // the sentence below, in full.
         expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
           .toContain('ราคาตอนนี้ 43.85');
       });
 
+      /*
+       * The other direction, and the reason both rules are measurements rather
+       * than thresholds: the same two prices on a track wide enough put 18px
+       * between the marks and 14px between the grown captions, so nothing
+       * collapses and nothing merges. One picture per width.
+       */
       it('keeps the two captions on the same prices once the bar is wide enough', async () => {
-        measuring(640, SEVEN_PX_PER_GLYPH);
+        measuring(1400, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
+        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+        expect(zoneBar().getAttribute('data-markers-collapsed')).toBe('false');
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
         expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดล่าสุด 44.06');
         expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 43.85');
@@ -1292,17 +1312,168 @@ describe('MarketSignalSection', () => {
      */
     it('warns that a zone standing on a new frame can still flip', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 45, frameAgeBars: 3 } });
-      expect(zoneBar().textContent).toContain('แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย');
+      expect(zoneBar().textContent).toContain('และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้');
     });
 
     it('warns when the zone itself is the new thing', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 1, frameAgeBars: 40 } });
+      expect(zoneBar().textContent).toContain('และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้');
+    });
+
+    /*
+     * A2 — the clause said something that had not happened.
+     *
+     * One sentence served all three zones: " แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย".
+     * On a sideways card the line above it reads "ราคายังอยู่ในกรอบเดิม" —
+     * nothing was crossed — so the two halves of one sentence contradicted each
+     * other and the half claiming an event was the false one. The word
+     * "ผ่าน" must not appear on a card where nothing was passed.
+     */
+    it('never claims something was crossed on a zone where nothing was', async () => {
+      await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 1, frameAgeBars: 1 } });
+      const text = zoneBar().textContent ?? '';
+      expect(text).toContain('ราคายังอยู่ในกรอบเดิม');
+      expect(text).not.toContain('เพิ่งผ่านมาไม่นาน');
+    });
+
+    it.each(['uptrend', 'downtrend'] as const)('keeps the crossing clause on %s, where something was crossed', async (zone) => {
+      await render({ ...zoned, zones: { ...zoned.zones!, zone, zoneAgeBars: 1, frameAgeBars: 40 } });
       expect(zoneBar().textContent).toContain('แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย');
     });
 
     it('stays quiet when both the zone and its frame have stood a while', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 45, frameAgeBars: 40 } });
       expect(zoneBar().textContent).not.toContain('เพิ่งผ่านมาไม่นาน');
+      expect(zoneBar().textContent).not.toContain('เพิ่งตั้งได้ไม่นาน');
+    });
+
+    /*
+     * A3 — the card's own question, on the zone that was not answering it.
+     *
+     * A sideways card carries no `actionable` rows (the engine publishes no
+     * invalidation for a zone that claims no direction), so it said where price
+     * was standing and stopped. "What has to happen for this to change?" is the
+     * question the whole block is for, and both numbers were already on the
+     * payload and already drawn on the bar.
+     */
+    it('says what would change a sideways zone, in the rule the engine uses', async () => {
+      await render(zoned);
+      const line = zoneBar().querySelector('[data-testid="signal-zone-change"]')!;
+      expect(line.textContent).toBe('โซนจะเปลี่ยนก็ต่อเมื่อราคาปิดเหนือ 47.24 หรือต่ำกว่า 38.26');
+      // Conditional, and naming no action: the row is a statement of the rule.
+      for (const banned of ['ควร', 'น่าจะ', 'รอซื้อ', 'ตั้ง stop']) {
+        expect(line.textContent, `"${banned}" is advice`).not.toContain(banned);
+      }
+    });
+
+    it.each(['uptrend', 'downtrend'] as const)('leaves that row off %s, where the actionable rows answer it', async (zone) => {
+      await render({ ...zoned, zones: { ...zoned.zones!, zone } });
+      expect(zoneBar().querySelector('[data-testid="signal-zone-change"]')).toBeNull();
+    });
+
+    /*
+     * B3 — the close is through an edge and the label has not followed.
+     *
+     * `pendingBreakout` is `zone !== 'uptrend' && close > upperTrigger`, so a
+     * SIDEWAYS zone whose close is already above the frame is a state the
+     * engine names, chips and writes a reason for. The headline over all of it
+     * still said "ราคายังอยู่ในกรอบเดิม" while the proximity line one row down
+     * said "ราคาเลยขอบกรอบมาแล้ว" — two sentences about one close, disagreeing
+     * about which side of a line it is on.
+     */
+    describe('when a close has gone through an edge but the label has not', () => {
+      const pendingUp: MarketSignalResult = {
+        ...zoned,
+        zones: {
+          ...zoned.zones!,
+          zone: 'sideways',
+          upperTrigger: 43.25,
+          referenceClose: 44.06,
+          upperDistance: -0.81,
+          upperDistanceAtr: -0.2,
+          nearestTriggerAtr: -0.2,
+          pendingBreakout: true,
+        },
+      };
+
+      it('never says price is still inside a frame it has closed through', async () => {
+        await render(pendingUp);
+        const text = zoneBar().textContent ?? '';
+        expect(text).toContain('ราคาปิดเลยขอบบนของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน');
+        expect(text).not.toContain('ราคายังอยู่ในกรอบเดิม');
+      });
+
+      it('stops naming a price the close has already passed as the thing to wait for', async () => {
+        await render(pendingUp);
+        const line = zoneBar().querySelector('[data-testid="signal-zone-change"]')!;
+        expect(line.textContent).toBe('ราคาปิดเลยขอบกรอบไปแล้ว โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้จนผ่านเงื่อนไขยืนยัน');
+        // The upper trigger must not be offered as a condition still ahead.
+        expect(line.textContent).not.toContain('43.25');
+      });
+
+      it('drops the freshness clause, which is about a settled zone being young', async () => {
+        await render({ ...pendingUp, zones: { ...pendingUp.zones!, zoneAgeBars: 1, frameAgeBars: 1 } });
+        expect(zoneBar().textContent).not.toContain('ยังไม่มีฝั่งไหนคุมได้');
+      });
+
+      it('says the mirror of it when the close has gone through the floor', async () => {
+        await render({
+          ...zoned,
+          zones: { ...zoned.zones!, zone: 'sideways', pendingBreakdown: true, referenceClose: 37.1 },
+        });
+        expect(zoneBar().textContent).toContain('ราคาปิดหลุดขอบล่างของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน');
+      });
+    });
+
+    /*
+     * B3 — SIDEWAYS with a lean. With zones on, structure names the label and
+     * the score describes the lean inside it, so "SIDEWAYS • Bullish Bias" is a
+     * normal reading — and the description under it flatly denied the two words
+     * above it.
+     */
+    /*
+     * B4 — one zone, two boundary prices, both on the card.
+     *
+     * `upperTrigger` is `resistance + buffer` and it is the cut the picture is
+     * drawn with; `actionable.invalidation` for an uptrend is `resistance`
+     * itself. That is deliberate hysteresis and it means the bar shows a cut at
+     * 47.24 while the row under it says the zone ends at 46.23 — two right
+     * numbers a buffer apart, with nothing saying they are different lines.
+     */
+    it('says the entry cut and the exit level are different lines on purpose', async () => {
+      await render({
+        ...zoned,
+        state: 'BULLISH',
+        bias: 'bullish',
+        zones: { ...zoned.zones!, zone: 'uptrend' },
+        actionable: {
+          invalidation: 46.2297, invalidationAtr: 0.45, invalidationPct: 4.13, invalidationBasis: 'zone_floor',
+          target: 58.51, targetAtr: 3.56, targetBasis: 'measured_move', targetIsConvention: true,
+          riskReward: 7.94, notes: [],
+        },
+      });
+      // Both numbers are on the card at once, which is why the explanation has
+      // to exist somewhere: the drawn cut and the printed level are a buffer
+      // apart and neither is wrong.
+      expect(zoneBar().textContent).toContain('47.24');
+      expect(zoneBar().textContent).toContain('46.23');
+
+      // It is in the dialog rather than on the card, because the card holds a
+      // four-line budget under the picture that the test above enforces.
+      expect(zoneBar().querySelector('[data-testid="signal-hysteresis-note"]')).toBeNull();
+      await act(async () => buttonContaining('ทำไม?').click());
+      const note = document.body.querySelector('[data-testid="signal-hysteresis-note"]')!;
+      expect(note.textContent).toContain('เป็นคนละราคาโดยตั้งใจ');
+      expect(note.textContent).toContain('ขอบที่วาดบนแถบคือเส้นเข้า');
+    });
+
+    it.each([
+      ['bullish', 'ขาขึ้น'],
+      ['bearish', 'ขาลง'],
+    ] as const)('does not deny a %s lean the headline is already showing', async (bias, direction) => {
+      await render({ ...zoned, bias, score: bias === 'bullish' ? 22 : -22 });
+      expect(container.textContent).toContain(`แต่คะแนนรวมเอนไปทาง${direction}`);
+      expect(container.textContent).not.toContain('ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน');
     });
 
     /*

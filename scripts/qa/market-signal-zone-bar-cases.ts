@@ -242,6 +242,32 @@ export const CASES: ZoneBarCase[] = [
     },
     livePrice: 42,
   },
+  /*
+   * ONE PIXEL APART, WHICH IS THE FALSIFICATION FIXTURE FOR THE MARKER RULE.
+   *
+   * Close 44.06, live 44.02: four hundredths on a frame nine units tall, which
+   * puts the two marks under a pixel apart at every width this harness renders
+   * and their painted edges overlapping. They are still two different prices —
+   * the sentence under the bar prints both in full — so this is not the
+   * `live-price-equals-the-close` case wearing different digits: the picture
+   * genuinely cannot carry a distinction that genuinely exists.
+   *
+   * The bar has to draw ONE mark here and say so on the block. Removing that
+   * collapse and re-running is the falsification: `markers-collide` fires on
+   * this case at all five widths in both appearances, because the two marks are
+   * then drawn 1px apart and the gap rule is measured on painted edges.
+   */
+  {
+    name: 'live-price-one-pixel-from-the-close',
+    result: {
+      ...base,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      score: 16,
+      zones: { ...zones, zone: 'sideways' },
+    },
+    livePrice: 44.02,
+  },
   {
     name: 'actionable-with-every-row',
     result: {

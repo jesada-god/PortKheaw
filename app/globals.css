@@ -319,8 +319,20 @@
    */
   [class~="bg-white/15"] { background-color: color-mix(in srgb, var(--text) 12%, transparent) !important; }
   [class~="bg-white/90"] { background-color: var(--text) !important; }
-  [class~="bg-white/40"],
-  [class~="bg-white/45"] { background-color: color-mix(in srgb, var(--text) 45%, transparent) !important; }
+  [class~="bg-white/40"] { background-color: color-mix(in srgb, var(--text) 45%, transparent) !important; }
+  /*
+   * The LIVE price marker, split off from the hairlines it used to share a
+   * mapping with.
+   *
+   * At 45% ink it composited to 2.94:1 against the light card — under the 3:1
+   * WCAG floor for non-text, and drifting: the round before it read 3.03:1 with
+   * nothing watching. It is a mark a reader has to find, not a rule between two
+   * numbers, so it gets its own value: 60% ink reads 4.65:1 on the light card
+   * and the dark side is untouched at 4.17:1. `qa:signal-zone-bar` now FAILS
+   * under 3.0 rather than printing the number, so the next drift is caught by
+   * the harness instead of by a reader.
+   */
+  [class~="bg-white/45"] { background-color: color-mix(in srgb, var(--text) 60%, transparent) !important; }
   [class~="border-slate-800/50"],
   [class~="border-slate-800/60"],
   [class~="border-slate-800/70"],

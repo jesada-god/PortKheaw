@@ -168,11 +168,25 @@ const FLAG_ORDER = Object.keys(FLAG_COPY);
 /*
  * Three, down from four.
  *
- * A row of chips is read left to right until the reader stops, and on a 390px
- * screen four of them wrap to a second line that reads as decoration. Three fit
- * on one line at every width the card renders at, and the ordering above is what
- * makes the cut safe: the ones that survive it are the ones that change how the
- * card should be read. The rest are listed in "ทำไม?", not dropped.
+ * A row of chips is read left to right until the reader stops, and the ordering
+ * above is what makes the cut safe: the ones that survive it are the ones that
+ * change how the card should be read. The rest are listed in "ทำไม?", not
+ * dropped.
+ *
+ * WHAT THIS COMMENT USED TO CLAIM, AND WHAT MEASURING IT FOUND. It said "three
+ * fit on one line at every width the card renders at". They do not, and the
+ * reason is the chip the sentence forgot: when anything is cut there is a
+ * fourth box after them reading "+N ใน ทำไม?", so the phone case is four boxes
+ * and not three. `qa:signal-zone-bar` measures the row at every width — one
+ * line at 1280 and 1440, TWO at 390, 360 and 320.
+ *
+ * Left at three anyway, and the count is not the interesting part. Cutting to
+ * two to win one line would push a chip that changes how the card reads into a
+ * dialog to save 20px of vertical space, and a second line of chips is legible
+ * — it was never the failure. What was wrong here was a number justified by a
+ * measurement nobody took; the number stays and the justification is now the
+ * measurement. The harness fails above two lines, which is where the claim
+ * actually is.
  */
 const MAX_FLAG_CHIPS = 3;
 
@@ -364,7 +378,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <InfoHint term="signalConfidence" align="end" />
         </span>
       </div>
-      <div className="mt-2 flex flex-wrap gap-2" aria-label="Signal flags">
+      <div className="mt-2 flex flex-wrap gap-2" aria-label="Signal flags" data-testid="signal-flags">
         {(chipsOrdered ? orderedFlags(result.flags).slice(0, MAX_FLAG_CHIPS) : result.flags).map((flag) => (
           <span key={flag} className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold">
             {chipsOrdered ? flagLabel(flag) : flag.replaceAll('_', ' ')}
@@ -414,15 +428,58 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
                   สัญญาณอื่นที่พบ: {orderedFlags(result.flags).slice(MAX_FLAG_CHIPS).map(flagLabel).join(' · ')}
                 </p>
               ) : null}
-              {/* The multipliers, in the order the product takes them. Confidence
-                  is not a sum of parts any more, so showing parts that add up
-                  would misdescribe it. */}
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <ConfidenceDetail label="ฐานจากน้ำหนักหลักฐาน" value={Math.round(result.gate.confidenceFactors.base)} />
-                <ConfidenceDetail label="× ความครบของข้อมูล" value={Math.round(result.gate.confidenceFactors.completeness * 100)} />
-                <ConfidenceDetail label="× ความสอดคล้อง" value={Math.round(result.gate.confidenceFactors.agreement * 100)} />
-                <ConfidenceDetail label="× ความชัดของภาวะตลาด" value={Math.round(result.gate.confidenceFactors.regimeClarity * 100)} />
-                <ConfidenceDetail label="× หักความขัดแย้ง" value={Math.round(result.gate.confidenceFactors.conflict * 100)} />
+              {/*
+                The multipliers, in the order the product takes them. Confidence
+                is not a sum of parts any more, so showing parts that add up
+                would misdescribe it.
+
+                AND EVERY ONE OF THEM CARRIES THE FIGURE IT WAS DERIVED FROM.
+                Five of these six are `withFloor(measured, floor)` — the same
+                quantity section 2 reports raw — so the dialog was printing two
+                different numbers for one thing, in two blocks, with nothing
+                between them saying which was which: agreement 40 there and 70
+                here, regime clarity 40 there and 70 here, conflict 13 there and
+                88 here. A reader who reaches this dialog is the reader who
+                checks arithmetic, and two contradictory sets cost them the
+                whole page. So the raw figure is printed under the factor it
+                produced, in the same box, and the heading says which kind each
+                block is.
+              */}
+              <h4 className="mt-4 text-xs font-semibold text-white">ค่าที่ใช้คูณจริง (หลังยกด้วยค่าขั้นต่ำ)</h4>
+              <p className="mt-1 text-xs leading-5 text-slate-400">
+                ตัวเลขชุดนี้ไม่ใช่ค่าที่วัดได้ตรง ๆ — แต่ละตัวถูกยกขึ้นด้วยค่าขั้นต่ำ กันไม่ให้ตัวเดียวกดผลลัพธ์เหลือศูนย์
+                ค่าที่วัดได้จริงกำกับไว้ใต้แต่ละช่อง และอยู่ครบทุกตัวในหัวข้อ 2
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-2 text-xs" data-testid="signal-confidence-factors">
+                <ConfidenceDetail
+                  label="ฐานจากน้ำหนักหลักฐาน"
+                  value={Math.round(result.gate.confidenceFactors.base)}
+                  note={`วัดได้ ${result.confidenceBreakdown.evidenceStrength}%`}
+                />
+                <ConfidenceDetail
+                  label="× ความครบของข้อมูล"
+                  value={Math.round(result.gate.confidenceFactors.completeness * 100)}
+                  note={`วัดได้ ${result.confidenceBreakdown.completeness}%`}
+                />
+                <ConfidenceDetail
+                  label="× สัดส่วนหลักฐานที่ไปทางเดียวกัน"
+                  value={Math.round(result.gate.confidenceFactors.agreement * 100)}
+                  note={`วัดได้ ${result.confidenceBreakdown.agreement}%`}
+                />
+                <ConfidenceDetail
+                  label="× ความชัดของภาวะตลาด"
+                  value={Math.round(result.gate.confidenceFactors.regimeClarity * 100)}
+                  note={`วัดได้ ${result.confidenceBreakdown.regimeClarity}%`}
+                />
+                {/* NOT a floored version of the row below it: this is the share
+                    that does NOT conflict, i.e. the complement of the measured
+                    penalty. Said as the complement rather than as "วัดได้",
+                    which would be a false claim about the same arithmetic. */}
+                <ConfidenceDetail
+                  label="× หักความขัดแย้ง"
+                  value={Math.round(result.gate.confidenceFactors.conflict * 100)}
+                  note={`หลักฐานขัดแย้งกัน ${result.confidenceBreakdown.conflictPenalty}% จึงเหลือส่วนนี้`}
+                />
                 <ConfidenceDetail label="× ระยะถึงวันงบ" value={Math.round(result.gate.confidenceFactors.earnings * 100)} />
               </dl>
             </section>
@@ -431,18 +488,35 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <section>
             <h3 className="font-semibold text-white">2. ระบบดูจากอะไร</h3>
             <p className="mt-2 leading-6">ใช้ finalized 1D candles และหลักฐานจาก EMA, Momentum, ADX/DMI, Volume และ Price Structure</p>
+            {/*
+              WHICH NUMBER THE HEADLINE IS, said before anything else in this
+              block.
+
+              `evidenceAgreement` is the payload's name for the COMPOSITE — the
+              same field as the deprecated `confidence`, the product of all six
+              terms. The row below called "Evidence agreement" was
+              `confidenceBreakdown.agreement`, which is one of those terms: the
+              share of evidence weight pointing the same way as the score. Two
+              different quantities, one name, four centimetres apart on one
+              page — 62 in the sentence and 84 in the box under it — and nothing
+              telling a reader they are not the same measurement disagreeing
+              with itself. The row is now named for what it measures and this
+              sentence says what the headline number is made of.
+            */}
             <p className="mt-2 leading-6 text-slate-400">
-              ตัวเลขความสอดคล้อง {result.evidenceAgreement}/100 วัดว่าหลักฐานทั้งห้าหมวดไปทางเดียวกันแค่ไหน
-              จากการวัดย้อนหลังพบว่าตัวเลขนี้ไม่ได้บอกโอกาสที่ราคาจะไปทางที่ระบุ
+              ตัวเลข {result.evidenceAgreement}/100 บนการ์ด คือผลของทุกค่าด้านล่างนี้รวมกัน ไม่ใช่แถวใดแถวหนึ่งเพียงแถวเดียว
+              ตัวเลขทั้งสองชุดจึงไม่เท่ากัน และไม่ได้ขัดกัน
+              · จากการวัดย้อนหลังพบว่าตัวเลขนี้ไม่ได้บอกโอกาสที่ราคาจะไปทางที่ระบุ
               ค่าสูงกับค่าต่ำให้ผลใกล้เคียงกัน จึงห้ามอ่านเป็นเปอร์เซ็นต์ความน่าจะเป็น
             </p>
-            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              <ConfidenceDetail label="Data completeness" value={result.confidenceBreakdown.completeness} />
-              <ConfidenceDetail label="Evidence agreement" value={result.confidenceBreakdown.agreement} />
-              <ConfidenceDetail label="Evidence strength" value={result.confidenceBreakdown.evidenceStrength} />
-              <ConfidenceDetail label="Volume confirmation" value={result.confidenceBreakdown.volumeConfirmation} />
-              <ConfidenceDetail label="Regime clarity" value={result.confidenceBreakdown.regimeClarity} />
-              <ConfidenceDetail label="Conflict penalty" value={result.confidenceBreakdown.conflictPenalty} />
+            <h4 className="mt-3 text-xs font-semibold text-white">ค่าที่วัดได้จากข้อมูลจริง</h4>
+            <dl className="mt-2 grid grid-cols-2 gap-2 text-xs" data-testid="signal-confidence-measured">
+              <ConfidenceDetail label="ความครบของข้อมูล" value={result.confidenceBreakdown.completeness} />
+              <ConfidenceDetail label="สัดส่วนหลักฐานที่ไปทางเดียวกัน" value={result.confidenceBreakdown.agreement} />
+              <ConfidenceDetail label="น้ำหนักหลักฐานรวม" value={result.confidenceBreakdown.evidenceStrength} />
+              <ConfidenceDetail label="วอลุ่มยืนยันทิศทาง" value={result.confidenceBreakdown.volumeConfirmation} />
+              <ConfidenceDetail label="ความชัดของภาวะตลาด" value={result.confidenceBreakdown.regimeClarity} />
+              <ConfidenceDetail label="สัดส่วนหลักฐานที่ขัดแย้งกัน" value={result.confidenceBreakdown.conflictPenalty} />
             </dl>
           </section>
 
@@ -495,7 +569,20 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
               <Detail label="Close ↔ EMA20 deviation" value={percent(result.metrics.ema20DeviationPct)} />
               <Detail label="ATR-normalized distance" value={result.metrics.atrNormalizedDistance === null ? '—' : `${number(result.metrics.atrNormalizedDistance)} ATR`} />
               <Detail label="OBV Trend" value={result.metrics.obvTrend ?? '—'} />
-              <Detail label="Support / Resistance" value={joined(result.metrics.nearestSupport, result.metrics.nearestResistance)} />
+              {/*
+                NOT the frame. These are the levels nearest the current price,
+                which is a different derivation from the swing anchors the zone
+                bar is cut with and routinely a very different pair of numbers —
+                39.27 / 46.41 here against a frame of 27.94 / 50.17. Under the
+                name "Support / Resistance", four rows above a block headed
+                กรอบราคา, they read as the same thing measured twice and wrong
+                once. `calculations.ts` says the card labels them as the nearest
+                levels; until now it did not.
+              */}
+              <Detail
+                label="แนวรับ / แนวต้านที่ใกล้ราคาที่สุด"
+                value={joined(result.metrics.nearestSupport, result.metrics.nearestResistance)}
+              />
               <Detail label="Divergence" value={result.metrics.divergence ?? '—'} />
             </dl>
           </section>
@@ -527,7 +614,21 @@ function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallba
     if (bias === 'bullish') return 'แนวโน้มหลักยังขึ้น แต่ราคาวิ่งไกลจากค่าเฉลี่ย ระวังการพักตัว';
     if (bias === 'bearish') return 'แนวโน้มหลักยังลง แต่ราคาลงไกลจากค่าเฉลี่ย ระวังการเด้งกลับ';
   }
-  if (state === 'SIDEWAYS' && bias === 'neutral') return 'แรงซื้อและแรงขายใกล้เคียงกัน ระบบยังไม่พบฝั่งที่ได้เปรียบชัดเจน';
+  if (state === 'SIDEWAYS') {
+    if (bias === 'neutral') return 'แรงซื้อและแรงขายใกล้เคียงกัน ระบบยังไม่พบฝั่งที่ได้เปรียบชัดเจน';
+    /*
+     * SIDEWAYS with a lean, which the fallback denied outright.
+     *
+     * With zones on, STRUCTURE names the label and the score describes the lean
+     * inside it, so "SIDEWAYS • Bullish Bias" is a normal reading. The fallback
+     * under it said "ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน" — a flat denial of
+     * the two words directly above it. These say both things, in the same shape
+     * SQUEEZE already uses for exactly this situation.
+     */
+    return bias === 'bullish'
+      ? 'ตลาดกำลังพักตัว • ยังไม่เลือกทางชัดเจน แต่คะแนนรวมเอนไปทางขาขึ้น'
+      : 'ตลาดกำลังพักตัว • ยังไม่เลือกทางชัดเจน แต่คะแนนรวมเอนไปทางขาลง';
+  }
   return fallback;
 }
 
@@ -625,6 +726,51 @@ const ZONE_COPY = {
   uptrend: 'ราคาขึ้นมาเหนือกรอบเดิมแล้ว',
   sideways: 'ราคายังอยู่ในกรอบเดิม',
   downtrend: 'ราคาหลุดลงมาใต้กรอบเดิมแล้ว',
+} as const;
+
+/**
+ * The freshness clause, and why it cannot be one sentence for three zones.
+ *
+ * It used to be one: " แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย", appended to
+ * whichever of the three lines above it was drawn. On `uptrend` and `downtrend`
+ * that reads correctly, because something WAS crossed to get there. On
+ * `sideways` the headline is "ราคายังอยู่ในกรอบเดิม" — nothing has been
+ * crossed at all — so the two halves of one sentence contradicted each other,
+ * and the half that was wrong was the half claiming an event.
+ *
+ * `freshlyFormed` is `min(zoneAge, frameAge) <= FRESH_ZONE_BARS`, so on a
+ * sideways card it fires for the OTHER reason in that minimum: the frame itself
+ * was re-anchored a few bars ago. That is what the sideways clause says.
+ */
+/**
+ * The close is through an edge and the label has not moved yet.
+ *
+ * `pendingBreakout` is `zone !== 'uptrend' && close > upperTrigger`, so it is
+ * true on a SIDEWAYS zone whose close is already above the frame — the engine
+ * names the state, raises a chip for it and writes a reason about it, and the
+ * headline above all of that still read "ราคายังอยู่ในกรอบเดิม". Meanwhile the
+ * proximity line one row down said "ราคาเลยขอบกรอบมาแล้ว". Two sentences a
+ * thumb-length apart, describing the same close, disagreeing about which side
+ * of a line it is on.
+ *
+ * Said as the two facts it actually is: price went through, and the label did
+ * not follow because confirmation has not been met. Worded for any zone, not
+ * just sideways — a gap through the whole frame makes `pendingBreakout` true on
+ * a downtrend zone too, where "ราคาหลุดลงมาใต้กรอบเดิมแล้ว" is the same
+ * contradiction in the other direction.
+ *
+ * No number for the confirmation rule, because the payload does not carry one
+ * and inventing one here would be the card describing an engine it cannot see.
+ */
+const PENDING_ZONE_COPY = {
+  up: 'ราคาปิดเลยขอบบนของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังนับเป็นโซนเดิม',
+  down: 'ราคาปิดหลุดขอบล่างของกรอบแล้ว แต่ยังไม่ผ่านเงื่อนไขยืนยัน จึงยังนับเป็นโซนเดิม',
+} as const;
+
+const FRESH_ZONE_COPY = {
+  uptrend: ' แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย',
+  downtrend: ' แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย',
+  sideways: ' และกรอบนี้เพิ่งตั้งได้ไม่นาน ยังไม่มีฝั่งไหนคุมได้',
 } as const;
 
 /**
@@ -842,6 +988,8 @@ const ZONE_SCALE = {
     marker: { close: '-top-0.5 h-10 w-1.5', live: 'top-1 h-7 w-1' },
     /** The close marker's own thickness, which is what it can hide behind it. */
     closeMarkPx: 6,
+    /** The live marker's, for the same question asked of the pair. */
+    liveMarkPx: 4,
   },
   wide: {
     caption: {
@@ -864,6 +1012,7 @@ const ZONE_SCALE = {
     },
     marker: { close: '-top-0.5 h-[52px] w-2', live: 'top-1.5 h-9 w-1.5' },
     closeMarkPx: 8,
+    liveMarkPx: 6,
   },
 } as const;
 
@@ -911,6 +1060,23 @@ export interface FloatingLabel { at: number; width: number; bias: number }
 
 /** Closer than this and two captions read as one run of text. */
 const LABEL_MIN_GAP_PX = 4;
+
+/**
+ * Closer than this and two MARKS read as one thick mark.
+ *
+ * The same number as `LABEL_MIN_GAP_PX` and for the same reason: below about
+ * four pixels of clear air between two painted edges a reader sees one line,
+ * and the bar is then telling them there is one price when it drew two. QA
+ * measured 2.8px between the close and live marks at 320px and reported the
+ * case clean, because the only marker rule it had was about labels overlapping.
+ *
+ * Measured in PAINTED EDGES rather than in centres, because that is what the
+ * eye is separating: two 6px marks whose centres are 7px apart have 1px of gap.
+ * When there is not enough, the bar draws ONE mark and the difference between
+ * the two prices is stated in the sentence under it — a picture that cannot
+ * carry a distinction has to hand it to the prose rather than pretend.
+ */
+const MARKER_MIN_GAP_PX = 4;
 
 /** Where a label's left edge lands on a track this wide, in px. */
 function labelLeftPx(track: number, label: FloatingLabel): number {
@@ -1308,6 +1474,8 @@ function ZoneBar({ zones, livePrice, actionable }: {
    * both numbers are in "ทำไม?" for whoever wants to check the working.
    */
   const freshlyFormed = Math.min(zones.zoneAgeBars, zones.frameAgeBars) <= FRESH_ZONE_BARS;
+  /** A close through an edge that the label has not followed. See `PENDING_ZONE_COPY`. */
+  const pendingSide = zones.pendingBreakout ? 'up' as const : zones.pendingBreakdown ? 'down' as const : null;
 
   /*
    * The captions, in two rows that cannot reach each other.
@@ -1407,6 +1575,28 @@ function ZoneBar({ zones, livePrice, actionable }: {
   const size = zoneScaleFor(track);
   const measured = (key: string) => metrics?.widths[key];
 
+  /*
+   * TWO MARKS OR ONE, decided on the pixels between their painted edges.
+   *
+   * Everything else on this bar is placed by measurement and the marks were the
+   * exception: they were drawn at their two percentages whatever that came to
+   * in pixels, and at 320px "whatever that came to" was 2.8px of gap on a case
+   * QA reported as clean. Two lines a reader cannot separate are worse than one
+   * line plus a sentence, because the picture is then making a distinction the
+   * eye cannot collect and the reader has no way to know it was there.
+   *
+   * Unmeasured (`track` 0 — the server render and the first client render) the
+   * answer is TWO, the same as every other concession on this bar: collapsing
+   * is a decision about room, and a decision about room made without a
+   * measurement is a guess. Both halves of hydration therefore draw two marks
+   * and the layout effect collapses them before the first paint if it must.
+   */
+  const markerCentreGapPx = liveAt === null || !(track > 0)
+    ? null
+    : (Math.abs(liveAt - closeAt) / 100) * track;
+  const markersMerged = markerCentreGapPx !== null
+    && markerCentreGapPx - (size.closeMarkPx + size.liveMarkPx) / 2 < MARKER_MIN_GAP_PX;
+
   const closeCaption = caption('close', closeText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('close'), size });
   const liveCaption = liveAt === null || liveText === null
     ? null
@@ -1455,7 +1645,13 @@ function ZoneBar({ zones, livePrice, actionable }: {
   const captions = ((): Caption[] => {
     if (liveCaption === null) return [closeCaption];
     if (track === 0) return [closeCaption, liveCaption];
-    const spread = spreadLabels(closeCaption, liveCaption, track);
+    /*
+     * A collapsed pair of marks takes its captions with it, and it has to: the
+     * live caption's leader points at `data-marker="live"`, and that element is
+     * no longer on the page. Two captions naming one drawn line is also the
+     * exact confusion the merge exists to prevent, one row higher up.
+     */
+    const spread = markersMerged ? null : spreadLabels(closeCaption, liveCaption, track);
     if (spread) return spread;
     const merged = caption('prices', mergedText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('prices'), size });
     return merged.width <= track ? [merged] : [closeCaption];
@@ -1558,10 +1754,22 @@ function ZoneBar({ zones, livePrice, actionable }: {
       the right the same gap by construction rather than by arithmetic — and
       `ZONE_SCALE` grows the type, the bar and the marks with it.
     */
-    <div className="mt-4 w-full rounded-xl border border-current/20 p-3" data-testid="signal-zone-bar">
+    <div
+      className="mt-4 w-full rounded-xl border border-current/20 p-3"
+      data-testid="signal-zone-bar"
+      /* So the harness can tell "the live mark is missing" from "the live mark
+         was deliberately drawn into the close one". The first is a bug. */
+      data-markers-collapsed={markersMerged ? 'true' : 'false'}
+    >
       <p className={`${size.prose.headline} font-semibold`} data-zone-row="headline">
-        {ZONE_COPY[zone]}
-        {freshlyFormed ? <span className="font-normal text-slate-300"> แต่เพิ่งผ่านมาไม่นาน ยังพลิกกลับได้ง่าย</span> : null}
+        {pendingSide === null ? ZONE_COPY[zone] : PENDING_ZONE_COPY[pendingSide]}
+        {/* The freshness clause is about a settled zone being young. On a close
+            that has already gone through an edge the zone's age is not the
+            unsettled thing about it, and "ยังไม่มีฝั่งไหนคุมได้" beside "ราคาปิด
+            เลยขอบบนแล้ว" is the contradiction again in smaller type. */}
+        {freshlyFormed && pendingSide === null
+          ? <span className="font-normal text-slate-300">{FRESH_ZONE_COPY[zone]}</span>
+          : null}
       </p>
       {/*
         Position only, and no direction at all.
@@ -1689,9 +1897,14 @@ function ZoneBar({ zones, livePrice, actionable }: {
             marker needs, because a literal white here is the surface colour and
             the mark disappears into the field it is standing on.
           */}
-          {liveAt !== null ? (
+          {liveAt !== null && !markersMerged ? (
             <div
               data-marker="live"
+              /* The width the collapse arithmetic above used, published so the
+                 harness can check it against the width Chrome actually paints.
+                 `liveMarkPx` is a hand-copy of the `w-1` / `w-1.5` in the class
+                 beside it, and a hand-copy is a number that drifts silently. */
+              data-mark-px={size.liveMarkPx}
               className={`absolute ${size.marker.live} -translate-x-1/2 rounded-full bg-white/45`}
               style={{ left: `${liveAt}%` }}
             />
@@ -1704,6 +1917,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
           */}
           <div
             data-marker="close"
+            data-mark-px={size.closeMarkPx}
             className={`absolute ${size.marker.close} -translate-x-1/2 rounded-full bg-white/90`}
             style={{ left: `${closeAt}%` }}
           />
@@ -1801,6 +2015,40 @@ function ZoneBar({ zones, livePrice, actionable }: {
             : liveDiverges
               ? ` ${liveMoveCopy(liveSide, closeSide)} · โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้`
               : ` ${LIVE_SAME_SIDE_COPY[liveSide]}`}
+          {/* Where the picture had to give the distinction up, the prose takes
+              it: the two prices are still two prices and this row still states
+              both, so nothing is lost except a line nobody could have seen. */}
+          {markersMerged ? ' · ห่างจากราคาปิดน้อยมาก บนแถบจึงวาดรวมเป็นเส้นเดียว' : ''}
+        </p>
+      ) : null}
+
+      {/*
+        THE QUESTION THE WHOLE BLOCK EXISTS TO ANSWER, on the one zone that was
+        not answering it.
+
+        `uptrend` and `downtrend` get `ActionableRows`: "ถ้าปิดต่ำกว่า X ถือว่า
+        ขาขึ้นรอบนี้จบ" — a level and the rule attached to it. `sideways` gets
+        nothing, because the engine publishes no invalidation for a zone that
+        claims no direction (`no_direction_to_invalidate`), so the card fell
+        silent on exactly the state where "what would change this?" is the only
+        question a reader has. The bar draws both edge prices, but a picture is
+        not a rule and nothing on the card said crossing one is what moves the
+        label.
+
+        Both numbers are already in the payload — they are the same two triggers
+        the picture is cut with and the same two `sideOf` reads — so nothing is
+        computed here. The wording is conditional and names no action.
+      */}
+      {zone === 'sideways' && hasFrame ? (
+        <p className={`mt-2 ${size.prose.note} text-slate-400`} data-testid="signal-zone-change" data-zone-row="change">
+          {/* Naming the two prices is the answer ONLY while both are still
+              ahead of the close. Once one has been closed through, "ต้องปิด
+              เหนือ 47.24" is a condition the reader can see has already been
+              met, and the row would be telling them to wait for something that
+              happened. What is left to wait for is the confirmation rule. */}
+          {pendingSide === null
+            ? `โซนจะเปลี่ยนก็ต่อเมื่อราคาปิดเหนือ ${priceText(upperTrigger)} หรือต่ำกว่า ${priceText(lowerTrigger)}`
+            : 'ราคาปิดเลยขอบกรอบไปแล้ว โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้จนผ่านเงื่อนไขยืนยัน'}
         </p>
       ) : null}
 
@@ -1932,8 +2180,25 @@ function TextList({ title, items, empty }: { title: string; items: string[]; emp
   );
 }
 
-function ConfidenceDetail({ label, value }: { label: string; value: number }) {
-  return <div className="rounded-lg border border-slate-800 p-2"><dt className="text-slate-500">{label}</dt><dd className="mt-1 font-mono text-white">{value}%</dd></div>;
+/**
+ * One term of the confidence product, and — where the two are different numbers
+ * — the figure it was derived from.
+ *
+ * `note` exists because the dialog carries two blocks of six percentages that
+ * measure the same six things, and five of the pairs disagree by construction:
+ * the factor is `floor + (1 - floor) * measured`, and the conflict factor is
+ * the complement of the measured penalty. Printed apart with no relation
+ * stated, that is a page contradicting itself; printed together, it is the
+ * working. So the note goes in the SAME box as the factor, not in a legend.
+ */
+function ConfidenceDetail({ label, value, note }: { label: string; value: number; note?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-800 p-2">
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="mt-1 font-mono text-white">{value}%</dd>
+      {note ? <dd className="mt-0.5 text-[11px] leading-4 text-slate-500">{note}</dd> : null}
+    </div>
+  );
 }
 
 /**
@@ -1962,7 +2227,35 @@ function ZoneDetails({ zones, actionable, atr }: {
       <p className="mt-2 text-xs leading-5 text-slate-400">
         ตัวเลขชุดนี้เคยอยู่บนหน้าการ์ด ย้ายมาที่นี่เพราะอ่านยากสำหรับคนเพิ่งเริ่ม ไม่ได้ถูกตัดออกจากผลลัพธ์
       </p>
+      {/*
+        The one sentence that keeps two similar-sounding pairs apart.
+
+        "Support / Resistance" in the metrics list and the two edges of this
+        frame are both levels, both drawn from price, and on IREN they are
+        39.27 / 46.41 against 27.94 / 50.17. Without this they read as the same
+        measurement reported twice and disagreeing.
+      */}
+      {/*
+        The frame's provenance is NOT always swing structure. `mode` is
+        'atr_band' whenever no usable swing existed, and this paragraph claimed
+        swing high/low unconditionally — true on most instruments and false on
+        exactly the ones where a reader most needs to know the frame is a
+        volatility envelope rather than levels the market traded against. The
+        clause is taken from `ZONE_MODE_COPY`, which is the same sentence the
+        row two below this one already prints.
+      */}
+      <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-frame-vs-levels">
+        ขอบกรอบสองเส้นนี้คือเส้นที่ใช้ตัดสินโซน — {ZONE_MODE_COPY[zones.mode]}
+        {' · ส่วน “แนวรับ / แนวต้านที่ใกล้ราคาที่สุด” ในหัวข้อ Metrics เลือกจากระยะถึงราคาปัจจุบัน'}
+        {' จึงเป็นคนละตัวกัน และตามปกติไม่เท่ากัน'}
+      </p>
       <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
+        {/* The two numbers the picture is cut with, spelled out where the
+            comparison with the metrics list can actually be made. */}
+        {/* Entry cut and exit anchor, one above the other, because they are a
+            buffer apart and the card shows both without naming the gap. */}
+        <Detail label="ขอบเข้าโซน ล่าง / บน (เส้นที่วาดบนแถบ)" value={joined(zones.lowerTrigger, zones.upperTrigger)} />
+        <Detail label="ขอบออกโซน ล่าง / บน (จุดยึดของกรอบ)" value={joined(zones.support, zones.resistance)} />
         {/* Deliberately unclamped: past 100% means price has broken out. */}
         <Detail label="ตำแหน่งในกรอบ" value={`${zones.positionPct}%`} />
         <Detail label="ที่มาของกรอบ" value={ZONE_MODE_COPY[zones.mode]} />
@@ -2008,6 +2301,27 @@ function ZoneDetails({ zones, actionable, atr }: {
           </>
         )}
       </dl>
+      {/*
+        THE TWO LINES THAT ARE NOT THE SAME LINE.
+
+        A zone is ENTERED by closing past `resistance + buffer` — the cut the
+        picture is drawn with — and LEFT by closing back through `resistance`
+        itself. So an uptrend card shows a cut at 47.24 and a row underneath
+        saying the zone ends at 46.23: two right numbers a buffer apart, and
+        until now nothing anywhere said they were different lines, which leaves
+        a reader who compares them with two boundaries for one zone and no way
+        to tell which is wrong. Neither is.
+
+        It lives here and not on the card because the card holds a deliberate
+        four-line budget under the picture — see the test that enforces it — and
+        because the reader who spots a 1.01 discrepancy between a drawn cut and
+        a printed level is exactly the reader who opens this dialog.
+      */}
+      <p className="mt-2 text-xs leading-5 text-slate-400" data-testid="signal-hysteresis-note">
+        เส้นที่ใช้เข้าโซนกับเส้นที่ใช้ออกจากโซนเป็นคนละราคาโดยตั้งใจ กันโซนสลับไปมาทุกวัน
+        ขอบที่วาดบนแถบคือเส้นเข้า ส่วนแถว “ถ้าปิด...” บนการ์ดใช้เส้นออก
+      </p>
+
       {/*
         The reading of that quotient, moved here whole from the card.
         On the card it was two lines: one saying which leg is longer, one saying

@@ -75,6 +75,14 @@
  *  16. nothing on the page logged a console error, which is how a hydration
  *      mismatch — the two halves of this harness drawing two different cards —
  *      would show up
+ *  17. EVERY CARD HAD ACTUALLY MEASURED ITSELF before any of the above ran.
+ *      The `data-hydrated` handshake fired two frames after the last
+ *      `hydrateRoot` returned while roots were still committing eight frames
+ *      later; what kept the readings honest was the incidental latency of the
+ *      calls after it. This checks the property rather than the mechanism, so a
+ *      probe pointed at the fallback says so instead of reporting on it — and
+ *      in particular so that 7 above, which cannot fail on an unmeasured card,
+ *      is never silently inert
  */
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -131,6 +139,16 @@ const ROW_ALIGN_TOLERANCE = 2;
  * each other rather than on top of each other.
  */
 const NAME_MIN_GAP_PX = 12;
+/**
+ * How many lines the flag-chip row is allowed to take.
+ *
+ * MAX_FLAG_CHIPS = 3 was justified in the component by "three fit on one line
+ * at every width", which nobody had measured and which is false: the cut also
+ * draws a "+N ใน ทำไม?" chip, so a phone renders four boxes and wraps. Two
+ * lines is what the design actually costs and it reads fine; three would mean
+ * the row had stopped being a row. The floor sits on the measurement.
+ */
+const CHIP_ROW_MAX_LINES = 2;
 /*
  * Both appearances, because the bar's three fields are the first thing on this
  * card to depend on translucent whites and on the 100-shade status text, and
@@ -194,9 +212,27 @@ async function clientBundle(): Promise<string> {
   return built.outputFiles[0].text;
 }
 
+/**
+ * Whether this case's live price is a DIFFERENT price from the close, in the
+ * digits the card prints.
+ *
+ * Same comparison the card makes (`samePriceInFull`), because the rule it feeds
+ * is about the card's own promise: where the two marks are drawn as one, the
+ * sentence under the bar is the only surviving statement of the second price —
+ * but only when there IS a second price. Two marks on one number collapsing to
+ * one line owe the reader nothing.
+ */
+function liveDiffersInFull(entry: (typeof CASES)[number]): boolean {
+  if (entry.livePrice === null) return false;
+  const zones = entry.result.status === 'available' ? entry.result.zones : undefined;
+  if (!zones) return false;
+  const text = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  return text(entry.livePrice) !== text(zones.referenceClose);
+}
+
 function page(css: string, script: string, width: number, appearance: (typeof APPEARANCES)[number]): string {
   const cards = CASES.map((entry) => `
-    <section data-case="${entry.name}" data-markers-apart="${entry.markersApart ? 'true' : 'false'}" data-live="${entry.livePrice === null ? 'false' : 'true'}" style="width:${width}px;padding:0 ${PAGE_PADDING}px;margin:0 auto 24px;">
+    <section data-case="${entry.name}" data-markers-apart="${entry.markersApart ? 'true' : 'false'}" data-live="${entry.livePrice === null ? 'false' : 'true'}" data-live-differs="${liveDiffersInFull(entry) ? 'true' : 'false'}" style="width:${width}px;padding:0 ${PAGE_PADDING}px;margin:0 auto 24px;">
       <p style="font:12px monospace;color:#64748b;margin:0 0 6px;">${entry.name} @ ${width}px</p>
       <div data-hydrate="${entry.name}">${markup(entry)}</div>
     </section>`).join('');
@@ -233,8 +269,10 @@ interface WidthReading { case: string; label: string; measured: number; estimate
  * depends on the case: a field too narrow for its name has no name to measure.
  */
 interface ScaleReading { what: string; px: number }
+interface ChipLineReading { case: string; chips: number; lines: number }
 interface ZoneBarReport {
   problems: ZoneBarProblem[];
+  chipLines: ChipLineReading[];
   markers: MarkerReading[];
   widths: WidthReading[];
   scale: ScaleReading[];
@@ -246,22 +284,38 @@ interface ZoneBarReport {
  *
  * Both marks are translucent ink over a translucent field over the card, so
  * "is it visible" cannot be read off one computed style — the whole stack has
- * to be composited. 1.8 is well under what either marker measures when its
- * class is mapped (the faint live mark reads around 3 in both appearances) and
- * well over the 1.0 an unmapped `bg-white` produces on the light surface,
- * where the marker is painted in the colour of the thing behind it.
+ * to be composited.
+ *
+ * 3.0 is the WCAG floor for non-text, and it is a FLOOR THAT FAILS rather than
+ * a number this printed and left to a reader. The previous value, 1.8, was
+ * chosen to sit under whatever the markers happened to measure, which is a
+ * threshold that can only ever ratify: the faint live mark drifted 3.03 → 2.94
+ * on the light surface between two rounds, under the accessibility floor, and
+ * nothing here said a word. `globals.css` now paints it at 60% ink, which
+ * composites to 4.65:1 light and 4.17:1 dark — headroom over this floor in both
+ * appearances rather than a number sitting on it.
  */
-const MARKER_MIN_CONTRAST = 1.8;
-/** Two marks closer than this on a phone read as one thick mark. */
-const MARKER_MIN_GAP = 2;
+const MARKER_MIN_CONTRAST = 3;
+/**
+ * Two marks whose painted edges are closer than this read as one thick mark.
+ *
+ * It was 2, which is a number below the failure it was supposed to catch: the
+ * bar drew the close and live marks 2.8px apart at 320px and this reported the
+ * case clean. The component collapses the pair below the same 4px
+ * (`MARKER_MIN_GAP_PX` there) and declares it on the block, so the rule here is
+ * a PAIR of rules — far enough apart, or honestly collapsed into one.
+ */
+const MARKER_MIN_GAP = 4;
 
 const PROBE = `() => {
   const TOLERANCE = 0.5;
   const MARKER_MIN_CONTRAST = ${MARKER_MIN_CONTRAST};
   const MARKER_MIN_GAP = ${MARKER_MIN_GAP};
   const NAME_MIN_GAP_PX = ${NAME_MIN_GAP_PX};
+  const CHIP_ROW_MAX_LINES = ${CHIP_ROW_MAX_LINES};
   const ROW_ALIGN_TOLERANCE = ${ROW_ALIGN_TOLERANCE};
   const problems = [];
+  const chipLines = [];
   const markers = [];
   const widths = [];
   const scale = [];
@@ -367,6 +421,28 @@ const PROBE = `() => {
       }
     }
 
+    /*
+     * THE CHIP ROW, WHICH CLAIMS SOMETHING NOBODY HAS MEASURED.
+     *
+     * MAX_FLAG_CHIPS = 3 is justified in the component as "three fit on one
+     * line at every width the card renders at". Nothing has ever checked it,
+     * the labels are Thai phrases of very different lengths, and a "+N" chip
+     * follows them. Measured: one line at 1280 and 1440, TWO at 390, 360 and
+     * 320. Two lines is legible and was never the failure; a number justified
+     * by a measurement nobody took was. So the floor sits on the measured
+     * truth rather than on the old aspiration.
+     */
+    const chipRow = card.querySelector('[data-testid="signal-flags"]');
+    if (chipRow) {
+      const chips = [...chipRow.children].map((node) => node.getBoundingClientRect());
+      const tops = new Set(chips.map((box) => Math.round(box.top)));
+      chipLines.push({ case: name, chips: chips.length, lines: tops.size });
+      if (tops.size > CHIP_ROW_MAX_LINES) {
+        note(name, 'chip-row-too-tall',
+          chips.length + ' chip(s) took ' + tops.size + ' lines, over ' + CHIP_ROW_MAX_LINES);
+      }
+    }
+
     const bar = card.querySelector('[data-testid="signal-zone-bar"]');
     if (!bar) continue;
 
@@ -428,6 +504,43 @@ const PROBE = `() => {
       track: node.closest('[data-track]'),
     }));
     if (labels.length === 0) note(name, 'no-labels', 'the picture drew no labels at all');
+
+    /*
+     * WAS THIS CARD MEASURED WHEN THE PROBE LOOKED?
+     *
+     * This is the property the "data-hydrated" handshake was supposed to buy
+     * and did not: it fired two frames after the last "hydrateRoot" RETURNED,
+     * while the roots were still committing seven and eight frames later. What
+     * saved the readings was the CDP round-trip latency of the calls after it —
+     * incidental delay, not a guarantee — and the day the page got one card
+     * heavier that slack ran out on the last card in the list.
+     *
+     * So the harness now checks the property instead of trusting the mechanism.
+     * A caption placed from a measurement carries that measurement in
+     * "data-label-width", so its box and its attribute agree to the pixel; a
+     * caption placed from "estimateLabelWidth" carries an estimate that runs
+     * deliberately wide. A non-zero worst-case delta therefore means the probe
+     * is reading the arrangement the bar falls back to having measured nothing,
+     * which is a picture no reader ever sees.
+     *
+     * It matters most for the rule it silently disables. "label-wider-than-
+     * estimated" compares the drawn box against the estimate the layout ran on
+     * — and on an unmeasured card the attribute IS the estimate, which is
+     * always the larger of the two, so that rule cannot fail there. It is the
+     * guard on the glyph table that decides whether two captions merge, and it
+     * was one round-trip away from being inert.
+     */
+    let worstEstimateDelta = 0;
+    for (const label of labels) {
+      if (label.estimate === null) continue;
+      worstEstimateDelta = Math.max(worstEstimateDelta, Math.abs(label.estimate - label.box.width));
+    }
+    if (worstEstimateDelta > 0.5) {
+      note(name, 'measured-the-fallback',
+        'the probe read this card before it had measured itself: a label is '
+        + worstEstimateDelta.toFixed(2) + 'px off the width it was placed on, so every rule above '
+        + 'just ran against the unmeasured arrangement');
+    }
 
     /*
      * THE CHECK THE LAST ROUND WAS MISSING.
@@ -662,8 +775,26 @@ const PROBE = `() => {
     const close = bar.querySelector('[data-marker="close"]');
     const live = bar.querySelector('[data-marker="live"]');
     const hasLive = section.getAttribute('data-live') === 'true';
+    const collapsed = bar.getAttribute('data-markers-collapsed') === 'true';
     if (!close) note(name, 'marker-missing', 'the close marker is not drawn');
-    if (hasLive && !live) note(name, 'marker-missing', 'the live price was given but no live marker is drawn');
+    /*
+     * A missing live mark is a bug UNLESS the bar says it drew the pair as one,
+     * which it is allowed to do only when they were too close to read as two.
+     * Both halves are checked: the declaration has to be there, and the gap
+     * rule below has to hold for every pair that is still drawn as two.
+     */
+    if (hasLive && !live && !collapsed) {
+      note(name, 'marker-missing', 'the live price was given but no live marker is drawn');
+    }
+    /*
+     * And a collapse the reader is never told about is the same bug wearing the
+     * fix's clothes: where the two prices genuinely differ, the sentence under
+     * the bar is the only place the second one still exists.
+     */
+    if (hasLive && collapsed && section.getAttribute('data-live-differs') === 'true'
+      && !section.querySelector('[data-testid="signal-live-price"]')) {
+      note(name, 'collapse-not-explained', 'the two marks were drawn as one and no line states the live price');
+    }
 
     for (const marker of [close, live]) {
       if (!marker) continue;
@@ -672,6 +803,24 @@ const PROBE = `() => {
       if (box.width < 1 || box.height < 1) {
         note(name, 'marker-has-no-size', which + ' is ' + box.width.toFixed(1) + 'x' + box.height.toFixed(1));
         continue;
+      }
+      /*
+       * THE CONSTANT THE ARITHMETIC USED, AGAINST THE PIXELS ON SCREEN.
+       *
+       * "closeMarkPx: 6" sits beside "w-1.5" in ZONE_SCALE as a hand-copy of
+       * that Tailwind class, and it is load-bearing twice: the collapse rule
+       * subtracts it to get the gap between painted edges, and nameAlignment
+       * asks with it whether the mark lands on a field name. A class edited
+       * without the number beside it moves both answers silently. So the
+       * component publishes the number it computed with and this compares it
+       * against the box Chrome painted.
+       */
+      const declared = marker.getAttribute('data-mark-px');
+      if (declared === null) {
+        note(name, 'marker-width-undeclared', which + ' does not publish the width its arithmetic used');
+      } else if (Math.abs(box.width - Number(declared)) > TOLERANCE) {
+        note(name, 'marker-width-drifted',
+          which + ' is drawn ' + box.width.toFixed(2) + 'px but the layout computed with ' + declared + 'px');
       }
       const own = parseColor(getComputedStyle(marker).backgroundColor);
       if (!own || own.a === 0) { note(name, 'marker-invisible', which + ' has no background colour'); continue; }
@@ -684,9 +833,18 @@ const PROBE = `() => {
       }
     }
 
-    // Two marks that are genuinely in different fields of the frame must read
-    // as two marks, at every width and in both appearances.
-    if (close && live && section.getAttribute('data-markers-apart') === 'true') {
+    /*
+     * ANY two marks that are drawn have to read as two marks.
+     *
+     * This used to run only on the cases flagged \`markersApart\` — the ones
+     * whose live price is in a different FIELD from the close — which is a
+     * question about the frame and not about the picture. Two marks 2.8px apart
+     * are one line to a reader whichever fields they are in, and the case that
+     * produced the 2.8px reading was flagged: the rule saw it, measured it,
+     * printed it, and passed it at a threshold of 2. Every drawn pair, at every
+     * width, in both appearances.
+     */
+    if (close && live) {
       const closeBox = close.getBoundingClientRect();
       const liveBox = live.getBoundingClientRect();
       const gap = Math.max(closeBox.left, liveBox.left) - Math.min(closeBox.right, liveBox.right);
@@ -697,7 +855,7 @@ const PROBE = `() => {
     }
   }
 
-  return { problems, markers, widths, scale, documentScrollWidth: document.documentElement.scrollWidth };
+  return { problems, chipLines, markers, widths, scale, documentScrollWidth: document.documentElement.scrollWidth };
 }`;
 
 async function main(): Promise<void> {
@@ -750,6 +908,10 @@ async function main(): Promise<void> {
         }
       }
 
+      const worstChips = [...report.chipLines].sort((a, b) => b.lines - a.lines)[0];
+      if (worstChips) {
+        console.log(`    [chips] ${tag} · worst row: ${worstChips.chips} chip(s) on ${worstChips.lines} line(s) (${worstChips.case})`);
+      }
       if (report.documentScrollWidth > width) {
         failures.push(`${tag} · document scrolls sideways (${report.documentScrollWidth}px)`);
       }

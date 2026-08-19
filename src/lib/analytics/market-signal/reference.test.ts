@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -283,4 +283,60 @@ describe('market signal metrics against an independent reference implementation'
     expect(bands.upper <= channel.upper && bands.lower >= channel.lower).toBe(false);
     expect(metrics.squeezeOn).toBe(false);
   });
+});
+
+/**
+ * THE MACD TRIO, ON EVERY CAPTURE RATHER THAN ON THE ONE THAT WAS QUESTIONED.
+ *
+ * The report that reopened this named a different reading from the one settled
+ * above: `MACD 0.2326 / Signal -0.8067 / Histogram 1.0393`, on the grounds that
+ * a nine-period EMA of the MACD line should not sit a full unit below it. The
+ * arithmetic checks (0.2326 - (-0.8067) = 1.0393) and the shape is the shape
+ * IREN already had — a MACD line that has climbed fast through its own signal —
+ * so the question is whether the ENGINE's signal EMA is right, not whether the
+ * subtraction is.
+ *
+ * That specific reading is not in any frozen capture, so it cannot be asserted
+ * by name; what can be checked is the thing the report is actually doubting.
+ * Every golden capture is recomputed here from raw closes with a longhand
+ * 12/26/9 that imports nothing from the engine, and each one's trio has to
+ * match to 1e-9 — including REMX, whose line sits 1.74 above its signal, and
+ * QQQ, whose sits 4.36 above. If the engine's EMA9 were lagging wrongly, ten
+ * independent instruments would not all agree with an implementation written
+ * from the definition.
+ *
+ * VERDICT: no defect. A signal line far from the line it smooths is what a
+ * nine-period EMA does after a fast reversal, which is the state the reported
+ * case describes (EMA20 slope +4.4% with 50 and 200 still negative).
+ */
+describe('the MACD signal EMA, checked against an independent implementation on every capture', () => {
+  const dir = join(process.cwd(), '__golden__', 'candles');
+  const symbols = readdirSync(dir).filter((file) => file.endsWith('.json')).map((file) => file.replace(/\.json$/, ''));
+
+  it('has captures to check', () => {
+    expect(symbols.length).toBeGreaterThanOrEqual(10);
+  });
+
+  for (const symbol of symbols) {
+    it(`reproduces MACD, its EMA9 and the histogram for ${symbol}`, () => {
+      const source = JSON.parse(readFileSync(join(dir, `${symbol}.json`), 'utf8')) as {
+        symbol: string; source: string | null; freshness: never; candles: MarketSignalCandle[];
+      };
+      const bars = source.candles.filter((candle) => candle.finalized);
+      const values = bars.map((bar) => bar.close);
+      const reference = refMacd(values, 12, 26, 9);
+      const own = calculateMarketSignal(source.candles, {
+        symbol,
+        source: source.source,
+        freshness: source.freshness,
+        calculatedAt: '2026-01-01T00:00:00.000Z',
+      }).metrics;
+
+      near(own.macd, reference.line.at(-1) as number, 1e-9);
+      near(own.macdSignal, reference.signal.at(-1) as number, 1e-9);
+      near(own.macdHistogram, reference.histogram.at(-1) as number, 1e-9);
+      // The defining identity, which is what a real indexing bug would break.
+      near(own.macdHistogram, (own.macd as number) - (own.macdSignal as number), 1e-12);
+    });
+  }
 });
