@@ -58,10 +58,21 @@
  *      past either end. This is the rule the two-column trigger grid broke: its
  *      right-hand cell ran out at about 70% of the block, so a sentence about
  *      the top of the frame ended in the middle of nowhere
- *  13. the block is no wider than one reading width and is centred in the card.
- *      Stretched across a desktop card the bar put a hand's width between a
- *      caption and the line it named, which no font size fixes
- *  14. nothing on the page logged a console error, which is how a hydration
+ *  13. the block fills the card's content box exactly — same gap on the left as
+ *      on the right, both of them the card's own padding. The 640px cap this
+ *      replaced answered a wide-screen complaint by shrinking the picture, which
+ *      left phone-sized type marooned in a two-thirds-width block; the fix is
+ *      that the DRAWING scales, checked by 15 below
+ *  14. two field names that sit beside each other keep at least 12px of clear
+ *      air. "กรอบเดิม" used to be shoved against whichever end of its field the
+ *      marker was not on, so it ended up touching "ขาลง", which is beside it
+ *      rather than on top of it and invisible to the overlap rule
+ *  15. THE TYPE GROWS WITH THE TRACK. Every kind of type on the picture — field
+ *      names, edge prices, price captions — and the bar's own height are
+ *      compared between 390px and 1440px, and each one has to be strictly
+ *      larger at the wide width. A cap plus fixed type is the arrangement this
+ *      replaced, and nothing about it was visible at one width alone
+ *  16. nothing on the page logged a console error, which is how a hydration
  *      mismatch — the two halves of this harness drawing two different cards —
  *      would show up
  */
@@ -96,15 +107,30 @@ const OUT_DIR = '.qa/artifacts/market-signal-zone-bar';
  * it merged captions that had 90px of clear air between them. Nothing about
  * that was visible at 390.
  */
-const WIDTHS = [1280, 390, 360, 320];
+const WIDTHS = [1440, 1280, 390, 360, 320];
 /**
- * The reading width the zone block is capped at, from `max-w-[640px]`. Checked
- * rather than assumed: the cap is the fix for the desktop bar, and a class that
- * stops being applied is invisible on a phone, where it never bound anyway.
+ * The two widths the font-scale rule is read off, and it is a rule about a
+ * PAIR: "the caption is 14px at 1440" is a number somebody can satisfy by
+ * hard-coding 14px everywhere. What the bar has to do is grow, so the assertion
+ * is that every kind of type on the picture measures strictly more at the wide
+ * width than at the phone width, and the bar with it.
  */
-const ZONE_BLOCK_MAX_PX = 640;
+const SCALE_FROM = 390;
+const SCALE_TO = 1440;
 /** Nothing in the block may start or end more than this far from the track. */
 const ROW_ALIGN_TOLERANCE = 2;
+/**
+ * The clear air two ADJACENT field names have to keep, mirroring
+ * `NAME_MIN_GAP_PX` in the component.
+ *
+ * The bug: the middle field's name was pushed hard against whichever end of its
+ * own field the close marker was not standing in, and the outer names are
+ * written against the cuts, so "กรอบเดิม" ended up touching "ขาลง" — two
+ * different claims about two different price ranges reading as one run of Thai.
+ * The overlap rule above could not see it, because the two boxes were beside
+ * each other rather than on top of each other.
+ */
+const NAME_MIN_GAP_PX = 12;
 /*
  * Both appearances, because the bar's three fields are the first thing on this
  * card to depend on translucent whites and on the 100-shade status text, and
@@ -201,10 +227,17 @@ interface ZoneBarProblem { case: string; kind: string; detail: string }
 interface MarkerReading { case: string; marker: string; contrast: number; gap: number | null }
 /** What a label actually measured, against the estimate it was placed on. */
 interface WidthReading { case: string; label: string; measured: number; estimate: number }
+/**
+ * One rendered size, so the same thing can be compared between two widths.
+ * `what` is a KIND of element rather than one node, because which nodes exist
+ * depends on the case: a field too narrow for its name has no name to measure.
+ */
+interface ScaleReading { what: string; px: number }
 interface ZoneBarReport {
   problems: ZoneBarProblem[];
   markers: MarkerReading[];
   widths: WidthReading[];
+  scale: ScaleReading[];
   documentScrollWidth: number;
 }
 
@@ -226,11 +259,24 @@ const PROBE = `() => {
   const TOLERANCE = 0.5;
   const MARKER_MIN_CONTRAST = ${MARKER_MIN_CONTRAST};
   const MARKER_MIN_GAP = ${MARKER_MIN_GAP};
-  const ZONE_BLOCK_MAX_PX = ${ZONE_BLOCK_MAX_PX};
+  const NAME_MIN_GAP_PX = ${NAME_MIN_GAP_PX};
   const ROW_ALIGN_TOLERANCE = ${ROW_ALIGN_TOLERANCE};
   const problems = [];
   const markers = [];
   const widths = [];
+  const scale = [];
+  const seenScale = new Set();
+  /*
+   * One reading per KIND, taken off the first case that draws one. Every case
+   * on the page is at the same width and therefore at the same size, so a
+   * second reading of the same kind adds nothing; and taking the first means
+   * the comparison between two widths is between the same two elements.
+   */
+  const measureScale = (what, px) => {
+    if (!(px > 0) || seenScale.has(what)) return;
+    seenScale.add(what);
+    scale.push({ what, px: Number(px.toFixed(2)) });
+  };
   const note = (caseName, kind, detail) => problems.push({ case: caseName, kind, detail });
 
   /*
@@ -342,13 +388,22 @@ const PROBE = `() => {
       const label = field.querySelector('[data-label]');
       const nameProbe = bar.querySelector('[data-measure="zone-' + field.dataset.zone + '"]');
       const nameWidth = nameProbe ? nameProbe.getBoundingClientRect().width : 0;
+      /*
+       * The middle field asks for more room than the other two, and the
+       * component asks for exactly the same: its name is always centred and it
+       * has a name on BOTH sides of it, so it needs \`NAME_MIN_GAP_PX\` of clear
+       * air twice over before it can be drawn at all. The outer two are bounded
+       * by the ends of the bar on their far side and need only to fit.
+       */
+      const clearance = field.dataset.zone === 'sideways' ? NAME_MIN_GAP_PX * 2 : 2;
       if (!label) {
-        if (nameWidth > 0 && box.width > nameWidth + 2 + TOLERANCE) {
+        if (nameWidth > 0 && box.width > nameWidth + clearance + TOLERANCE) {
           note(name, 'field-unnamed', field.dataset.zone + ' is ' + box.width.toFixed(1)
             + 'px and its name only ' + nameWidth.toFixed(1) + 'px');
         }
         continue;
       }
+      measureScale('zone-name-font', parseFloat(getComputedStyle(label).fontSize));
       const labelBox = label.getBoundingClientRect();
       if (labelBox.left < box.left - TOLERANCE || labelBox.right > box.right + TOLERANCE) {
         note(name, 'name-overflows-field', field.dataset.zone + ' name is ' + labelBox.width.toFixed(1) + 'px in a ' + box.width.toFixed(1) + 'px field');
@@ -394,6 +449,35 @@ const PROBE = `() => {
             a.key + ' "' + a.text + '" and ' + b.key + ' "' + b.text + '" overlap by '
             + overlapX.toFixed(1) + 'x' + overlapY.toFixed(1) + 'px');
         }
+      }
+    }
+
+    /*
+     * AND THE FIELD NAMES KEEP THEIR DISTANCE.
+     *
+     * Not overlapping is not enough for these three: they are three different
+     * claims about three different price ranges, written in the same face at
+     * the same size and sitting in one row, so two of them a pixel apart read
+     * as one Thai word. The rule that produced the bug pushed the middle name
+     * against whichever end of its field the marker was not standing in, and
+     * the outer names are written against the cuts, so "กรอบเดิม" finished
+     * flush against "ขาลง" with the overlap rule above reporting nothing.
+     *
+     * Adjacent in DRAWN order rather than in field order: a field too narrow
+     * for its name has none, and the two names either side of it are then the
+     * adjacent pair.
+     */
+    const drawnNames = [...bar.querySelectorAll('[data-zone] [data-label]')]
+      .map((node) => ({ key: node.getAttribute('data-label'), text: (node.textContent || '').trim(), box: node.getBoundingClientRect() }))
+      .sort((a, b) => a.box.left - b.box.left);
+    for (let i = 1; i < drawnNames.length; i += 1) {
+      const left = drawnNames[i - 1];
+      const right = drawnNames[i];
+      const gap = right.box.left - left.box.right;
+      if (gap < NAME_MIN_GAP_PX - TOLERANCE) {
+        note(name, 'zone-names-too-close',
+          left.key + ' "' + left.text + '" and ' + right.key + ' "' + right.text + '" are '
+          + gap.toFixed(1) + 'px apart, under ' + NAME_MIN_GAP_PX + 'px');
       }
     }
 
@@ -450,21 +534,31 @@ const PROBE = `() => {
       }
 
       /*
-       * The reading width. A bar as wide as a desktop card puts a hand's width
-       * between a caption and its line, and no font size fixes that — it is the
-       * same constraint that stops body text from running the width of a page.
+       * THE BLOCK IS THE CARD, EDGE TO EDGE.
+       *
+       * It used to be capped at 640px and centred, which read on a desktop as a
+       * small drawing pushed into the middle of a large card with a hand's
+       * width of empty card either side and phone-sized type on it. The cap is
+       * gone; what replaces it is that the block fills the card's CONTENT box —
+       * so the gap on the left is the card's padding and the gap on the right
+       * is the same padding, by construction rather than by arithmetic — and
+       * the type on it grows with the track (see the scale readings below).
+       *
+       * Both edges are checked, not just the difference between them: a block
+       * that is 20px short on each side is perfectly centred and still wrong.
        */
       const blockBox = bar.getBoundingClientRect();
-      if (blockBox.width > ZONE_BLOCK_MAX_PX + 1) {
-        note(name, 'zone-block-too-wide', 'the block is ' + blockBox.width.toFixed(1) + 'px wide');
-      }
       const cardStyle = getComputedStyle(card);
       const contentLeft = cardBox.left + parseFloat(cardStyle.borderLeftWidth) + parseFloat(cardStyle.paddingLeft);
       const contentRight = cardBox.right - parseFloat(cardStyle.borderRightWidth) - parseFloat(cardStyle.paddingRight);
-      const offCentre = (blockBox.left - contentLeft) - (contentRight - blockBox.right);
-      if (Math.abs(offCentre) > ROW_ALIGN_TOLERANCE) {
-        note(name, 'zone-block-not-centred', 'the block sits ' + offCentre.toFixed(1) + 'px off centre in the card');
+      const leftGap = blockBox.left - contentLeft;
+      const rightGap = contentRight - blockBox.right;
+      if (Math.abs(leftGap) > ROW_ALIGN_TOLERANCE || Math.abs(rightGap) > ROW_ALIGN_TOLERANCE) {
+        note(name, 'zone-block-not-full-width',
+          'the block leaves ' + leftGap.toFixed(1) + 'px on the left and ' + rightGap.toFixed(1)
+          + 'px on the right of the card content box');
       }
+      measureScale('bar-height', barBox.height);
     }
 
     const markX = (which) => {
@@ -475,6 +569,10 @@ const PROBE = `() => {
     };
 
     for (const label of labels) {
+      const font = parseFloat(getComputedStyle(label.node).fontSize);
+      if (label.key === 'close' || label.key === 'live' || label.key === 'prices') measureScale('price-caption-font', font);
+      if (label.key.indexOf('edge') === 0 || label.key === 'edges') measureScale('edge-price-font', font);
+
       // Inside the row it is positioned against. A label that has left its track
       // is broken long before anything reaches the edge of the card.
       if (label.track) {
@@ -599,7 +697,7 @@ const PROBE = `() => {
     }
   }
 
-  return { problems, markers, widths, documentScrollWidth: document.documentElement.scrollWidth };
+  return { problems, markers, widths, scale, documentScrollWidth: document.documentElement.scrollWidth };
 }`;
 
 async function main(): Promise<void> {
@@ -610,6 +708,8 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   const readings: Array<MarkerReading & { at: string }> = [];
   const labelWidths: Array<WidthReading & { at: string }> = [];
+  /** appearance -> width -> kind -> rendered px, for the growth rule below. */
+  const scaleByWidth = new Map<string, Map<number, Map<string, number>>>();
 
   try {
     for (const appearance of APPEARANCES) {
@@ -682,12 +782,50 @@ async function main(): Promise<void> {
       );
       readings.push(...report.markers.map((entry) => ({ ...entry, at: tag })));
       labelWidths.push(...report.widths.map((entry) => ({ ...entry, at: tag })));
+      const perAppearance = scaleByWidth.get(appearance) ?? new Map<number, Map<string, number>>();
+      perAppearance.set(width, new Map(report.scale.map((entry) => [entry.what, entry.px])));
+      scaleByWidth.set(appearance, perAppearance);
       await context.close();
     }
     }
   } finally {
     await browser.close();
   }
+
+  /*
+   * THE GROWTH RULE, which needs two widths and therefore cannot live in the
+   * probe.
+   *
+   * Removing the 640px cap on its own would make the bar worse, not better: the
+   * complaint the cap was answering is that a wide bar puts distance between a
+   * caption and the line it names, and distance with unchanged 12px type is a
+   * caption that has shrunk relative to everything around it. So the cap and
+   * the scaling are one change, and this is the half of it a single width
+   * cannot see. Strictly greater, in every kind, in both appearances.
+   */
+  const scaleFailures: string[] = [];
+  for (const appearance of APPEARANCES) {
+    const narrow = scaleByWidth.get(appearance)?.get(SCALE_FROM);
+    const wide = scaleByWidth.get(appearance)?.get(SCALE_TO);
+    if (!narrow || !wide) {
+      scaleFailures.push(`${appearance} · no readings at ${SCALE_FROM}px or ${SCALE_TO}px to compare`);
+      continue;
+    }
+    for (const [what, narrowPx] of narrow) {
+      const widePx = wide.get(what);
+      if (widePx === undefined) {
+        scaleFailures.push(`${appearance} · ${what} is drawn at ${SCALE_FROM}px but not at ${SCALE_TO}px`);
+      } else if (!(widePx > narrowPx)) {
+        scaleFailures.push(
+          `${appearance} · ${what} does not grow with the track: ${narrowPx}px at ${SCALE_FROM}`
+          + ` and ${widePx}px at ${SCALE_TO}`,
+        );
+      } else {
+        console.log(`${appearance} · ${what} ${narrowPx}px @${SCALE_FROM} → ${widePx}px @${SCALE_TO}`);
+      }
+    }
+  }
+  failures.push(...scaleFailures);
 
   writeFileSync(path.join(OUT_DIR, 'report.json'), JSON.stringify({
     widths: WIDTHS,
@@ -697,6 +835,10 @@ async function main(): Promise<void> {
     markerMinGap: MARKER_MIN_GAP,
     markers: readings,
     labelWidths,
+    scale: Object.fromEntries([...scaleByWidth].map(([appearance, byWidth]) => [
+      appearance,
+      Object.fromEntries([...byWidth].map(([width, kinds]) => [width, Object.fromEntries(kinds)])),
+    ])),
     failures,
   }, null, 2), 'utf8');
 

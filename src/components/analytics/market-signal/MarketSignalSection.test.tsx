@@ -8,7 +8,7 @@ import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
-import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle } from './MarketSignalSection';
+import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle, zoneScaleFor } from './MarketSignalSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -398,19 +398,57 @@ describe('MarketSignalSection', () => {
     });
 
     /*
-     * The bar is a picture with a measure, not a picture as wide as the monitor.
+     * The block is the card, and the drawing grows instead of the block
+     * shrinking.
      *
-     * At 1,500px every distance on it grew without a single number growing with
-     * it: the eye had to carry a caption a hand's width back to its line. The
-     * geometry is the browser QA's to prove (`qa:signal-zone-bar` measures the
-     * drawn block at 1280px); what is asserted here is that the cap is on the
-     * block that contains ALL of it — bar, captions, edge prices and the lines
-     * underneath — so no part of it can be laid out to a different width.
+     * It used to be capped at 640px and centred, which answered a real
+     * wide-screen complaint — a caption a hand's width from the line it names —
+     * by shrinking the picture, and left the other half of the complaint
+     * untouched: the type on it stayed phone-sized, so a desktop reader got a
+     * small drawing marooned in a large card. `w-full` inside the card's own
+     * padding is what makes the gap on the left the same as the gap on the
+     * right without any arithmetic; `qa:signal-zone-bar` measures both gaps
+     * against the card's content box at 1440 and 1280, and measures that every
+     * kind of type on the picture is strictly larger there than at 390.
      */
-    it('caps the whole zone block at one reading width and centres it', async () => {
+    it('fills the card instead of capping itself at a reading width', async () => {
       await render(zoned, 'elite', 42.38);
-      expect(zoneBar().className).toContain('max-w-[640px]');
-      expect(zoneBar().className).toContain('mx-auto');
+      expect(zoneBar().className).toContain('w-full');
+      expect(zoneBar().className).not.toContain('max-w-');
+      // `mx-auto` centred a capped block. With no cap there is nothing to
+      // centre, and leaving it in would hide a cap creeping back.
+      expect(zoneBar().className).not.toContain('mx-auto');
+    });
+
+    /*
+     * The sizes themselves, asked of the pure function rather than of a
+     * rendered card: jsdom has no layout, so the track it measures is always 0
+     * and the component can only ever be seen at the compact size here.
+     *
+     * The threshold is on the TRACK, which is why this is worth a test at all.
+     * A viewport breakpoint would give a bar inside a narrow two-column layout
+     * the same 15px names as one running the width of the window, and the
+     * narrow one has nowhere to put them.
+     */
+    it('grows the picture from the width of the track, not the window', () => {
+      const narrow = zoneScaleFor(390);
+      const wide = zoneScaleFor(1400);
+      // Nothing measured yet is the compact size, never the wide one: the
+      // server and the first client render both land on 0 and have to agree.
+      expect(zoneScaleFor(0)).toBe(narrow);
+      expect(zoneScaleFor(900)).toBe(narrow);
+      expect(zoneScaleFor(901)).toBe(wide);
+
+      expect(narrow.caption.name).toContain('text-[10px]');
+      expect(wide.caption.name).toContain('text-[15px]');
+      expect(narrow.caption.price).toContain('text-[10px]');
+      expect(wide.caption.price).toContain('text-[14px]');
+      expect(narrow.caption.level).toContain('text-[10px]');
+      expect(wide.caption.level).toContain('text-[13px]');
+      // The bar and the mark a reader has to find grow with the type.
+      expect(narrow.row.bar).toBe('h-9');
+      expect(wide.row.bar).toBe('h-12');
+      expect(wide.closeMarkPx).toBeGreaterThan(narrow.closeMarkPx);
     });
 
     /*
@@ -622,6 +660,52 @@ describe('MarketSignalSection', () => {
        * drawn label against it in a real browser, and these are the numbers that
        * run measured on Chrome at the size these captions actually render.
        */
+      /*
+       * "กรอบเดิม" IS ALWAYS CENTRED IN ITS OWN FIELD.
+       *
+       * The rule this replaced moved any field's name off its preferred end
+       * whenever the close marker was anywhere in that HALF of the field, which
+       * on the ordinary card — close at about 65% of a wide middle field,
+       * nowhere near the name sitting in the centre of it — shoved "กรอบเดิม"
+       * hard against the lower cut. "ขาลง" is written against that same cut
+       * from the other side, so the two names finished flush against each
+       * other: two claims about two different price ranges reading as one run
+       * of Thai. The outer names have the end of the bar on their far side and
+       * can still move away from a mark standing on their glyphs; the middle
+       * one has a name on both sides and no such position, so it does not move
+       * at all. `qa:signal-zone-bar` measures the drawn gap at every width.
+       */
+      it('keeps the middle field name centred, whatever the marker is doing', async () => {
+        const alignment = () => zoneBar().querySelector('[data-zone="sideways"]')!.className;
+        // Close high in the field, close low in it, close outside it entirely.
+        for (const close of [46.5, 39.5, 61.42]) {
+          await render({ ...zoned, zones: { ...zoned.zones!, referenceClose: close } });
+          expect(alignment(), `close ${close}`).toContain('justify-center');
+          expect(alignment(), `close ${close}`).not.toContain('justify-start');
+          expect(alignment(), `close ${close}`).not.toContain('justify-end');
+        }
+      });
+
+      /*
+       * The estimate has to be in the units of the size the caption is DRAWN
+       * at. The glyph table is measured at the 12px `text-[10px]` renders, so a
+       * 15px field name placed on an unscaled estimate is placed on a box a
+       * quarter narrower than the one it occupies — which is how a name comes
+       * to be drawn a pixel into the field beside it.
+       *
+       * Padding is not scaled with it: `px-1` and `px-1.5` are spacing
+       * utilities, not lengths in ems, so they are added after.
+       */
+      it('scales the estimate with the size the caption is drawn at', () => {
+        const base = estimateLabelWidth('กรอบเดิม');
+        expect(estimateLabelWidth('กรอบเดิม', { scale: 15 / 12 })).toBeGreaterThan(base);
+        // 8px of padding at the compact size, 12px at the wide one, both added
+        // whole rather than multiplied by the glyph scale.
+        expect(estimateLabelWidth('กรอบเดิม', { padding: 8 })).toBe(base + 8);
+        expect(estimateLabelWidth('44.06', { mono: true, padding: 0, scale: 13 / 12 }))
+          .toBeGreaterThan(estimateLabelWidth('44.06', { mono: true }));
+      });
+
       it('estimates a label at least as wide as Chrome draws it', () => {
         // Chrome draws these two at 91.9px and 104.5px.
         expect(estimateLabelWidth('ปิดล่าสุด 44.06', { padding: 12 })).toBeGreaterThanOrEqual(91);
@@ -694,6 +778,76 @@ describe('MarketSignalSection', () => {
      * distance between the prices, not a threshold, not a hypothetical 216px
      * track it is not being read on: the boxes.
      */
+    /*
+     * ONE PRICE, ONE CAPTION — the case none of the collision machinery below
+     * can reach, because nothing about it is a collision.
+     *
+     * When the live price rounds to the figure the close rounds to, the two
+     * marks stand on the same percent and paint as one line, and the bar was
+     * captioning that single line "ปิดล่าสุด 42 · ราคาตอนนี้ 42": two identical
+     * numbers offered as two facts, with a sentence underneath repeating the
+     * second of them. There is all the room in the world for two captions at
+     * 1440px and they still say the same thing twice, so the answer cannot come
+     * from measuring boxes — it comes from comparing the two strings the bar
+     * draws.
+     */
+    describe('when the live price is the close', () => {
+      it('draws one caption, on the close', async () => {
+        await render({ ...zoned, zones: { ...zoned.zones!, referenceClose: 42 } }, 'elite', 42);
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent)
+          .toBe('ปิดล่าสุด 42');
+        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
+        expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
+      });
+
+      it('does not say the price a second time under the bar', async () => {
+        await render({ ...zoned, zones: { ...zoned.zones!, referenceClose: 42 } }, 'elite', 42);
+        expect(container.querySelector('[data-testid="signal-live-price"]')).toBeNull();
+        // The one line that still carries it is the provenance footnote, which
+        // is saying which close every figure on the card was measured from.
+        expect(zoneBar().querySelector('[data-zone-row="source"]')!.textContent)
+          .toContain('วัดจากราคาปิดตลาดรอบล่าสุด 42');
+      });
+
+      /*
+       * The MARKS do not collapse, and this is the line between the two.
+       * Whether there are two prices is a fact about the payload; whether there
+       * are two captions is a reading of it. Both marks stay drawn — they land
+       * on the same percent and paint as one line, which is the truthful
+       * picture of two prices that are one number.
+       */
+      it('still draws both marks', async () => {
+        await render({ ...zoned, zones: { ...zoned.zones!, referenceClose: 42 } }, 'elite', 42);
+        const live = zoneBar().querySelector<HTMLElement>('[data-marker="live"]')!;
+        const close = zoneBar().querySelector<HTMLElement>('[data-marker="close"]')!;
+        expect(live.style.left).toBe(close.style.left);
+      });
+
+      /*
+       * Only when they are the same to every digit the card prints. The bar
+       * drops the cents above a thousand, so two six-figure prices can share a
+       * caption up there and still be two prices — and then the sentence under
+       * the bar is the row that says so, and it stays.
+       */
+      it('keeps the sentence when the bar rounded two different prices together', async () => {
+        const btc = {
+          ...zoned,
+          zones: {
+            ...zoned.zones!,
+            lowerTrigger: 103_192.08,
+            upperTrigger: 120_091.68,
+            referenceClose: 121_884.35,
+          },
+        };
+        await render(btc, 'elite', 121_884.02);
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent)
+          .toBe('ปิดล่าสุด 121,884');
+        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
+        expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
+          .toContain('ราคาตอนนี้ 121,884.02');
+      });
+    });
+
     describe('when two captions would land on top of each other', () => {
       it('never merges on a guess, when nothing has been measured', async () => {
         // No layout stub: every box reads 0, which is jsdom and also the server.
@@ -913,14 +1067,51 @@ describe('MarketSignalSection', () => {
       expect(segment('uptrend').className).toContain('justify-start');
     });
 
-    it('moves a name off its own edge when the price marker is standing there', async () => {
-      // Close 44.06 against an upper trigger of 43.25: the marker is in the
-      // left-hand half of the uptrend field, which is where that name would go.
-      await render({
-        ...zoned,
-        zones: { ...zoned.zones!, zone: 'uptrend', upperTrigger: 43.25, upperDistance: -0.81, nearestTriggerAtr: -0.2 },
-      });
+    /*
+     * A name moves off its own cut only when the mark is ON it — measured, and
+     * not before.
+     *
+     * The question used to be asked as "is the marker in this half of the
+     * field", which is a proxy for the real one and a bad one: on a wide bar
+     * the marker is routinely in the same half as the name and 200px away from
+     * it, and the answer "move" cost a reader a name written where its own
+     * boundary is not. Now the two boxes are compared, on the track the reader
+     * has, which is why both of these cases are the same card at two widths.
+     *
+     * Close 44.06 against an upper trigger of 43.25 puts the mark just inside
+     * the uptrend field, which spans 77.8-100% of the track.
+     */
+    const markedUp: MarketSignalResult = {
+      ...zoned,
+      zones: { ...zoned.zones!, zone: 'uptrend', upperTrigger: 43.25, upperDistance: -0.81, nearestTriggerAtr: -0.2 },
+    };
+
+    it('moves a name off its own edge when the price marker is standing on it', async () => {
+      // A 400px track leaves the uptrend field 89px, and the mark lands at
+      // 347px — inside the 42px name written from the field's left edge.
+      measuring(400, SEVEN_PX_PER_GLYPH);
+      await render(markedUp);
       expect(segment('uptrend').className).toContain('justify-end');
+    });
+
+    it('leaves it on its own edge when the marker is nowhere near the glyphs', async () => {
+      // The same card on a 1200px track: the name still starts at the cut, the
+      // mark is still just inside the field, and there are now 60px of green
+      // between them. Nothing has to move, and moving would put the word that
+      // explains the field at the wrong end of it.
+      measuring(1200, SEVEN_PX_PER_GLYPH);
+      await render(markedUp);
+      expect(segment('uptrend').className).toContain('justify-start');
+    });
+
+    /*
+     * Unmeasured, nothing moves. The server and the first client render both
+     * see a track of 0, and they have to draw the same card or hydration is
+     * comparing two different ones — the same contract the caption merge keeps.
+     */
+    it('does not move a name on a track it has not measured', async () => {
+      await render(markedUp);
+      expect(segment('uptrend').className).toContain('justify-start');
     });
 
     /*
