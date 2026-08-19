@@ -137,6 +137,18 @@ export function InfoHint({
         and an explicit 18px block/inline size stop a tight parent grid/flex from
         squeezing it into a vertical pill. The ≥44px touch target is an absolutely
         positioned transparent `::after` that never affects layout size.
+
+        `min-h-0` is what makes the sentence above TRUE, and it was missing.
+        `globals.css` gives every `button` a `min-height: 44px` so that a control
+        nobody sized is still tappable — and `min-height` beats `height`, so this
+        icon was an 18px circle inside a 44px box in every layout it appeared in,
+        with the ::after insetting from THAT (a 44x70 target, not 44x44).
+
+        Measured, not reasoned about: at 1280, 380 and 320px the Confidence label
+        row of the Options Signal header was 44px tall against a 13.75px line,
+        which put its label 15.1px and its number 30.3px below the score's. The
+        icon carries its own target, so the floor here is not what makes it
+        reachable and it can go.
       */}
       <button
         ref={triggerRef}
@@ -148,7 +160,7 @@ export function InfoHint({
         data-testid={`info-hint-${term}`}
         onClick={() => (open ? close() : setOpen(true))}
         style={{ inlineSize: 18, blockSize: 18, aspectRatio: '1' }}
-        className="relative box-border inline-flex flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full text-[15px] leading-none text-slate-500 outline-none after:absolute after:-inset-[13px] after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
+        className="relative box-border inline-flex min-h-0 flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full text-[15px] leading-none text-slate-500 outline-none after:absolute after:-inset-[13px] after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
       >
         <span aria-hidden="true">ⓘ</span>
       </button>

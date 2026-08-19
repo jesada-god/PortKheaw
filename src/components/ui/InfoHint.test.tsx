@@ -65,6 +65,18 @@ describe('InfoHint — accessible glossary popover', () => {
     expect(cls).toContain('rounded-full');
     // The ≥44px touch target is a transparent ::after overlay that must not add layout size.
     expect(cls).toContain("after:-inset-[13px]");
+    /*
+     * And the floor that was quietly beating all of the above.
+     *
+     * `globals.css` gives every `button` a `min-height: 44px`, `min-height` wins
+     * over `height`, so an 18px icon rendered as an 18px glyph inside a 44px box
+     * in every row it appeared in — measured at 1280, 380 and 320px on the
+     * Options Signal header, where it put the Confidence label 15.1px and its
+     * number 30.3px below the score's. jsdom has no cascade to see that with, so
+     * what is asserted here is the class that answers it; the pixels are
+     * `npm run qa:options-signal-header`.
+     */
+    expect(cls).toContain('min-h-0');
   });
 
   it('opens on tap and shows the three beginner-Thai explanation sections, then closes on a second tap', () => {

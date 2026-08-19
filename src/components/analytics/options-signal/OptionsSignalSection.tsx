@@ -158,7 +158,13 @@ function OptionsSignalContent({
   );
 }
 
-function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
+/**
+ * The card itself, exported so the two probes that cannot go through the
+ * fetching wrapper can render it: the jsdom test drives the wrapper, while
+ * `scripts/qa/options-signal-header-qa.mts` needs the real markup at a real
+ * width in a real browser and has no endpoint to answer it.
+ */
+export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
   signal: OptionsSignalDto;
   breakdownEntitled: boolean;
   open: boolean;
@@ -224,10 +230,15 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
           * 33px AND a hairline rule, and the hint moved onto the word it
           * explains so the value line is a clean number in both columns.
           */}
-        <div className="flex items-stretch text-center">
+        <div className="flex items-stretch text-center" data-testid="options-signal-headline-pair">
           <p className="flex flex-col items-center gap-0.5 pr-4">
-            <span className="text-[11px] font-normal leading-tight text-slate-400">คะแนนทิศทาง</span>
-            <span className="font-mono leading-tight">
+            <span
+              className="flex h-[1lh] items-center justify-center text-[11px] font-normal leading-tight text-slate-400"
+              data-testid="options-signal-score-label"
+            >
+              คะแนนทิศทาง
+            </span>
+            <span className="font-mono leading-tight" data-testid="options-signal-score-value">
               <span className="text-lg font-bold text-white" data-testid="options-signal-score-card">
                 {summary.directionScore0to100 ?? '—'}
               </span>
@@ -235,11 +246,14 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
             </span>
           </p>
           <p className="flex flex-col items-center gap-0.5 border-l border-white/20 pl-4">
-            <span className="inline-flex items-center gap-1 text-[11px] font-normal leading-tight text-slate-400">
+            <span
+              className="flex h-[1lh] items-center justify-center gap-1 text-[11px] font-normal leading-tight text-slate-400"
+              data-testid="options-signal-confidence-label"
+            >
               Confidence
               <InfoHint term="optionsSignalConfidence" align="end" />
             </span>
-            <span className="font-mono leading-tight">
+            <span className="font-mono leading-tight" data-testid="options-signal-confidence-value">
               <span className="text-lg font-bold text-white" data-testid="options-signal-confidence-card">
                 {summary.confidenceScore}
               </span>
