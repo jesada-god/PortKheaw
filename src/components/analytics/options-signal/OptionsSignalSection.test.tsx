@@ -123,6 +123,8 @@ const eliteSignal: OptionsSignalDto = {
         upsideExpectedMoves: 0.9,
         downsideExpectedMoves: 0.38,
         expectedMove: 13.3,
+        expectedMoveDte: 24,
+        expectedMoveHorizonWarning: null,
         state: 'DELAYED',
       },
       iv: {
@@ -159,6 +161,8 @@ const eliteSignal: OptionsSignalDto = {
         medianSpreadPercent: 2.4,
         contractsExamined: 14,
         expiration: '2026-08-21',
+        marketOpenAtCapture: true,
+        offHoursAssessment: null,
         state: 'DELAYED',
         reason: null,
         detail: 'OI กลาง 2,400 · Volume กลาง 310',
@@ -454,6 +458,86 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(text).not.toContain('undefined');
     expect(text).not.toContain('Infinity');
     expect(container.querySelector('[data-testid="options-signal-score-card"]')?.textContent).toBe('—');
+  });
+
+  it('shows the expected move with the horizon it was priced over', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    // A distance without a deadline is not a statement about this contract.
+    expect(document.body.textContent).toContain('เหลือ 24 วัน');
+  });
+
+  it('raises the horizon warning when the payload carries one', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    let trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(document.body.querySelector('[data-testid="options-signal-em-horizon-warning"]')).toBeNull();
+
+    mocks.requestOptionsSignal.mockResolvedValue({
+      status: 'ready',
+      signal: {
+        ...eliteSignal,
+        breakdown: {
+          ...eliteSignal.breakdown!,
+          diagnostics: {
+            ...eliteSignal.breakdown!.diagnostics,
+            riskReward: {
+              ...eliteSignal.breakdown!.diagnostics.riskReward,
+              expectedMoveHorizonWarning: 'แนวต้านอยู่ไกล 3.33 เท่าของ Expected Move',
+            },
+          },
+        },
+      },
+    });
+    await renderFor('elite', 'NVDA');
+    trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(document.body.querySelector('[data-testid="options-signal-em-horizon-warning"]')?.textContent)
+      .toContain('3.33');
+  });
+
+  it('says liquidity cannot be judged, rather than judging it, on a closed book', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({
+      status: 'ready',
+      signal: {
+        summary: { ...summary, liquidityGrade: 'unknown' },
+        breakdown: {
+          ...eliteSignal.breakdown!,
+          diagnostics: {
+            ...eliteSignal.breakdown!.diagnostics,
+            liquidity: {
+              ...eliteSignal.breakdown!.diagnostics.liquidity,
+              grade: 'unknown',
+              score: null,
+              medianSpreadPercent: 42,
+              marketOpenAtCapture: false,
+              offHoursAssessment: { grade: 'fair', score: 60 },
+            },
+          },
+        },
+      },
+    });
+    await renderFor('elite');
+
+    // The badge stops making a claim instead of making a false one.
+    const badge = container.querySelector('[data-testid="options-signal-liquidity-badge"]');
+    expect(badge?.textContent).toContain('ประเมินไม่ได้');
+    expect(badge?.textContent).not.toContain('ต้องระวัง');
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // ...and the measurement behind it is still on screen, labelled.
+    expect(document.body.querySelector('[data-testid="options-signal-liquidity-closed"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('ถ้าดูเฉพาะ OI และ Volume');
+    expect(document.body.textContent).toContain('สภาพคล่องพอใช้');
   });
 
   it('keeps all six signal labels paired with beginner-facing Thai copy', () => {

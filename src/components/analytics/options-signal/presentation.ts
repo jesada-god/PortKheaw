@@ -135,11 +135,19 @@ export function ivPercentileText(
   return 'ไม่พร้อมใช้งาน';
 }
 
-/** The liquidity badge. Three words a beginner can act on, not a raw score. */
+/**
+ * The liquidity badge. A few words a beginner can act on, not a raw score.
+ *
+ * `unknown` is deliberately NEUTRAL in tone rather than a warning colour. It is
+ * the answer to "can I get out of this" asked while the book is shut, and
+ * dressing that as a red flag would push readers away from chains that are
+ * perfectly liquid at 10:00 and merely unquoted at 02:00.
+ */
 export const LIQUIDITY_BADGE = {
   good: { label: 'สภาพคล่องดี', tone: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200' },
   fair: { label: 'สภาพคล่องพอใช้', tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200' },
   thin: { label: 'สภาพคล่องต้องระวัง', tone: 'border-red-500/40 bg-red-500/15 text-red-200' },
+  unknown: { label: 'สภาพคล่องประเมินไม่ได้ (ตลาดปิด)', tone: 'border-slate-500/40 bg-slate-500/15 text-slate-200' },
 } as const satisfies Record<LiquidityGrade, { label: string; tone: string }>;
 
 /** Sources that disagree by more than the configured window say so, once. */

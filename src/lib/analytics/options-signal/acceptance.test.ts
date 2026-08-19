@@ -712,6 +712,119 @@ describe('liquidity is graded from real chain numbers, and never scores directio
 });
 
 // ---------------------------------------------------------------------------
+// Badges that must not mislead: an after-hours spread, and an expected move
+// quoted without the horizon it belongs to.
+// ---------------------------------------------------------------------------
+
+describe('a bid-ask spread quoted while the book is shut is not a liquidity grade', () => {
+  /*
+   * A chain that is thin ONLY because of its spread: the standing book is
+   * ordinary, and the 42% spread is what a quote looks like at 02:00. Counting
+   * that spread drags the composite to `thin`; excluding it lands on `fair`.
+   */
+  const thinLookingAfterHours: LiquidityInput = {
+    medianOpenInterest: 400, medianVolume: 40, medianSpreadPercent: 42,
+    contractsExamined: 12, expiration: '2026-09-18',
+  };
+
+  it('grades the same chain thin when open and unknown when shut', () => {
+    const open = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: true });
+    const shut = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: false });
+    expect(open.grade).toBe('thin');
+    expect(shut.grade).toBe('unknown');
+    expect(shut.score).toBeNull();
+  });
+
+  it('keeps the open-interest and volume evidence rather than throwing it away', () => {
+    const shut = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: false });
+    // The badge stops making a claim; the measurement is still there, labelled.
+    expect(shut.offHoursAssessment).toEqual({ grade: 'fair', score: 60 });
+    expect(shut.detail).toContain('ตลาดปิด');
+    expect(shut.detail).toContain('OI กลาง 400');
+  });
+
+  it('treats an unknown capture time as unknown, not as closed', () => {
+    // "We do not know when this was quoted" is not "we know the market was shut".
+    const unknownTime = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: null });
+    expect(unknownTime.grade).toBe('thin');
+    expect(gradeLiquidity(thinLookingAfterHours).grade).toBe('thin');
+  });
+
+  it('carries the closed state and the fallback assessment into the diagnostics', () => {
+    const result = calculateOptionsSignal(input({
+      liquidity: available<LiquidityInput>({ ...thinLookingAfterHours, marketOpenAtCapture: false }),
+    }));
+    expect(result.liquidityGrade).toBe('unknown');
+    expect(result.diagnostics.liquidity.marketOpenAtCapture).toBe(false);
+    expect(result.diagnostics.liquidity.offHoursAssessment?.grade).toBe('fair');
+    // And the setup warns the reader to look again when the book reopens.
+    expect(result.suggestedOptionsSetup.warnings.some((warning) => warning.includes('ตลาดปิด'))).toBe(true);
+    // It is NOT the thin-chain warning: that would be the false claim.
+    expect(result.suggestedOptionsSetup.warnings.some((warning) => warning.includes('บาง'))).toBe(false);
+  });
+
+  it('still never touches the direction score', () => {
+    const open = calculateOptionsSignal(input({
+      liquidity: available<LiquidityInput>({ ...thinLookingAfterHours, marketOpenAtCapture: true }),
+    }));
+    const shut = calculateOptionsSignal(input({
+      liquidity: available<LiquidityInput>({ ...thinLookingAfterHours, marketOpenAtCapture: false }),
+    }));
+    expect(open.diagnostics.score).toBe(shut.diagnostics.score);
+    expect(open.confidenceScore).toBe(shut.confidenceScore);
+  });
+});
+
+describe('an expected move is never shown without the horizon it belongs to', () => {
+  it('carries the straddle DTE through to the diagnostics and the detail text', () => {
+    const result = calculateOptionsSignal(input({
+      riskReward: available<RiskRewardInput>({
+        price: 100, support: 95, resistance: 110, atr: 2, expectedMove: 6, expectedMoveDte: 32,
+      }),
+    }));
+    expect(result.diagnostics.riskReward.expectedMoveDte).toBe(32);
+    expect(result.diagnostics.factors.riskReward.detail).toContain('32 วัน');
+  });
+
+  it('warns when a level sits further away than this contract can reach', () => {
+    // Resistance 20% away on a straddle pricing a 6% move: reaching it before
+    // expiry is a tail event, and the R:R measured against it flatters the setup.
+    const outcome = scoreRiskReward(
+      { price: 100, support: 97, resistance: 120, atr: 2, expectedMove: 6, expectedMoveDte: 7 },
+      { direction: 'bullish' },
+    );
+    expect(outcome.upsideExpectedMoves).toBeCloseTo(3.33, 2);
+    expect(outcome.expectedMoveHorizonWarning).toContain('Expected Move');
+    expect(outcome.expectedMoveHorizonWarning).toContain('7 วัน');
+  });
+
+  it('stays quiet when both levels are inside the move the contract prices', () => {
+    const outcome = scoreRiskReward(
+      { price: 100, support: 96, resistance: 105, atr: 2, expectedMove: 8, expectedMoveDte: 45 },
+      { direction: 'bullish' },
+    );
+    expect(outcome.expectedMoveHorizonWarning).toBeNull();
+  });
+
+  it('says nothing at all when there is no straddle to compare against', () => {
+    const outcome = scoreRiskReward({ price: 100, support: 90, resistance: 130 }, { direction: 'bullish' });
+    expect(outcome.expectedMoveDte).toBeNull();
+    expect(outcome.expectedMoveHorizonWarning).toBeNull();
+  });
+
+  it('surfaces the warning as a caution reason on the signal', () => {
+    const result = calculateOptionsSignal(input({
+      riskReward: available<RiskRewardInput>({
+        price: 100, support: 97, resistance: 120, atr: 2, expectedMove: 6, expectedMoveDte: 7,
+      }),
+    }));
+    const reason = result.reasoning.find((entry) => entry.id === 'expected-move-horizon');
+    expect(reason?.polarity).toBe('caution');
+    expect(result.diagnostics.riskReward.expectedMoveHorizonWarning).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Nothing broken reaches the UI
 // ---------------------------------------------------------------------------
 

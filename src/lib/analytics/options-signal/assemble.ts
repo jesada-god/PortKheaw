@@ -1,6 +1,8 @@
 import { calculateAtmIv } from '@/src/lib/market-data/options/analytics';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import type { OptionsSrResult } from '@/src/lib/analytics/options-sr/types';
+import { classifyUsEquitySession } from '@/src/lib/market-data/session';
+import { isUsTradingDay } from '@/src/lib/market-data/us-market-calendar';
 import { OPTIONS_SIGNAL_CONFIG } from './config';
 import { percentileRank } from './indicators';
 import type { RealizedVolatilityWindows } from './underlying';
@@ -168,6 +170,25 @@ export function chainDte(chain: OptionsChain): number | null {
 }
 
 /**
+ * Was the US regular session open at the instant this chain was captured?
+ *
+ * Both halves matter and neither is enough alone: `classifyUsEquitySession`
+ * knows the clock and the weekend but not the holiday calendar, and
+ * `isUsTradingDay` knows the holiday calendar but not the hour. A quote taken at
+ * 11:00 on Thanksgiving is an after-hours quote in every way that affects a
+ * bid-ask spread.
+ *
+ * `null` when the timestamp cannot be parsed, which stays distinct from `false`:
+ * "we do not know when this was quoted" is not "we know the market was shut".
+ */
+export function marketOpenAt(timestamp: string | null | undefined): boolean | null {
+  if (!timestamp || !Number.isFinite(Date.parse(timestamp))) return null;
+  const session = classifyUsEquitySession(timestamp);
+  if (session === null) return false;
+  return session === 'regular' && isUsTradingDay(timestamp.slice(0, 10));
+}
+
+/**
  * Expected move from the real ATM STRADDLE, not from a volatility formula.
  *
  * The straddle is what the market is actually charging for the move to this
@@ -207,6 +228,7 @@ export function buildRiskRewardSlot(
   levels: OptionsSignalInputSlot<PriceLevelsInput>,
   acceptedPrice: number | null,
   expectedMove: number | null = null,
+  expectedMoveDte: number | null = null,
 ): OptionsSignalInputSlot<RiskRewardInput> {
   if (levels.status === 'unavailable') return levels as OptionsSignalInputSlot<RiskRewardInput>;
   const accepted = finite(acceptedPrice);
@@ -220,6 +242,7 @@ export function buildRiskRewardSlot(
       resistance: levels.value.resistance,
       atr: levels.value.atr ?? null,
       expectedMove,
+      expectedMoveDte,
     },
     provider: levels.provider,
     asOf: levels.asOf,
@@ -456,6 +479,12 @@ export function buildLiquiditySlot(
       medianSpreadPercent: median(spreads),
       contractsExamined: nearAtm.length,
       expiration: chain.expiration,
+      /*
+       * Recorded at CAPTURE time, not read time. A chain fetched at the close
+       * and served from cache an hour later was still quoted while the book was
+       * open, and the spread in it is still a real cost.
+       */
+      marketOpenAtCapture: marketOpenAt(source.asOf ?? chain.asOf),
     },
     provider: chain.provider,
     asOf: source.asOf,
@@ -483,6 +512,7 @@ export function assembleOptionsSignalInput(
       context.levels,
       options.acceptedPrice,
       source.chain ? atmStraddleExpectedMove(source.chain) : null,
+      source.chain ? chainDte(source.chain) : null,
     ),
     event: context.event,
     liquidity: buildLiquiditySlot(options),

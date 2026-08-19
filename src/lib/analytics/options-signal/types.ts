@@ -150,6 +150,14 @@ export interface RiskRewardInput {
   atr?: number | null;
   /** ATM straddle expected move to expiration, in price units. */
   expectedMove?: number | null;
+  /**
+   * Days to expiration of the straddle `expectedMove` was read from.
+   *
+   * Shown wherever the expected move is, because an expected move without its
+   * horizon is a distance without a deadline: 6 dollars over four days and 6
+   * dollars over sixty are not the same statement about the same chart.
+   */
+  expectedMoveDte?: number | null;
 }
 
 /**
@@ -167,9 +175,25 @@ export interface LiquidityInput {
   /** How many near-ATM contracts the medians were taken over. */
   contractsExamined: number;
   expiration: string;
+  /**
+   * Whether the regular session was OPEN at the moment the chain was captured.
+   *
+   * A bid-ask spread quoted while the book is closed is not a measurement of
+   * what it costs to trade — market makers widen or pull quotes entirely
+   * overnight, and a chain that is perfectly liquid at 10:00 can show a 40%
+   * spread at 02:00. Grading that as "thin" tells a reader something false about
+   * the instrument rather than something true about the hour, so the grade is
+   * withheld instead. `null` when the capture time could not be classified.
+   */
+  marketOpenAtCapture?: boolean | null;
 }
 
-export type LiquidityGrade = 'good' | 'fair' | 'thin';
+/**
+ * `unknown` is not "no data" — the medians are still there and still shown. It
+ * is the honest answer to "can I get in and out of this", asked while the book
+ * is shut.
+ */
+export type LiquidityGrade = 'good' | 'fair' | 'thin' | 'unknown';
 
 export interface EventRiskInput {
   reportDate: string;
@@ -285,6 +309,14 @@ export interface OptionsSignalLiquidityDiagnostics {
   medianSpreadPercent: number | null;
   contractsExamined: number | null;
   expiration: string | null;
+  /** False when the spread below is an after-hours quote rather than a cost. */
+  marketOpenAtCapture: boolean | null;
+  /**
+   * What the open-interest and volume evidence alone says, with the unreliable
+   * spread excluded. Present when the market was shut, so the reader keeps the
+   * measurement even though the badge stops making a claim.
+   */
+  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
   state: OptionsSignalDataState;
   reason: string | null;
   detail: string;
@@ -336,6 +368,14 @@ export interface OptionsSignalDiagnostics {
     upsideExpectedMoves: number | null;
     downsideExpectedMoves: number | null;
     expectedMove: number | null;
+    /** Days to expiration of the straddle the expected move came from. */
+    expectedMoveDte: number | null;
+    /**
+     * Set when a level sits further away than this contract's own pricing says
+     * it can reach before expiry — the case where a flattering Risk:Reward is
+     * measured against a target the instrument will not live to see.
+     */
+    expectedMoveHorizonWarning: string | null;
     state: OptionsSignalDataState;
   };
   iv: {

@@ -162,6 +162,19 @@ export const OPTIONS_SIGNAL_CONFIG = {
     fairFrom: 45,
   },
 
+  expectedMove: {
+    /**
+     * How far a level may sit, measured in expected moves, before the modal says
+     * the contract probably expires before price gets there.
+     *
+     * The straddle prices roughly a one-standard-deviation move to ITS OWN
+     * expiration. A level two of those away is not "a target with a worse
+     * reward" — it is a target this contract is the wrong instrument for, and a
+     * Risk:Reward ratio quoted against it reads far better than it deserves.
+     */
+    reachableWithin: 1.5,
+  },
+
   event: {
     /** Earnings this close force the IV_WARNING gate regardless of direction. */
     warningDays: 3,

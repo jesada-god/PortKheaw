@@ -100,6 +100,8 @@ const result: OptionsSignalResult = {
       upsideExpectedMoves: null,
       downsideExpectedMoves: null,
       expectedMove: null,
+      expectedMoveDte: null,
+      expectedMoveHorizonWarning: null,
       state: 'DELAYED',
     },
     iv: {
@@ -136,6 +138,8 @@ const result: OptionsSignalResult = {
       medianSpreadPercent: null,
       contractsExamined: null,
       expiration: null,
+      marketOpenAtCapture: null,
+      offHoursAssessment: null,
       state: 'UNAVAILABLE',
       reason: 'test',
       detail: 'test',

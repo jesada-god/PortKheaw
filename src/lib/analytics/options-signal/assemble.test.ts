@@ -11,6 +11,7 @@ import {
   chainDte,
   dataStateFromChainStatus,
   ivPercentilePendingOf,
+  marketOpenAt,
   putCallVolumeRatio,
   realizedWindowForDte,
   type OptionsSignalServerContext,
@@ -109,7 +110,9 @@ describe('buildRiskRewardSlot', () => {
     const slot = buildRiskRewardSlot(levels, 102);
     expect(slot.status).toBe('available');
     if (slot.status !== 'available') return;
-    expect(slot.value).toEqual({ price: 102, support: 95, resistance: 110, atr: null, expectedMove: null });
+    expect(slot.value).toEqual({
+      price: 102, support: 95, resistance: 110, atr: null, expectedMove: null, expectedMoveDte: null,
+    });
   });
 
   it('falls back to the finalized close when no accepted price exists', () => {
@@ -462,3 +465,53 @@ describe('liquidity is measured off the near-the-money strikes only', () => {
   });
 });
 
+describe('capture time decides whether a spread is a cost or an artefact', () => {
+  it('reads the US regular session, not just the clock', () => {
+    // 2026-08-19 is a Wednesday. 14:00 UTC is 10:00 ET, mid-session.
+    expect(marketOpenAt('2026-08-19T14:00:00.000Z')).toBe(true);
+    // 06:00 UTC is 02:00 ET the same day: the book is shut.
+    expect(marketOpenAt('2026-08-19T06:00:00.000Z')).toBe(false);
+    // 13:00 UTC is 09:00 ET, pre-market: quoted, but not the regular book.
+    expect(marketOpenAt('2026-08-19T13:00:00.000Z')).toBe(false);
+  });
+
+  it('knows the weekend and the holiday calendar, which the clock alone does not', () => {
+    // 2026-08-22 is a Saturday.
+    expect(marketOpenAt('2026-08-22T14:00:00.000Z')).toBe(false);
+    // US Independence Day 2025 observed: a weekday at a market hour, still shut.
+    expect(marketOpenAt('2025-07-04T14:00:00.000Z')).toBe(false);
+  });
+
+  it('keeps "unknown" distinct from "closed"', () => {
+    expect(marketOpenAt(null)).toBeNull();
+    expect(marketOpenAt('')).toBeNull();
+    expect(marketOpenAt('not-a-timestamp')).toBeNull();
+  });
+
+  it('stamps the liquidity slot with the capture time, not the read time', () => {
+    const slot = buildLiquiditySlot({ chain: chain(0.24), optionsSr: availableSr });
+    if (slot.status !== 'available') throw new Error('expected a liquidity reading');
+    // The fixture chain is stamped 2026-07-27T20:00:00Z — 16:00 ET, one minute
+    // after the close, which is exactly the boundary this has to get right.
+    expect(slot.value.marketOpenAtCapture).toBe(false);
+  });
+
+  it('reports the straddle horizon alongside the move it belongs to', () => {
+    const built = assembleOptionsSignalInput(
+      {
+        symbol: 'TEST', timeframe: '1D', calculatedAt: ASOF, latestCandleAt: '2026-07-27',
+        finalizedCandles: 250,
+        macro: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'x', provider: null, asOf: null },
+        trend: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'x', provider: null, asOf: null },
+        momentum: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'x', provider: null, asOf: null },
+        levels,
+        event: { status: 'unavailable', state: 'UNAVAILABLE', reason: 'x', provider: null, asOf: null },
+        realizedVolatility: { value: 0.3, observations: 250 },
+      },
+      { chain: chain(0.24), optionsSr: availableSr, acceptedPrice: 100 },
+    );
+    if (built.riskReward.status !== 'available') throw new Error('expected levels');
+    expect(built.riskReward.value.expectedMove).toBeCloseTo(2.2, 6);
+    expect(built.riskReward.value.expectedMoveDte).toBe(25);
+  });
+});
