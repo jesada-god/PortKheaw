@@ -49,7 +49,8 @@
     "signal:calibrate": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/calibrate.ts",
     "signal:context": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-context-probe.ts",
     "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts",
-    "signal:distribution": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-distribution-regression.ts"
+    "signal:distribution": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-distribution-regression.ts",
+    "signal:levels": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-level-audit.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

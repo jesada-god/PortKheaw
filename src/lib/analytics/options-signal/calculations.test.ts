@@ -144,13 +144,34 @@ describe('factor scoring', () => {
   it('scores risk/reward symmetrically around a 1:1 ratio, for the led direction', () => {
     const bullish = { direction: 'bullish' as const };
     expect(scoreRiskReward({ price: 100, support: 90, resistance: 110 }, bullish).normalized).toBe(0);
+
+    // 2:1 no longer saturates — the tilt band was widened to 4.5:1 because a
+    // band that ended at 2 pinned four fifths of the market at one end. A 2:1
+    // setup is still a WORKABLE one; it is just no longer maximum evidence.
     const favourable = scoreRiskReward({ price: 100, support: 95, resistance: 110 }, bullish);
-    expect(favourable.normalized).toBe(1);
     expect(favourable.callRewardRisk).toBe(2);
+    expect(favourable.normalized).toBeCloseTo(0.4608, 4);
     expect(favourable.scoredSide).toBe('call');
+    expect(favourable.setupQuality).toBe(1);
+
+    // ...and the mirror ratio is the exact negative of it.
     const unfavourable = scoreRiskReward({ price: 100, support: 90, resistance: 105 }, bullish);
-    expect(unfavourable.normalized).toBe(-1);
+    expect(unfavourable.callRewardRisk).toBe(0.5);
+    expect(unfavourable.normalized).toBeCloseTo(-0.4608, 4);
+    expect(unfavourable.normalized).toBeCloseTo(-(favourable.normalized as number), 6);
+
     expect(scoreRiskReward({ price: 100, support: null, resistance: null }, bullish).normalized).toBeNull();
+  });
+
+  it('saturates the tilt at the configured ratio, and only there', () => {
+    const bullish = { direction: 'bullish' as const };
+    const base = OPTIONS_SIGNAL_CONFIG.riskReward.tiltSaturationRatio;
+    // up 4.5x the downside -> exactly the saturation point.
+    const atBand = scoreRiskReward({ price: 100, support: 98, resistance: 100 + 2 * base }, bullish);
+    expect(atBand.callRewardRisk).toBeCloseTo(base, 6);
+    expect(atBand.normalized).toBeCloseTo(1, 6);
+    // Beyond it, clamped rather than runaway.
+    expect(scoreRiskReward({ price: 100, support: 99, resistance: 130 }, bullish).normalized).toBe(1);
   });
 
   it('mirrors the same geometry onto the Put side when the evidence leads bearish', () => {
@@ -159,7 +180,9 @@ describe('factor scoring', () => {
     const bearish = scoreRiskReward({ price: 100, support: 80, resistance: 110 }, { direction: 'bearish' });
     expect(bearish.scoredSide).toBe('put');
     expect(bearish.putRewardRisk).toBe(2);
-    expect(bearish.normalized).toBe(-1);
+    expect(bearish.normalized).toBeCloseTo(-0.4608, 4);
+    const bullishTwin = scoreRiskReward({ price: 100, support: 95, resistance: 110 }, { direction: 'bullish' });
+    expect(bearish.normalized).toBeCloseTo(-(bullishTwin.normalized as number), 6);
   });
 
   it('treats a missing level as unbounded on that side, in mirror image', () => {

@@ -99,39 +99,50 @@ describe('screenshot-baseline', () => {
 
     /*
      * THE LEAD IS BULLISH, so the sideways damping does not fire and geometry is
-     * measured on the CALL side — where the reward:risk is 0.24. The tilt
-     * saturates at 2:1 against, so 0.24 lands on the full -15.
+     * measured on the CALL side — where the reward:risk is 0.24.
      *
-     * This is the finding: the item-B rework does NOT reach this case. It is
-     * locked here rather than hidden, and changing it is a scoring decision that
-     * needs its own review.
+     * WIDENED TILT BAND (saturation 2:1 -> 4.5:1). Before / after, on this case:
+     *
+     *   riskReward normalized   -1      -> -0.9589
+     *   riskReward points       -15     -> -14
+     *   rawDirectionPoints      13      -> 14
+     *   directionScore0to100    57      -> 58
+     *   confidence              38      -> 40
+     *   label                   SIDEWAYS -> SIDEWAYS   (unchanged, as required)
+     *
+     * The conclusion was already right; what changed is the resolution behind
+     * it. 0.24 and 0.49 used to score identically and now differ by 7 points.
      */
     expect(diagnostics.riskReward.scoredSide).toBe('call');
     expect(diagnostics.riskReward.callRewardRisk).toBeCloseTo(0.24, 2);
     expect(diagnostics.riskReward.putRewardRisk).toBeCloseTo(4.23, 2);
-    expect(diagnostics.factors.riskReward.normalized).toBe(-1);
-    expect(diagnostics.factors.riskReward.points).toBe(-OPTIONS_SIGNAL_WEIGHTS.riskReward);
+    expect(diagnostics.factors.riskReward.normalized).toBeCloseTo(-0.9589, 4);
+    expect(diagnostics.factors.riskReward.points).toBe(-14);
+    // No longer pinned at the end of the band, which is the whole point.
+    expect(diagnostics.factors.riskReward.points)
+      .toBeGreaterThan(-OPTIONS_SIGNAL_WEIGHTS.riskReward);
 
-    expect(diagnostics.rawDirectionPoints).toBe(13);
+    expect(diagnostics.rawDirectionPoints).toBe(14);
     expect(diagnostics.availableWeight).toBe(90);
-    expect(diagnostics.directionScore0to100).toBe(57);
-    expect(diagnostics.scoreFormula).toBe('(+13 + 90) ÷ (2 × 90) × 100 = 57');
+    expect(diagnostics.directionScore0to100).toBe(58);
+    expect(diagnostics.scoreFormula).toBe('(+14 + 90) ÷ (2 × 90) × 100 = 58');
 
+    // THE INVARIANT: the answer this case gives must not move. The evidence is
+    // genuinely mixed and SIDEWAYS is the honest label for it.
     expect(result.signalType).toBe('SIDEWAYS');
     expect(result.underlyingBias).toBe('neutral');
 
-    // What the rework DID change here: agreement is 21%, and the old weighted
-    // average published 62% on it. The geometric mean publishes 38%.
-    expect(diagnostics.agreement).toBeCloseTo(0.2063, 4);
+    // Agreement is 23%, and the old weighted average published 62% on this.
+    expect(diagnostics.agreement).toBeCloseTo(0.2258, 4);
     expect(diagnostics.coverage).toBe(1);
-    expect(diagnostics.evidenceStrength).toBeCloseTo(0.7, 4);
-    expect(result.confidenceScore).toBe(38);
+    expect(diagnostics.evidenceStrength).toBeCloseTo(0.6889, 4);
+    expect(result.confidenceScore).toBe(40);
     expect(result.confidenceScore).toBeLessThan(45);
 
     // And both surfaces still read the one field.
     const projected = projectOptionsSignal(result, { includeBreakdown: true });
-    expect(projected.summary.directionScore0to100).toBe(57);
-    expect(projected.breakdown?.diagnostics.directionScore0to100).toBe(57);
+    expect(projected.summary.directionScore0to100).toBe(58);
+    expect(projected.breakdown?.diagnostics.directionScore0to100).toBe(58);
   });
 
   it('shows the damping is unreachable here because the lead is not neutral', () => {
@@ -142,10 +153,29 @@ describe('screenshot-baseline', () => {
     const underNoLead = scoreRiskReward(geometry.value, { direction: 'neutral' });
 
     // The damping exists and works — it is simply not what this case reaches.
-    expect(underNoLead.normalized).toBe(-0.25);
-    expect(underBullishLead.normalized).toBe(-1);
+    expect(underNoLead.normalized).toBeCloseTo(-0.2397, 4);
+    expect(underBullishLead.normalized).toBeCloseTo(-0.9589, 4);
+    expect(underNoLead.normalized).toBeCloseTo(
+      (underBullishLead.normalized as number) * OPTIONS_SIGNAL_CONFIG.riskReward.sidewaysDamping, 6,
+    );
+    // The diagnostics field is rounded to 4dp for display; the engine used the
+    // bullish branch, which is what this asserts.
     expect(calculateOptionsSignal(screenshotCase).diagnostics.factors.riskReward.normalized)
-      .toBe(underBullishLead.normalized);
+      .toBeCloseTo(underBullishLead.normalized as number, 4);
+  });
+
+  it('tells 0.236 apart from 0.49, which the old band could not', () => {
+    // Both used to pin at -15. The requirement was a gap of at least 3 points.
+    const worse = scoreRiskReward({ price: 100, support: 89.425, resistance: 102.5 }, { direction: 'bullish' });
+    const better = scoreRiskReward({ price: 100, support: 89.796, resistance: 105 }, { direction: 'bullish' });
+    expect(worse.callRewardRisk).toBeCloseTo(0.236, 3);
+    expect(better.callRewardRisk).toBeCloseTo(0.49, 3);
+
+    const points = (value: number) => Math.round(value * OPTIONS_SIGNAL_WEIGHTS.riskReward);
+    const gap = points(better.normalized as number) - points(worse.normalized as number);
+    expect(points(worse.normalized as number)).toBe(-14);
+    expect(points(better.normalized as number)).toBe(-7);
+    expect(gap).toBeGreaterThanOrEqual(3);
   });
 
   it('records that only confidence moved, not the direction score', () => {
@@ -153,12 +183,12 @@ describe('screenshot-baseline', () => {
     // call-side geometry, same raw 13 of 90. The rework changed what the card
     // CLAIMS about it, not where it points.
     const result = calculateOptionsSignal(screenshotCase);
-    expect(result.diagnostics.directionScore0to100).toBe(57);
+    expect(result.diagnostics.directionScore0to100).toBe(58);
     const legacyConfidence = Math.round(
       (0.3 * 1 + 0.35 * result.diagnostics.agreement + 0.35 * result.diagnostics.evidenceStrength) * 100,
     );
     expect(legacyConfidence).toBe(62);
-    expect(result.confidenceScore).toBe(38);
+    expect(result.confidenceScore).toBe(40);
   });
 });
 

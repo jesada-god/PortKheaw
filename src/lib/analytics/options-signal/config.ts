@@ -98,8 +98,32 @@ export const OPTIONS_SIGNAL_CONFIG = {
   },
 
   riskReward: {
-    /** Reward:risk at which the factor saturates (2:1 in the favoured direction). */
+    /**
+     * Reward:risk at which a side counts as a fully WORKABLE setup.
+     *
+     * Deliberately separate from `tiltSaturationRatio` below. "This side is a
+     * workable trade" and "this geometry is maximum directional evidence" are
+     * two different statements, and collapsing them is what made the factor a
+     * three-position switch.
+     */
     saturationRatio: 2,
+    /**
+     * Reward:risk at which the DIRECTIONAL tilt saturates, on the same log base
+     * both ways: `log(rr) / log(4.5)` reaches +1 at 4.5:1 and -1 at 1:4.5.
+     *
+     * It used to saturate at 2 and 0.5, which is far too shallow to describe
+     * real charts. Measured across 30 symbols, the call reward:risk ranged from
+     * 0.06 to 35 with a median of 2.31 — so 22 of the 27 that produced a ratio
+     * were already pinned at one end or the other, and the factor could not tell
+     * a 0.49 apart from a 0.24, or a 2.1 apart from a 12. A band that saturates
+     * for four fifths of the market is not measuring anything.
+     *
+     * Widening cuts BOTH ways on purpose: full +15 now needs 4.5:1 in favour,
+     * not 2:1. The factor gives up some of its ability to shout, which is the
+     * price of it being able to speak at all. Everything between the ends is
+     * where the resolution now lives.
+     */
+    tiltSaturationRatio: 4.5,
     /** A level closer than this (% of price) is treated as touching, not as a target. */
     minimumDistancePercent: 0.1,
     /**

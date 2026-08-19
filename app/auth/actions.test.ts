@@ -1,6 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDLE_AUTH_STATE, type AuthFormState } from '@/src/lib/auth/form-state';
 
+/*
+ * Nothing in this file waits on a timer or a network — the Supabase client is a
+ * recorder and every assertion is synchronous once the module is in memory. What
+ * IS slow is the `await import('./actions')` in `beforeEach`, which pulls the
+ * server-action module graph in, and under a full-suite run that competes with
+ * every other worker for CPU. It measured 2.8s alone and intermittently crossed
+ * the 5s default when the whole suite ran, which read as a flake in a test that
+ * has nothing flaky in it.
+ *
+ * A longer ceiling, not a retry: a retry would hide a real hang, while this only
+ * costs anything on a run that was going to be slow regardless.
+ */
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 /**
  * Behaviour tests for the authentication server actions.
  *

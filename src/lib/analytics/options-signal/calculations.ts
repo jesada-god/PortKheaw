@@ -489,8 +489,14 @@ export function scoreRiskReward(
     : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× `
       + `ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
 
-  // The signed tilt of the geometry itself, on the call frame of reference.
-  const tilt = clamp(Math.log((callRewardRisk as number)) / Math.log(config.saturationRatio), -1, 1);
+  /*
+   * The signed tilt of the geometry, on the call frame of reference.
+   *
+   * `log(rr) / log(base)` is symmetric by construction — `log(1/x) = -log(x)` —
+   * so the put frame below is the exact mirror of this one, and widening the
+   * base makes both ends harder to reach by the same amount.
+   */
+  const tilt = clamp(Math.log((callRewardRisk as number)) / Math.log(config.tiltSaturationRatio), -1, 1);
 
   if (direction === 'bullish') {
     return {
@@ -504,7 +510,7 @@ export function scoreRiskReward(
   if (direction === 'bearish') {
     // Mirror image: a strong PUT reward:risk is strong evidence for the bearish
     // thesis, and carries the same magnitude a strong call R:R would carry up.
-    const putTilt = clamp(Math.log((putRewardRisk as number)) / Math.log(config.saturationRatio), -1, 1);
+    const putTilt = clamp(Math.log((putRewardRisk as number)) / Math.log(config.tiltSaturationRatio), -1, 1);
     return {
       ...geometry,
       normalized: -putTilt,
