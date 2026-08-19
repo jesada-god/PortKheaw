@@ -211,7 +211,7 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
           <p className="text-right">
             <span className="block text-[11px] font-normal text-slate-400">คะแนนทิศทาง</span>
             <span className="font-mono text-lg font-bold text-white" data-testid="options-signal-score-card">
-              {summary.score ?? '—'}
+              {summary.directionScore0to100 ?? '—'}
             </span>
             <span className="text-sm font-normal text-slate-400"> / 100</span>
           </p>
@@ -480,12 +480,12 @@ function DetailBody({ breakdown, summary }: {
             <div className="flex items-center justify-between font-semibold text-white">
               <span>รวม (เทียบเฉพาะปัจจัยที่มีข้อมูล)</span>
               <span className="font-mono">
-                {signedPoints(diagnostics.directionScore)} / {diagnostics.availableWeight}
+                {signedPoints(diagnostics.rawDirectionPoints)} / {diagnostics.availableWeight}
               </span>
             </div>
             <div className="mt-2 flex items-center justify-between font-semibold text-white">
               <span>คะแนนทิศทางที่แสดงบนการ์ด</span>
-              <span className="font-mono" data-testid="options-signal-score-modal">{diagnostics.score} / 100</span>
+              <span className="font-mono" data-testid="options-signal-score-modal">{diagnostics.directionScore0to100} / 100</span>
             </div>
             {/*
               * The conversion, written out. The card and this dialog read the

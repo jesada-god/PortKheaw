@@ -31,12 +31,14 @@ export interface OptionsSignalSummaryDto {
   status: 'available' | 'insufficient-data';
   signalType: OptionsSignalType | null;
   /**
-   * THE published 0-100 direction score, and the reason this field is in the
-   * SUMMARY rather than in the breakdown: the card shows it to every entitled
-   * reader, the modal shows the same number to an Elite one, and a card that had
-   * to derive its own number is exactly how the two came to disagree.
+   * THE published direction score, and the reason this field is in the SUMMARY
+   * rather than in the breakdown: the card shows it to every entitled reader,
+   * the modal shows the same number to an Elite one, and a card that had to
+   * derive its own number is exactly how the two came to disagree.
+   *
+   * One scale only. There is no bipolar twin of this field anywhere.
    */
-  score: number | null;
+  directionScore0to100: number | null;
   /** The conversion written out, so the modal can show its arithmetic. */
   scoreFormula: string | null;
   confidenceScore: number;
@@ -79,7 +81,7 @@ export function projectOptionsSignal(
     finalizedCandles: result.finalizedCandles,
     status: result.status,
     signalType: result.status === 'available' ? result.signalType : null,
-    score: result.status === 'available' ? result.diagnostics.score : null,
+    directionScore0to100: result.status === 'available' ? result.diagnostics.directionScore0to100 : null,
     scoreFormula: result.status === 'available' ? result.diagnostics.scoreFormula : null,
     confidenceScore: result.confidenceScore,
     underlyingBias: result.status === 'available' ? result.underlyingBias : null,

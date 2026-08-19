@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  biasFromNormalizedScore,
+  biasFromDirectionBalance,
   calculateOptionsSignal,
   classifyIvLevel,
   scoreMacro,
@@ -205,10 +205,10 @@ describe('factor scoring', () => {
   });
 
   it('maps the normalized score onto a bias at the configured boundaries', () => {
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bullish)).toBe('bullish');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bullish - 1)).toBe('neutral');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bearish)).toBe('bearish');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bearish + 1)).toBe('neutral');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bullish)).toBe('bullish');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bullish - 1)).toBe('neutral');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bearish)).toBe('bearish');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bearish + 1)).toBe('neutral');
   });
 });
 

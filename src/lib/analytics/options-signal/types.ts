@@ -324,17 +324,25 @@ export interface OptionsSignalLiquidityDiagnostics {
 
 export interface OptionsSignalDiagnostics {
   factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore>;
-  /** Raw sum of factor points, in the same units as the weights. */
-  directionScore: number;
+  /**
+   * ONE scale, three numbers, and nothing else.
+   *
+   * There used to be two normalizations in this object: a bipolar
+   * `normalizedScore` in [-100, 100] and a 0-100 `score`. They were the same
+   * quantity on different rulers, which meant a reader who did the printed
+   * arithmetic got a number that did not match a number printed beside it. The
+   * bipolar figure is gone from everything published; it survives only as the
+   * scale the direction/quality THRESHOLDS are written on, inside the engine.
+   *
+   * `rawDirectionPoints` is the signed sum, `availableWeight` is what it could
+   * have been (the weight of the factors that had data, never the full model),
+   * and `directionScore0to100` is those two put on the ruler every surface uses.
+   */
+  rawDirectionPoints: number;
   availableWeight: number;
   totalWeight: number;
-  /** directionScore rescaled to [-100, 100] against the AVAILABLE weight only. */
-  normalizedScore: number;
-  /**
-   * THE published direction number, 0-100, and the only one any surface shows.
-   * `(raw + maxAbs) / (2 * maxAbs) * 100`, where `maxAbs` is `availableWeight`.
-   */
-  score: number;
+  /** `(rawDirectionPoints + availableWeight) / (2 * availableWeight) * 100`. */
+  directionScore0to100: number;
   /** That conversion written out, so the card and the modal cannot drift apart. */
   scoreFormula: string;
   coverage: number;
@@ -451,8 +459,8 @@ export type OptionsSignalResult = OptionsSignalBase & (
   | {
     status: 'available';
     signalType: OptionsSignalType;
-    /** The 0-100 direction score. Identical to `diagnostics.score`, by construction. */
-    score: number;
+    /** Identical to `diagnostics.directionScore0to100`, by construction. */
+    directionScore0to100: number;
     confidenceScore: number;
     underlyingBias: UnderlyingBias;
     liquidityGrade: LiquidityGrade | null;
@@ -460,7 +468,7 @@ export type OptionsSignalResult = OptionsSignalBase & (
   | {
     status: 'insufficient-data';
     signalType: null;
-    score: null;
+    directionScore0to100: null;
     confidenceScore: 0;
     underlyingBias: null;
     liquidityGrade: null;

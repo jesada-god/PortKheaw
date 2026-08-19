@@ -666,12 +666,27 @@ export function classifyIvLevel(pricing: IvPricingInput, config = OPTIONS_SIGNAL
   return 'low';
 }
 
-export function biasFromNormalizedScore(
-  normalizedScore: number,
+/**
+ * The signed balance of the evidence, in [-100, 100].
+ *
+ * INTERNAL. This is the ruler the direction and quality thresholds in the config
+ * are written on, and the only reason it still exists — it is deliberately not
+ * published, because a second normalization beside the 0-100 score is what let
+ * the card and its own printed arithmetic disagree.
+ */
+export function directionBalance(rawDirectionPoints: number, availableWeight: number): number {
+  const raw = finite(rawDirectionPoints) ?? 0;
+  const maxAbs = finite(availableWeight) ?? 0;
+  if (maxAbs <= 0) return 0;
+  return round(clamp(raw / maxAbs * 100, -100, 100), 0);
+}
+
+export function biasFromDirectionBalance(
+  balance: number,
   config = OPTIONS_SIGNAL_CONFIG.direction,
 ): UnderlyingBias {
-  if (normalizedScore >= config.bullish) return 'bullish';
-  if (normalizedScore <= config.bearish) return 'bearish';
+  if (balance >= config.bullish) return 'bullish';
+  if (balance <= config.bearish) return 'bearish';
   return 'neutral';
 }
 
@@ -925,11 +940,10 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       sentiment: factor('sentiment', input.sentiment),
       riskReward: factor('riskReward', input.riskReward),
     },
-    directionScore: 0,
+    rawDirectionPoints: 0,
     availableWeight: 0,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
-    normalizedScore: 0,
-    score: 50,
+    directionScore0to100: 50,
     scoreFormula: 'ไม่มีปัจจัยที่มีข้อมูลพอจะแปลงเป็นคะแนน',
     coverage: 0,
     agreement: 0,
@@ -1008,7 +1022,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     ...base,
     status: 'insufficient-data',
     signalType: null,
-    score: null,
+    directionScore0to100: null,
     confidenceScore: 0,
     underlyingBias: null,
     liquidityGrade: null,
@@ -1056,7 +1070,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const leadWeight = leadEntries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
   const leadScore = leadEntries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const leadDirection = leadWeight > 0
-    ? biasFromNormalizedScore(clamp(leadScore / leadWeight * 100, -100, 100))
+    ? biasFromDirectionBalance(directionBalance(leadScore, leadWeight))
     : 'neutral';
 
   // --- Stage 1b: geometry, scored for the side that direction points at ---
@@ -1085,12 +1099,12 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const availableWeight = entries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
   const directionScore = entries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const absoluteScore = entries.reduce((sum, factor) => sum + Math.abs(factor.points ?? 0), 0);
-  const normalizedScore = availableWeight > 0
-    ? round(clamp(directionScore / availableWeight * 100, -100, 100), 0)
-    : 0;
-  const score = directionScoreOutOf100(directionScore, availableWeight);
+  const directionScore0to100 = directionScoreOutOf100(directionScore, availableWeight);
   const scoreFormula = directionScoreFormula(directionScore, availableWeight);
-  const underlyingBias = biasFromNormalizedScore(normalizedScore);
+  // Internal only. See `directionBalance`: the thresholds below are written on
+  // this ruler and were not restated, so nothing about the gating changes here.
+  const balance = directionBalance(directionScore, availableWeight);
+  const underlyingBias = biasFromDirectionBalance(balance);
 
   // --- Stage 2: signal quality -------------------------------------------
   const coverage = availableWeight / OPTIONS_SIGNAL_TOTAL_WEIGHT;
@@ -1143,7 +1157,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   if (factors.momentum.partial) primeBlockers.push('momentum-unconfirmed');
   if (config.sufficiency.blockPrimeWhileSqueezeOn && squeezeState === 'ON') primeBlockers.push('squeeze-still-compressing');
   if (config.sufficiency.requirePricingForPrime && ivLevel === null) primeBlockers.push('iv-unavailable');
-  if (Math.abs(normalizedScore) < config.quality.primeScore) primeBlockers.push('score-below-prime');
+  if (Math.abs(balance) < config.quality.primeScore) primeBlockers.push('score-below-prime');
   if (confidenceScore < config.quality.primeConfidence) primeBlockers.push('confidence-below-prime');
   if (agreement < config.quality.primeAgreement) primeBlockers.push('agreement-below-prime');
   if (underlyingBias !== 'neutral' && trendPoints !== null
@@ -1153,7 +1167,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const primeEligible = primeBlockers.length === 0 && underlyingBias !== 'neutral';
 
   let signalType: OptionsSignalType;
-  if (underlyingBias === 'neutral' || Math.abs(normalizedScore) < config.quality.watchScore) {
+  if (underlyingBias === 'neutral' || Math.abs(balance) < config.quality.watchScore) {
     signalType = 'SIDEWAYS';
   } else if (primeEligible) {
     signalType = underlyingBias === 'bullish' ? 'PRIME_CALL' : 'PRIME_PUT';
@@ -1183,11 +1197,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
 
   const diagnostics: OptionsSignalDiagnostics = {
     factors,
-    directionScore: round(directionScore, 0),
+    rawDirectionPoints: round(directionScore, 0),
     availableWeight,
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
-    normalizedScore,
-    score,
+    directionScore0to100,
     scoreFormula,
     coverage: round(coverage, 4),
     agreement: round(agreement, 4),
@@ -1264,7 +1277,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     ...base,
     status: 'available',
     signalType,
-    score,
+    directionScore0to100,
     confidenceScore,
     underlyingBias,
     liquidityGrade: liquidityOutcome?.grade ?? null,
