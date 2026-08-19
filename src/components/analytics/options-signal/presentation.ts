@@ -185,3 +185,53 @@ export const STALE_MIX_BADGE = {
   tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
   helper: 'แหล่งข้อมูลของสัญญาณนี้มาจากคนละเวลากันเกินเกณฑ์ จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ',
 } as const;
+
+/**
+ * The sentence that stops the dialog contradicting itself about direction.
+ *
+ * Risk:Reward is scored for the side the OTHER FOUR factors lean toward, and
+ * that lean is read at an earlier point in the pipeline than the label on the
+ * card. Two steps sit between them:
+ *
+ *   1. the Risk:Reward points themselves join the sum;
+ *   2. the trend veto attenuates the whole total toward zero.
+ *
+ * So a card can honestly print "หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call" beside a
+ * SIDEWAYS badge, and a reader who does not know the order of operations sees
+ * two claims about direction that do not agree, four centimetres apart, with
+ * nothing on the page reconciling them.
+ *
+ * The ordering is not a defect and this does not change it. What it changes is
+ * that the page now says so, and says it only when the two actually differ — a
+ * note that appeared on every card would be noise on the ones that agree, and
+ * unread by the time it mattered.
+ *
+ * Deliberately NOT limited to the veto. The veto is one of the two steps, and it
+ * is the one the reader can see a number for, but adding the Risk:Reward points
+ * can move the total across the neutral band on its own. Naming only the veto
+ * would be a third claim that does not match the arithmetic.
+ */
+export function riskRewardDirectionNote(input: {
+  scoredSide: 'call' | 'put' | null;
+  signalType: OptionsSignalType | null;
+  underlyingBias: 'bullish' | 'bearish' | 'neutral' | null;
+  trendVeto: { applied: boolean; multiplier: number } | null;
+}): string | null {
+  const { scoredSide, signalType, underlyingBias, trendVeto } = input;
+  if (scoredSide === null) return null;
+  const expected = scoredSide === 'call' ? 'bullish' : 'bearish';
+  if (underlyingBias === null || underlyingBias === expected) return null;
+
+  const side = scoredSide === 'call' ? 'Call' : 'Put';
+  const lean = scoredSide === 'call' ? 'ขาขึ้น' : 'ขาลง';
+  const badge = signalType === null ? 'ป้ายสุดท้าย' : OPTIONS_SIGNAL_PRESENTATION[signalType].title;
+  const because = trendVeto?.applied
+    ? `หลังจากนั้นคะแนน R:R ถูกรวมเข้าไป และคะแนนรวมถูกหักด้วยแนวโน้มสวนทาง `
+      + `(× ${trendVeto.multiplier.toFixed(2)}) จนเหลือไม่พอจะเรียกทิศทางเดียวกัน`
+    : 'หลังจากนั้นคะแนน R:R ถูกรวมเข้าไปด้วย แล้วคะแนนรวมไม่พอจะเรียกทิศทางเดียวกัน';
+
+  return `หมายเหตุ: R:R ข้างบนวัดจากฝั่ง ${side} เพราะปัจจัยอื่นอีก 4 ตัวชี้${lean} `
+    + `ในขั้นก่อนหน้า ซึ่งเป็นทิศ "ก่อน" นำคะแนน R:R มารวมและก่อนหักด้วย trend veto · `
+    + `${because} ป้ายบนการ์ดจึงเป็น ${badge} · `
+    + `ทั้งสองประโยคมาจากคนละขั้นของการคำนวณ ไม่ได้ขัดกัน`;
+}

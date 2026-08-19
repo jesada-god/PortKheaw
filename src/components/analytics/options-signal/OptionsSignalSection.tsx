@@ -30,6 +30,7 @@ import {
   displayStatusOf,
   ivBasisLabel,
   ivPercentileText,
+  riskRewardDirectionNote,
   signedPoints,
 } from './presentation';
 
@@ -491,6 +492,18 @@ function DetailBody({ breakdown, summary }: {
   const event = diagnostics.event;
   const liquidity = diagnostics.liquidity;
   const provenance = diagnostics.provenance;
+  /*
+   * Present only when the side Risk:Reward was measured on and the side the card
+   * finally printed actually disagree. See `riskRewardDirectionNote`: they are
+   * read at different points in the pipeline, which is correct and is also
+   * exactly what makes two sentences on one page look like a contradiction.
+   */
+  const directionNote = riskRewardDirectionNote({
+    scoredSide: riskReward.scoredSide,
+    signalType: summary.signalType,
+    underlyingBias: summary.underlyingBias,
+    trendVeto: diagnostics.trendVeto,
+  });
 
   return (
     <div className="space-y-6 text-sm text-slate-300">
@@ -514,6 +527,17 @@ function DetailBody({ breakdown, summary }: {
                   </p>
                 </div>
                 <p className="mt-2 text-xs leading-5 text-slate-300">{factor.detail}</p>
+                {/*
+                  * Beside the sentence that causes the confusion, not only at
+                  * the bottom of section 3. "หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call"
+                  * is printed HERE, and a reader meets it a screen and a half
+                  * before the block that explains it.
+                  */}
+                {id === 'riskReward' && directionNote && (
+                  <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-rr-direction-note-factor">
+                    {directionNote}
+                  </p>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                   <DataStatusBadge status={displayStatusOf(factor.state)} />
                   <span>{factor.provider ?? 'ไม่ทราบผู้ให้บริการ'}</span>
@@ -634,8 +658,27 @@ function DetailBody({ breakdown, summary }: {
             {riskReward.expectedMoveHorizonWarning}
           </p>
         )}
+        {directionNote && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-rr-direction-note">
+            {directionNote}
+          </p>
+        )}
         <p className="mt-2 text-xs leading-5 text-slate-500">
           Risk:Reward วัดจากฝั่งที่หลักฐานอื่นชี้ไป ไม่ได้วัดจากฝั่ง Call เสมอ ถ้ายังไม่มีทิศทาง คะแนนจะถูกลดทอนเพราะเรขาคณิตของราคาบอกได้แค่คุณภาพของ setup ไม่ได้บอกทิศทาง
+        </p>
+        {/*
+          * The order of operations, printed once and always.
+          *
+          * The conditional note above fires only when the two directions
+          * actually differ. This one is the standing explanation of WHY they
+          * can, so a reader who has never seen them differ still knows the two
+          * sentences come from different steps rather than from one step
+          * disagreeing with itself.
+          */}
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          ลำดับการคำนวณ: ฝั่งที่ใช้วัด R:R มาจากปัจจัยอื่นอีก 4 ตัว (Macro, Trend, Momentum, Options Sentiment) ซึ่งอ่านค่า
+          <b className="text-slate-300"> ก่อน</b> นำคะแนน R:R มารวม และ<b className="text-slate-300">ก่อน</b>หักด้วย trend veto
+          ส่วนป้ายบนการ์ดคือผลหลังทั้งสองขั้นนั้นแล้ว ทิศทั้งสองจึงต่างกันได้โดยไม่ขัดกัน
         </p>
       </section>
 
