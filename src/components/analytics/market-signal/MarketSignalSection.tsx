@@ -782,7 +782,7 @@ const LABEL_GLYPH_PX = {
 } as const;
 
 /**
- * The Thai combining marks the captions on this bar use: ปิดเมื่อวาน, ราคาตอนนี้.
+ * The Thai combining marks the captions on this bar use: ปิดล่าสุด, ราคาตอนนี้.
  * Written as code points rather than as glyphs because a mark on its own is
  * invisible in most editors, and an invisible character in a character class is
  * a bug nobody can see.
@@ -849,7 +849,7 @@ function labelLeftPx(track: number, label: FloatingLabel): number {
  * required argument rather than a constant. The version this replaced answered
  * it on a hypothetical 216px track at every width, so a 640px bar with 90px of
  * clear air between two captions merged them anyway — and a merged caption is
- * strictly worse than two, because "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" over two
+ * strictly worse than two, because "ปิดล่าสุด 44.9 · ราคาตอนนี้ 42.14" over two
  * marks a centimetre apart no longer says which number belongs to which line.
  *
  * The two boxes are the whole rule. Not the distance between the prices, not a
@@ -883,7 +883,7 @@ function labelLeft(label: FloatingLabel): string {
  * centred over a line is the arrangement a reader does not have to think about.
  * And it is CLAMPED into the track, because at 390px there is no gutter to hang
  * into — an unclamped caption on a six-figure price runs out under the card's
- * padding, which `qa:signal-zone-bar` caught on "ปิดเมื่อวาน 121,884".
+ * padding, which `qa:signal-zone-bar` caught on "ปิดล่าสุด 121,884".
  *
  * The clamp is done in CSS rather than here on purpose. The previous version
  * switched to an edge-anchored position at fixed percentages (below 40%, above
@@ -1115,7 +1115,7 @@ function useZoneMetrics(probeKey: string): [ZoneMetrics | null, React.RefObject<
  * the header is showing a live price that on an open market is a different
  * number. Drawing only the close would quietly invite a reader to compare a
  * trigger against the price they can see at the top of the screen, which is not
- * the price the trigger was measured from. The close is labelled "ปิดเมื่อวาน"
+ * the price the trigger was measured from. The close is labelled "ปิดล่าสุด"
  * and it is the price every percentage on this card is measured from; the live
  * one is labelled "ราคาตอนนี้" and is never the base of a percentage.
  */
@@ -1194,19 +1194,24 @@ function ZoneBar({ zones, livePrice, actionable }: {
    *
    * WHAT EACH ONE IS CALLED. The close used to be "ตอนนี้" and the live price
    * "สด", which is the naming a reader arrives with turned exactly backwards:
-   * "ตอนนี้" sat on yesterday's close and the price actually trading right now
+   * "ตอนนี้" sat on a finalized close and the price actually trading right now
    * was called by a word that names nothing a beginner owns. Each mark is now
-   * named by WHEN it happened — "ปิดเมื่อวาน" and "ราคาตอนนี้" — and every
-   * percentage on the card says which of the two it was measured from. The
-   * names stay short because they are drawn ON the track: the full statement of
-   * what "ปิดเมื่อวาน" means, with the session date, is the footnote at the
-   * bottom of the block, where a long sentence costs nothing.
+   * named by WHEN it happened — "ปิดล่าสุด" and "ราคาตอนนี้" — and every
+   * percentage on the card says which of the two it was measured from.
+   *
+   * "ล่าสุด" and not "เมื่อวาน". Yesterday is the wrong word on a Monday and
+   * after every holiday, and a US session closes in the small hours of a Thai
+   * morning, so the close a Bangkok reader is looking at is routinely not from
+   * the calendar day they would call yesterday. "ล่าสุด" is the same length and
+   * has no exceptions to remember. The names stay short because they are drawn
+   * ON the track: which session it actually was, as a date, is the footnote at
+   * the bottom of the block, where a long sentence costs nothing.
    */
-  const closeText = `ปิดเมื่อวาน ${markerPriceText(referenceClose)}`;
+  const closeText = `ปิดล่าสุด ${markerPriceText(referenceClose)}`;
   const liveText = liveAt === null ? null : `ราคาตอนนี้ ${markerPriceText(livePrice as number)}`;
   const mergedText = liveText === null
     ? ''
-    : `ปิดเมื่อวาน ${markerPriceText(referenceClose)} · ราคาตอนนี้ ${markerPriceText(livePrice as number)}`;
+    : `ปิดล่าสุด ${markerPriceText(referenceClose)} · ราคาตอนนี้ ${markerPriceText(livePrice as number)}`;
   const lowerText = markerPriceText(lowerTrigger);
   const upperText = markerPriceText(upperTrigger);
   const edgesText = `${lowerText} · ${upperText}`;
@@ -1258,7 +1263,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
    *
    * The merged caption is anchored on the CLOSE and leads to the close mark
    * alone. It used to sit at the midpoint with a leader to each mark, which put
-   * "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" between two lines while pointing at
+   * "ปิดล่าสุด 44.9 · ราคาตอนนี้ 42.14" between two lines while pointing at
    * both — a reader who cannot pair a number with a line is worse off than one
    * who has to look up a second number. The close is the mark that gets it because it
    * is the price every figure on this card is measured from; the live mark is
@@ -1269,18 +1274,20 @@ function ZoneBar({ zones, livePrice, actionable }: {
    * bar, because the lines are the fact and the caption is only the reading.
    *
    * AND ONE LAST RUNG, for the case where even the merged caption does not fit.
-   * Naming the two marks by when they happened made both captions longer, and
-   * "ปิดเมื่อวาน 121,884 · ราคาตอนนี้ 122,402" is 225px of text on the 220px
-   * track a 320px phone leaves for a six-figure instrument — `qa:signal-zone-bar`
-   * measured it hanging 5px past the end of its own row. A caption wider than
-   * its track cannot be placed anywhere: `labelLeft` clamps it to the left edge
-   * and it runs out under the card's padding. So when the merge does not fit
-   * either, the bar draws the CLOSE caption alone. It is the price every figure
-   * on the card is measured from, the live mark is still drawn on the bar, and
-   * the live price is still stated in full in the sentence two rows below — the
-   * same trade the fields make when one is too narrow to carry its own name.
-   * Shortening the words instead would put the old cryptic labels back, which is
-   * what this naming exists to undo.
+   * A caption wider than its own track cannot be placed anywhere: `labelLeft`
+   * clamps it to the left edge and the rest runs out under the card's padding.
+   * So when the merge does not fit either, the bar draws the CLOSE caption
+   * alone. It is the price every figure on the card is measured from, the live
+   * mark is still drawn on the bar, and the live price is still stated in full
+   * in the sentence two rows below — the same trade the fields make when one is
+   * too narrow to carry its own name.
+   *
+   * The naming pass is what put this rung here. Written "ปิดเมื่อวาน", the
+   * merged caption for a six-figure instrument measured 225px on the 220px
+   * track a 320px phone leaves, and `qa:signal-zone-bar` caught it hanging 5px
+   * past the end of its own row; at "ปิดล่าสุด" the same caption is 215px and
+   * fits. Two characters is the whole margin, which is exactly why the check is
+   * a measurement rather than a rule about how long a label may be.
    */
   const captions = ((): Caption[] => {
     if (liveCaption === null) return [closeCaption];
@@ -1619,7 +1626,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
         greyed lines at the bottom of a card read as boilerplate and get skipped
         together; one reads as a footnote and gets read.
 
-        This is also where "ปิดเมื่อวาน" is spelled out in full. The caption on
+        This is also where "ปิดล่าสุด" is spelled out in full. The caption on
         the bar has to stay short — it is drawn on the track, and a label 28
         characters long lands on the name of the field beside it — so the mark
         carries the short name and this line carries the whole sentence: which
