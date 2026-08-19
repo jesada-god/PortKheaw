@@ -90,7 +90,8 @@ const zones: MarketSignalZones = {
 /**
  * The cases, chosen so every branch that positions something lands in at least
  * one of them: marker in the middle, marker jammed against each end, a live
- * price beside the close, a five-digit instrument, and the fully loaded card.
+ * price beside the close, a live price that IS the close, a five-digit
+ * instrument, and the fully loaded card.
  */
 export const CASES: ZoneBarCase[] = [
   {
@@ -215,6 +216,31 @@ export const CASES: ZoneBarCase[] = [
     },
     livePrice: 43.7,
     markersApart: true,
+  },
+  /*
+   * ONE PRICE, TWO NAMES FOR IT.
+   *
+   * Close 42.00, live 42.00: the two marks land on the same percent and paint
+   * as one line, and the bar was captioning that single line "ปิดล่าสุด 42 ·
+   * ราคาตอนนี้ 42" — two identical numbers presented as two facts, over one
+   * mark, with a sentence underneath repeating the second of them in full. The
+   * spread/merge machinery cannot catch it because nothing about it is a
+   * collision: there is all the room in the world at 1440px and the captions
+   * still say the same thing twice.
+   *
+   * `markersApart` is deliberately absent: these two marks are meant to be one
+   * line, which is exactly why one caption is the honest count.
+   */
+  {
+    name: 'live-price-equals-the-close',
+    result: {
+      ...base,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      score: 16,
+      zones: { ...zones, zone: 'sideways', referenceClose: 42, upperDistance: 5.244, lowerDistance: 3.7417 },
+    },
+    livePrice: 42,
   },
   {
     name: 'actionable-with-every-row',
