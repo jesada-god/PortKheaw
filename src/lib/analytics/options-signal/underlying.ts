@@ -41,14 +41,34 @@ export interface UnderlyingContextMeta {
   calculatedAt: string;
 }
 
+/**
+ * Realized volatility measured over several windows.
+ *
+ * A 30-day contract is not priced against a year of realized volatility, so the
+ * IV comparison needs a window that matches the contract's DTE. All three are
+ * computed from the SAME candle set in one pass; the caller picks.
+ */
+export interface RealizedVolatilityWindows {
+  /** The 1-year baseline. Kept as the default for long-dated contracts. */
+  long: { value: number; observations: number } | null;
+  /** 20 trading days. */
+  near: { value: number; observations: number } | null;
+  /** 30 trading days. */
+  far: { value: number; observations: number } | null;
+}
+
 export interface UnderlyingSignalInputs {
   trend: OptionsSignalInputSlot<TrendInput>;
   momentum: OptionsSignalInputSlot<MomentumInput>;
   levels: OptionsSignalInputSlot<PriceLevelsInput>;
+  /** The 1-year window, unchanged, so existing callers keep working. */
   realizedVolatility: { value: number; observations: number } | null;
+  realizedVolatilityWindows: RealizedVolatilityWindows;
   latestCandleAt: string | null;
   finalizedCandles: number;
 }
+
+const EMPTY_REALIZED_WINDOWS: RealizedVolatilityWindows = { long: null, near: null, far: null };
 
 /** Drop still-forming candles. Every technical input below is look-ahead free. */
 export function finalizedOnly(candles: readonly UnderlyingCandle[]): HistoricalPrice[] {
@@ -112,6 +132,7 @@ export function buildUnderlyingInputs(
       momentum: unavailable(meta, reason),
       levels: unavailable(meta, reason),
       realizedVolatility: null,
+      realizedVolatilityWindows: EMPTY_REALIZED_WINDOWS,
       latestCandleAt,
       finalizedCandles: finalized.length,
     };
@@ -123,6 +144,7 @@ export function buildUnderlyingInputs(
       momentum: unavailable(meta, insufficient),
       levels: unavailable(meta, insufficient),
       realizedVolatility: null,
+      realizedVolatilityWindows: EMPTY_REALIZED_WINDOWS,
       latestCandleAt,
       finalizedCandles: finalized.length,
     };
@@ -140,6 +162,7 @@ export function buildUnderlyingInputs(
       momentum: unavailable(meta, technical.reason),
       levels: unavailable(meta, technical.reason),
       realizedVolatility: null,
+      realizedVolatilityWindows: EMPTY_REALIZED_WINDOWS,
       latestCandleAt,
       finalizedCandles: finalized.length,
     };
@@ -182,20 +205,23 @@ export function buildUnderlyingInputs(
     ? {
       status: 'available',
       state,
-      value: { close, ...nearestLevels(supportResistance.zones, close) },
+      value: { close, atr, ...nearestLevels(supportResistance.zones, close) },
       ...provenance,
     }
     : unavailable(meta, supportResistance.reason);
 
+  const ivConfig = OPTIONS_SIGNAL_CONFIG.iv;
+  const long = realizedVolatility(finalized, ivConfig.realizedWindowDays, ivConfig.minimumRealizedObservations);
   return {
     trend,
     momentum,
     levels,
-    realizedVolatility: realizedVolatility(
-      finalized,
-      OPTIONS_SIGNAL_CONFIG.iv.realizedWindowDays,
-      OPTIONS_SIGNAL_CONFIG.iv.minimumRealizedObservations,
-    ),
+    realizedVolatility: long,
+    realizedVolatilityWindows: {
+      long,
+      near: realizedVolatility(finalized, ivConfig.shortWindows.near, ivConfig.minimumShortObservations),
+      far: realizedVolatility(finalized, ivConfig.shortWindows.far, ivConfig.minimumShortObservations),
+    },
     latestCandleAt,
     finalizedCandles: finalized.length,
   };

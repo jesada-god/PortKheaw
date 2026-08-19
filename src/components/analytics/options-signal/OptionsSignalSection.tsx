@@ -17,15 +17,19 @@ import type {
   OptionsSignalFactorScore,
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
-import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { formatBangkokDateTimeCE } from '@/src/lib/presentation/datetime';
 import { requestOptionsSignal, type OptionsSignalOutcome } from './signal-client';
 import {
   DATA_STATE_LABEL,
   FACTOR_COPY,
+  HISTORY_DEGRADED_NOTICE,
   IV_LEVEL_LABEL,
+  LIQUIDITY_BADGE,
   OPTIONS_SIGNAL_PRESENTATION,
+  STALE_MIX_BADGE,
   displayStatusOf,
   ivBasisLabel,
+  ivPercentileText,
   signedPoints,
 } from './presentation';
 
@@ -195,12 +199,36 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
           <span aria-hidden="true">{presentation.dot}</span>
           {presentation.title}
         </p>
-        <p className="inline-flex items-center gap-2 font-mono text-lg font-bold text-white">
-          {summary.confidenceScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
-          <InfoHint term="optionsSignalConfidence" align="end" />
-        </p>
+        {/*
+          * TWO numbers, each labelled, and neither of them derived here.
+          *
+          * The card used to print one bare "55 / 100" that the modal contradicted
+          * with "+13 / 90 -> 14", because the card was showing confidence and the
+          * modal was showing the signed sum. Both now come from the payload, the
+          * direction score is the SAME field the modal renders, and each carries
+          * the word for what it measures so no reader has to guess which is which.
+          */}
+        <div className="flex items-end gap-4">
+          <p className="text-right">
+            <span className="block text-[11px] font-normal text-slate-400">คะแนนทิศทาง</span>
+            <span className="font-mono text-lg font-bold text-white" data-testid="options-signal-score-card">
+              {summary.directionScore0to100 ?? '—'}
+            </span>
+            <span className="text-sm font-normal text-slate-400"> / 100</span>
+          </p>
+          <p className="text-right">
+            <span className="block text-[11px] font-normal text-slate-400">Confidence</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="font-mono text-lg font-bold text-white">{summary.confidenceScore}</span>
+              <span className="text-sm font-normal text-slate-400">/ 100</span>
+              <InfoHint term="optionsSignalConfidence" align="end" />
+            </span>
+          </p>
+        </div>
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-300">{presentation.headline}</p>
+
+      <SignalBadges summary={summary} />
 
       {breakdown ? (
         <EliteBody breakdown={breakdown} summary={summary} highlights={highlights} open={open} onOpenChange={onOpenChange} />
@@ -304,6 +332,53 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
   );
 }
 
+/**
+ * The two things a reader must see before acting, on the card itself.
+ *
+ * The liquidity grade because the setup warnings already tell them to check it
+ * and the engine now actually measures it; STALE-MIX because a signal whose
+ * sources are hours apart is not the single-moment reading the layout implies,
+ * and the published `asOf` beside it is the OLDEST of them, in CE years like
+ * every other year on this card.
+ */
+function SignalBadges({ summary }: { summary: OptionsSignalSummaryDto }) {
+  const liquidity = summary.liquidityGrade ? LIQUIDITY_BADGE[summary.liquidityGrade] : null;
+  if (!liquidity && !summary.staleMix && !summary.asOf && !summary.historyDegraded) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+      {liquidity && (
+        <span
+          data-testid="options-signal-liquidity-badge"
+          className={`inline-flex items-center rounded-full border px-2 py-1 font-semibold ${liquidity.tone}`}
+        >
+          {liquidity.label}
+        </span>
+      )}
+      {summary.staleMix && (
+        <span
+          data-testid="options-signal-stale-mix"
+          title={STALE_MIX_BADGE.helper}
+          className={`inline-flex items-center rounded-full border px-2 py-1 font-mono font-semibold ${STALE_MIX_BADGE.tone}`}
+        >
+          {STALE_MIX_BADGE.label}
+        </span>
+      )}
+      {summary.historyDegraded && (
+        <span
+          data-testid="options-signal-history-degraded"
+          title={HISTORY_DEGRADED_NOTICE.helper}
+          className={`inline-flex items-center rounded-full border px-2 py-1 font-semibold ${HISTORY_DEGRADED_NOTICE.tone}`}
+        >
+          {HISTORY_DEGRADED_NOTICE.label}
+        </span>
+      )}
+      {summary.asOf && (
+        <span className="text-slate-400">ข้อมูล ณ {formatBangkokDateTimeCE(summary.asOf)}</span>
+      )}
+    </div>
+  );
+}
+
 function Header({ timeframe }: { timeframe: string }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -378,6 +453,8 @@ function DetailBody({ breakdown, summary }: {
   const riskReward = diagnostics.riskReward;
   const iv = diagnostics.iv;
   const event = diagnostics.event;
+  const liquidity = diagnostics.liquidity;
+  const provenance = diagnostics.provenance;
 
   return (
     <div className="space-y-6 text-sm text-slate-300">
@@ -404,16 +481,33 @@ function DetailBody({ breakdown, summary }: {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                   <DataStatusBadge status={displayStatusOf(factor.state)} />
                   <span>{factor.provider ?? 'ไม่ทราบผู้ให้บริการ'}</span>
-                  {factor.asOf && <span>{formatBangkokDateTime(factor.asOf)}</span>}
+                  {factor.asOf && <span>{formatBangkokDateTimeCE(factor.asOf)}</span>}
                 </div>
               </div>
             );
           })}
-          <div className="flex items-center justify-between border-t border-slate-700 px-3 pt-3 font-semibold text-white">
-            <span>รวม (เทียบเฉพาะปัจจัยที่มีข้อมูล)</span>
-            <span className="font-mono">
-              {signedPoints(diagnostics.directionScore)} / {diagnostics.availableWeight} → {diagnostics.normalizedScore}
-            </span>
+          <div className="border-t border-slate-700 px-3 pt-3">
+            <div className="flex items-center justify-between font-semibold text-white">
+              <span>รวม (เทียบเฉพาะปัจจัยที่มีข้อมูล)</span>
+              <span className="font-mono">
+                {signedPoints(diagnostics.rawDirectionPoints)} / {diagnostics.availableWeight}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center justify-between font-semibold text-white">
+              <span>คะแนนทิศทางที่แสดงบนการ์ด</span>
+              <span className="font-mono" data-testid="options-signal-score-modal">{diagnostics.directionScore0to100} / 100</span>
+            </div>
+            {/*
+              * The conversion, written out. The card and this dialog read the
+              * same field, and this line is how a reader can check that for
+              * themselves instead of taking it on trust.
+              */}
+            <p className="mt-2 font-mono text-xs leading-5 text-slate-400" data-testid="options-signal-score-formula">
+              {diagnostics.scoreFormula}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              สูตร: (ผลรวมคะแนน + น้ำหนักที่มีข้อมูล) ÷ (2 × น้ำหนักที่มีข้อมูล) × 100 · 50 คือกลาง ไม่เอียงไปทางไหน
+            </p>
           </div>
         </div>
       </section>
@@ -423,12 +517,21 @@ function DetailBody({ breakdown, summary }: {
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} term="ttmSqueeze" />
           <Detail label="Squeeze Momentum" value={numberText(squeeze.momentum)} />
-          <Detail label="Momentum ÷ ATR (normalize)" value={numberText(squeeze.normalizedMomentum)} />
+          <Detail
+            label="Momentum ÷ ATR (normalize)"
+            value={squeeze.normalizedMomentum === null
+              ? '—'
+              : `${squeeze.normalizedMomentum.toFixed(3)}${squeeze.normalizedMomentumCapped ? ' (capped)' : ''}`}
+          />
           <Detail label="RVOL 20 วัน" value={squeeze.relativeVolume === null ? '—' : `${squeeze.relativeVolume.toFixed(2)}×`} term="relativeVolume" />
           <Detail label="ระดับการยืนยันจาก RVOL" value={squeeze.confirmation === null ? 'ไม่มีข้อมูล' : `${Math.round(squeeze.confirmation * 100)}%`} />
         </dl>
         <p className="mt-2 text-xs leading-5 text-slate-500">
           Squeeze ON คือความผันผวนกำลังบีบตัว ไม่ได้แปลว่าขาขึ้น และ RVOL บอกความคึกคักของการซื้อขาย จึงใช้ยืนยันทิศทางเดิมเท่านั้น ไม่สร้างทิศทางใหม่
+          {squeeze.normalizedMomentumCapped && ' · ค่า Momentum ÷ ATR จริงเกิน 1 จึงถูกจำกัดไว้ที่ 1 (capped) ตัวเลขที่แสดงคือค่าหลังจำกัดแล้ว'}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          ระดับการยืนยันจาก RVOL เป็นเส้นโค้งต่อเนื่องรอบ 1.00× ไม่ใช่การกระโดดเป็นขั้น RVOL 1.00× คือ 50%
         </p>
       </section>
 
@@ -439,45 +542,153 @@ function DetailBody({ breakdown, summary }: {
           <Detail label="แนวรับใกล้สุด" value={numberText(riskReward.support)} />
           <Detail label="แนวต้านใกล้สุด" value={numberText(riskReward.resistance)} />
           <Detail label="ระยะขึ้น / ระยะลง" value={`${percentText(riskReward.upsidePercent)} / ${percentText(riskReward.downsidePercent)}`} />
+          {/*
+            * The same two distances in ATR. A +2.96% / -12.53% pair looks wildly
+            * lopsided until you know one daily range is 3% of price, at which
+            * point it is 1 ATR up and 4 ATR down — which is the sentence a reader
+            * can actually use.
+            */}
+          <Detail
+            label="ระยะขึ้น / ระยะลง (หน่วย ATR)"
+            value={`${atrText(riskReward.upsideAtr)} / ${atrText(riskReward.downsideAtr)}`}
+          />
+          <Detail
+            label="ระยะขึ้น / ระยะลง (เทียบ Expected Move)"
+            value={`${atrText(riskReward.upsideExpectedMoves)} / ${atrText(riskReward.downsideExpectedMoves)}`}
+          />
+          {/*
+            * The expected move NEVER appears without its horizon. Six dollars
+            * over four days and six dollars over sixty are not the same
+            * statement about the same chart, and the ratio above is measured in
+            * whichever one this straddle happens to be.
+            */}
+          <Detail
+            label="Expected Move (ATM straddle)"
+            value={riskReward.expectedMove === null
+              ? '—'
+              : `${numberText(riskReward.expectedMove)} · ${riskReward.expectedMoveDte === null ? 'ไม่ทราบอายุสัญญา' : `เหลือ ${riskReward.expectedMoveDte} วัน`}`}
+          />
           <Detail label="R:R ฝั่ง Call" value={numberText(riskReward.callRewardRisk)} />
           <Detail label="R:R ฝั่ง Put" value={numberText(riskReward.putRewardRisk)} />
+          <Detail
+            label="ฝั่งที่ใช้ให้คะแนน"
+            value={riskReward.scoredSide === 'call'
+              ? 'Call (หลักฐานอื่นชี้ขาขึ้น)'
+              : riskReward.scoredSide === 'put'
+                ? 'Put (หลักฐานอื่นชี้ขาลง)'
+                : 'ยังไม่เลือกทาง จึงคิดเป็นคุณภาพ setup ไม่ใช่คะแนนทิศทางเต็ม'}
+          />
+          <Detail
+            label="คุณภาพ setup ของฝั่งที่ดีที่สุด"
+            value={riskReward.setupQuality === null ? '—' : `${Math.round(riskReward.setupQuality * 100)}%`}
+          />
         </dl>
+        {riskReward.expectedMoveHorizonWarning && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-em-horizon-warning">
+            {riskReward.expectedMoveHorizonWarning}
+          </p>
+        )}
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          Risk:Reward วัดจากฝั่งที่หลักฐานอื่นชี้ไป ไม่ได้วัดจากฝั่ง Call เสมอ ถ้ายังไม่มีทิศทาง คะแนนจะถูกลดทอนเพราะเรขาคณิตของราคาบอกได้แค่คุณภาพของ setup ไม่ได้บอกทิศทาง
+        </p>
       </section>
 
       <section>
         <h3 className="font-semibold text-white">4. ราคาพรีเมียม (IV) และ Put/Call</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
-          <Detail label="เกณฑ์ที่ใช้" value={ivBasisLabel(iv.basis)} />
+          <Detail label="เกณฑ์ที่ใช้" value={ivBasisLabel(iv.basis, iv.realizedWindowDays)} />
           <Detail label="IV Rank" value={iv.ivRank === null ? 'ไม่พร้อมใช้งาน' : String(iv.ivRank)} />
+          {/*
+            * "ไม่พร้อมใช้งาน" was the wrong word for a series that fills itself
+            * in one reading per day. A countdown is the truth and it also tells
+            * the reader that waiting is what fixes it.
+            */}
+          <Detail
+            label="IV Percentile (เทียบตัวเอง)"
+            value={ivPercentileText(iv.ivPercentile, iv.percentilePending, iv.percentileStoreUnavailable)}
+          />
           <Detail label="IV ปัจจุบัน (ATM)" value={iv.impliedVolatility === null ? '—' : `${(iv.impliedVolatility * 100).toFixed(1)}%`} />
-          <Detail label="ความผันผวนจริง 1 ปี" value={iv.realizedVolatility === null ? '—' : `${(iv.realizedVolatility * 100).toFixed(1)}%`} />
+          <Detail
+            label={iv.realizedWindowDays === null ? 'ความผันผวนจริง' : `ความผันผวนจริง ${iv.realizedWindowDays} วัน`}
+            value={iv.realizedVolatility === null ? '—' : `${(iv.realizedVolatility * 100).toFixed(1)}%`}
+          />
+          <Detail label="อายุสัญญาที่ใช้เทียบ (DTE)" value={iv.dte === null ? '—' : `${iv.dte} วัน`} />
           <Detail label="IV ÷ ความผันผวนจริง" value={numberText(iv.ratio)} />
           <Detail label="ระดับความแพง" value={iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]} />
           <Detail label="สถานะข้อมูล IV" value={DATA_STATE_LABEL[iv.state]} />
           <Detail label="แหล่งข้อมูล IV" value={iv.source ?? 'ไม่พร้อมใช้งาน'} />
-          <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTime(iv.fetchedAt) : '—'} />
+          <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTimeCE(iv.fetchedAt) : '—'} />
           <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
+        {iv.percentileStoreUnavailable && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-percentile-outage">
+            {HISTORY_DEGRADED_NOTICE.helper}
+          </p>
+        )}
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">5. ความเสี่ยงจากเหตุการณ์ (Earnings)</h3>
+        <h3 className="font-semibold text-white">5. สภาพคล่องของ chain</h3>
+        <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
+          <Detail
+            label="ระดับสภาพคล่อง"
+            value={liquidity.grade === null ? 'ไม่พร้อมใช้งาน' : LIQUIDITY_BADGE[liquidity.grade].label}
+          />
+          <Detail label="คะแนนรวม" value={liquidity.score === null ? '—' : `${liquidity.score} / 100`} />
+          <Detail
+            label="ตลาดเปิดตอนเก็บข้อมูล"
+            value={liquidity.marketOpenAtCapture === null
+              ? '—'
+              : liquidity.marketOpenAtCapture ? 'เปิด' : 'ปิด'}
+          />
+          {liquidity.offHoursAssessment && (
+            <Detail
+              label="ถ้าดูเฉพาะ OI และ Volume"
+              value={`${LIQUIDITY_BADGE[liquidity.offHoursAssessment.grade].label} · ${liquidity.offHoursAssessment.score} / 100`}
+            />
+          )}
+          <Detail label="Open Interest (ค่ากลาง)" value={numberText(liquidity.medianOpenInterest)} />
+          <Detail label="Volume (ค่ากลาง)" value={numberText(liquidity.medianVolume)} />
+          <Detail
+            label="ส่วนต่าง Bid/Ask (ค่ากลาง)"
+            value={liquidity.medianSpreadPercent === null ? '—' : `${liquidity.medianSpreadPercent.toFixed(2)}% ของราคากลาง`}
+          />
+          <Detail label="สัญญาที่ใช้ประเมิน" value={liquidity.contractsExamined === null ? '—' : `${liquidity.contractsExamined} สัญญา`} />
+          <Detail label="สถานะข้อมูล" value={DATA_STATE_LABEL[liquidity.state]} />
+        </dl>
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          สภาพคล่องไม่ได้เป็นส่วนหนึ่งของคะแนนทิศทาง หุ้นจะขึ้นหรือลงไม่เกี่ยวกับว่า chain ซื้อขายง่ายแค่ไหน แต่สัญญาณบน chain ที่ออกยากคือสัญญาณที่ผู้เริ่มต้นไม่ควรลงมือตาม
+        </p>
+        {liquidity.marketOpenAtCapture === false && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-liquidity-closed">
+            ส่วนต่าง Bid/Ask ที่เห็นเก็บตอนตลาดปิด ซึ่งกว้างกว่าตอนเปิดเป็นปกติ จึงยังไม่ใช้ตัดสินสภาพคล่อง ให้ดูอีกครั้งตอนตลาดเปิด
+          </p>
+        )}
+        {liquidity.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{liquidity.reason}</p>}
+      </section>
+
+      <section>
+        <h3 className="font-semibold text-white">6. ความเสี่ยงจากเหตุการณ์ (Earnings)</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="วันประกาศงบ" value={event.reportDate ?? 'ไม่พร้อมใช้งาน'} />
           <Detail label="เหลืออีก" value={event.daysToEarnings === null ? '—' : `${event.daysToEarnings} วัน`} />
           <Detail label="ช่วงเวลา" value={event.timeOfDay ?? '—'} />
           <Detail label="สถานะข้อมูล" value={DATA_STATE_LABEL[event.state]} />
           <Detail label="แหล่งข้อมูล" value={event.source ?? 'ไม่พร้อมใช้งาน'} />
-          <Detail label="ดึงข้อมูลเมื่อ" value={event.fetchedAt ? formatBangkokDateTime(event.fetchedAt) : '—'} />
+          <Detail label="ดึงข้อมูลเมื่อ" value={event.fetchedAt ? formatBangkokDateTimeCE(event.fetchedAt) : '—'} />
         </dl>
         {event.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{event.reason}</p>}
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">6. Confidence และการหักคะแนน</h3>
+        <h3 className="font-semibold text-white">7. Confidence และการหักคะแนน</h3>
         <p className="mt-2 leading-6">
           Confidence วัดว่าหลักฐานหนักแน่นและไปทางเดียวกันแค่ไหน <b className="text-white">ไม่ใช่โอกาสทำกำไร</b>
+        </p>
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          คิดจากการ<b className="text-slate-300">คูณกัน</b>ของสามค่า (ความครบ × ความสอดคล้อง × ความหนักแน่น) ไม่ใช่การเฉลี่ย
+          ค่าใดค่าหนึ่งที่ต่ำมากจึงดึงผลรวมลงเสมอ และความสอดคล้องมีน้ำหนักมากที่สุด เพราะเป็นค่าที่การเฉลี่ยแบบเดิมกลบไว้
         </p>
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
           <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.coverage * 100)}%`} />
@@ -498,7 +709,7 @@ function DetailBody({ breakdown, summary }: {
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">7. เงื่อนไขที่ทำให้ยังไม่เป็น PRIME</h3>
+        <h3 className="font-semibold text-white">8. เงื่อนไขที่ทำให้ยังไม่เป็น PRIME</h3>
         {diagnostics.dataSufficiency.primeBlockers.length ? (
           <ul className="mt-2 space-y-1">
             {diagnostics.dataSufficiency.primeBlockers.map((blocker) => (
@@ -512,7 +723,34 @@ function DetailBody({ breakdown, summary }: {
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">8. เหตุผลทั้งหมด</h3>
+        <h3 className="font-semibold text-white">9. เวลาของข้อมูลแต่ละแหล่ง</h3>
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          แหล่งข้อมูลปิดคนละเวลากัน สัญญาณจึงยึด<b className="text-slate-300">เวลาที่เก่าที่สุด</b>เป็นเวลาของตัวเอง
+          เพราะสัญญาณจะใหม่กว่าข้อมูลที่เก่าที่สุดของมันไม่ได้ ทุกปีในหน้านี้เป็น ค.ศ. ทั้งหมด
+        </p>
+        <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
+          <Detail label="เวลาของสัญญาณ (เก่าที่สุด)" value={formatBangkokDateTimeCE(provenance.asOf)} />
+          <Detail label="แหล่งที่ใหม่ที่สุด" value={formatBangkokDateTimeCE(provenance.newestAsOf)} />
+          <Detail
+            label="ห่างกัน"
+            value={provenance.spreadHours === null ? '—' : `${provenance.spreadHours} ชั่วโมง`}
+          />
+          <Detail label="STALE-MIX" value={provenance.staleMix ? 'ใช่ · ข้อมูลมาจากคนละเวลากันเกินเกณฑ์' : 'ไม่'} />
+        </dl>
+        <ul className="mt-2 space-y-1 text-xs text-slate-400">
+          {provenance.sources.map((source) => (
+            <li key={source.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-slate-300">{source.id}</span>
+              <span className="font-mono">
+                {source.provider ?? 'ไม่ทราบผู้ให้บริการ'} · {formatBangkokDateTimeCE(source.asOf)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h3 className="font-semibold text-white">10. เหตุผลทั้งหมด</h3>
         <ul className="mt-2 space-y-1.5">
           {breakdown.reasoning.map((reason) => (
             <li key={reason.id} className="flex gap-2">
@@ -525,8 +763,10 @@ function DetailBody({ breakdown, summary }: {
 
       <div className="rounded-xl border border-slate-800 p-3 text-xs leading-5 text-slate-400">
         <p>Timeframe: {summary.timeframe} · แท่งที่ปิดแล้ว: {summary.finalizedCandles}</p>
-        <p>แท่งล่าสุดที่ใช้: {summary.latestCandleAt ?? 'ไม่พร้อมใช้งาน'}</p>
-        <p>คำนวณเมื่อ: {formatBangkokDateTime(summary.calculatedAt)}</p>
+        <p>แท่งล่าสุดที่ใช้: {summary.latestCandleAt ?? 'ไม่พร้อมใช้งาน'} (ค.ศ.)</p>
+        <p>ข้อมูล ณ: {formatBangkokDateTimeCE(summary.asOf)}</p>
+        <p>คำนวณเมื่อ: {formatBangkokDateTimeCE(summary.calculatedAt)}</p>
+        <p>เวอร์ชันการคำนวณ: {summary.configVersion}</p>
       </div>
       <p className="text-xs leading-5 text-slate-500">{DISCLAIMER}</p>
     </div>
@@ -563,6 +803,11 @@ function numberText(value: number | null): string {
   return value === null || !Number.isFinite(value)
     ? '—'
     : value.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+/** A multiple, printed as `1.24×`. Used for both ATR and Expected Move units. */
+function atrText(value: number | null): string {
+  return value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(2)}×`;
 }
 
 function percentText(value: number | null): string {

@@ -1,6 +1,8 @@
 import type { DisplayDataStatus } from '@/src/components/market-data/DataProvenance';
 import type {
   IvLevel,
+  IvPricingInput,
+  LiquidityGrade,
   OptionsSignalDataState,
   OptionsSignalFactorId,
   OptionsSignalType,
@@ -97,9 +99,76 @@ export function signedPoints(points: number | null): string {
   return points === null ? '—' : `${points > 0 ? '+' : ''}${points}`;
 }
 
-/** Describe the IV basis truthfully — the fallback is never labelled "IV Rank". */
-export function ivBasisLabel(basis: 'iv-rank' | 'iv-vs-realized' | null): string {
+/**
+ * Describe the IV basis truthfully — the fallback is never labelled "IV Rank",
+ * and the realized-volatility fallback names the window it actually used rather
+ * than claiming a year it may not have measured.
+ */
+export function ivBasisLabel(
+  basis: IvPricingInput['basis'] | null,
+  realizedWindowDays: number | null = null,
+): string {
   if (basis === 'iv-rank') return 'IV Rank';
-  if (basis === 'iv-vs-realized') return 'IV เทียบความผันผวนจริง 1 ปี';
+  if (basis === 'iv-percentile') return 'IV Percentile (เทียบตัวเอง)';
+  if (basis === 'iv-vs-realized') {
+    return realizedWindowDays === null
+      ? 'IV เทียบความผันผวนจริง'
+      : `IV เทียบความผันผวนจริง ${realizedWindowDays} วัน`;
+  }
   return 'IV Rank';
 }
+
+/**
+ * What to print where an IV percentile would go.
+ *
+ * THREE different states, and collapsing any two of them is a lie:
+ *
+ *   * a number — the percentile is published;
+ *   * a COUNTDOWN — the series is short and fills itself in one reading per day,
+ *     so "ไม่พร้อมใช้งาน" was the wrong word for it; and
+ *   * an OUTAGE — the store cannot be read at all. This one must never wear the
+ *     countdown, because the countdown would not be counting: a reader told to
+ *     wait 60 days would still be waiting after 600.
+ */
+export function ivPercentileText(
+  percentile: number | null,
+  pending: { observations: number; required: number; missingDays: number } | null,
+  storeUnavailable = false,
+): string {
+  if (percentile !== null) return String(percentile);
+  if (storeUnavailable) return 'ใช้ไม่ได้ชั่วคราว (อ่านประวัติไม่สำเร็จ)';
+  if (pending && pending.missingDays > 0) {
+    return `ต้องการข้อมูลอีก ${pending.missingDays} วัน (มีแล้ว ${pending.observations}/${pending.required})`;
+  }
+  return 'ไม่พร้อมใช้งาน';
+}
+
+/** Said once, on the card, when the percentile bases are off for an outage. */
+export const HISTORY_DEGRADED_NOTICE = {
+  label: 'Percentile ใช้ไม่ได้ชั่วคราว',
+  tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+  helper: 'อ่านประวัติค่าย้อนหลังของหุ้นตัวนี้ไม่สำเร็จ IV Percentile และ Put/Call Percentile จึงยังใช้ไม่ได้ '
+    + 'ไม่ใช่เพราะข้อมูลยังสะสมไม่พอ ระหว่างนี้การ์ดใช้เกณฑ์เทียบความผันผวนจริงแทน',
+} as const;
+
+/**
+ * The liquidity badge. A few words a beginner can act on, not a raw score.
+ *
+ * `unknown` is deliberately NEUTRAL in tone rather than a warning colour. It is
+ * the answer to "can I get out of this" asked while the book is shut, and
+ * dressing that as a red flag would push readers away from chains that are
+ * perfectly liquid at 10:00 and merely unquoted at 02:00.
+ */
+export const LIQUIDITY_BADGE = {
+  good: { label: 'สภาพคล่องดี', tone: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200' },
+  fair: { label: 'สภาพคล่องพอใช้', tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200' },
+  thin: { label: 'สภาพคล่องต้องระวัง', tone: 'border-red-500/40 bg-red-500/15 text-red-200' },
+  unknown: { label: 'สภาพคล่องประเมินไม่ได้ (ตลาดปิด)', tone: 'border-slate-500/40 bg-slate-500/15 text-slate-200' },
+} as const satisfies Record<LiquidityGrade, { label: string; tone: string }>;
+
+/** Sources that disagree by more than the configured window say so, once. */
+export const STALE_MIX_BADGE = {
+  label: 'STALE-MIX',
+  tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+  helper: 'แหล่งข้อมูลของสัญญาณนี้มาจากคนละเวลากันเกินเกณฑ์ จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ',
+} as const;

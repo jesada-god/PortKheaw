@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  biasFromNormalizedScore,
+  biasFromDirectionBalance,
   calculateOptionsSignal,
   classifyIvLevel,
   scoreMacro,
@@ -56,7 +56,8 @@ const bullishSentiment: SentimentInput = {
 const bullishRiskReward: RiskRewardInput = { price: 110, support: 105, resistance: 130 };
 const bearishRiskReward: RiskRewardInput = { price: 90, support: 70, resistance: 95 };
 const cheapIv: IvPricingInput = {
-  basis: 'iv-vs-realized', impliedVolatility: 0.24, realizedVolatility: 0.32, ratio: 0.75, observations: 250,
+  basis: 'iv-vs-realized', impliedVolatility: 0.24, realizedVolatility: 0.32, ratio: 0.75,
+  observations: 250, realizedWindowDays: 252, dte: 55,
 };
 const farEarnings: EventRiskInput = { reportDate: '2026-09-01', daysToEarnings: 28, timeOfDay: 'post-market' };
 
@@ -140,19 +141,54 @@ describe('factor scoring', () => {
     expect(scoreSentiment({ ...bullishSentiment, putCallRatio: 1.5 }).normalized).toBe(-1);
   });
 
-  it('scores risk/reward symmetrically around a 1:1 ratio', () => {
-    expect(scoreRiskReward({ price: 100, support: 90, resistance: 110 }).normalized).toBe(0);
-    const favourable = scoreRiskReward({ price: 100, support: 95, resistance: 110 });
-    expect(favourable.normalized).toBe(1);
+  it('scores risk/reward symmetrically around a 1:1 ratio, for the led direction', () => {
+    const bullish = { direction: 'bullish' as const };
+    expect(scoreRiskReward({ price: 100, support: 90, resistance: 110 }, bullish).normalized).toBe(0);
+
+    // 2:1 no longer saturates — the tilt band was widened to 4.5:1 because a
+    // band that ended at 2 pinned four fifths of the market at one end. A 2:1
+    // setup is still a WORKABLE one; it is just no longer maximum evidence.
+    const favourable = scoreRiskReward({ price: 100, support: 95, resistance: 110 }, bullish);
     expect(favourable.callRewardRisk).toBe(2);
-    const unfavourable = scoreRiskReward({ price: 100, support: 90, resistance: 105 });
-    expect(unfavourable.normalized).toBe(-1);
-    expect(scoreRiskReward({ price: 100, support: null, resistance: null }).normalized).toBeNull();
+    expect(favourable.normalized).toBeCloseTo(0.4608, 4);
+    expect(favourable.scoredSide).toBe('call');
+    expect(favourable.setupQuality).toBe(1);
+
+    // ...and the mirror ratio is the exact negative of it.
+    const unfavourable = scoreRiskReward({ price: 100, support: 90, resistance: 105 }, bullish);
+    expect(unfavourable.callRewardRisk).toBe(0.5);
+    expect(unfavourable.normalized).toBeCloseTo(-0.4608, 4);
+    expect(unfavourable.normalized).toBeCloseTo(-(favourable.normalized as number), 6);
+
+    expect(scoreRiskReward({ price: 100, support: null, resistance: null }, bullish).normalized).toBeNull();
+  });
+
+  it('saturates the tilt at the configured ratio, and only there', () => {
+    const bullish = { direction: 'bullish' as const };
+    const base = OPTIONS_SIGNAL_CONFIG.riskReward.tiltSaturationRatio;
+    // up 4.5x the downside -> exactly the saturation point.
+    const atBand = scoreRiskReward({ price: 100, support: 98, resistance: 100 + 2 * base }, bullish);
+    expect(atBand.callRewardRisk).toBeCloseTo(base, 6);
+    expect(atBand.normalized).toBeCloseTo(1, 6);
+    // Beyond it, clamped rather than runaway.
+    expect(scoreRiskReward({ price: 100, support: 99, resistance: 130 }, bullish).normalized).toBe(1);
+  });
+
+  it('mirrors the same geometry onto the Put side when the evidence leads bearish', () => {
+    // Identical chart, opposite lead: a 2:1 PUT reward:risk is bearish evidence
+    // of exactly the magnitude a 2:1 call reward:risk would be bullish evidence.
+    const bearish = scoreRiskReward({ price: 100, support: 80, resistance: 110 }, { direction: 'bearish' });
+    expect(bearish.scoredSide).toBe('put');
+    expect(bearish.putRewardRisk).toBe(2);
+    expect(bearish.normalized).toBeCloseTo(-0.4608, 4);
+    const bullishTwin = scoreRiskReward({ price: 100, support: 95, resistance: 110 }, { direction: 'bullish' });
+    expect(bearish.normalized).toBeCloseTo(-(bullishTwin.normalized as number), 6);
   });
 
   it('treats a missing level as unbounded on that side, in mirror image', () => {
     // All-time high: nothing confirmed overhead is clear runway up.
     const noResistance = scoreRiskReward({ price: 100, support: 90, resistance: null });
+    expect(noResistance.scoredSide).toBe('call');
     expect(noResistance.normalized).toBe(1);
     expect(noResistance.partial).toBe(true);
     // All-time low: nothing confirmed beneath is open downside risk.
@@ -165,6 +201,8 @@ describe('factor scoring', () => {
     expect(scoreRiskReward({ price: 100, support: 100, resistance: 110 }).normalized).toBe(1);
     expect(scoreRiskReward({ price: 100, support: 90, resistance: 100 }).normalized).toBe(-1);
     expect(scoreRiskReward({ price: 100, support: 100, resistance: 100 }).normalized).toBe(0);
+    // A level the price is sitting on is not a "direction" question, so the
+    // touch cases keep their full magnitude with or without a lead.
   });
 
   it('classifies IV Rank exactly on the documented boundaries', () => {
@@ -179,7 +217,8 @@ describe('factor scoring', () => {
 
   it('classifies the labelled IV-vs-realized fallback on its own boundaries', () => {
     const ratio = (value: number): IvPricingInput => ({
-      basis: 'iv-vs-realized', impliedVolatility: 0.3, realizedVolatility: 0.3 / value, ratio: value, observations: 250,
+      basis: 'iv-vs-realized', impliedVolatility: 0.3, realizedVolatility: 0.3 / value, ratio: value,
+      observations: 250, realizedWindowDays: 252, dte: 55,
     });
     expect(classifyIvLevel(ratio(0.8))).toBe('low');
     expect(classifyIvLevel(ratio(0.9))).toBe('normal');
@@ -189,10 +228,10 @@ describe('factor scoring', () => {
   });
 
   it('maps the normalized score onto a bias at the configured boundaries', () => {
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bullish)).toBe('bullish');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bullish - 1)).toBe('neutral');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bearish)).toBe('bearish');
-    expect(biasFromNormalizedScore(OPTIONS_SIGNAL_CONFIG.direction.bearish + 1)).toBe('neutral');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bullish)).toBe('bullish');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bullish - 1)).toBe('neutral');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bearish)).toBe('bearish');
+    expect(biasFromDirectionBalance(OPTIONS_SIGNAL_CONFIG.direction.bearish + 1)).toBe('neutral');
   });
 });
 
@@ -253,7 +292,8 @@ describe('calculateOptionsSignal', () => {
   it('raises IV_WARNING when premium is extreme, even with strong direction', () => {
     const result = calculateOptionsSignal(input({
       pricing: available<IvPricingInput>({
-        basis: 'iv-vs-realized', impliedVolatility: 0.6, realizedVolatility: 0.3, ratio: 2, observations: 250,
+        basis: 'iv-vs-realized', impliedVolatility: 0.6, realizedVolatility: 0.3, ratio: 2,
+        observations: 250, realizedWindowDays: 252, dte: 55,
       }),
     }));
     expect(result.signalType).toBe('IV_WARNING');
@@ -265,7 +305,8 @@ describe('calculateOptionsSignal', () => {
   it('downgrades PRIME to WATCH when premium is merely high', () => {
     const result = calculateOptionsSignal(input({
       pricing: available<IvPricingInput>({
-        basis: 'iv-vs-realized', impliedVolatility: 0.45, realizedVolatility: 0.3, ratio: 1.5, observations: 250,
+        basis: 'iv-vs-realized', impliedVolatility: 0.45, realizedVolatility: 0.3, ratio: 1.5,
+        observations: 250, realizedWindowDays: 252, dte: 55,
       }),
     }));
     expect(result.signalType).toBe('CALL_WATCH');

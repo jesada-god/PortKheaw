@@ -1,9 +1,16 @@
 import { calculateAtmIv } from '@/src/lib/market-data/options/analytics';
-import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
+import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import type { OptionsSrResult } from '@/src/lib/analytics/options-sr/types';
+import { classifyUsEquitySession } from '@/src/lib/market-data/session';
+import { isUsTradingDay } from '@/src/lib/market-data/us-market-calendar';
+import { OPTIONS_SIGNAL_CONFIG } from './config';
+import { percentileRank } from './indicators';
+import type { RealizedVolatilityWindows } from './underlying';
 import type {
   EventRiskInput,
+  IvPercentilePending,
   IvPricingInput,
+  LiquidityInput,
   MacroInput,
   MomentumInput,
   OptionsSignalDataState,
@@ -33,6 +40,12 @@ export interface OptionsSignalServerContext {
   event: OptionsSignalInputSlot<EventRiskInput>;
   /** Annualized realized volatility of the underlying; the IV comparison baseline. */
   realizedVolatility: { value: number; observations: number } | null;
+  /**
+   * The same measurement over several windows, so a short-dated contract is
+   * compared against short-dated realized volatility. Optional so an older
+   * caller that only has the 1-year figure keeps working.
+   */
+  realizedVolatilityWindows?: RealizedVolatilityWindows;
 }
 
 /**
@@ -45,6 +58,21 @@ export interface OptionsSignalStaleChain {
   result: OptionsSrResult;
   fetchedAt: string;
   reason: string;
+}
+
+/**
+ * This symbol's own recorded readings, newest-last.
+ *
+ * A raw IV of 38% or a raw Put/Call of 1.51 says nothing on its own — both are
+ * routine on one ticker and an outlier on another. These series are what make
+ * them comparable, and they are supplied by the caller (from the signal history)
+ * rather than invented here.
+ */
+export interface OptionsSignalOwnHistory {
+  /** Daily ATM implied volatility readings, as decimals. */
+  atmIv?: readonly number[];
+  /** Daily Put/Call open-interest ratios. */
+  putCallRatio?: readonly number[];
 }
 
 export interface OptionsSignalOptionsInputs {
@@ -61,9 +89,11 @@ export interface OptionsSignalOptionsInputs {
   /**
    * A real historical IV Rank, when a provider ever supplies one. No currently
    * entitled provider does, so this stays undefined and the engine falls back to
-   * the explicitly-labelled IV-vs-realized basis.
+   * the percentile basis, then to the labelled IV-vs-realized basis.
    */
   ivRank?: { ivRank: number; observations: number };
+  /** Recorded readings for this symbol, used for the two percentile bases. */
+  ownHistory?: OptionsSignalOwnHistory;
 }
 
 /**
@@ -117,24 +147,141 @@ function unavailableSlot<T>(reason: string, provider: string | null = null, asOf
   return { status: 'unavailable', state: 'UNAVAILABLE', reason, provider, asOf };
 }
 
+const finite = (value: number | null | undefined): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+function median(values: readonly number[]): number | null {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function calendarDaysBetween(startDate: string, endDate: string): number | null {
+  const start = Date.parse(`${startDate}T00:00:00.000Z`);
+  const end = Date.parse(`${endDate}T00:00:00.000Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, Math.round((end - start) / 86_400_000));
+}
+
+/** Days to expiration for the chain the options factors were read from. */
+export function chainDte(chain: OptionsChain): number | null {
+  return calendarDaysBetween(chain.asOf.slice(0, 10), chain.expiration);
+}
+
+/**
+ * Was the US regular session open at the instant this chain was captured?
+ *
+ * Both halves matter and neither is enough alone: `classifyUsEquitySession`
+ * knows the clock and the weekend but not the holiday calendar, and
+ * `isUsTradingDay` knows the holiday calendar but not the hour. A quote taken at
+ * 11:00 on Thanksgiving is an after-hours quote in every way that affects a
+ * bid-ask spread.
+ *
+ * `null` when the timestamp cannot be parsed, which stays distinct from `false`:
+ * "we do not know when this was quoted" is not "we know the market was shut".
+ */
+export function marketOpenAt(timestamp: string | null | undefined): boolean | null {
+  if (!timestamp || !Number.isFinite(Date.parse(timestamp))) return null;
+  const session = classifyUsEquitySession(timestamp);
+  if (session === null) return false;
+  return session === 'regular' && isUsTradingDay(timestamp.slice(0, 10));
+}
+
+/**
+ * Expected move from the real ATM STRADDLE, not from a volatility formula.
+ *
+ * The straddle is what the market is actually charging for the move to this
+ * expiration, so when both ATM legs carry a usable price this is the honest
+ * number. It returns `null` rather than substituting a model when they do not.
+ */
+export function atmStraddleExpectedMove(chain: OptionsChain): number | null {
+  const priceOf = (contract: OptionContract): number | null => {
+    const mark = finite(contract.mark);
+    if (mark !== null && mark > 0) return mark;
+    const bid = finite(contract.bid);
+    const ask = finite(contract.ask);
+    if (bid !== null && ask !== null && ask > 0) return (bid + ask) / 2;
+    const last = finite(contract.last);
+    return last !== null && last > 0 ? last : null;
+  };
+  const nearest = (contracts: readonly OptionContract[]) => contracts
+    .filter((contract) => contract.expiration === chain.expiration && priceOf(contract) !== null)
+    .sort((left, right) => Math.abs(left.strike - chain.spot) - Math.abs(right.strike - chain.spot))[0] ?? null;
+
+  const call = nearest(chain.calls);
+  const put = nearest(chain.puts);
+  if (!call || !put) return null;
+  // Both legs must be struck at the same place, or the sum is not a straddle.
+  if (Math.abs(call.strike - put.strike) > Number.EPSILON) return null;
+  const move = (priceOf(call) as number) + (priceOf(put) as number);
+  return move > 0 ? move : null;
+}
+
 /**
  * Risk/Reward anchored to the single accepted underlying price the header and
- * chart already display, using the confirmed daily zones from the server.
+ * chart already display, using the confirmed daily zones from the server, and
+ * carrying the two yardsticks a bare percentage cannot supply: the underlying's
+ * own ATR, and what the option market is charging for the move.
  */
 export function buildRiskRewardSlot(
   levels: OptionsSignalInputSlot<PriceLevelsInput>,
   acceptedPrice: number | null,
+  expectedMove: number | null = null,
+  expectedMoveDte: number | null = null,
 ): OptionsSignalInputSlot<RiskRewardInput> {
   if (levels.status === 'unavailable') return levels as OptionsSignalInputSlot<RiskRewardInput>;
-  const price = acceptedPrice !== null && Number.isFinite(acceptedPrice) && acceptedPrice > 0
-    ? acceptedPrice
-    : levels.value.close;
+  const accepted = finite(acceptedPrice);
+  const price = accepted !== null && accepted > 0 ? accepted : levels.value.close;
   return {
     status: 'available',
     state: levels.state,
-    value: { price, support: levels.value.support, resistance: levels.value.resistance },
+    value: {
+      price,
+      support: levels.value.support,
+      resistance: levels.value.resistance,
+      atr: levels.value.atr ?? null,
+      expectedMove,
+      expectedMoveDte,
+    },
     provider: levels.provider,
     asOf: levels.asOf,
+  };
+}
+
+/** Which realized-volatility window a contract of this DTE should be judged against. */
+export function realizedWindowForDte(
+  dte: number | null,
+  windows: RealizedVolatilityWindows | undefined,
+  fallback: { value: number; observations: number } | null,
+  config = OPTIONS_SIGNAL_CONFIG.iv,
+): { value: number; observations: number; windowDays: number } | null {
+  const long = windows?.long ?? fallback;
+  const pick = (
+    measurement: { value: number; observations: number } | null | undefined,
+    windowDays: number,
+  ) => (measurement && measurement.value > 0 ? { ...measurement, windowDays } : null);
+
+  if (dte !== null && dte < config.shortDatedDteThreshold) {
+    const short = dte <= config.nearWindowDteThreshold
+      ? pick(windows?.near, config.shortWindows.near) ?? pick(windows?.far, config.shortWindows.far)
+      : pick(windows?.far, config.shortWindows.far) ?? pick(windows?.near, config.shortWindows.near);
+    if (short) return short;
+  }
+  return pick(long, config.realizedWindowDays);
+}
+
+/** How far this symbol still is from having a publishable IV percentile. */
+export function ivPercentilePendingOf(
+  history: readonly number[] | undefined,
+  config = OPTIONS_SIGNAL_CONFIG.iv,
+): IvPercentilePending | null {
+  const observations = (history ?? []).filter((value) => Number.isFinite(value)).length;
+  if (observations >= config.minimumPercentileObservations) return null;
+  return {
+    observations,
+    required: config.minimumPercentileObservations,
+    missingDays: config.minimumPercentileObservations - observations,
   };
 }
 
@@ -142,17 +289,22 @@ export function buildRiskRewardSlot(
  * Options pricing richness from real numbers only.
  *
  * IV Rank is preferred but needs a historical IV series no entitled provider
- * offers; the fallback compares today's real ATM implied volatility with the
- * underlying's own realized volatility and is always labelled with its basis.
+ * offers. Next is this symbol's OWN IV percentile, which fills itself in one
+ * reading at a time — until it does, the card is told how many days are still
+ * missing rather than being shown a flat "unavailable". The last basis compares
+ * today's real ATM implied volatility with the underlying's own realized
+ * volatility over a window matched to the contract's DTE, and is always
+ * labelled with the basis and the window it used.
  */
 export function buildPricingSlot(
   options: OptionsSignalOptionsInputs,
   realized: { value: number; observations: number } | null,
+  windows?: RealizedVolatilityWindows,
 ): OptionsSignalInputSlot<IvPricingInput> {
   const source = resolveChainSource(options);
   const chain = source.chain;
   const atm = chain ? calculateAtmIv(chain) : null;
-  const impliedVolatility = atm?.status === 'available' ? atm.iv : null;
+  const impliedVolatility = atm?.status === 'available' ? finite(atm.iv) : null;
 
   if (options.ivRank) {
     return {
@@ -177,7 +329,31 @@ export function buildPricingSlot(
       source.asOf,
     );
   }
-  if (!realized || realized.value <= 0) {
+
+  const ivConfig = OPTIONS_SIGNAL_CONFIG.iv;
+  const ranked = percentileRank(
+    impliedVolatility,
+    options.ownHistory?.atmIv ?? [],
+    ivConfig.minimumPercentileObservations,
+  );
+  if (ranked) {
+    return {
+      status: 'available',
+      state: source.state,
+      value: {
+        basis: 'iv-percentile',
+        ivPercentile: ranked.percentile * 100,
+        impliedVolatility,
+        observations: ranked.observations,
+      },
+      provider: chain.provider,
+      asOf: source.asOf,
+    };
+  }
+
+  const dte = chainDte(chain);
+  const window = realizedWindowForDte(dte, windows, realized);
+  if (!window) {
     return unavailableSlot(
       'ไม่มีความผันผวนจริงย้อนหลังพอสำหรับเทียบความแพงของค่าพรีเมียม',
       chain.provider,
@@ -190,18 +366,34 @@ export function buildPricingSlot(
     value: {
       basis: 'iv-vs-realized',
       impliedVolatility,
-      realizedVolatility: realized.value,
-      ratio: impliedVolatility / realized.value,
-      observations: realized.observations,
+      realizedVolatility: window.value,
+      ratio: impliedVolatility / window.value,
+      observations: window.observations,
+      realizedWindowDays: window.windowDays,
+      dte,
     },
     provider: chain.provider,
     asOf: source.asOf,
   };
 }
 
+/** Put/Call by traded VOLUME on the same chain, when the provider sent volume. */
+export function putCallVolumeRatio(chain: OptionsChain | null): number | null {
+  if (!chain) return null;
+  const total = (contracts: readonly OptionContract[]) => contracts
+    .filter((contract) => contract.expiration === chain.expiration && finite(contract.volume) !== null)
+    .reduce((sum, contract) => sum + (contract.volume as number), 0);
+  const calls = total(chain.calls);
+  const puts = total(chain.puts);
+  if (calls <= 0) return null;
+  return puts / calls;
+}
+
 /**
  * Put/Call positioning, taken from the SAME Options S/R computation the chart
- * already runs on this chain, so open interest is never summed twice.
+ * already runs on this chain, so open interest is never summed twice — plus the
+ * two things that make the number mean something: today's traded volume ratio,
+ * and where the reading sits inside this symbol's own recent history.
  */
 export function buildSentimentSlot(
   options: OptionsSignalOptionsInputs,
@@ -215,6 +407,11 @@ export function buildSentimentSlot(
   if (result.putCallOIRatio === null || !Number.isFinite(result.putCallOIRatio)) {
     return unavailableSlot('คำนวณ Put/Call Ratio ไม่ได้จาก Open Interest ที่ได้รับ', result.provider, result.asOf);
   }
+  const ranked = percentileRank(
+    result.putCallOIRatio,
+    options.ownHistory?.putCallRatio ?? [],
+    OPTIONS_SIGNAL_CONFIG.sentiment.minimumPercentileObservations,
+  );
   // A fallback reading is STALE no matter what status the cached payload froze in.
   const state = source.staleReason !== null || result.dataMode === 'STALE' ? 'STALE' : 'DELAYED';
   return {
@@ -226,9 +423,71 @@ export function buildSentimentSlot(
       putTotal: result.totalPutOI,
       callTotal: result.totalCallOI,
       expiration: result.expiration,
+      volumeRatio: putCallVolumeRatio(source.chain),
+      ownPercentile: ranked?.percentile ?? null,
+      percentileObservations: ranked?.observations
+        ?? (options.ownHistory?.putCallRatio ?? []).filter((value) => Number.isFinite(value)).length,
     },
     provider: result.provider,
     asOf: source.staleReason !== null ? source.asOf : result.asOf,
+  };
+}
+
+/**
+ * How tradeable this chain actually is.
+ *
+ * Judged only on the strikes near the money, because every chain's wings are
+ * thin and grading a chain on them would fail every symbol equally. Medians, not
+ * means, so one 5,000-lot strike cannot carry an otherwise empty board.
+ */
+export function buildLiquiditySlot(
+  options: OptionsSignalOptionsInputs,
+  config = OPTIONS_SIGNAL_CONFIG.liquidity,
+): OptionsSignalInputSlot<LiquidityInput> {
+  const source = resolveChainSource(options);
+  const chain = source.chain;
+  if (!chain || source.state === null) return unavailableSlot('ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้');
+
+  const window = chain.spot * config.atmWindowPercent / 100;
+  const nearAtm = [...chain.calls, ...chain.puts].filter((contract) => (
+    contract.expiration === chain.expiration && Math.abs(contract.strike - chain.spot) <= window
+  ));
+  if (!nearAtm.length) {
+    return unavailableSlot(
+      `ไม่มีสัญญาในช่วง ±${config.atmWindowPercent}% ของราคาปัจจุบันให้ประเมิน`,
+      chain.provider,
+      source.asOf,
+    );
+  }
+
+  const openInterests = nearAtm.flatMap((contract) => finite(contract.openInterest) === null ? [] : [contract.openInterest as number]);
+  const volumes = nearAtm.flatMap((contract) => finite(contract.volume) === null ? [] : [contract.volume as number]);
+  const spreads = nearAtm.flatMap((contract) => {
+    const bid = finite(contract.bid);
+    const ask = finite(contract.ask);
+    if (bid === null || ask === null) return [];
+    const mid = (bid + ask) / 2;
+    return mid > 0 ? [(ask - bid) / mid * 100] : [];
+  });
+
+  return {
+    status: 'available',
+    state: source.state,
+    value: {
+      medianOpenInterest: median(openInterests),
+      medianVolume: median(volumes),
+      medianSpreadPercent: median(spreads),
+      contractsExamined: nearAtm.length,
+      expiration: chain.expiration,
+      /*
+       * Recorded at CAPTURE time, not read time. A chain fetched at the close
+       * and served from cache an hour later was still quoted while the book was
+       * open, and the spread in it is still a real cost.
+       */
+      marketOpenAtCapture: marketOpenAt(source.asOf ?? chain.asOf),
+    },
+    provider: chain.provider,
+    asOf: source.asOf,
   };
 }
 
@@ -237,6 +496,7 @@ export function assembleOptionsSignalInput(
   context: OptionsSignalServerContext,
   options: OptionsSignalOptionsInputs & { acceptedPrice: number | null },
 ): OptionsSignalInput {
+  const source = resolveChainSource(options);
   return {
     symbol: context.symbol,
     timeframe: context.timeframe,
@@ -246,9 +506,16 @@ export function assembleOptionsSignalInput(
     macro: context.macro,
     trend: context.trend,
     momentum: context.momentum,
-    pricing: buildPricingSlot(options, context.realizedVolatility),
+    pricing: buildPricingSlot(options, context.realizedVolatility, context.realizedVolatilityWindows),
     sentiment: buildSentimentSlot(options),
-    riskReward: buildRiskRewardSlot(context.levels, options.acceptedPrice),
+    riskReward: buildRiskRewardSlot(
+      context.levels,
+      options.acceptedPrice,
+      source.chain ? atmStraddleExpectedMove(source.chain) : null,
+      source.chain ? chainDte(source.chain) : null,
+    ),
     event: context.event,
+    liquidity: buildLiquiditySlot(options),
+    ivPercentilePending: ivPercentilePendingOf(options.ownHistory?.atmIv),
   };
 }

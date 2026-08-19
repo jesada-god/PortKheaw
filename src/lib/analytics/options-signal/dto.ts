@@ -13,6 +13,7 @@
  */
 
 import type {
+  LiquidityGrade,
   OptionsSignalDiagnostics,
   OptionsSignalReason,
   OptionsSignalResult,
@@ -29,8 +30,28 @@ export interface OptionsSignalSummaryDto {
   finalizedCandles: number;
   status: 'available' | 'insufficient-data';
   signalType: OptionsSignalType | null;
+  /**
+   * THE published direction score, and the reason this field is in the SUMMARY
+   * rather than in the breakdown: the card shows it to every entitled reader,
+   * the modal shows the same number to an Elite one, and a card that had to
+   * derive its own number is exactly how the two came to disagree.
+   *
+   * One scale only. There is no bipolar twin of this field anywhere.
+   */
+  directionScore0to100: number | null;
+  /** The conversion written out, so the modal can show its arithmetic. */
+  scoreFormula: string | null;
   confidenceScore: number;
   underlyingBias: UnderlyingBias | null;
+  /** Oldest source timestamp behind the signal. The one time the card may show. */
+  asOf: string | null;
+  /** True when the sources span more than the configured window. */
+  staleMix: boolean;
+  /** Chain tradeability badge. Never part of the direction. */
+  liquidityGrade: LiquidityGrade | null;
+  configVersion: string;
+  /** True when the reading history could not be reached at all. */
+  historyDegraded: boolean;
   /**
    * Why no signal could be produced. Present only on `insufficient-data`, where
    * withholding it would leave the reader looking at an unexplained blank.
@@ -62,8 +83,15 @@ export function projectOptionsSignal(
     finalizedCandles: result.finalizedCandles,
     status: result.status,
     signalType: result.status === 'available' ? result.signalType : null,
+    directionScore0to100: result.status === 'available' ? result.diagnostics.directionScore0to100 : null,
+    scoreFormula: result.status === 'available' ? result.diagnostics.scoreFormula : null,
     confidenceScore: result.confidenceScore,
     underlyingBias: result.status === 'available' ? result.underlyingBias : null,
+    asOf: result.asOf,
+    staleMix: result.staleMix,
+    liquidityGrade: result.liquidityGrade,
+    configVersion: result.configVersion,
+    historyDegraded: result.historyDegraded,
     reason: result.status === 'insufficient-data' ? result.reason : null,
   };
 
