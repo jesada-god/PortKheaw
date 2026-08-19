@@ -110,6 +110,19 @@ export interface OptionsSignalOptionsInputs {
    * the expected move altogether.
    */
   expectedMoveChain?: OptionsChain | null;
+  /**
+   * The expected move ALREADY DERIVED, when the caller has it without a chain.
+   *
+   * Two numbers — the ATM straddle price and the DTE it was read at — are the
+   * entire contribution of a second chain fetch that otherwise costs a full
+   * options snapshot per card. A caller that can serve those two from its own
+   * cache passes them here and skips the fetch; the arithmetic downstream is
+   * identical either way, because this is exactly what
+   * {@link atmStraddleExpectedMove} and {@link chainDte} would have returned.
+   *
+   * Takes precedence over `expectedMoveChain` when both are supplied.
+   */
+  expectedMove?: { move: number | null; dte: number | null } | null;
 }
 
 /**
@@ -519,6 +532,15 @@ export function assembleOptionsSignalInput(
    * card never implies a horizon it did not measure.
    */
   const expectedMoveSource = options.expectedMoveChain ?? source.chain;
+  /*
+   * A caller that already holds the two numbers is believed; otherwise they are
+   * derived here from whichever chain resolved above. Same arithmetic, one
+   * fewer provider request.
+   */
+  const expectedMove = options.expectedMove
+    ?? (expectedMoveSource
+      ? { move: atmStraddleExpectedMove(expectedMoveSource), dte: chainDte(expectedMoveSource) }
+      : { move: null, dte: null });
   return {
     symbol: context.symbol,
     timeframe: context.timeframe,
@@ -533,8 +555,8 @@ export function assembleOptionsSignalInput(
     riskReward: buildRiskRewardSlot(
       context.levels,
       options.acceptedPrice,
-      expectedMoveSource ? atmStraddleExpectedMove(expectedMoveSource) : null,
-      expectedMoveSource ? chainDte(expectedMoveSource) : null,
+      expectedMove.move,
+      expectedMove.dte,
     ),
     event: context.event,
     liquidity: buildLiquiditySlot(options),

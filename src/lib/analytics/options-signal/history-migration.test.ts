@@ -26,11 +26,19 @@ vi.setConfig({ testTimeout: 240_000, hookTimeout: 240_000 });
  */
 
 const MIGRATION_FILE = '202608190001_options_signal_history.sql';
-const rawSql = readFileSync(resolve(process.cwd(), 'supabase/migrations', MIGRATION_FILE), 'utf8');
+/* The sweep's second window — the access canary — arrived in its own file, and
+ * the two are applied here in the order production applies them. */
+const SWEEP_MIGRATION_FILE = '202608190003_options_signal_history_canary_sweep.sql';
+
+const readMigration = (file: string) =>
+  readFileSync(resolve(process.cwd(), 'supabase/migrations', file), 'utf8');
 
 /* The reversal lives in a trailing comment block, so the file cannot be fed to
  * Postgres whole — everything after the migration's own `commit;` is prose. */
-const [migrationSql, reversalBlock] = rawSql.split(/^-- =+\s*\n-- Reversal/m);
+const splitReversal = (sql: string) => sql.split(/^-- =+\s*\n-- Reversal/m);
+
+const [migrationSql, reversalBlock] = splitReversal(readMigration(MIGRATION_FILE));
+const [sweepMigrationSql] = splitReversal(readMigration(SWEEP_MIGRATION_FILE));
 
 let database: PGlite;
 
@@ -49,6 +57,7 @@ beforeAll(async () => {
   database = new PGlite();
   await database.exec(PLATFORM_ROLES);
   await database.exec(migrationSql);
+  await database.exec(sweepMigrationSql);
 });
 
 const rows = async <T>(sql: string): Promise<T[]> => (await database.query<T>(sql)).rows;
@@ -246,7 +255,102 @@ describe('retention', () => {
     // The floor in the migration has to leave room for the percentile window.
     expect(OPTIONS_SIGNAL_CONFIG.history.retentionDays)
       .toBeGreaterThan(OPTIONS_SIGNAL_CONFIG.iv.minimumPercentileObservations);
-    expect(migrationSql).toContain('retention_days < 90');
+    expect(sweepMigrationSql).toContain('retention_days < 90');
+  });
+});
+
+/*
+ * The access canary writes one row per day and nothing ever reads a row older
+ * than the one it just wrote. Under the single 400-day window those rows simply
+ * accumulated — more than a year of daily writes under a reserved symbol that no
+ * percentile, no card and no query reads. It gets its own, much shorter window,
+ * and its own counters, so clearing it can never be mistaken for real history
+ * being deleted.
+ */
+describe('retention · the access canary', () => {
+  const canary = OPTIONS_SIGNAL_CONFIG.history.canarySymbol;
+
+  const sweep = (sql: string) =>
+    rows<{ due: number; deleted: number; canary_due: number; canary_deleted: number }>(sql);
+
+  it('clears canary rows on their own window while real history is untouched', async () => {
+    // Start from a known canary state rather than from whatever the earlier
+    // retention tests happened to leave, so the counts below mean one thing.
+    await database.exec(
+      `delete from public.options_signal_history where symbol = '${canary}';`,
+    );
+    await database.exec(`
+      insert into public.options_signal_history (symbol, captured_at, config_version) values
+        ('${canary}', (now() at time zone 'utc')::date - 400, '2026.08.19'),
+        ('${canary}', (now() at time zone 'utc')::date - 60,  '2026.08.19'),
+        ('${canary}', (now() at time zone 'utc')::date - 8,   '2026.08.19'),
+        ('${canary}', (now() at time zone 'utc')::date - 1,   '2026.08.19'),
+        ('MSFT',      (now() at time zone 'utc')::date - 100, '2026.08.19')
+      on conflict (symbol, captured_at) do nothing;
+    `);
+
+    const reported = await sweep(
+      `select * from public.sweep_options_signal_history(400, false, '${canary}', 7)`,
+    );
+    // Three canary rows are older than seven days; nothing has been deleted yet.
+    expect(Number(reported[0].canary_due)).toBe(3);
+    expect(Number(reported[0].canary_deleted)).toBe(0);
+    // And the real MSFT reading at 100 days is nowhere near its own window.
+    expect(Number(reported[0].due)).toBe(0);
+
+    const applied = await sweep(
+      `select * from public.sweep_options_signal_history(400, true, '${canary}', 7)`,
+    );
+    expect(Number(applied[0].canary_deleted)).toBe(3);
+    expect(Number(applied[0].deleted)).toBe(0);
+
+    const left = await rows<{ count: number }>(
+      `select count(*)::int as count from public.options_signal_history where symbol = '${canary}'`,
+    );
+    // The row inside the window survives — a week of them is the record of when
+    // the store was last reachable, which is all these rows can ever answer.
+    expect(left[0].count).toBe(1);
+    const history = await rows<{ count: number }>(
+      "select count(*)::int as count from public.options_signal_history where symbol = 'MSFT'",
+    );
+    expect(history[0].count).toBe(1);
+  });
+
+  it('never counts canary rows as history, in either direction', async () => {
+    await database.exec(`
+      insert into public.options_signal_history (symbol, captured_at, config_version) values
+        ('${canary}', (now() at time zone 'utc')::date - 500, '2026.08.19'),
+        ('TSLA',      (now() at time zone 'utc')::date - 500, '2026.08.19')
+      on conflict (symbol, captured_at) do nothing;
+    `);
+    const reported = await sweep(
+      `select * from public.sweep_options_signal_history(400, false, '${canary}', 7)`,
+    );
+    // One of each, and they are reported as one of each — never as two of either.
+    expect(Number(reported[0].due)).toBe(1);
+    expect(Number(reported[0].canary_due)).toBe(1);
+    await sweep(`select * from public.sweep_options_signal_history(400, true, '${canary}', 7)`);
+  });
+
+  it('refuses a canary window that would delete the row just written', async () => {
+    // The probe is "is the row I just wrote there". A zero-day window would
+    // delete it in the same breath, turning the health check into a liar.
+    await expect(rows(`select * from public.sweep_options_signal_history(400, true, '${canary}', 0)`))
+      .rejects.toThrow();
+    await expect(rows(`select * from public.sweep_options_signal_history(400, true, '${canary}', null)`))
+      .rejects.toThrow();
+    // And an empty symbol would match nothing on either side, silently restoring
+    // the accumulation this window exists to stop.
+    await expect(rows("select * from public.sweep_options_signal_history(400, true, '   ', 7)"))
+      .rejects.toThrow();
+  });
+
+  it('takes both canary numbers from the engine config, not from a literal', () => {
+    expect(OPTIONS_SIGNAL_CONFIG.history.canaryRetentionDays).toBe(7);
+    expect(OPTIONS_SIGNAL_CONFIG.history.canaryRetentionDays)
+      .toBeLessThan(OPTIONS_SIGNAL_CONFIG.history.retentionDays);
+    // The reserved symbol still satisfies the table's own symbol check.
+    expect(OPTIONS_SIGNAL_CONFIG.history.canarySymbol).toMatch(/^[A-Z0-9][A-Z0-9.-]{0,19}$/);
   });
 });
 

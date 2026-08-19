@@ -259,19 +259,37 @@ export function resetOptionsSignalHistoryHealth(): void {
  *
  * Reporting-only by default, mirroring the SQL function it calls: the first run
  * tells you the size of the delete before you authorise it.
+ *
+ * TWO windows, reported separately and never added together. Real readings live
+ * for `retentionDays`; the access canary writes one row a day that nothing ever
+ * reads back except the write that produced it, so those rows live for
+ * `canaryRetentionDays` instead — they used to sit in the table for the full 400
+ * days, which is where this second window came from. Keeping the counts apart is
+ * the point: a run that clears three hundred canary rows and a run that throws
+ * away three hundred percentile readings must not print the same number.
  */
 export async function sweepOptionsSignalHistory(
-  options: { apply?: boolean; retentionDays?: number } = {},
-): Promise<{ due: number; deleted: number } | null> {
+  options: { apply?: boolean; retentionDays?: number; canaryRetentionDays?: number } = {},
+): Promise<{ due: number; deleted: number; canaryDue: number; canaryDeleted: number } | null> {
   const client = createAdminClient();
   if (!client) return null;
   try {
     const { data, error } = await client.rpc('sweep_options_signal_history', {
       retention_days: options.retentionDays ?? OPTIONS_SIGNAL_CONFIG.history.retentionDays,
       apply: options.apply ?? false,
+      // Passed rather than left to the SQL defaults, so the engine config stays
+      // the single place both numbers are written down.
+      canary_symbol: OPTIONS_SIGNAL_CONFIG.history.canarySymbol,
+      canary_retention_days: options.canaryRetentionDays
+        ?? OPTIONS_SIGNAL_CONFIG.history.canaryRetentionDays,
     });
     if (error || !data?.length) return null;
-    return { due: Number(data[0].due), deleted: Number(data[0].deleted) };
+    return {
+      due: Number(data[0].due),
+      deleted: Number(data[0].deleted),
+      canaryDue: Number(data[0].canary_due),
+      canaryDeleted: Number(data[0].canary_deleted),
+    };
   } catch {
     return null;
   }

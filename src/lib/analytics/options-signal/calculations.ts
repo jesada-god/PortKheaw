@@ -159,11 +159,19 @@ export interface MomentumOutcome extends FactorOutcome {
    * squeeze adjustment -> × multiplier = normalized`, and they multiply out.
    */
   breakdown: {
-    /** Raw TTM momentum in ATR units, BEFORE the saturation clamp. */
+    /**
+     * Raw TTM momentum in ATR UNITS, before anything is done to it.
+     *
+     * Genuinely `momentum ÷ ATR14`, not `momentum ÷ (ATR14 × saturation)`. The
+     * two were the same number while the saturation was 1.0 and stopped being
+     * the same number when it widened to 3.5 — and the factor's own sentence
+     * prints this value followed by the word "ATR", so it has to be the one the
+     * word describes.
+     */
     rawAtr: number | null;
-    /** The clamp itself, so a reader can see the ceiling that was hit. */
+    /** The ATR multiple at which the factor reaches full weight. */
     saturation: number;
-    /** After the clamp, before the squeeze state adjusts it. */
+    /** `rawAtr ÷ saturation`, clamped to ±1. Before the squeeze state adjusts it. */
     clamped: number | null;
     /** After squeeze damping or a fired-release bonus. */
     afterSqueeze: number | null;
@@ -196,9 +204,18 @@ export function scoreMomentum(
 ): MomentumOutcome {
   const squeezeMomentum = finite(input.squeezeMomentum);
   const atr = finite(input.atr);
-  const rawNormalized = squeezeMomentum !== null && atr !== null && atr > 0
-    ? squeezeMomentum / (atr * config.momentumAtrSaturation)
+  /*
+   * Two separate numbers, deliberately. `momentumAtr` is the measurement in the
+   * units the card names — ATR — and `rawNormalized` is that measurement placed
+   * on the factor's own [-1, 1] scale by the saturation. They were one
+   * expression while the saturation was 1.0, which made them the same number by
+   * coincidence rather than by meaning; at 3.5 the coincidence ends and the
+   * sentence that prints "N ATR" needs the first of them.
+   */
+  const momentumAtr = squeezeMomentum !== null && atr !== null && atr > 0
+    ? squeezeMomentum / atr
     : null;
+  const rawNormalized = momentumAtr === null ? null : momentumAtr / config.momentumAtrSaturation;
   const normalizedMomentum = rawNormalized === null ? null : clamp(rawNormalized, -1, 1);
   const normalizedMomentumCapped = rawNormalized !== null && Math.abs(rawNormalized) > 1;
 
@@ -218,7 +235,7 @@ export function scoreMomentum(
       normalizedMomentumCapped,
       confirmation: null,
       breakdown: {
-        rawAtr: rawNormalized,
+        rawAtr: momentumAtr,
         saturation: config.momentumAtrSaturation,
         clamped: normalizedMomentum,
         afterSqueeze: null,
@@ -249,20 +266,22 @@ export function scoreMomentum(
   /*
    * The arithmetic, printed.
    *
-   * The saturation clamp is not a rare edge: measured across the 30 regression
-   * tickers it fires on 22 of them, so for most symbols most days the published
-   * momentum is the CEILING and not the measurement. A factor whose usual value
-   * is its own maximum has to say so, or the reader is left to infer a large
+   * The clamp used to fire on 22 of the 30 regression tickers, so for most
+   * symbols most days the published momentum was the CEILING and not the
+   * measurement. Widening the saturation from 1.0 to 3.5 ATR took that to 4 of
+   * 30, but "usually" is not "never" and a factor that is sitting on its own
+   * maximum still has to say so — otherwise the reader is left to infer a large
    * number from three small ones.
    *
-   * `momentumText` is the raw reading with the clamp disclosed; `mathText` is
-   * the last multiplication, so the points beside it can be checked by hand.
+   * `momentumText` is the raw reading IN ATR, with the ceiling disclosed beside
+   * it when it was reached; `mathText` is the last multiplication, so the points
+   * printed next to it can be checked by hand.
    */
-  const momentumText = rawNormalized === null
+  const momentumText = momentumAtr === null
     ? 'ไม่มีค่าโมเมนตัมเทียบ ATR'
     : normalizedMomentumCapped
-      ? `โมเมนตัม ${round(rawNormalized, 2)} ATR (เกินเพดาน ${round(config.momentumAtrSaturation, 2)} จึงคิดเท่าเพดาน)`
-      : `โมเมนตัม ${round(rawNormalized, 2)} ATR`;
+      ? `โมเมนตัม ${round(momentumAtr, 2)} ATR (เกินเพดาน ${round(config.momentumAtrSaturation, 2)} ATR จึงคิดเท่าเพดาน)`
+      : `โมเมนตัม ${round(momentumAtr, 2)} ATR (เพดาน ${round(config.momentumAtrSaturation, 2)} ATR)`;
   const mathText = `คิดเป็น ${round(base, 2)} × ตัวคูณ ${round(multiplier, 2)} = ${round(clamp(base * multiplier, -1, 1), 2)} ของน้ำหนักเต็ม`;
 
   return {
@@ -273,7 +292,7 @@ export function scoreMomentum(
     normalizedMomentumCapped,
     confirmation,
     breakdown: {
-      rawAtr: rawNormalized,
+      rawAtr: momentumAtr,
       saturation: config.momentumAtrSaturation,
       clamped: normalizedMomentum,
       afterSqueeze: base,

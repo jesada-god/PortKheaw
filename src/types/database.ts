@@ -846,6 +846,32 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['analytics_valuation_inputs_lkg']['Insert']>;
         Relationships: [];
       };
+      /**
+       * Last known good next-earnings date per symbol.
+       *
+       * `fetched_at` is when a PROVIDER last answered, not when the row was
+       * written: the 24-hour TTL is measured against it, so a value the
+       * in-process cache re-served from an old fetch cannot refresh its own
+       * freshness. Service-role only — RLS is on with no policy.
+       */
+      analytics_earnings_calendar_lkg: {
+        Row: {
+          symbol: string; report_date: string;
+          time_of_day: 'pre-market' | 'post-market' | 'unknown';
+          eps_estimate: number | null;
+          provider: 'alpha-vantage' | 'financial-modeling-prep';
+          fetched_at: string; created_at: string; updated_at: string;
+        };
+        Insert: {
+          symbol: string; report_date: string;
+          time_of_day?: 'pre-market' | 'post-market' | 'unknown';
+          eps_estimate?: number | null;
+          provider: 'alpha-vantage' | 'financial-modeling-prep';
+          fetched_at: string; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['analytics_earnings_calendar_lkg']['Insert']>;
+        Relationships: [];
+      };
       price_alerts: {
         Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; was_matching: boolean; last_observed_price: string | null; last_observed_session: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source: string | null; last_observed_at: string | null; created_at: string; updated_at: string };
         Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; created_at?: string; updated_at?: string };
@@ -978,10 +1004,23 @@ export interface Database {
         Args: { retention_days: number; apply?: boolean };
         Returns: Array<{ due: number; deleted: number }>;
       };
-      /** Options Signal history retention. `apply => false` reports and deletes nothing. */
+      /**
+       * Options Signal history retention. `apply => false` reports and deletes
+       * nothing.
+       *
+       * Two windows, counted separately and never summed: real readings past
+       * `retention_days`, and access-canary rows past `canary_retention_days`.
+       * A run that clears three hundred canary rows must not read the same as
+       * one that threw away three hundred percentile readings.
+       */
       sweep_options_signal_history: {
-        Args: { retention_days: number; apply?: boolean };
-        Returns: Array<{ due: number; deleted: number }>;
+        Args: {
+          retention_days: number;
+          apply?: boolean;
+          canary_symbol?: string;
+          canary_retention_days?: number;
+        };
+        Returns: Array<{ due: number; deleted: number; canary_due: number; canary_deleted: number }>;
       };
       get_or_create_default_watchlist: {
         Args: Record<PropertyKey, never>;
