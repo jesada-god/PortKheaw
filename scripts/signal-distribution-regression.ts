@@ -2,6 +2,12 @@
  * Distribution regression: the OLD Options Signal model against the NEW one,
  * over the same real inputs, on the same day.
  *
+ * Three models over the same real inputs:
+ *
+ *   pre-B      the engine before any of this work
+ *   post-B     + side-aware Risk/Reward, geometric-mean confidence, logistic RVOL
+ *   post-curve + the widened Risk/Reward tilt band (2:1 -> 4.5:1)
+ *
  * The rework changed three things that move published numbers:
  *
  *   1. confidence became a weighted GEOMETRIC mean instead of a weighted average;
@@ -110,6 +116,25 @@ interface ModelReading {
 }
 
 /**
+ * The Risk/Reward tilt as the PRE-CURVE engine computed it: always the call
+ * frame, saturating at 2:1 either way.
+ *
+ * Reimplemented here rather than reached for through a config override, because
+ * a regression harness that cannot state the old arithmetic is not comparing
+ * anything.
+ */
+function preCurveCallTilt(input: OptionsSignalInput): number | null {
+  if (input.riskReward.status !== 'available') return null;
+  const outcome = scoreRiskReward(input.riskReward.value, { direction: 'bullish' });
+  if (outcome.callRewardRisk === null || outcome.upsidePercent === null || outcome.downsidePercent === null) {
+    // The unbounded and touching-a-level branches are unchanged by the widening.
+    return outcome.normalized;
+  }
+  if (outcome.upsidePercent === 0 || outcome.downsidePercent === 0) return outcome.normalized;
+  return clamp(Math.log(outcome.callRewardRisk) / Math.log(2), -1, 1);
+}
+
+/**
  * The pre-rework model over a post-rework input.
  *
  * Everything the rework did NOT change — the weights, the penalties, the IV and
@@ -131,11 +156,8 @@ function legacyReading(input: OptionsSignalInput): ModelReading {
       // The absolute-band read, which is what the old model always used.
       ? scoreSentiment({ ...input.sentiment.value, ownPercentile: null, percentileObservations: 0 }).normalized
       : null,
-    // The old model always measured the CALL side, undamped. That is exactly
-    // what the call frame of reference returns.
-    riskReward: input.riskReward.status === 'available'
-      ? scoreRiskReward(input.riskReward.value, { direction: 'bullish' }).normalized
-      : null,
+    // The old model always measured the CALL side, undamped, on the 2:1 band.
+    riskReward: preCurveCallTilt(input),
   };
 
   let availableWeight = 0;
@@ -205,6 +227,92 @@ function legacyReading(input: OptionsSignalInput): ModelReading {
   return { score, confidence, signalType, bias, agreement };
 }
 
+/**
+ * post-B: everything from the rework EXCEPT the widened tilt band.
+ *
+ * Built by taking the current engine's answer and substituting the Risk/Reward
+ * factor the 2:1 band would have produced for the side the engine actually
+ * chose, then re-running the arithmetic that depends on it. Confidence and the
+ * gates are the current ones — this isolates the curve change alone.
+ */
+function postBReading(input: OptionsSignalInput): ModelReading {
+  const current = calculateOptionsSignal(input);
+  if (current.status !== 'available') {
+    return { score: null, confidence: 0, signalType: null, bias: null, agreement: 0 };
+  }
+  const diagnostics = current.diagnostics;
+  const side = diagnostics.riskReward.scoredSide;
+  const rr = diagnostics.factors.riskReward;
+  if (!rr.available || rr.normalized === null || input.riskReward.status !== 'available') {
+    return {
+      score: diagnostics.directionScore0to100,
+      confidence: current.confidenceScore,
+      signalType: current.signalType,
+      bias: current.underlyingBias,
+      agreement: diagnostics.agreement,
+    };
+  }
+
+  const ratio = side === 'put' ? diagnostics.riskReward.putRewardRisk : diagnostics.riskReward.callRewardRisk;
+  let normalized = rr.normalized;
+  if (ratio !== null && ratio > 0 && diagnostics.riskReward.upsidePercent
+    && diagnostics.riskReward.downsidePercent) {
+    const narrow = clamp(Math.log(ratio) / Math.log(2), -1, 1);
+    normalized = side === 'put' ? -narrow : side === 'call' ? narrow
+      : clamp(Math.log(diagnostics.riskReward.callRewardRisk ?? 1) / Math.log(2), -1, 1)
+        * OPTIONS_SIGNAL_CONFIG.riskReward.sidewaysDamping;
+  }
+
+  const points = Math.round(normalized * OPTIONS_SIGNAL_WEIGHTS.riskReward);
+  const others = (Object.values(diagnostics.factors) as Array<{ id: string; points: number | null }>)
+    .filter((factor) => factor.id !== 'riskReward');
+  const directionScore = others.reduce((sum, factor) => sum + (factor.points ?? 0), 0) + points;
+  const absoluteScore = others.reduce((sum, factor) => sum + Math.abs(factor.points ?? 0), 0) + Math.abs(points);
+  const availableWeight = diagnostics.availableWeight;
+
+  const balance = Math.round(clamp(directionScore / availableWeight * 100, -100, 100));
+  const agreement = absoluteScore > 0 ? Math.abs(directionScore) / absoluteScore : 0;
+  const strength = clamp(absoluteScore / availableWeight, 0, 1);
+  const floorAt = (value: number) => Math.max(OPTIONS_SIGNAL_CONFIG.confidence.termFloor, clamp(value, 0, 1));
+  const exponents = OPTIONS_SIGNAL_CONFIG.confidence.exponents;
+  const confidenceBase = Math.exp(
+    exponents.coverage * Math.log(floorAt(diagnostics.coverage))
+    + exponents.agreement * Math.log(floorAt(agreement))
+    + exponents.strength * Math.log(floorAt(strength)),
+  );
+  const confidence = Math.round(clamp(confidenceBase - diagnostics.penaltyTotal, 0, 1) * 100);
+
+  const quality = OPTIONS_SIGNAL_CONFIG.quality;
+  const bias: UnderlyingBias = balance >= OPTIONS_SIGNAL_CONFIG.direction.bullish
+    ? 'bullish'
+    : balance <= OPTIONS_SIGNAL_CONFIG.direction.bearish ? 'bearish' : 'neutral';
+  const scoreDriven = new Set(['score-below-prime', 'confidence-below-prime', 'agreement-below-prime', 'trend-opposes-bias']);
+  const structural = diagnostics.dataSufficiency.primeBlockers.filter((blocker) => !scoreDriven.has(blocker));
+  const trendPoints = diagnostics.factors.trend.points;
+  const trendOpposes = bias !== 'neutral' && trendPoints !== null
+    && Math.sign(trendPoints) !== (bias === 'bullish' ? 1 : -1);
+  const primeEligible = structural.length === 0 && bias !== 'neutral' && !trendOpposes
+    && Math.abs(balance) >= quality.primeScore && confidence >= quality.primeConfidence
+    && agreement >= quality.primeAgreement;
+
+  let signalType: OptionsSignalType;
+  if (bias === 'neutral' || Math.abs(balance) < quality.watchScore) signalType = 'SIDEWAYS';
+  else if (primeEligible) signalType = bias === 'bullish' ? 'PRIME_CALL' : 'PRIME_PUT';
+  else signalType = bias === 'bullish' ? 'CALL_WATCH' : 'PUT_WATCH';
+  if (diagnostics.gates.ivWarning) signalType = 'IV_WARNING';
+  else if ((signalType === 'PRIME_CALL' || signalType === 'PRIME_PUT') && diagnostics.gates.downgrades.length) {
+    signalType = signalType === 'PRIME_CALL' ? 'CALL_WATCH' : 'PUT_WATCH';
+  }
+
+  return {
+    score: Math.round((directionScore + availableWeight) / (2 * availableWeight) * 100),
+    confidence,
+    signalType,
+    bias,
+    agreement,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Statistics
 // ---------------------------------------------------------------------------
@@ -263,12 +371,15 @@ interface Row {
   symbol: string;
   cap: string;
   status: string;
-  oldScore: number | null;
-  newScore: number | null;
-  oldConfidence: number;
-  newConfidence: number;
-  oldType: OptionsSignalType | null;
-  newType: OptionsSignalType | null;
+  preBScore: number | null;
+  postBScore: number | null;
+  curveScore: number | null;
+  preBConfidence: number;
+  postBConfidence: number;
+  curveConfidence: number;
+  preBType: OptionsSignalType | null;
+  postBType: OptionsSignalType | null;
+  curveType: OptionsSignalType | null;
   agreement: number;
   coverage: number;
 }
@@ -292,16 +403,20 @@ async function main() {
         ownHistory: { atmIv: [], putCallRatio: [] },
       });
       const next = calculateOptionsSignal(input);
-      const previous = legacyReading(input);
+      const preB = legacyReading(input);
+      const postB = postBReading(input);
       rows.push({
         symbol, cap,
         status: next.status,
-        oldScore: previous.score,
-        newScore: next.status === 'available' ? next.directionScore0to100 : null,
-        oldConfidence: previous.confidence,
-        newConfidence: next.confidenceScore,
-        oldType: previous.signalType,
-        newType: next.signalType,
+        preBScore: preB.score,
+        postBScore: postB.score,
+        curveScore: next.status === 'available' ? next.directionScore0to100 : null,
+        preBConfidence: preB.confidence,
+        postBConfidence: postB.confidence,
+        curveConfidence: next.confidenceScore,
+        preBType: preB.signalType,
+        postBType: postB.signalType,
+        curveType: next.signalType,
         agreement: next.diagnostics.agreement,
         coverage: next.diagnostics.coverage,
       });
@@ -314,64 +429,86 @@ async function main() {
   process.stderr.write('\n');
 
   const usable = rows.filter((row) => row.status === 'available');
-  const oldScores = usable.map((row) => row.oldScore).filter((value): value is number => value !== null);
-  const newScores = usable.map((row) => row.newScore).filter((value): value is number => value !== null);
-  const oldConfidence = usable.map((row) => row.oldConfidence);
-  const newConfidence = usable.map((row) => row.newConfidence);
+  const scoresOf = (key: 'preBScore' | 'postBScore' | 'curveScore') =>
+    usable.map((row) => row[key]).filter((value): value is number => value !== null);
 
   console.log('\n## Per-symbol\n');
-  console.log('| symbol | cap | old score | new score | old conf | new conf | old type | new type | agreement | coverage |');
-  console.log('| --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |');
+  console.log('| symbol | cap | score pre-B | score post-B | score post-curve | conf pre-B | conf post-B | conf post-curve | type pre-B | type post-B | type post-curve |');
+  console.log('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |');
   for (const row of rows) {
-    console.log(`| ${row.symbol} | ${row.cap} | ${row.oldScore ?? '—'} | ${row.newScore ?? '—'} | `
-      + `${row.oldConfidence} | ${row.newConfidence} | ${row.oldType ?? '—'} | ${row.newType ?? '—'} | `
-      + `${round(row.agreement * 100, 0)}% | ${round(row.coverage * 100, 0)}% |`);
+    console.log(`| ${row.symbol} | ${row.cap} | ${row.preBScore ?? '—'} | ${row.postBScore ?? '—'} | ${row.curveScore ?? '—'} `
+      + `| ${row.preBConfidence} | ${row.postBConfidence} | ${row.curveConfidence} `
+      + `| ${row.preBType ?? '—'} | ${row.postBType ?? '—'} | ${row.curveType ?? '—'} |`);
   }
 
   console.log('\n## Distribution\n');
   console.log('| metric | n | mean | median | p10 | p90 |');
   console.log('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (const summary of [
-    describe('score · OLD', oldScores),
-    describe('score · NEW', newScores),
-    describe('confidence · OLD', oldConfidence),
-    describe('confidence · NEW', newConfidence),
+    describe('score · pre-B', scoresOf('preBScore')),
+    describe('score · post-B', scoresOf('postBScore')),
+    describe('score · post-curve', scoresOf('curveScore')),
+    describe('confidence · pre-B', usable.map((row) => row.preBConfidence)),
+    describe('confidence · post-B', usable.map((row) => row.postBConfidence)),
+    describe('confidence · post-curve', usable.map((row) => row.curveConfidence)),
   ]) {
     console.log(`| ${summary.metric} | ${summary.n} | ${summary.mean} | ${summary.median} | ${summary.p10} | ${summary.p90} |`);
   }
 
-  const oldPrime = usable.filter((row) => row.oldType && PRIME.has(row.oldType));
-  const newPrime = usable.filter((row) => row.newType && PRIME.has(row.newType));
   console.log('\n## PRIME\n');
   console.log(`| model | PRIME_CALL | PRIME_PUT | total | of ${usable.length} usable |`);
   console.log('| --- | ---: | ---: | ---: | ---: |');
-  for (const [label, set] of [['OLD', oldPrime], ['NEW', newPrime]] as const) {
-    const calls = set.filter((row) => (label === 'OLD' ? row.oldType : row.newType) === 'PRIME_CALL').length;
-    const puts = set.filter((row) => (label === 'OLD' ? row.oldType : row.newType) === 'PRIME_PUT').length;
-    console.log(`| ${label} | ${calls} | ${puts} | ${set.length} | ${round(set.length / Math.max(1, usable.length) * 100, 0)}% |`);
+  const primeCounts: Record<string, number> = {};
+  for (const [label, key] of [
+    ['pre-B', 'preBType'], ['post-B', 'postBType'], ['post-curve', 'curveType'],
+  ] as const) {
+    const calls = usable.filter((row) => row[key] === 'PRIME_CALL').length;
+    const puts = usable.filter((row) => row[key] === 'PRIME_PUT').length;
+    primeCounts[label] = calls + puts;
+    console.log(`| ${label} | ${calls} | ${puts} | ${calls + puts} | ${round((calls + puts) / Math.max(1, usable.length) * 100, 0)}% |`);
   }
-  const lost = oldPrime.length === 0 ? 0 : (oldPrime.length - newPrime.length) / oldPrime.length * 100;
-  console.log(`\nPRIME lost vs old model: ${round(lost, 0)}%`);
+
+  const change = primeCounts['post-B'] === 0
+    ? 0
+    : (primeCounts['post-curve'] - primeCounts['post-B']) / primeCounts['post-B'] * 100;
+  console.log(`\nPRIME change from the curve widening: ${round(change, 0)}%`);
+  console.log(Math.abs(change) > 30
+    ? '=> OVER the 30% line. Reported, not acted on: no threshold is changed here.'
+    : '=> within the 30% line.');
 
   console.log('\n## Label changes\n');
-  const changed = usable.filter((row) => row.oldType !== row.newType);
-  console.log(`${changed.length} of ${usable.length} labels changed`);
-  for (const row of changed) console.log(`  ${row.symbol}: ${row.oldType} -> ${row.newType}`);
+  for (const [label, from, to] of [
+    ['pre-B -> post-B', 'preBType', 'postBType'],
+    ['post-B -> post-curve', 'postBType', 'curveType'],
+  ] as const) {
+    const changed = usable.filter((row) => row[from] !== row[to]);
+    console.log(`${label}: ${changed.length} of ${usable.length}`);
+    for (const row of changed) console.log(`  ${row.symbol}: ${row[from]} -> ${row[to]}`);
+  }
 
   if (failures.length) {
     console.log('\n## Failed to load\n');
     for (const failure of failures) console.log(`  ${failure}`);
   }
 
-  // What a retune WOULD have to be, reported and not applied.
-  if (lost > 80 && oldPrime.length > 0) {
-    const confidences = usable
-      .filter((row) => row.oldType && PRIME.has(row.oldType))
-      .map((row) => row.newConfidence)
-      .sort((left, right) => right - left);
-    console.log('\n## Suggested thresholds (NOT applied)\n');
-    console.log(`  new confidence of the symbols the OLD model called PRIME: ${confidences.join(', ')}`);
-    console.log(`  primeConfidence that would restore half of them: ${quantile(confidences, 0.5)}`);
+  /*
+   * What a retune would have to be, reported and never applied. This script
+   * exists to measure the model, not to move it — a threshold that moves to make
+   * a distribution look better is a threshold fitted to one day of tape.
+   */
+  const primeUnderCurve = usable.filter((row) => row.curveType && PRIME.has(row.curveType));
+  const lostByCurve = usable.filter((row) => row.postBType && PRIME.has(row.postBType)
+    && !(row.curveType && PRIME.has(row.curveType)));
+  if (lostByCurve.length) {
+    console.log('\n## Symbols the curve widening moved out of PRIME (NOT acted on)\n');
+    for (const row of lostByCurve) {
+      console.log(`  ${row.symbol}: score ${row.postBScore} -> ${row.curveScore}`
+        + ` · confidence ${row.postBConfidence} -> ${row.curveConfidence}`);
+    }
+    console.log(`\n  primeScore is ${OPTIONS_SIGNAL_CONFIG.quality.primeScore} on the bipolar scale`);
+    console.log('  (reported only — changing it is a separate, deliberate decision)');
+  } else {
+    console.log(`\nNo symbol left PRIME because of the curve. PRIME under the current engine: ${primeUnderCurve.length}.`);
   }
 }
 

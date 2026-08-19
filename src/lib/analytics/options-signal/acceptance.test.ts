@@ -169,6 +169,7 @@ describe('B · Risk/Reward is scored for the side the evidence points at', () =>
     expect(Math.abs(outcome.normalized as number)).toBeLessThanOrEqual(
       OPTIONS_SIGNAL_CONFIG.riskReward.sidewaysDamping,
     );
+    expect(outcome.normalized).toBeCloseTo(-0.2385, 4);
     expect(outcome.scoredSide).toBeNull();
     // The best side IS workable, and that is what the factor reports instead.
     expect(outcome.setupQuality).toBe(1);
@@ -207,8 +208,15 @@ describe('B · Risk/Reward is scored for the side the evidence points at', () =>
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
     expect(result.diagnostics.riskReward.scoredSide).toBe('put');
-    // A 4.2:1 put reward:risk SUPPORTS the bearish thesis rather than opposing it.
-    expect(result.diagnostics.factors.riskReward.points).toBe(-OPTIONS_SIGNAL_WEIGHTS.riskReward);
+    /*
+     * A 4.2:1 put reward:risk SUPPORTS the bearish thesis rather than opposing
+     * it. It is -14 of a possible -15 rather than the full -15: the tilt band
+     * saturates at 4.5:1 now, so 4.2 is very strong evidence but not maximal,
+     * which is the resolution the widening was for.
+     */
+    expect(result.diagnostics.factors.riskReward.points).toBe(-14);
+    expect(result.diagnostics.factors.riskReward.points)
+      .toBeGreaterThan(-OPTIONS_SIGNAL_WEIGHTS.riskReward);
     expect(result.underlyingBias).toBe('bearish');
   });
 
@@ -251,7 +259,9 @@ describe('the published score is built from post-damping points over live weight
     // that -4. If the score were built from the pre-damping tilt the total
     // would be -15 and the published score 42 instead of 48.
     expect(diagnostics.factors.riskReward.points).toBe(-4);
-    expect(diagnostics.factors.riskReward.normalized).toBe(-0.25);
+    // -0.2385, not exactly -0.25: the tilt at rrCall 0.236 no longer saturates,
+    // so the damping is applied to a real number rather than to a pinned one.
+    expect(diagnostics.factors.riskReward.normalized).toBeCloseTo(-0.2385, 4);
     expect(diagnostics.rawDirectionPoints).toBe(-4);
     expect(diagnostics.availableWeight).toBe(90);
     expect(diagnostics.directionScore0to100).toBe(48);
