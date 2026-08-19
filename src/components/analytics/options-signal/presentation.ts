@@ -121,19 +121,35 @@ export function ivBasisLabel(
 /**
  * What to print where an IV percentile would go.
  *
- * "ไม่พร้อมใช้งาน" was the wrong word for a number that fills itself in one
- * reading per day: it reads as broken when the honest answer is a countdown.
+ * THREE different states, and collapsing any two of them is a lie:
+ *
+ *   * a number — the percentile is published;
+ *   * a COUNTDOWN — the series is short and fills itself in one reading per day,
+ *     so "ไม่พร้อมใช้งาน" was the wrong word for it; and
+ *   * an OUTAGE — the store cannot be read at all. This one must never wear the
+ *     countdown, because the countdown would not be counting: a reader told to
+ *     wait 60 days would still be waiting after 600.
  */
 export function ivPercentileText(
   percentile: number | null,
   pending: { observations: number; required: number; missingDays: number } | null,
+  storeUnavailable = false,
 ): string {
   if (percentile !== null) return String(percentile);
+  if (storeUnavailable) return 'ใช้ไม่ได้ชั่วคราว (อ่านประวัติไม่สำเร็จ)';
   if (pending && pending.missingDays > 0) {
     return `ต้องการข้อมูลอีก ${pending.missingDays} วัน (มีแล้ว ${pending.observations}/${pending.required})`;
   }
   return 'ไม่พร้อมใช้งาน';
 }
+
+/** Said once, on the card, when the percentile bases are off for an outage. */
+export const HISTORY_DEGRADED_NOTICE = {
+  label: 'Percentile ใช้ไม่ได้ชั่วคราว',
+  tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+  helper: 'อ่านประวัติค่าย้อนหลังของหุ้นตัวนี้ไม่สำเร็จ IV Percentile และ Put/Call Percentile จึงยังใช้ไม่ได้ '
+    + 'ไม่ใช่เพราะข้อมูลยังสะสมไม่พอ ระหว่างนี้การ์ดใช้เกณฑ์เทียบความผันผวนจริงแทน',
+} as const;
 
 /**
  * The liquidity badge. A few words a beginner can act on, not a raw score.

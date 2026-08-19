@@ -3,8 +3,10 @@ import 'server-only';
 import { createAdminClient } from '@/src/lib/supabase/admin';
 import { OPTIONS_SIGNAL_CONFIG } from './config';
 import {
+  checkHistoryAccess,
   createResilientHistoryStore,
   optionsSignalHistoryFallback,
+  type HistoryAccessHealth,
   type OptionsSignalHistoryPoint,
   type OptionsSignalHistoryRecord,
   type OptionsSignalHistoryStore,
@@ -126,6 +128,7 @@ export function createSupabaseSignalHistoryStore(): OptionsSignalHistoryStore {
 }
 
 let store: OptionsSignalHistoryStore | undefined;
+let health: Promise<HistoryAccessHealth> | undefined;
 
 /**
  * The store the server uses: durable first, in-process buffer behind it.
@@ -136,6 +139,49 @@ let store: OptionsSignalHistoryStore | undefined;
 export function getOptionsSignalHistoryStore(): OptionsSignalHistoryStore {
   store ??= createResilientHistoryStore(createSupabaseSignalHistoryStore(), optionsSignalHistoryFallback);
   return store;
+}
+
+/**
+ * The durable store's reachability, probed ONCE per process and remembered.
+ *
+ * Memoized on the promise, not on the result, so concurrent first requests share
+ * one probe rather than each running their own. It is deliberately not retried:
+ * a wrong key does not fix itself, and a probe on every request would turn a
+ * configuration mistake into a load problem on top of a correctness one. A
+ * deploy restarts the process and re-probes.
+ */
+export function getOptionsSignalHistoryHealth(
+  options: { store?: OptionsSignalHistoryStore } = {},
+): Promise<HistoryAccessHealth> {
+  health ??= checkHistoryAccess(options.store ?? createSupabaseSignalHistoryStore())
+    .then((result) => {
+      if (!result.ok) {
+        /*
+         * warn, not info: the percentile bases are silently off in this state
+         * and the card is showing a fallback basis to every reader. It is the
+         * kind of failure that otherwise only surfaces as "nobody ever gets a
+         * percentile", months later.
+         */
+        console.warn(JSON.stringify({
+          event: 'options_signal_history_unreachable',
+          reason: result.reason,
+          checkedAt: result.checkedAt,
+          impact: 'iv-and-putcall-percentiles-disabled',
+        }));
+      }
+      return result;
+    })
+    .catch((error: unknown) => ({
+      ok: false,
+      reason: `health-check-threw:${String(error).slice(0, 60)}`,
+      checkedAt: new Date().toISOString(),
+    }));
+  return health;
+}
+
+/** Test seam: forget the memoized probe. */
+export function resetOptionsSignalHistoryHealth(): void {
+  health = undefined;
 }
 
 /**

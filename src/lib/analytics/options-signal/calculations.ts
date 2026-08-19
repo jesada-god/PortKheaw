@@ -962,7 +962,8 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     },
     iv: {
       level: null, basis: null, ivRank: null, ivPercentile: null,
-      percentilePending: input.ivPercentilePending ?? null,
+      percentilePending: input.historyDegraded === true ? null : input.ivPercentilePending ?? null,
+      percentileStoreUnavailable: input.historyDegraded === true,
       impliedVolatility: null, realizedVolatility: null, realizedWindowDays: null, dte: null,
       ratio: null, observations: null, state: input.pricing.state,
       reason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
@@ -1012,6 +1013,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     asOf: provenance.asOf,
     staleMix: provenance.staleMix,
     configVersion: OPTIONS_SIGNAL_CONFIG_VERSION,
+    historyDegraded: input.historyDegraded === true,
   };
 
   const liquidityOutcome = input.liquidity?.status === 'available'
@@ -1238,7 +1240,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       basis: pricing?.basis ?? null,
       ivRank: pricing?.basis === 'iv-rank' ? roundOrNull(pricing.ivRank, 1) : null,
       ivPercentile: pricing?.basis === 'iv-percentile' ? roundOrNull(pricing.ivPercentile, 1) : null,
-      percentilePending: input.ivPercentilePending ?? null,
+      // A countdown and an outage are different sentences. When the store is
+      // unreachable the countdown is withheld, because it would not be counting.
+      percentilePending: input.historyDegraded === true ? null : input.ivPercentilePending ?? null,
+      percentileStoreUnavailable: input.historyDegraded === true,
       impliedVolatility: roundOrNull(pricing?.impliedVolatility, 6),
       realizedVolatility: pricing?.basis === 'iv-vs-realized' ? roundOrNull(pricing.realizedVolatility, 4) : null,
       realizedWindowDays: pricing?.basis === 'iv-vs-realized' ? pricing.realizedWindowDays : null,
@@ -1292,6 +1297,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       daysToEarnings,
       pricingReason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       percentilePending: input.ivPercentilePending ?? null,
+      historyDegraded: input.historyDegraded === true,
       liquidity: liquidityOutcome,
       expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       staleMix: provenance.staleMix,
@@ -1320,6 +1326,7 @@ function buildReasoning(context: {
   daysToEarnings: number | null;
   pricingReason: string | null;
   percentilePending: OptionsSignalInput['ivPercentilePending'];
+  historyDegraded: boolean;
   liquidity: LiquidityOutcome | null;
   expectedMoveHorizonWarning: string | null;
   staleMix: boolean;
@@ -1358,8 +1365,19 @@ function buildReasoning(context: {
     reasons.push({ id: 'iv-unavailable', polarity: 'information', text: `Implied Volatility: ${context.pricingReason}` });
   }
 
-  // "Needs N more days" is a schedule, not a failure, and reads very differently.
-  if (context.percentilePending && context.percentilePending.missingDays > 0) {
+  /*
+   * Two different sentences, and mixing them is the failure this distinction
+   * exists to prevent. "Needs N more days" is a schedule; a store that cannot be
+   * read is not counting down to anything, and a countdown shown for it would
+   * never move.
+   */
+  if (context.historyDegraded) {
+    reasons.push({
+      id: 'history-unavailable',
+      polarity: 'caution',
+      text: 'อ่านประวัติการอ่านค่าย้อนหลังของหุ้นตัวนี้ไม่สำเร็จ IV Percentile และ Put/Call Percentile จึงใช้ไม่ได้ชั่วคราว (ไม่ใช่เพราะข้อมูลยังไม่พอ) ระหว่างนี้ใช้เกณฑ์เทียบความผันผวนจริงแทน',
+    });
+  } else if (context.percentilePending && context.percentilePending.missingDays > 0) {
     reasons.push({
       id: 'iv-percentile-pending',
       polarity: 'information',
