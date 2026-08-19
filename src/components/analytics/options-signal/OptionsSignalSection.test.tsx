@@ -416,6 +416,132 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(confidenceGroup?.textContent).not.toContain('คะแนนทิศทาง');
   });
 
+  /*
+   * The IV never appears without the contract it came off.
+   *
+   * It is now read at the ~45-day horizon rather than the front expiration,
+   * because the pricing verdict is a comparison — against realized volatility
+   * and against the 30-60 day setup the card recommends — and both sides of a
+   * comparison have to share a horizon. Where the horizon chain cannot be
+   * resolved the card falls back to the front expiration, and then this label is
+   * the only thing that says which one a reader is looking at. Either way it has
+   * to be printed, which is what this asserts.
+   */
+  it('names the contract horizon the IV was read at, on the card and in the dialog', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+
+    // The fixture's IV is read at 24 DTE against a 30-day realized window.
+    expect(container.textContent).toContain('IV สัญญา 24 วัน เทียบความผันผวนจริง');
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const modal = document.body.querySelector('[role="dialog"]');
+    // The dialog names both horizons: the contract's, and the window it is held
+    // against. Two different numbers of days that used to look like one.
+    expect(modal?.textContent).toContain('IV สัญญา 24 วัน เทียบความผันผวนจริง 30 วัน');
+    expect(modal?.textContent).toContain('อายุสัญญาที่ใช้เทียบ (DTE)');
+  });
+
+  /*
+   * TWO SENTENCES ABOUT DIRECTION, FOUR CENTIMETRES APART.
+   *
+   * Risk:Reward is scored for the side the other four factors lean toward, and
+   * that lean is read BEFORE the Risk:Reward points join the sum and before the
+   * trend veto attenuates the total. So a card can honestly print "หลักฐานอื่น
+   * ชี้ขาขึ้น จึงวัดจากฝั่ง Call" under a SIDEWAYS badge. Nothing about the
+   * ordering is wrong and none of it changes here; what changes is that the page
+   * now reconciles the two instead of leaving a reader to.
+   */
+  describe('a Risk:Reward measured on one side under a badge that says another', () => {
+    const sidewaysWithCallGeometry: OptionsSignalDto = {
+      ...eliteSignal,
+      summary: { ...summary, signalType: 'SIDEWAYS', underlyingBias: 'neutral', directionScore0to100: 54 },
+      breakdown: {
+        ...eliteSignal.breakdown!,
+        diagnostics: {
+          ...eliteSignal.breakdown!.diagnostics,
+          trendVeto: { applied: true, opposition: 0.7, multiplier: 0.65, pointsBeforeVeto: 22 },
+          factors: {
+            ...eliteSignal.breakdown!.diagnostics.factors,
+            riskReward: factor('riskReward', 12, 20, 'หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · R:R Call 2.40'),
+          },
+        },
+      },
+    };
+
+    it('explains that the two come from different steps, and names the veto that separated them', async () => {
+      mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: sidewaysWithCallGeometry });
+      await renderFor('elite');
+      const trigger = [...container.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+      await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+      const note = document.body.querySelector('[data-testid="options-signal-rr-direction-note"]');
+      expect(note).not.toBeNull();
+      const text = note?.textContent ?? '';
+      // The side it was measured on, the badge it ended on, and the step between.
+      expect(text).toContain('Call');
+      expect(text).toContain('SIDEWAYS');
+      expect(text).toContain('trend veto');
+      expect(text).toContain('× 0.65');
+
+      // And it sits beside the sentence that causes the confusion, not only at
+      // the bottom of the Risk:Reward block a screen and a half below it.
+      expect(document.body.querySelector('[data-testid="options-signal-rr-direction-note-factor"]')?.textContent)
+        .toBe(text);
+    });
+
+    /*
+     * The veto is one of the two steps between the lean and the label, and it is
+     * the only one with a number a reader can see. Adding the Risk:Reward points
+     * can carry the total across the neutral band on its own, and a note that
+     * blamed the veto for that would be a third claim not matching the
+     * arithmetic — so the wording changes when the veto did not fire.
+     */
+    it('does not blame the veto when the veto never fired', async () => {
+      mocks.requestOptionsSignal.mockResolvedValue({
+        status: 'ready',
+        signal: {
+          ...sidewaysWithCallGeometry,
+          breakdown: {
+            ...sidewaysWithCallGeometry.breakdown!,
+            diagnostics: {
+              ...sidewaysWithCallGeometry.breakdown!.diagnostics,
+              trendVeto: { applied: false, opposition: 0, multiplier: 1, pointsBeforeVeto: 0 },
+            },
+          },
+        },
+      });
+      await renderFor('elite');
+      const trigger = [...container.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+      await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+      const text = document.body.querySelector('[data-testid="options-signal-rr-direction-note"]')?.textContent ?? '';
+      expect(text).toContain('SIDEWAYS');
+      expect(text).toContain('คะแนน R:R ถูกรวมเข้าไป');
+      expect(text).not.toContain('แนวโน้มสวนทาง');
+      expect(text).not.toContain('×');
+    });
+
+    it('says nothing at all when the two agree, so the note is never wallpaper', async () => {
+      mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+      await renderFor('elite');
+      const trigger = [...container.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+      await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+      // CALL_WATCH with a call-side geometry: nothing to reconcile.
+      expect(document.body.querySelector('[data-testid="options-signal-rr-direction-note"]')).toBeNull();
+      expect(document.body.querySelector('[data-testid="options-signal-rr-direction-note-factor"]')).toBeNull();
+      // The standing explanation of the ORDER is there either way, because a
+      // reader who has never seen the two differ still has to know they can.
+      expect(document.body.textContent).toContain('ลำดับการคำนวณ');
+    });
+  });
+
   it('shows the card score to a Pro reader who has no breakdown at all', async () => {
     await renderFor('pro');
     // The score lives in the SUMMARY precisely so this reader still sees it.

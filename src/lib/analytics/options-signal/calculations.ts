@@ -1500,7 +1500,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       impliedVolatility: roundOrNull(pricing?.impliedVolatility, 6),
       realizedVolatility: pricing?.basis === 'iv-vs-realized' ? roundOrNull(pricing.realizedVolatility, 4) : null,
       realizedWindowDays: pricing?.basis === 'iv-vs-realized' ? pricing.realizedWindowDays : null,
-      dte: pricing?.basis === 'iv-vs-realized' ? pricing.dte : null,
+      dte: pricing?.dte ?? null,
       ratio: pricing?.basis === 'iv-vs-realized' ? roundOrNull(pricing.ratio, 3) : null,
       observations: pricing?.observations ?? null,
       state: input.pricing.state,
