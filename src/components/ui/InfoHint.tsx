@@ -137,6 +137,36 @@ export function InfoHint({
         and an explicit 18px block/inline size stop a tight parent grid/flex from
         squeezing it into a vertical pill. The ≥44px touch target is an absolutely
         positioned transparent `::after` that never affects layout size.
+
+        `min-h-0` is what makes the sentence above TRUE, and it was missing.
+        `globals.css` gives every `button` a `min-height: 44px` so that a control
+        nobody sized is still tappable — and `min-height` beats `height`, so this
+        icon was an 18px circle inside a 44px box in every layout it appeared in,
+        with the ::after insetting from THAT (a 44x70 target, not 44x44).
+
+        Measured, not reasoned about: at 1280, 380 and 320px the Confidence label
+        row of the Options Signal header was 44px tall against a 13.75px line,
+        which put its label 15.1px and its number 30.3px below the score's. The
+        icon carries its own target, so the floor here is not what makes it
+        reachable and it can go.
+
+        AND IT REACHES EVERY ROW A HINT SITS IN, which the commit that landed it
+        claimed it did not. Measured afterwards, at 1280px, one row per call site
+        with the class strings taken verbatim from them:
+
+          DecisionPanel  side label / anchor / heading / resistance   44 -> 18px
+          DecisionPanel  dataLabels / proximity / wall hints          44 -> 24px
+          OptionsSignal  IV and Earnings rows                         44 -> 44px
+
+        The last line is the exception and the reason the mistaken claim was
+        plausible: those two rows carry `min-h-11` themselves, so the floor was
+        never theirs to lose. Nothing else does. A 10px caption occupying 44px
+        was not a design anybody chose, so the tightening is the intended
+        rendering rather than a regression — but it is a VISIBLE change to the
+        decision panel and it was not measured before it shipped.
+
+        `npm run qa:options-signal-header` is where the header numbers are kept
+        honest; the rows above have no probe of their own yet.
       */}
       <button
         ref={triggerRef}
@@ -148,7 +178,7 @@ export function InfoHint({
         data-testid={`info-hint-${term}`}
         onClick={() => (open ? close() : setOpen(true))}
         style={{ inlineSize: 18, blockSize: 18, aspectRatio: '1' }}
-        className="relative box-border inline-flex flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full text-[15px] leading-none text-slate-500 outline-none after:absolute after:-inset-[13px] after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
+        className="relative box-border inline-flex min-h-0 flex-none shrink-0 grow-0 items-center justify-center self-center rounded-full text-[15px] leading-none text-slate-500 outline-none after:absolute after:-inset-[13px] after:content-[''] hover:text-[#D4FF00] focus-visible:ring-2 focus-visible:ring-[#D4FF00]"
       >
         <span aria-hidden="true">ⓘ</span>
       </button>

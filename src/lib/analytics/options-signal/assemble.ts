@@ -123,6 +123,31 @@ export interface OptionsSignalOptionsInputs {
    * Takes precedence over `expectedMoveChain` when both are supplied.
    */
   expectedMove?: { move: number | null; dte: number | null } | null;
+  /**
+   * The horizon chain's ATM implied volatility, when the caller has it without
+   * a chain — the third number that survives the same fetch as
+   * {@link OptionsSignalOptionsInputs.expectedMove}.
+   *
+   * IV BELONGS ON THE HORIZON CHAIN TOO, and it used to be the one options
+   * factor left behind on the front one. The front expiration was two days out
+   * on RKLB and priced at 103.4% — a number that is almost entirely the earnings
+   * report eight days later, which that contract does not live to see and cannot
+   * amortise. The card then compared it against 20-day realized volatility and
+   * printed "premium is cheap", while the setup section beside it recommended a
+   * 30-60 day contract and the expected move above it was already read at 44
+   * days. Three horizons, one paragraph.
+   *
+   * Unlike liquidity and positioning — which are facts ABOUT the book a reader
+   * is looking at, and stay on the front chain — the pricing verdict is a
+   * comparison, and a comparison is only worth as much as its two sides sharing
+   * a horizon.
+   *
+   * Takes precedence over the IV of `expectedMoveChain`, which takes precedence
+   * over the front chain's. A null or non-positive reading falls back to the
+   * front chain rather than losing the factor, and the DTE published alongside
+   * says which one was used.
+   */
+  horizonIv?: { iv: number | null; dte: number | null; asOf?: string | null } | null;
 }
 
 /**
@@ -315,6 +340,70 @@ export function ivPercentilePendingOf(
 }
 
 /**
+ * Which chain the implied volatility is READ FROM, and the horizon it was read
+ * at, in one place so the two can never be published apart.
+ *
+ * Order, and every step of it is a fallback rather than a preference:
+ *
+ *   1. a horizon reading the caller already has (`horizonIv`), which costs
+ *      nothing — it is the third number off the same fetch the expected move is
+ *      cached from;
+ *   2. the horizon CHAIN, when the caller passed one instead;
+ *   3. the front chain, which is where this used to live unconditionally.
+ *
+ * A horizon reading that is missing, zero or negative does not sink the factor:
+ * it falls through to the front chain, and the `dte` returned here is what says
+ * which one a reader is looking at. That distinction has to reach the card,
+ * because "IV 103.4% over two days" and "IV 68.1% over forty-four" are not the
+ * same claim about the same stock, and only one of them is on the horizon the
+ * rest of the card is written for.
+ */
+function resolveIvReading(
+  options: OptionsSignalOptionsInputs,
+  front: OptionsChain | null,
+): { iv: number | null; dte: number | null; asOf: string | null; horizon: boolean; reason: string | null } {
+  const usable = (value: number | null | undefined): number | null => {
+    const number = finite(value ?? null);
+    return number !== null && number > 0 ? number : null;
+  };
+
+  const preDerived = usable(options.horizonIv?.iv);
+  if (preDerived !== null) {
+    return {
+      iv: preDerived,
+      dte: options.horizonIv?.dte ?? null,
+      /*
+       * The horizon chain's OWN capture time, not the front chain's. It is
+       * served from a fifteen-minute cache, so a card that stamped it with the
+       * front chain's timestamp would print a fetch time up to fifteen minutes
+       * newer than the number underneath it.
+       */
+      asOf: options.horizonIv?.asOf ?? null,
+      horizon: true,
+      reason: null,
+    };
+  }
+
+  const horizonChain = options.expectedMoveChain;
+  if (horizonChain) {
+    const atm = calculateAtmIv(horizonChain);
+    const iv = atm.status === 'available' ? usable(atm.iv) : null;
+    if (iv !== null) {
+      return { iv, dte: chainDte(horizonChain), asOf: horizonChain.asOf, horizon: true, reason: null };
+    }
+  }
+
+  const atm = front ? calculateAtmIv(front) : null;
+  return {
+    iv: atm?.status === 'available' ? usable(atm.iv) : null,
+    dte: front ? chainDte(front) : null,
+    asOf: null,
+    horizon: false,
+    reason: atm?.status === 'unavailable' ? atm.reason ?? null : null,
+  };
+}
+
+/**
  * Options pricing richness from real numbers only.
  *
  * IV Rank is preferred but needs a historical IV series no entitled provider
@@ -332,8 +421,16 @@ export function buildPricingSlot(
 ): OptionsSignalInputSlot<IvPricingInput> {
   const source = resolveChainSource(options);
   const chain = source.chain;
-  const atm = chain ? calculateAtmIv(chain) : null;
-  const impliedVolatility = atm?.status === 'available' ? finite(atm.iv) : null;
+  const reading = resolveIvReading(options, chain);
+  const impliedVolatility = reading.iv;
+  const dte = reading.dte;
+  /*
+   * The IV's own capture time when it came off the horizon chain, the front
+   * chain's when it did not. This is what the card prints under "ดึงข้อมูลเมื่อ"
+   * for this factor, and a timestamp belonging to a different fetch is a wrong
+   * one however small the difference.
+   */
+  const asOf = reading.asOf ?? source.asOf;
 
   if (options.ivRank) {
     return {
@@ -344,18 +441,19 @@ export function buildPricingSlot(
         ivRank: options.ivRank.ivRank,
         impliedVolatility,
         observations: options.ivRank.observations,
+        dte,
       },
       provider: chain?.provider ?? null,
-      asOf: source.asOf,
+      asOf,
     };
   }
 
   if (!chain || source.state === null) return unavailableSlot('ยังไม่ได้โหลด options chain');
   if (impliedVolatility === null || impliedVolatility <= 0) {
     return unavailableSlot(
-      atm?.reason ?? 'ผู้ให้บริการไม่ได้ส่ง Implied Volatility ของสัญญาใกล้ราคาปัจจุบัน',
+      reading.reason ?? 'ผู้ให้บริการไม่ได้ส่ง Implied Volatility ของสัญญาใกล้ราคาปัจจุบัน',
       chain.provider,
-      source.asOf,
+      asOf,
     );
   }
 
@@ -374,19 +472,19 @@ export function buildPricingSlot(
         ivPercentile: ranked.percentile * 100,
         impliedVolatility,
         observations: ranked.observations,
+        dte,
       },
       provider: chain.provider,
-      asOf: source.asOf,
+      asOf,
     };
   }
 
-  const dte = chainDte(chain);
   const window = realizedWindowForDte(dte, windows, realized);
   if (!window) {
     return unavailableSlot(
       'ไม่มีความผันผวนจริงย้อนหลังพอสำหรับเทียบความแพงของค่าพรีเมียม',
       chain.provider,
-      source.asOf,
+      asOf,
     );
   }
   return {
@@ -402,7 +500,7 @@ export function buildPricingSlot(
       dte,
     },
     provider: chain.provider,
-    asOf: source.asOf,
+    asOf,
   };
 }
 

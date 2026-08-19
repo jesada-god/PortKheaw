@@ -246,6 +246,16 @@ export function createResilientHistoryStore(
  * provider measurements rather than engine output and no threshold change moves
  * them — but the switch is here so a future change that does move them has one
  * line to flip rather than a migration to write.
+ *
+ * ONE change did move them, and it moved only one of the two series. The ATM IV
+ * is now read at the horizon expiration rather than the front one, so a reading
+ * recorded before `iv.horizonBasisFromConfigVersion` is a measurement of a
+ * different contract — often a two-day one carrying an earnings report whole
+ * against a forty-four-day one that amortises it. Those are dropped from the IV
+ * series here, unconditionally and regardless of the switch above, because a
+ * percentile that silently mixed the two would rank a stock against an
+ * instrument it never traded. The Put/Call series is untouched by that change
+ * and is not thrown away with it.
  */
 export async function readOwnHistory(
   symbol: string,
@@ -257,8 +267,15 @@ export async function readOwnHistory(
   const usable = options.configVersion === undefined
     ? rows
     : rows.filter((row) => row.configVersion === options.configVersion);
+  /*
+   * A CUTOFF, not an equality test: every version from this one on records the
+   * horizon reading, so an unrelated bump next week must not restart the
+   * countdown. Version strings are date-first, so `>=` is the comparison.
+   */
+  const ivFrom = OPTIONS_SIGNAL_CONFIG.iv.horizonBasisFromConfigVersion;
+  const onHorizonBasis = usable.filter((row) => row.configVersion >= ivFrom);
   return {
-    atmIv: usable.flatMap((row) => (finite(row.iv) === null ? [] : [row.iv as number])),
+    atmIv: onHorizonBasis.flatMap((row) => (finite(row.iv) === null ? [] : [row.iv as number])),
     putCallRatio: usable.flatMap((row) => (finite(row.putCallOi) === null ? [] : [row.putCallOi as number])),
   };
 }

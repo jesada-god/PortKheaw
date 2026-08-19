@@ -53,26 +53,11 @@ import type {
   OptionsSignalType,
   UnderlyingBias,
 } from '@/src/lib/analytics/options-signal/types';
+import { REGRESSION_TICKERS } from './signal-regression-tickers';
 
-const TICKERS: Array<{ symbol: string; cap: 'mega' | 'mid' | 'small' }> = [
-  { symbol: 'AAPL', cap: 'mega' }, { symbol: 'MSFT', cap: 'mega' },
-  { symbol: 'NVDA', cap: 'mega' }, { symbol: 'GOOGL', cap: 'mega' },
-  { symbol: 'AMZN', cap: 'mega' }, { symbol: 'META', cap: 'mega' },
-  { symbol: 'AVGO', cap: 'mega' }, { symbol: 'TSLA', cap: 'mega' },
-  { symbol: 'JPM', cap: 'mega' }, { symbol: 'XOM', cap: 'mega' },
-
-  { symbol: 'RKLB', cap: 'mid' }, { symbol: 'SOFI', cap: 'mid' },
-  { symbol: 'PLTR', cap: 'mid' }, { symbol: 'ROKU', cap: 'mid' },
-  { symbol: 'DKNG', cap: 'mid' }, { symbol: 'ENPH', cap: 'mid' },
-  { symbol: 'CROX', cap: 'mid' }, { symbol: 'RIVN', cap: 'mid' },
-  { symbol: 'AFRM', cap: 'mid' }, { symbol: 'U', cap: 'mid' },
-
-  { symbol: 'IONQ', cap: 'small' }, { symbol: 'ACHR', cap: 'small' },
-  { symbol: 'JOBY', cap: 'small' }, { symbol: 'BBAI', cap: 'small' },
-  { symbol: 'LUNR', cap: 'small' }, { symbol: 'RGTI', cap: 'small' },
-  { symbol: 'OPEN', cap: 'small' }, { symbol: 'WULF', cap: 'small' },
-  { symbol: 'BTBT', cap: 'small' }, { symbol: 'SMCI', cap: 'small' },
-];
+// The same thirty every Options Signal regression is read on. Shared so two
+// harnesses cannot end up reporting on two different universes.
+const TICKERS = REGRESSION_TICKERS;
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const round = (value: number, digits = 2) => Number(value.toFixed(digits));

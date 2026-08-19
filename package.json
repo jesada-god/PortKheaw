@@ -41,6 +41,7 @@
     "qa:ui-redesign": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-responsive-qa.mjs",
     "qa:ui-redesign-auth": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-authenticated-qa.mjs",
     "qa:signal-zone-bar": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-signal-zone-bar-mobile-qa.mts",
+    "qa:options-signal-header": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/options-signal-header-qa.mts",
     "signal:sensitivity": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sensitivity.ts",
     "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts",
     "signal:htf-probe": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-htf-probe.ts",
@@ -50,7 +51,8 @@
     "signal:context": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-context-probe.ts",
     "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts",
     "signal:distribution": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-distribution-regression.ts",
-    "signal:levels": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-level-audit.ts"
+    "signal:levels": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-level-audit.ts",
+    "signal:iv-horizon": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-iv-horizon-probe.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
