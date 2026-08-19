@@ -129,6 +129,41 @@ describe('the table', () => {
     }
   });
 
+  it('takes the health canary row, which is the row with no inputs in it', async () => {
+    /*
+     * The bug that made this test exist.
+     *
+     * `inputs` is `not null default '{}'`, and a DEFAULT only fills a column
+     * that is OMITTED — an explicit null is a constraint violation, 23502. The
+     * canary writes a probe record with no engine input at all, the store sent
+     * that as a literal null, the write was rejected, and the health check read
+     * one rejected write as "the history store is unreachable". The card then
+     * told every reader the percentiles were down while the table sat there
+     * answering reads perfectly.
+     *
+     * Both halves are pinned: an explicit null is still refused (the constraint
+     * is real and stays), and the payload the store now sends still lands.
+     */
+    await expect(database.exec(`
+      insert into public.options_signal_history (symbol, captured_at, config_version, inputs)
+      values ('ZZ-NULLIN', '2026-08-10', '2026.08.19', null);
+    `)).rejects.toThrow();
+
+    await database.exec(`
+      insert into public.options_signal_history
+        (symbol, captured_at, config_version, signal_type, underlying_bias, score, confidence,
+         iv, put_call_oi, put_call_volume, inputs, recorded_at)
+      values ('${OPTIONS_SIGNAL_CONFIG.history.canarySymbol}', '2026-08-10', '2026.08.19',
+              null, null, null, 0, null, null, null, '{}'::jsonb, now())
+      on conflict (symbol, captured_at) do update set recorded_at = excluded.recorded_at;
+    `);
+    const stored = await rows<{ count: number }>(
+      `select count(*)::int as count from public.options_signal_history
+       where symbol = '${OPTIONS_SIGNAL_CONFIG.history.canarySymbol}'`,
+    );
+    expect(stored[0].count).toBe(1);
+  });
+
   it('serves the read path off its primary key, with no duplicate index beside it', async () => {
     const indexes = await rows<{ indexdef: string }>(
       "select indexdef from pg_indexes where tablename = 'options_signal_history' order by indexname",

@@ -262,6 +262,12 @@ function putCallPercentileScore(percentile: number, config = OPTIONS_SIGNAL_CONF
  */
 export function scoreSentiment(
   input: SentimentInput,
+  /**
+   * True when the reading history could not be READ at all, as opposed to being
+   * short. The two states share a fallback — the absolute bands — and share
+   * nothing else, and this factor's own sentence has to say which one it is in.
+   */
+  options: { historyUnavailable?: boolean } = {},
   config = OPTIONS_SIGNAL_CONFIG.sentiment,
 ): FactorOutcome {
   const ratio = finite(input.putCallRatio);
@@ -282,9 +288,20 @@ export function scoreSentiment(
     ? openInterestSignal
     : (openInterestSignal + volumeSignal) / 2;
 
-  const basisText = percentile === null
-    ? `ยังเทียบเปอร์เซ็นไทล์ของตัวเองไม่ได้ (มีประวัติ ${observations}/${config.minimumPercentileObservations} วัน) จึงใช้เกณฑ์กลางไปก่อน`
-    : `เปอร์เซ็นไทล์ที่ ${Math.round(percentile * 100)} ของ ${observations} วันล่าสุดของหุ้นตัวนี้เอง`;
+  /*
+   * THREE states, and the counter belongs to exactly one of them.
+   *
+   * A store that cannot be read is not part-way through collecting anything, so
+   * "มีประวัติ 0/20 วัน" beside an outage badge is a countdown that will never
+   * move — the same lie the card-level notice was split in two to avoid, told
+   * one line further down. No count, no denominator, no "ยัง" in the outage
+   * sentence: this factor reads its state from the same flag the badge does.
+   */
+  const basisText = options.historyUnavailable === true
+    ? 'อ่านประวัติของหุ้นตัวนี้ไม่สำเร็จ จึงเทียบเปอร์เซ็นไทล์ไม่ได้ชั่วคราว และใช้เกณฑ์กลางแทน'
+    : percentile === null
+      ? `ยังเทียบเปอร์เซ็นไทล์ของตัวเองไม่ได้ (มีประวัติ ${observations}/${config.minimumPercentileObservations} วัน) จึงใช้เกณฑ์กลางไปก่อน`
+      : `เปอร์เซ็นไทล์ที่ ${Math.round(percentile * 100)} ของ ${observations} วันล่าสุดของหุ้นตัวนี้เอง`;
   const positionText = percentile === null
     ? ''
     : percentile >= config.percentileNeutralHigh
@@ -1065,7 +1082,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       normalizedMomentum: null, normalizedMomentumCapped: false, confirmation: null,
     };
   const sentimentOutcome = input.sentiment.status === 'available'
-    ? scoreSentiment(input.sentiment.value)
+    ? scoreSentiment(input.sentiment.value, { historyUnavailable: input.historyDegraded === true })
     : { normalized: null, detail: input.sentiment.reason, partial: false };
 
   const leadFactors = {
