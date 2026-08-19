@@ -518,7 +518,7 @@ describe('MarketSignalSection', () => {
 
       it('labels the price marker so a reader knows which mark is now', async () => {
         await render(zoned);
-        expect(zoneBar().textContent).toContain('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().textContent).toContain('ปิดล่าสุด 44.06');
       });
 
       /*
@@ -623,14 +623,14 @@ describe('MarketSignalSection', () => {
        * run measured on Chrome at the size these captions actually render.
        */
       it('estimates a label at least as wide as Chrome draws it', () => {
-        // Chrome draws these two at 102.5px and 104.5px.
-        expect(estimateLabelWidth('ปิดเมื่อวาน 44.06', { padding: 12 })).toBeGreaterThanOrEqual(102);
+        // Chrome draws these two at 91.9px and 104.5px.
+        expect(estimateLabelWidth('ปิดล่าสุด 44.06', { padding: 12 })).toBeGreaterThanOrEqual(91);
         expect(estimateLabelWidth('ราคาตอนนี้ 42.38', { padding: 12 })).toBeGreaterThanOrEqual(104);
         expect(estimateLabelWidth('38.26', { mono: true })).toBeGreaterThanOrEqual(33);
         expect(estimateLabelWidth('103,192', { mono: true })).toBeGreaterThanOrEqual(47);
         // And not wildly over: an estimate twice the truth would merge captions
         // that had room to stand apart.
-        expect(estimateLabelWidth('ปิดเมื่อวาน 44.06', { padding: 12 })).toBeLessThan(125);
+        expect(estimateLabelWidth('ปิดล่าสุด 44.06', { padding: 12 })).toBeLessThan(110);
         // Thai tone marks stack on their consonant, so they cost almost nothing.
         expect(estimateLabelWidth('ปิด')).toBeLessThan(estimateLabelWidth('ปดด'));
       });
@@ -701,7 +701,7 @@ describe('MarketSignalSection', () => {
         // they do.
         await render(zoned, 'elite', 44.07);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดล่าสุด 44.06');
         expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 44.07');
       });
 
@@ -714,7 +714,7 @@ describe('MarketSignalSection', () => {
        * because at those two widths they genuinely are different pictures.
        *
        * The track was 216px here until the marks were renamed. At seven pixels
-       * a glyph "ปิดเมื่อวาน 44.06 · ราคาตอนนี้ 43.85" is 252px of caption, so
+       * a glyph "ปิดล่าสุด 44.06 · ราคาตอนนี้ 43.85" is 238px of caption, so
        * 216 is now the width where the merge itself does not fit — which is the
        * case below this one, not this one.
        */
@@ -722,7 +722,7 @@ describe('MarketSignalSection', () => {
         measuring(280, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
         const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
-        expect(merged.textContent).toBe('ปิดเมื่อวาน 44.06 · ราคาตอนนี้ 43.85');
+        expect(merged.textContent).toBe('ปิดล่าสุด 44.06 · ราคาตอนนี้ 43.85');
         expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
         expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
         // The MARKS never collapse: the lines are the fact, the caption is the
@@ -734,12 +734,15 @@ describe('MarketSignalSection', () => {
       /*
        * The rung below the merge, and why it exists.
        *
-       * A merged caption is only worth drawing if it fits on the track. Naming
-       * the marks by when they happened made both captions longer, and at 320px
-       * a six-figure instrument produced a merge 5px wider than the row it lives
-       * in — `qa:signal-zone-bar` measured it hanging past the end. A caption
-       * wider than its track cannot be placed: it is clamped to the left edge
-       * and runs out under the card's padding.
+       * A merged caption is only worth drawing if it fits on the track, and a
+       * caption wider than its track cannot be placed at all: it is clamped to
+       * the left edge and runs out under the card's padding.
+       *
+       * The naming pass is what found this. Written "ปิดเมื่อวาน", the merged
+       * caption for a six-figure instrument measured 225px on the 220px track a
+       * 320px phone leaves, and `qa:signal-zone-bar` caught it hanging past the
+       * end of its row; at "ปิดล่าสุด" the same caption is 215px and fits. Two
+       * characters was the whole margin, so the rung stays.
        *
        * So the last arrangement is the CLOSE alone. It is the price every figure
        * on the card is measured from, both marks are still drawn, and the live
@@ -750,7 +753,7 @@ describe('MarketSignalSection', () => {
         await render(zoned, 'elite', 43.85);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
         expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดล่าสุด 44.06');
         // Both marks, still. Nothing about a caption that would not fit changes
         // what the picture says happened.
         expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
@@ -764,7 +767,7 @@ describe('MarketSignalSection', () => {
         measuring(640, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดล่าสุด 44.06');
         expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 43.85');
         // And each one still points at its own mark rather than at the pair.
         for (const key of ['close', 'live']) {
@@ -778,7 +781,7 @@ describe('MarketSignalSection', () => {
        * The merged caption points at ONE mark, and it is the close.
        *
        * It used to be anchored at the midpoint between the two marks with a
-       * leader running to each — "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" hanging between two lines
+       * leader running to each — "ปิดล่าสุด 44.9 · ราคาตอนนี้ 42.14" hanging between two lines
        * and claiming both. A reader who cannot tell which number belongs to
        * which line is worse off than one who has to read the live price out of
        * the sentence underneath, which is where it still is in full.
@@ -938,7 +941,7 @@ describe('MarketSignalSection', () => {
       expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 46.31');
       expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
       // And it is not the price the percentages are measured from.
-      expect(zoneBar().textContent).toContain('ปิดเมื่อวาน 44.06');
+      expect(zoneBar().textContent).toContain('ปิดล่าสุด 44.06');
     });
 
     it('never drops the live marker, whatever the caption does', async () => {
