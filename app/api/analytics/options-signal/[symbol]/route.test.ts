@@ -66,6 +66,7 @@ const result: OptionsSignalResult = {
     warnings: [],
   },
   diagnostics: {
+    trendVeto: { applied: false, opposition: 0, multiplier: 1, pointsBeforeVeto: 0 },
     factors: {
       macro: factor('macro'),
       trend: factor('trend'),
@@ -86,6 +87,7 @@ const result: OptionsSignalResult = {
     penaltyTotal: 0,
     dataSufficiency: { passed: true, missing: [], primeEligible: true, primeBlockers: [] },
     riskReward: {
+      reachability: 1,
       price: 200,
       support: 190,
       resistance: 220,
@@ -146,6 +148,7 @@ const result: OptionsSignalResult = {
       detail: 'test',
     },
     squeeze: {
+      breakdown: { rawAtr: 0, saturation: 1, clamped: 0, afterSqueeze: 0, multiplier: 0.8 },
       state: 'OFF',
       momentum: 0,
       normalizedMomentum: 0,

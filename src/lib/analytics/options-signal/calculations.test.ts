@@ -131,6 +131,65 @@ describe('factor scoring', () => {
     expect(outcome.normalized).toBeCloseTo(OPTIONS_SIGNAL_CONFIG.momentum.unconfirmedMultiplier, 6);
   });
 
+  it('prints a breakdown that multiplies back out to the points it published', () => {
+    /*
+     * The reported case: "ไม่มี Squeeze · RVOL 0.92× · ยืนยัน 38%" printed beside
+     * +19 of a possible 25. Nothing in those words accounts for 76% of the full
+     * weight, and the missing term was a momentum of 3.19 ATR clamped to 1.00.
+     * The clamp is not an edge case — across the 30 regression tickers it fires
+     * on 22 — so it has to be in the sentence, and the sentence has to be
+     * checkable by hand.
+     */
+    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 3.19, atr: 1, relativeVolume: 0.92 });
+    const { rawAtr, saturation, clamped, afterSqueeze, multiplier } = outcome.breakdown;
+
+    expect(rawAtr).toBeCloseTo(3.19, 6);
+    expect(clamped).toBe(saturation);
+    expect(afterSqueeze).toBe(clamped);
+    expect(outcome.normalizedMomentumCapped).toBe(true);
+    // The published value IS the product of the terms shown, with nothing hidden.
+    expect(outcome.normalized).toBeCloseTo((afterSqueeze as number) * multiplier, 6);
+    expect(outcome.normalized! * OPTIONS_SIGNAL_WEIGHTS.momentum).toBeCloseTo(18.8, 1);
+
+    // And the reader is told the ceiling was hit, with the raw reading beside it.
+    expect(outcome.detail).toContain('3.19 ATR');
+    expect(outcome.detail).toContain('เกินเพดาน');
+    expect(outcome.detail).toContain('RVOL 0.92');
+  });
+
+  it('says nothing about a ceiling it did not hit', () => {
+    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 0.5, atr: 1, relativeVolume: 1.2 });
+    expect(outcome.normalizedMomentumCapped).toBe(false);
+    expect(outcome.detail).not.toContain('เกินเพดาน');
+    expect(outcome.detail).toContain('0.5 ATR');
+    expect(outcome.normalized).toBeCloseTo(0.5 * outcome.breakdown.multiplier, 6);
+  });
+
+  it('keeps TTM momentum and the EMA stack as two separate measurements', () => {
+    /*
+     * Trend −8 with Momentum +19 on one chart is not a sign bug, and this pins
+     * the reason so the next reader does not have to re-derive it.
+     *
+     * `scoreTrend` votes on where price sits against EMA20/EMA50 and how those
+     * two are stacked — a statement about the last ten weeks. TTM momentum is
+     * the linear-regression endpoint of the close's distance from a 20-bar
+     * midline — a statement about the last month, and specifically about
+     * ACCELERATION rather than level. A stock that fell for two months and
+     * bounced hard for three weeks is genuinely below both averages and
+     * genuinely accelerating upward, and the model is supposed to show both.
+     *
+     * What WOULD be a bug is a mirrored input producing a non-mirrored sign, and
+     * that is asserted here too.
+     */
+    const bearishTrend = scoreTrend({ close: 90, ema20: 100, ema50: 110 });
+    const risingMomentum = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 3.19, atr: 1, relativeVolume: 0.92 });
+    expect(Math.sign(bearishTrend.normalized!)).toBe(-1);
+    expect(Math.sign(risingMomentum.normalized!)).toBe(1);
+
+    const mirrored = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: -3.19, atr: 1, relativeVolume: 0.92 });
+    expect(mirrored.normalized).toBeCloseTo(-risingMomentum.normalized!, 12);
+  });
+
   it('reports momentum unavailable when neither the histogram nor a fire exists', () => {
     expect(scoreMomentum({ squeeze: 'OFF', squeezeMomentum: null, atr: null, relativeVolume: 1.2 }).normalized).toBeNull();
   });
@@ -449,5 +508,136 @@ describe('provenance on every degraded dimension', () => {
     // Missing earnings is not "no event risk": it never earns an all-clear penalty of 0 risk.
     expect(result.diagnostics.event.daysToEarnings).toBeNull();
     expect(result.suggestedOptionsSetup.status).toBe('not-recommended');
+  });
+});
+
+describe('the trend veto', () => {
+  /*
+   * The heaviest factor is Trend, at 25 of 90. Before this, a chart whose EMAs
+   * were stacked DOWN could still publish "CALL WATCH", because Macro (+15, the
+   * same on every symbol that day) and a saturated Momentum (+19) outvoted it.
+   * The disagreement was already detected — `macro-trend-conflict` took 10 off
+   * CONFIDENCE for it — but nobody reads a confidence figure to find out what
+   * the card said. The headline is what they read, so the disagreement is
+   * applied there too.
+   */
+
+  /** Trend disagreeing by one EMA vote in three, against a bullish lead. */
+  const opposedTrend: TrendInput = { close: 110, ema20: 105, ema50: 104 };
+
+  it('presses the score toward neutral in proportion to the disagreement', () => {
+    const agreeing = calculateOptionsSignal(input());
+    const opposed = calculateOptionsSignal(input({ trend: available<TrendInput>({ close: 100, ema20: 105, ema50: 104 }) }));
+    expect(agreeing.status).toBe('available');
+    expect(opposed.status).toBe('available');
+    if (agreeing.status !== 'available' || opposed.status !== 'available') return;
+
+    expect(agreeing.diagnostics.trendVeto.applied).toBe(false);
+    expect(agreeing.diagnostics.trendVeto.multiplier).toBe(1);
+
+    const veto = opposed.diagnostics.trendVeto;
+    expect(veto.applied).toBe(true);
+    /*
+     * votes [-1, -1, 1] -> -1/3 of the trend weight -> a third of the score goes.
+     *
+     * Read off the PUBLISHED trend points (-8 of 25 = 0.32), not off the unrounded
+     * -8.333, and deliberately so: the veto has to reconcile with the number
+     * printed on the factor row, not with one behind it.
+     */
+    expect(veto.opposition).toBeCloseTo(8 / 25, 3);
+    expect(veto.multiplier).toBeCloseTo(1 - 8 / 25, 3);
+    expect(opposed.directionScore0to100).toBeLessThan(agreeing.directionScore0to100 as number);
+  });
+
+  it('publishes a formula that reconciles with the factor rows above it', () => {
+    const result = calculateOptionsSignal(input({ trend: available<TrendInput>({ close: 100, ema20: 105, ema50: 104 }) }));
+    if (result.status !== 'available') throw new Error('expected an available signal');
+    const veto = result.diagnostics.trendVeto;
+    // The number the card's five factor rows add up to, before the veto.
+    const summed = Object.values(result.diagnostics.factors)
+      .reduce((total, factor) => total + (factor.points ?? 0), 0);
+    expect(veto.pointsBeforeVeto).toBe(Math.round(summed));
+    expect(result.diagnostics.rawDirectionPoints)
+      .toBe(Math.round(veto.pointsBeforeVeto * veto.multiplier));
+    // And the step is shown, not folded away.
+    expect(result.diagnostics.scoreFormula).toContain('แนวโน้มสวนทาง');
+    expect(result.reasoning.some((reason) => reason.id === 'trend-veto')).toBe(true);
+  });
+
+  it('can only move a score toward neutral, never across it', () => {
+    for (const trend of [opposedTrend, { close: 100, ema20: 105, ema50: 104 }, bearishTrend, bullishTrend]) {
+      const before = calculateOptionsSignal(input({ trend: available<TrendInput>(trend) }));
+      if (before.status !== 'available') continue;
+      const veto = before.diagnostics.trendVeto;
+      expect(veto.multiplier).toBeGreaterThanOrEqual(0);
+      expect(veto.multiplier).toBeLessThanOrEqual(1);
+      // Same sign as the pre-veto total, or zero. Never the other side.
+      if (veto.pointsBeforeVeto !== 0 && before.diagnostics.rawDirectionPoints !== 0) {
+        expect(Math.sign(before.diagnostics.rawDirectionPoints)).toBe(Math.sign(veto.pointsBeforeVeto));
+      }
+    }
+  });
+
+  it('does not charge the same disagreement twice', () => {
+    /*
+     * The veto presses the SCORE. `macro-trend-conflict` presses CONFIDENCE, and
+     * it was there first. Agreement is therefore still measured on the summed
+     * points, or the one disagreement would arrive in confidence twice.
+     */
+    const result = calculateOptionsSignal(input({ trend: available<TrendInput>({ close: 100, ema20: 105, ema50: 104 }) }));
+    if (result.status !== 'available') throw new Error('expected an available signal');
+    const summed = Object.values(result.diagnostics.factors)
+      .reduce((total, factor) => total + (factor.points ?? 0), 0);
+    const absolute = Object.values(result.diagnostics.factors)
+      .reduce((total, factor) => total + Math.abs(factor.points ?? 0), 0);
+    // Published rounded, so compared at the precision it is published to.
+    expect(result.diagnostics.agreement).toBeCloseTo(Math.abs(summed) / absolute, 3);
+  });
+});
+
+describe('a target the contract cannot reach', () => {
+  const base: RiskRewardInput = { price: 100, support: 95, resistance: 110, atr: 2 };
+
+  it('scales the scored side down in proportion to how far past the expected move it sits', () => {
+    // Resistance 10% away on a $100 stock is $10; an expected move of $2 puts it
+    // at 5 expected moves, which is 1.5/5 = 30% of full weight.
+    const far = scoreRiskReward({ ...base, expectedMove: 2, expectedMoveDte: 45 }, { direction: 'bullish' });
+    const near = scoreRiskReward({ ...base, expectedMove: 20, expectedMoveDte: 45 }, { direction: 'bullish' });
+    expect(near.reachability).toBe(1);
+    expect(far.reachability).toBeCloseTo(OPTIONS_SIGNAL_CONFIG.expectedMove.reachableWithin / 5, 4);
+    expect(far.normalized).toBeCloseTo((near.normalized as number) * far.reachability, 6);
+    // And it says so, rather than warning about a number it then prints in full.
+    expect(far.detail).toContain('Expected Move');
+    expect(far.detail).toContain('30%');
+    expect(near.detail).not.toContain('จึงคิดคะแนน R:R เพียง');
+  });
+
+  it('judges the side it actually scored, not always the upside', () => {
+    // Support 5% away = $5; resistance 10% away = $10. With an expected move of
+    // $4 the DOWNSIDE is inside the window and the upside is not, so the bearish
+    // frame keeps full weight where the bullish frame loses some.
+    const bullish = scoreRiskReward({ ...base, expectedMove: 4, expectedMoveDte: 45 }, { direction: 'bullish' });
+    const bearish = scoreRiskReward({ ...base, expectedMove: 4, expectedMoveDte: 45 }, { direction: 'bearish' });
+    expect(bullish.reachability).toBeLessThan(1);
+    expect(bearish.reachability).toBe(1);
+  });
+
+  it('leaves the factor alone when no expected move was available to judge it', () => {
+    const withoutEm = scoreRiskReward(base, { direction: 'bullish' });
+    expect(withoutEm.reachability).toBe(1);
+    expect(withoutEm.detail).not.toContain('จึงคิดคะแนน R:R เพียง');
+  });
+
+  it('scales the two sides by the same rule, so the mirror still holds', () => {
+    const up = scoreRiskReward(
+      { price: 100, support: 95, resistance: 110, atr: 2, expectedMove: 2, expectedMoveDte: 45 },
+      { direction: 'bullish' },
+    );
+    const down = scoreRiskReward(
+      { price: 100, support: 90, resistance: 105, atr: 2, expectedMove: 2, expectedMoveDte: 45 },
+      { direction: 'bearish' },
+    );
+    expect(down.reachability).toBeCloseTo(up.reachability, 12);
+    expect(down.normalized).toBeCloseTo(-(up.normalized as number), 12);
   });
 });

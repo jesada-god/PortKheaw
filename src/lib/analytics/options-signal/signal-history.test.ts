@@ -298,6 +298,49 @@ describe('a store that silently returns nothing is caught, not believed', () => 
     expect(health.reason).toBeNull();
   });
 
+  it('probes with an EMPTY input, never a null one', async () => {
+    /*
+     * `inputs` is `jsonb not null` in the migration. A null probe row is a 23502
+     * the moment it reaches Postgres, and the health check reads its own
+     * rejected write as "the store is unreachable" — which is how a healthy
+     * table came to be reported as an outage on every card.
+     */
+    const log = createSignalHistoryLog();
+    await checkHistoryAccess(log, { now: today });
+    const probe = log.all().at(-1);
+    expect(probe?.input).not.toBeNull();
+    expect(probe?.input).toBeTypeOf('object');
+  });
+
+  it('says WHY the store refused, in the store own words, not just THAT it did', async () => {
+    const rejecting: OptionsSignalHistoryStore = {
+      async write() { return false; },
+      async read() { return []; },
+      lastFailure: () => ({
+        operation: 'write',
+        code: '23502',
+        message: 'null value in column "inputs" violates not-null constraint',
+        hint: null,
+        details: null,
+      }),
+    };
+    const health = await checkHistoryAccess(rejecting, { now: today });
+    expect(health.ok).toBe(false);
+    // The slug survives for anything that greps on it, and the sentence that
+    // actually names the broken column rides along behind it.
+    expect(health.reason).toContain('history-write-rejected');
+    expect(health.reason).toContain('23502');
+    expect(health.reason).toContain('inputs');
+  });
+
+  it('still reports a bare reason for a store that keeps no failure', async () => {
+    const mute: OptionsSignalHistoryStore = {
+      async write() { return false; },
+      async read() { return []; },
+    };
+    expect((await checkHistoryAccess(mute, { now: today })).reason).toBe('history-write-rejected');
+  });
+
   it('writes its probe under the reserved symbol, never under a real one', async () => {
     const log = createSignalHistoryLog();
     await checkHistoryAccess(log, { now: today });
@@ -341,6 +384,56 @@ describe('an outage is shown as an outage, never as a countdown', () => {
     expect(accumulating.diagnostics.iv.percentilePending?.missingDays).toBe(48);
     expect(accumulating.reasoning.some((reason) => reason.id === 'history-unavailable')).toBe(false);
     expect(accumulating.reasoning.some((reason) => reason.id === 'iv-percentile-pending')).toBe(true);
+  });
+
+  it('carries no counter anywhere in the card when the store is unreachable', () => {
+    /*
+     * The failure this test exists for: the card-level notice said "outage" while
+     * the Options Sentiment factor, one line below it, still said
+     * "มีประวัติ 0/20 วัน" — the countdown's own words, for a countdown that was
+     * not running. A reader gets both sentences at once, so BOTH have to come
+     * from the same state, and the check is over every string the result
+     * publishes rather than over the one that happened to be wrong.
+     */
+    const degraded = calculateOptionsSignal(input({
+      historyDegraded: true,
+      sentiment: available<SentimentInput>({
+        ...neutralSentiment,
+        putCallRatio: 1.51,
+        ownPercentile: null,
+        percentileObservations: 0,
+      }),
+      ivPercentilePending: { observations: 0, required: 60, missingDays: 60 },
+    }));
+    expect(degraded.historyDegraded).toBe(true);
+
+    const published = [
+      ...degraded.reasoning.map((reason) => reason.text),
+      ...Object.values(degraded.diagnostics.factors).map((factor) => factor.detail),
+    ];
+    for (const text of published) {
+      // No "n/m วัน", no "0/20", no denominator of any shape.
+      expect(text).not.toMatch(/\d+\s*\/\s*\d+/);
+      expect(text).not.toMatch(/มีประวัติ\s*\d/);
+      expect(text).not.toMatch(/ต้องการข้อมูลอีก\s*\d/);
+    }
+    // And it still says what IS wrong, on the factor as well as on the card.
+    expect(degraded.diagnostics.factors.sentiment.detail).toContain('อ่านประวัติ');
+    expect(degraded.diagnostics.factors.sentiment.detail).toContain('ชั่วคราว');
+  });
+
+  it('keeps the counter on the sentiment factor while the store is merely young', () => {
+    const young = calculateOptionsSignal(input({
+      sentiment: available<SentimentInput>({
+        ...neutralSentiment,
+        putCallRatio: 1.51,
+        ownPercentile: null,
+        percentileObservations: 4,
+      }),
+    }));
+    expect(young.historyDegraded).toBe(false);
+    expect(young.diagnostics.factors.sentiment.detail)
+      .toContain(`มีประวัติ 4/${OPTIONS_SIGNAL_CONFIG.sentiment.minimumPercentileObservations} วัน`);
   });
 
   it('never lets the two states be true at once', () => {

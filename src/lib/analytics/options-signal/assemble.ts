@@ -94,6 +94,22 @@ export interface OptionsSignalOptionsInputs {
   ivRank?: { ivRank: number; observations: number };
   /** Recorded readings for this symbol, used for the two percentile bases. */
   ownHistory?: OptionsSignalOwnHistory;
+  /**
+   * The chain the EXPECTED MOVE is read from, when it is not the nearest one.
+   *
+   * Every other options-derived factor belongs on the front chain — that is the
+   * book whose liquidity, positioning and implied volatility a reader is looking
+   * at. The expected move does not: it is the yardstick the confirmed daily
+   * support and resistance are measured against, and those are swing levels the
+   * card's own SETUP section recommends a 30-60 day contract for. Measuring them
+   * against a 0-DTE straddle made "this level is further than the option can
+   * reach" fire on 24 of 30 regression tickers; at 30 days it fires on 3.
+   *
+   * Optional, and falling back to the nearest chain, so a caller that cannot
+   * resolve a second expiration degrades to the old behaviour rather than losing
+   * the expected move altogether.
+   */
+  expectedMoveChain?: OptionsChain | null;
 }
 
 /**
@@ -497,6 +513,12 @@ export function assembleOptionsSignalInput(
   options: OptionsSignalOptionsInputs & { acceptedPrice: number | null },
 ): OptionsSignalInput {
   const source = resolveChainSource(options);
+  /*
+   * The horizon chain when one was resolved, the front chain otherwise. The DTE
+   * that was actually read is published beside the number either way, so the
+   * card never implies a horizon it did not measure.
+   */
+  const expectedMoveSource = options.expectedMoveChain ?? source.chain;
   return {
     symbol: context.symbol,
     timeframe: context.timeframe,
@@ -511,8 +533,8 @@ export function assembleOptionsSignalInput(
     riskReward: buildRiskRewardSlot(
       context.levels,
       options.acceptedPrice,
-      source.chain ? atmStraddleExpectedMove(source.chain) : null,
-      source.chain ? chainDte(source.chain) : null,
+      expectedMoveSource ? atmStraddleExpectedMove(expectedMoveSource) : null,
+      expectedMoveSource ? chainDte(expectedMoveSource) : null,
     ),
     event: context.event,
     liquidity: buildLiquiditySlot(options),

@@ -43,6 +43,39 @@ export const OPTIONS_SIGNAL_CONFIG = {
     bearish: -20,
   },
 
+  /**
+   * What happens when the heaviest factor points the other way.
+   *
+   * Trend carries 25 of the 90 available points, more than anything else, and
+   * it was still possible for a chart whose EMAs are stacked DOWN to publish
+   * "CALL WATCH" — because Macro (+15, identical on every symbol that day) and a
+   * saturated Momentum (+19) simply outvoted it. The existing
+   * `macro-trend-conflict` penalty took 10 points off CONFIDENCE for exactly
+   * this shape, which is the right instinct aimed at the wrong number: nobody
+   * reads a confidence figure to decide what the card said. The headline is what
+   * they read.
+   *
+   * So the disagreement is applied where the headline comes from. This is NOT a
+   * second penalty stacked on the first — the confidence penalty is unchanged
+   * and untouched — it is the same disagreement finally reaching the number it
+   * was always about.
+   *
+   * PROPORTIONAL, never a switch: the multiplier is `1 - strength × |trend|`, so
+   * a trend that mildly disagrees (one EMA vote out of three) shaves a third off
+   * the score and a trend that flatly contradicts the published bias cancels it.
+   * The operation is odd — negating every input negates the result and leaves
+   * the multiplier alone — so the put and call mirrors stay exact.
+   *
+   * It can only move a score TOWARD neutral. It can never flip a bias, and it
+   * never turns a CALL into a PUT.
+   *
+   * Measured over the 30 regression tickers at `strength: 1`: 2 labels changed
+   * (AVGO and AFRM, CALL_WATCH -> SIDEWAYS), 0 changes to PRIME membership.
+   */
+  trendVeto: {
+    strength: 1,
+  },
+
   quality: {
     primeScore: 55,
     primeConfidence: 65,
@@ -195,8 +228,33 @@ export const OPTIONS_SIGNAL_CONFIG = {
      * expiration. A level two of those away is not "a target with a worse
      * reward" — it is a target this contract is the wrong instrument for, and a
      * Risk:Reward ratio quoted against it reads far better than it deserves.
+     *
+     * Beyond this the factor is no longer merely WARNED about, it is scaled: the
+     * scored side's contribution is multiplied by
+     * `reachableWithin / distanceInExpectedMoves`, so a target at 3 expected
+     * moves carries half the weight and one at 15 carries a tenth. The card used
+     * to print +5 for a geometry it was warning about in the same paragraph.
      */
     reachableWithin: 1.5,
+    /**
+     * The horizon the expected move is READ AT, in days to expiration.
+     *
+     * It used to be read off the nearest expiration, which is whatever is on the
+     * board today — 0 or 2 days, most days. The card's own SETUP section
+     * recommends 30-60 DTE in the same breath, so the geometry was being judged
+     * against a straddle nobody was being told to buy, over a horizon two orders
+     * of magnitude shorter than the one recommended. Measured across the 30
+     * regression tickers, "this level is further than the option can reach"
+     * fired on 24 of 30 on the nearest chain and on 3 of 30 at 30 days: the
+     * warning was almost entirely an artifact of the wrong horizon, and a
+     * warning that fires on four fifths of the market warns of nothing.
+     *
+     * 45 is the one DTE inside BOTH `setup` bands below, so the expected move is
+     * quoted over a horizon the card actually recommends whichever band applies.
+     * The nearest listed expiration to this is used; the DTE that was really
+     * read is published beside the number, never assumed.
+     */
+    horizonDays: 45,
   },
 
   event: {

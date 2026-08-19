@@ -63,6 +63,33 @@ export interface OptionsSignalHistoryRecord extends OptionsSignalHistoryPoint {
   input: OptionsSignalInput;
 }
 
+/**
+ * What actually went wrong, in the words the database used.
+ *
+ * A boolean `false` from `write` is enough to fall back on but useless to fix:
+ * a missing key, a table that was never migrated and a NOT NULL violation all
+ * arrive as the same `false`, and the difference between them is the difference
+ * between an afternoon of guessing and a one-line fix. This is the shape the
+ * PostgREST error already has; it is carried rather than discarded.
+ */
+export interface HistoryStoreFailure {
+  operation: 'read' | 'write';
+  /** SQLSTATE, e.g. `23502` for a NOT NULL violation. */
+  code: string | null;
+  message: string;
+  hint: string | null;
+  details: string | null;
+}
+
+/** One line, safe to log and safe to put in a health `reason`. */
+export function describeHistoryFailure(failure: HistoryStoreFailure | null): string | null {
+  if (!failure) return null;
+  return [failure.operation, failure.code, failure.message, failure.hint]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join(':')
+    .slice(0, 200);
+}
+
 export interface OptionsSignalHistoryStore {
   /**
    * Readings for one symbol, oldest first, at most one per captured date.
@@ -73,6 +100,14 @@ export interface OptionsSignalHistoryStore {
   read(symbol: string, lookbackDays: number): Promise<OptionsSignalHistoryPoint[] | null>;
   /** `false` when the write did not land, so a caller can fall back. */
   write(record: OptionsSignalHistoryRecord): Promise<boolean>;
+  /**
+   * The last failure this store saw, when it keeps one.
+   *
+   * Optional: an in-memory store has no failures to report, and a caller that
+   * does not care about the reason must not have to know which kind of store it
+   * is holding.
+   */
+  lastFailure?(): HistoryStoreFailure | null;
 }
 
 const finite = (value: number | null | undefined): number | null =>
@@ -195,6 +230,9 @@ export function createResilientHistoryStore(
       await fallback.write(record).catch(() => false);
       return landed;
     },
+    // Forwarded, not swallowed: the wrapper is what every caller holds, so a
+    // reason that stops here is a reason nobody can read.
+    lastFailure: () => durable.lastFailure?.() ?? null,
   };
 }
 
@@ -282,17 +320,37 @@ export async function checkHistoryAccess(
     iv: null,
     putCallOi: null,
     putCallVolume: null,
-    input: null as unknown as OptionsSignalInput,
+    /*
+     * An EMPTY input, not `null`.
+     *
+     * `inputs` is `jsonb not null` in the migration, and a null here is written
+     * as a literal SQL NULL rather than falling back to the column default — so
+     * a null probe row is rejected by the constraint, the write reports `false`,
+     * and a perfectly healthy store is declared unreachable. That is exactly the
+     * outage this canary reported for its first day alive. The store defends
+     * against a null too; this is the other half of the same fix.
+     */
+    input: {} as unknown as OptionsSignalInput,
+  };
+
+  /*
+   * The store's own words, when it kept them. `history-write-rejected` alone
+   * says a row did not land; `history-write-rejected:write:23502:null value in
+   * column "inputs" ...` says which line to change.
+   */
+  const because = () => {
+    const detail = describeHistoryFailure(store.lastFailure?.() ?? null);
+    return detail === null ? '' : `:${detail}`;
   };
 
   try {
     const written = await store.write(probe);
     if (!written) {
-      return { ok: false, reason: 'history-write-rejected', checkedAt };
+      return { ok: false, reason: `history-write-rejected${because()}`, checkedAt };
     }
     const rows = await store.read(symbol, 2);
     if (rows === null) {
-      return { ok: false, reason: 'history-read-failed', checkedAt };
+      return { ok: false, reason: `history-read-failed${because()}`, checkedAt };
     }
     if (!rows.some((row) => row.capturedAt === capturedAt)) {
       // Wrote it, cannot see it. This is the RLS/wrong-key shape exactly.

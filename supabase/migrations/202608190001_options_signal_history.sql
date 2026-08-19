@@ -4,9 +4,18 @@ begin;
 -- Options Signal history — one row per symbol per finalized-candle date
 -- ===========================================================================
 --
--- NOT YET APPLIED. Reviewed as a file before it is run, same as the P6 Market
--- Signal history migration it is modelled on. Read the reversal block at the
--- bottom before applying.
+-- APPLIED 2026-08-19. Reviewed as a file before it was run, same as the P6
+-- Market Signal history migration it is modelled on. Read the reversal block at
+-- the bottom before touching it.
+--
+-- One thing this file's own constraints caught, recorded here because the next
+-- reader will meet it too: `inputs` below is `not null default '{}'`, and a
+-- DEFAULT only fills a column that is OMITTED. The health canary writes a probe
+-- row with no engine input at all, the store sent that as an explicit null, and
+-- Postgres correctly refused it with 23502 — which the health check read as
+-- "the store is unreachable" and every card then reported as a percentile
+-- outage, on a table that was answering reads perfectly. The constraint is
+-- right and stays; the store now sends `{}`.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THIS TABLE EXISTS AT ALL
