@@ -225,6 +225,85 @@ export async function readOwnHistory(
   };
 }
 
+/**
+ * Whether the store can actually be read AND written, established by doing both.
+ *
+ * `ok: false` is the state the UI must show as an outage rather than as a
+ * countdown; `reason` is what gets logged.
+ */
+export interface HistoryAccessHealth {
+  ok: boolean;
+  reason: string | null;
+  checkedAt: string;
+}
+
+/**
+ * Write one row and read it straight back.
+ *
+ * This exists because of a failure mode that looks exactly like success. The
+ * table has RLS on with no policy, which is the entitlement boundary — but a
+ * SELECT under a key that is not the service role does not error under
+ * PostgREST, it returns an empty set. An empty set is ALSO the correct answer
+ * for a symbol nobody has ever opened, so a read alone cannot tell a locked-out
+ * store from a new symbol. Left undetected, a mistyped or rotated key would park
+ * every symbol on "ต้องการข้อมูลอีก 60 วัน" permanently, counting down to
+ * nothing, in perfect silence — the same broken outcome the durable store was
+ * built to fix, from a different cause.
+ *
+ * A write followed by a read of the row just written has no such ambiguity.
+ */
+export async function checkHistoryAccess(
+  store: OptionsSignalHistoryStore,
+  options: { symbol?: string; now?: () => Date } = {},
+): Promise<HistoryAccessHealth> {
+  const now = (options.now ?? (() => new Date()))();
+  const checkedAt = now.toISOString();
+  const symbol = options.symbol ?? OPTIONS_SIGNAL_CONFIG.history.canarySymbol;
+  const capturedAt = checkedAt.slice(0, 10);
+
+  const probe: OptionsSignalHistoryRecord = {
+    configVersion: OPTIONS_SIGNAL_CONFIG_VERSION,
+    recordedAt: checkedAt,
+    symbol,
+    capturedAt,
+    asOf: checkedAt,
+    latestCandleAt: capturedAt,
+    calculatedAt: checkedAt,
+    status: 'insufficient-data',
+    signalType: null,
+    underlyingBias: null,
+    score: null,
+    confidenceScore: 0,
+    coverage: 0,
+    agreement: 0,
+    evidenceStrength: 0,
+    staleMix: false,
+    liquidityGrade: null,
+    iv: null,
+    putCallOi: null,
+    putCallVolume: null,
+    input: null as unknown as OptionsSignalInput,
+  };
+
+  try {
+    const written = await store.write(probe);
+    if (!written) {
+      return { ok: false, reason: 'history-write-rejected', checkedAt };
+    }
+    const rows = await store.read(symbol, 2);
+    if (rows === null) {
+      return { ok: false, reason: 'history-read-failed', checkedAt };
+    }
+    if (!rows.some((row) => row.capturedAt === capturedAt)) {
+      // Wrote it, cannot see it. This is the RLS/wrong-key shape exactly.
+      return { ok: false, reason: 'history-read-denied-silently', checkedAt };
+    }
+    return { ok: true, reason: null, checkedAt };
+  } catch (error) {
+    return { ok: false, reason: `history-probe-threw:${(error as Error).message.slice(0, 60)}`, checkedAt };
+  }
+}
+
 /** Record one computation. Never throws: a history is never a reason to fail a page. */
 export async function recordOptionsSignal(
   input: OptionsSignalInput,

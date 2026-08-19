@@ -4,6 +4,7 @@ import { calculateOptionsSignal } from './calculations';
 import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_CONFIG_VERSION } from './config';
 import {
   buildSignalHistoryRecord,
+  checkHistoryAccess,
   createResilientHistoryStore,
   createSignalHistoryLog,
   readOwnHistory,
@@ -226,5 +227,131 @@ describe('history falls back to the buffer on an outage, never on an empty answe
     await expect(readOwnHistory('TEST', resilient)).resolves.toEqual({ atmIv: [], putCallRatio: [] });
     await expect(recordOptionsSignal(input(), calculateOptionsSignal(input()), resilient))
       .resolves.not.toBeNull();
+  });
+});
+
+/**
+ * The silent-denial case.
+ *
+ * `public.options_signal_history` has RLS on with no policy — that IS the
+ * entitlement boundary and it must stay. The cost is a failure mode that looks
+ * exactly like success: under a key that is not the service role, PostgREST
+ * answers a SELECT with an empty set rather than an error, and an empty set is
+ * also the right answer for a symbol nobody has opened. A read alone cannot tell
+ * them apart, so an unreachable store would park every symbol on a 60-day
+ * countdown that never moves.
+ */
+describe('a store that silently returns nothing is caught, not believed', () => {
+  const today = () => new Date('2026-08-19T09:00:00.000Z');
+
+  /** RLS denial as PostgREST actually presents it: writes rejected, reads empty. */
+  function rlsDeniedStore(): OptionsSignalHistoryStore {
+    return {
+      async read() { return []; },
+      async write() { return false; },
+    };
+  }
+
+  /** The nastier shape: the write appears to land, but nothing can be read back. */
+  function writeOnlyStore(): OptionsSignalHistoryStore {
+    return {
+      async read() { return []; },
+      async write() { return true; },
+    };
+  }
+
+  it('reports an outage when the write is rejected', async () => {
+    const health = await checkHistoryAccess(rlsDeniedStore(), { now: today });
+    expect(health.ok).toBe(false);
+    expect(health.reason).toBe('history-write-rejected');
+  });
+
+  it('reports an outage when the row it just wrote cannot be read back', async () => {
+    // This is the exact silent shape: no error anywhere, and still broken.
+    const health = await checkHistoryAccess(writeOnlyStore(), { now: today });
+    expect(health.ok).toBe(false);
+    expect(health.reason).toBe('history-read-denied-silently');
+  });
+
+  it('reports an outage when the read cannot answer at all', async () => {
+    const health = await checkHistoryAccess({
+      async read() { return null; },
+      async write() { return true; },
+    }, { now: today });
+    expect(health.ok).toBe(false);
+    expect(health.reason).toBe('history-read-failed');
+  });
+
+  it('does not turn a thrown probe into a healthy verdict', async () => {
+    const health = await checkHistoryAccess({
+      async read() { throw new Error('connection reset'); },
+      async write() { return true; },
+    }, { now: today });
+    expect(health.ok).toBe(false);
+    expect(health.reason).toContain('history-probe-threw');
+  });
+
+  it('passes on a store that can actually round-trip a row', async () => {
+    const log = createSignalHistoryLog();
+    const health = await checkHistoryAccess(log, { now: today });
+    expect(health.ok).toBe(true);
+    expect(health.reason).toBeNull();
+  });
+
+  it('writes its probe under the reserved symbol, never under a real one', async () => {
+    const log = createSignalHistoryLog();
+    await checkHistoryAccess(log, { now: today });
+    const symbols = new Set(log.all().map((entry) => entry.symbol));
+    expect([...symbols]).toEqual([OPTIONS_SIGNAL_CONFIG.history.canarySymbol]);
+    // And that symbol satisfies the table's own check constraint.
+    expect(OPTIONS_SIGNAL_CONFIG.history.canarySymbol).toMatch(/^[A-Z0-9][A-Z0-9.-]{0,19}$/);
+  });
+
+  it('leaves an empty-but-healthy store reading as empty, not as an outage', async () => {
+    // The distinction the whole design turns on: a new symbol has no history and
+    // that is not a failure.
+    const log = createSignalHistoryLog();
+    expect((await checkHistoryAccess(log, { now: today })).ok).toBe(true);
+    expect((await readOwnHistory('NEVER-OPENED', log)).atmIv).toEqual([]);
+  });
+});
+
+describe('an outage is shown as an outage, never as a countdown', () => {
+  it('withholds the countdown and says the store is unreachable instead', () => {
+    const degraded = calculateOptionsSignal(input({
+      ivPercentilePending: { observations: 12, required: 60, missingDays: 48 },
+      historyDegraded: true,
+    }));
+    expect(degraded.historyDegraded).toBe(true);
+    expect(degraded.diagnostics.iv.percentileStoreUnavailable).toBe(true);
+    // The countdown is suppressed: it would be counting down to nothing.
+    expect(degraded.diagnostics.iv.percentilePending).toBeNull();
+    expect(degraded.reasoning.some((reason) => reason.id === 'iv-percentile-pending')).toBe(false);
+    const outage = degraded.reasoning.find((reason) => reason.id === 'history-unavailable');
+    expect(outage?.polarity).toBe('caution');
+    expect(outage?.text).toContain('ชั่วคราว');
+  });
+
+  it('keeps showing the countdown when the store is merely young', () => {
+    const accumulating = calculateOptionsSignal(input({
+      ivPercentilePending: { observations: 12, required: 60, missingDays: 48 },
+    }));
+    expect(accumulating.historyDegraded).toBe(false);
+    expect(accumulating.diagnostics.iv.percentileStoreUnavailable).toBe(false);
+    expect(accumulating.diagnostics.iv.percentilePending?.missingDays).toBe(48);
+    expect(accumulating.reasoning.some((reason) => reason.id === 'history-unavailable')).toBe(false);
+    expect(accumulating.reasoning.some((reason) => reason.id === 'iv-percentile-pending')).toBe(true);
+  });
+
+  it('never lets the two states be true at once', () => {
+    for (const degraded of [true, false]) {
+      const result = calculateOptionsSignal(input({
+        ivPercentilePending: { observations: 3, required: 60, missingDays: 57 },
+        historyDegraded: degraded,
+      }));
+      const showsCountdown = result.diagnostics.iv.percentilePending !== null;
+      const showsOutage = result.diagnostics.iv.percentileStoreUnavailable;
+      expect(showsCountdown && showsOutage).toBe(false);
+    }
   });
 });

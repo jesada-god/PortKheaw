@@ -58,6 +58,7 @@ const result: OptionsSignalResult = {
   asOf: '2026-07-28T00:00:00.000Z',
   staleMix: false,
   configVersion: '2026.08.19',
+  historyDegraded: false,
   reasoning: [{ id: 'secret-reason', polarity: 'positive', text: BREAKDOWN_SECRET }],
   suggestedOptionsSetup: {
     status: 'not-recommended',
@@ -109,6 +110,7 @@ const result: OptionsSignalResult = {
       ivRank: null,
       ivPercentile: null,
       percentilePending: null,
+      percentileStoreUnavailable: false,
       impliedVolatility: 0.3,
       realizedVolatility: 0.25,
       realizedWindowDays: 252,

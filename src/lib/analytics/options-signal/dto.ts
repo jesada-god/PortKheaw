@@ -50,6 +50,8 @@ export interface OptionsSignalSummaryDto {
   /** Chain tradeability badge. Never part of the direction. */
   liquidityGrade: LiquidityGrade | null;
   configVersion: string;
+  /** True when the reading history could not be reached at all. */
+  historyDegraded: boolean;
   /**
    * Why no signal could be produced. Present only on `insufficient-data`, where
    * withholding it would leave the reader looking at an unexplained blank.
@@ -89,6 +91,7 @@ export function projectOptionsSignal(
     staleMix: result.staleMix,
     liquidityGrade: result.liquidityGrade,
     configVersion: result.configVersion,
+    historyDegraded: result.historyDegraded,
     reason: result.status === 'insufficient-data' ? result.reason : null,
   };
 

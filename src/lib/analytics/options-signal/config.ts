@@ -278,6 +278,20 @@ export const OPTIONS_SIGNAL_CONFIG = {
      * takes it as an argument rather than hardcoding it.
      */
     retentionDays: 400,
+    /**
+     * Reserved symbol for the access canary.
+     *
+     * RLS is on with no policy, and a SELECT under a non-service-role key does
+     * not error — PostgREST returns an empty set. An empty set is also the
+     * correct answer for a symbol nobody has opened, so the two are
+     * indistinguishable from a read alone and a misconfigured key would leave
+     * the percentile "accumulating" forever, silently. The canary writes one row
+     * under this symbol and reads it straight back: if the row it just wrote is
+     * not there, the store is not reachable, whatever the reads say.
+     *
+     * Matches the table's symbol check, and the retention sweep clears old ones.
+     */
+    canarySymbol: 'ZZ-CANARY',
   },
 } as const;
 

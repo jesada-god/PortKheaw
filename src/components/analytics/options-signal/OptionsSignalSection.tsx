@@ -22,6 +22,7 @@ import { requestOptionsSignal, type OptionsSignalOutcome } from './signal-client
 import {
   DATA_STATE_LABEL,
   FACTOR_COPY,
+  HISTORY_DEGRADED_NOTICE,
   IV_LEVEL_LABEL,
   LIQUIDITY_BADGE,
   OPTIONS_SIGNAL_PRESENTATION,
@@ -342,7 +343,7 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
  */
 function SignalBadges({ summary }: { summary: OptionsSignalSummaryDto }) {
   const liquidity = summary.liquidityGrade ? LIQUIDITY_BADGE[summary.liquidityGrade] : null;
-  if (!liquidity && !summary.staleMix && !summary.asOf) return null;
+  if (!liquidity && !summary.staleMix && !summary.asOf && !summary.historyDegraded) return null;
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
       {liquidity && (
@@ -360,6 +361,15 @@ function SignalBadges({ summary }: { summary: OptionsSignalSummaryDto }) {
           className={`inline-flex items-center rounded-full border px-2 py-1 font-mono font-semibold ${STALE_MIX_BADGE.tone}`}
         >
           {STALE_MIX_BADGE.label}
+        </span>
+      )}
+      {summary.historyDegraded && (
+        <span
+          data-testid="options-signal-history-degraded"
+          title={HISTORY_DEGRADED_NOTICE.helper}
+          className={`inline-flex items-center rounded-full border px-2 py-1 font-semibold ${HISTORY_DEGRADED_NOTICE.tone}`}
+        >
+          {HISTORY_DEGRADED_NOTICE.label}
         </span>
       )}
       {summary.asOf && (
@@ -595,7 +605,7 @@ function DetailBody({ breakdown, summary }: {
             */}
           <Detail
             label="IV Percentile (เทียบตัวเอง)"
-            value={ivPercentileText(iv.ivPercentile, iv.percentilePending)}
+            value={ivPercentileText(iv.ivPercentile, iv.percentilePending, iv.percentileStoreUnavailable)}
           />
           <Detail label="IV ปัจจุบัน (ATM)" value={iv.impliedVolatility === null ? '—' : `${(iv.impliedVolatility * 100).toFixed(1)}%`} />
           <Detail
@@ -610,6 +620,11 @@ function DetailBody({ breakdown, summary }: {
           <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTimeCE(iv.fetchedAt) : '—'} />
           <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
+        {iv.percentileStoreUnavailable && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-percentile-outage">
+            {HISTORY_DEGRADED_NOTICE.helper}
+          </p>
+        )}
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
       </section>
 

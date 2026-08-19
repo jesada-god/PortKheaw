@@ -7,7 +7,7 @@ import { assembleOptionsSignalInput } from './assemble';
 import { calculateOptionsSignal } from './calculations';
 import { loadOptionsSignalContext } from './service';
 import { readOwnHistory, recordOptionsSignal } from './signal-history';
-import { getOptionsSignalHistoryStore } from './signal-history-repository';
+import { getOptionsSignalHistoryHealth, getOptionsSignalHistoryStore } from './signal-history-repository';
 import type { OptionsSignalResult } from './types';
 
 /**
@@ -66,7 +66,7 @@ async function loadNearestChain(symbol: string): Promise<{ chain: OptionsChain; 
 
 export async function computeServerOptionsSignal(symbol: string): Promise<ServerOptionsSignal> {
   const history = getOptionsSignalHistoryStore();
-  const [context, options, ownHistory] = await Promise.all([
+  const [context, options, ownHistory, historyHealth] = await Promise.all([
     loadOptionsSignalContext(symbol),
     loadNearestChain(symbol),
     /*
@@ -75,6 +75,12 @@ export async function computeServerOptionsSignal(symbol: string): Promise<Server
      * lookup must never be the reason a card is slower to appear.
      */
     readOwnHistory(symbol, history),
+    /*
+     * Probed once per process, so this resolves instantly after the first
+     * request. Without it an unreachable store is indistinguishable from a new
+     * symbol, and the card would count down to a day that never arrives.
+     */
+    getOptionsSignalHistoryHealth(),
   ]);
 
   const input = assembleOptionsSignalInput(context, {
@@ -85,6 +91,7 @@ export async function computeServerOptionsSignal(symbol: string): Promise<Server
     // Put/Call comparable at all.
     ownHistory,
   });
+  input.historyDegraded = !historyHealth.ok;
   const result = calculateOptionsSignal(input);
   /*
    * Fire-and-forget, and deliberately not awaited: the row is a disclosure

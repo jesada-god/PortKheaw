@@ -219,6 +219,15 @@ export interface OptionsSignalInput {
   liquidity?: OptionsSignalInputSlot<LiquidityInput>;
   /** Optional: how far today's IV percentile still is from being publishable. */
   ivPercentilePending?: IvPercentilePending | null;
+  /**
+   * The reading history could not be reached at all.
+   *
+   * Kept rigidly separate from `ivPercentilePending`, which says "this fills
+   * itself in, come back in N days". A store that cannot be read is not
+   * accumulating anything, and telling a reader to wait 60 days for a countdown
+   * that will never move is a worse lie than saying nothing.
+   */
+  historyDegraded?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +402,11 @@ export interface OptionsSignalDiagnostics {
     ivPercentile: number | null;
     /** Set when a percentile is still accumulating; the card shows the countdown. */
     percentilePending: IvPercentilePending | null;
+    /**
+     * True when the percentile is missing because the STORE is unreachable, not
+     * because the series is short. The card must not show a countdown for this.
+     */
+    percentileStoreUnavailable: boolean;
     impliedVolatility: number | null;
     realizedVolatility: number | null;
     /** Which realized-volatility window the ratio used. */
@@ -450,6 +464,8 @@ interface OptionsSignalBase {
   staleMix: boolean;
   /** Config revision the numbers were produced under. */
   configVersion: string;
+  /** True when the reading history could not be reached; see `historyDegraded`. */
+  historyDegraded: boolean;
   reasoning: OptionsSignalReason[];
   suggestedOptionsSetup: SuggestedOptionsSetup;
   diagnostics: OptionsSignalDiagnostics;

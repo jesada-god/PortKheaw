@@ -62,6 +62,7 @@ const summary: OptionsSignalDto['summary'] = {
   staleMix: false,
   liquidityGrade: 'good',
   configVersion: '2026.08.19',
+  historyDegraded: false,
   reason: null,
 };
 
@@ -132,6 +133,7 @@ const eliteSignal: OptionsSignalDto = {
         ivRank: null,
         ivPercentile: null,
         percentilePending: { observations: 12, required: 60, missingDays: 48 },
+        percentileStoreUnavailable: false,
         impliedVolatility: 0.38,
         realizedVolatility: 0.32,
         realizedWindowDays: 30,
@@ -537,6 +539,51 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(document.body.querySelector('[data-testid="options-signal-liquidity-closed"]')).not.toBeNull();
     expect(document.body.textContent).toContain('ถ้าดูเฉพาะ OI และ Volume');
     expect(document.body.textContent).toContain('สภาพคล่องพอใช้');
+  });
+
+  it('shows an outage as an outage, never as the accumulating countdown', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({
+      status: 'ready',
+      signal: {
+        summary: { ...summary, historyDegraded: true },
+        breakdown: {
+          ...eliteSignal.breakdown!,
+          diagnostics: {
+            ...eliteSignal.breakdown!.diagnostics,
+            iv: {
+              ...eliteSignal.breakdown!.diagnostics.iv,
+              percentilePending: null,
+              percentileStoreUnavailable: true,
+            },
+          },
+        },
+      },
+    });
+    await renderFor('elite');
+
+    expect(container.querySelector('[data-testid="options-signal-history-degraded"]')?.textContent)
+      .toContain('ใช้ไม่ได้ชั่วคราว');
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    expect(document.body.querySelector('[data-testid="options-signal-percentile-outage"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('อ่านประวัติไม่สำเร็จ');
+    // The countdown must be nowhere on the page: it would never count down.
+    expect(document.body.textContent).not.toContain('ต้องการข้อมูลอีก');
+  });
+
+  it('keeps the countdown when the store is merely young', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    expect(container.querySelector('[data-testid="options-signal-history-degraded"]')).toBeNull();
+
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(document.body.textContent).toContain('ต้องการข้อมูลอีก 48 วัน');
+    expect(document.body.querySelector('[data-testid="options-signal-percentile-outage"]')).toBeNull();
   });
 
   it('keeps all six signal labels paired with beginner-facing Thai copy', () => {
