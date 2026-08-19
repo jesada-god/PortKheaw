@@ -948,6 +948,24 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_signal_history']['Insert']>;
         Relationships: [];
       };
+      options_signal_history: {
+        Row: {
+          symbol: string; captured_at: string; config_version: string;
+          signal_type: string | null; underlying_bias: string | null;
+          score: number | null; confidence: number | null;
+          iv: number | null; put_call_oi: number | null; put_call_volume: number | null;
+          inputs: Record<string, unknown>; recorded_at: string;
+        };
+        Insert: {
+          symbol: string; captured_at: string; config_version: string;
+          signal_type?: string | null; underlying_bias?: string | null;
+          score?: number | null; confidence?: number | null;
+          iv?: number | null; put_call_oi?: number | null; put_call_volume?: number | null;
+          inputs?: Record<string, unknown>; recorded_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['options_signal_history']['Insert']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -957,6 +975,11 @@ export interface Database {
       };
       /** P6 retention. `apply => false` counts what is due and deletes nothing. */
       sweep_market_signal_history: {
+        Args: { retention_days: number; apply?: boolean };
+        Returns: Array<{ due: number; deleted: number }>;
+      };
+      /** Options Signal history retention. `apply => false` reports and deletes nothing. */
+      sweep_options_signal_history: {
         Args: { retention_days: number; apply?: boolean };
         Returns: Array<{ due: number; deleted: number }>;
       };

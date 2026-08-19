@@ -6,6 +6,8 @@ import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
 import { assembleOptionsSignalInput } from './assemble';
 import { calculateOptionsSignal } from './calculations';
 import { loadOptionsSignalContext } from './service';
+import { readOwnHistory, recordOptionsSignal } from './signal-history';
+import { getOptionsSignalHistoryStore } from './signal-history-repository';
 import type { OptionsSignalResult } from './types';
 
 /**
@@ -63,16 +65,34 @@ async function loadNearestChain(symbol: string): Promise<{ chain: OptionsChain; 
 }
 
 export async function computeServerOptionsSignal(symbol: string): Promise<ServerOptionsSignal> {
-  const [context, options] = await Promise.all([
+  const history = getOptionsSignalHistoryStore();
+  const [context, options, ownHistory] = await Promise.all([
     loadOptionsSignalContext(symbol),
     loadNearestChain(symbol),
+    /*
+     * Read BEFORE this computation, so today's reading never sits inside its own
+     * percentile — and in parallel with the market data, because a percentile
+     * lookup must never be the reason a card is slower to appear.
+     */
+    readOwnHistory(symbol, history),
   ]);
 
-  const result = calculateOptionsSignal(assembleOptionsSignalInput(context, {
+  const input = assembleOptionsSignalInput(context, {
     chain: options?.chain ?? null,
     optionsSr: options?.result ?? null,
     acceptedPrice: options?.chain.spot ?? null,
-  }));
+    // This symbol's own recorded readings are what make a raw IV or a raw
+    // Put/Call comparable at all.
+    ownHistory,
+  });
+  const result = calculateOptionsSignal(input);
+  /*
+   * Fire-and-forget, and deliberately not awaited: the row is a disclosure
+   * record, and a card that waited on a write to a table it does not read would
+   * be slower for no benefit to the reader in front of it. `recordOptionsSignal`
+   * never rejects, so there is nothing here for an unhandled rejection to catch.
+   */
+  void recordOptionsSignal(input, result, history);
 
   return { result, expiration: options?.chain.expiration ?? null };
 }
