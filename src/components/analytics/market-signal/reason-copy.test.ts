@@ -174,6 +174,27 @@ describe('reason copy', () => {
    * states these ten instruments do not happen to be in, which is precisely why
    * the source-reading test below exists too.
    */
+  /*
+   * WHICH IDS THIS CORPUS CANNOT REACH, written down rather than left implicit.
+   *
+   * Ten instruments over eight flag combinations produce sixteen of the
+   * twenty-five ids. The nine below need states none of them are in: an
+   * `atr_band` frame, an actionable leg whose target or invalidation is
+   * withheld, a structure break, an RSI past 75/25, or a volume reading that
+   * fails confirmation. Leaving that as a footnote meant the corpus test looked
+   * like full coverage and was not, so the split is now an assertion.
+   *
+   * The check is deliberately one-directional. Anything NOT on this list must
+   * still be reached — that is the regression guard. An id that starts being
+   * reached does not fail: the corpus got better, and the only cost is a stale
+   * line here. What cannot happen is one of the sixteen quietly dropping out.
+   */
+  const IDS_THE_CORPUS_CANNOT_REACH = [
+    'rsi-extreme', 'relative-volume', 'structure-breakout', 'structure-breakdown',
+    'overextended', 'narrow-range-band', 'invalidation-from-band',
+    'no-defensible-target', 'structure-volume-unconfirmed',
+  ];
+
   it('knows every reason id the frozen corpus actually produces', { timeout: 30_000 }, () => {
     const seen = [...goldenIds()].sort();
     expect(seen.length, 'the corpus produced no reasons at all').toBeGreaterThan(5);
@@ -181,6 +202,24 @@ describe('reason copy', () => {
     expect(unlisted, 'ids the engine emits that ENGINE_REASON_IDS does not list').toEqual([]);
     const untranslated = seen.filter((id) => !(id in REASON_COPY) && !(id in REASON_IDS_WITHOUT_COPY));
     expect(untranslated, 'ids the engine emits with no copy and no documented reason').toEqual([]);
+
+    // Every id not excused above has to actually show up in the replay.
+    const expected = (ENGINE_REASON_IDS as readonly string[])
+      .filter((id) => !IDS_THE_CORPUS_CANNOT_REACH.includes(id)).sort();
+    const missing = expected.filter((id) => !seen.includes(id));
+    expect(missing, 'ids the corpus used to reach and no longer does').toEqual([]);
+  });
+
+  /*
+   * The nine are only safe because the source-reading test above covers them.
+   * If one were ever dropped from `ENGINE_REASON_IDS`, it would fall out of
+   * both checks at once and nothing would notice — so it is named here too.
+   */
+  it('covers the ids the corpus misses through the source list instead', () => {
+    for (const id of IDS_THE_CORPUS_CANNOT_REACH) {
+      expect((ENGINE_REASON_IDS as readonly string[]).includes(id), `${id} is excused but not listed`).toBe(true);
+      expect(id in REASON_COPY || id in REASON_IDS_WITHOUT_COPY, `${id} has no copy`).toBe(true);
+    }
   });
 
   /*
