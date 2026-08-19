@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
+import { createInMemoryEarningsScheduleStore } from './schedule-cache';
 import { loadEarningsSchedule } from './service';
 
 const AV_CSV = [
@@ -26,11 +27,18 @@ function fetcherFor(handlers: Record<'alphavantage' | 'financialmodelingprep', (
   }) as typeof fetch;
 }
 
+/*
+ * A fresh last-known-good store per call, for the same reason `cache` is fresh
+ * per call: the production store is memoized for the life of the process, which
+ * is exactly right in a server and exactly wrong across tests, where one test's
+ * remembered date would answer the next test's outage.
+ */
 const options = () => ({
   alphaVantageApiKey: 'av',
   fmpApiKey: 'fmp',
   now: NOW,
   cache: new SharedRequestCache(),
+  store: createInMemoryEarningsScheduleStore(),
 });
 
 describe('loadEarningsSchedule', () => {
@@ -179,6 +187,7 @@ describe('loadEarningsSchedule — typed failure reasons and stale-if-error', ()
     try {
       vi.setSystemTime(NOW());
       const cache = new SharedRequestCache();
+      const store = createInMemoryEarningsScheduleStore();
       let failing = false;
       const fetcher = fetcherFor({
         alphavantage: () => (failing
@@ -187,17 +196,17 @@ describe('loadEarningsSchedule — typed failure reasons and stale-if-error', ()
         financialmodelingprep: () => new Response('{"Error":"nope"}', { status: 402 }),
       });
 
-      const fresh = await loadEarningsSchedule('AAPL', { ...options(), cache, fetcher });
+      const fresh = await loadEarningsSchedule('AAPL', { ...options(), cache, store, fetcher });
       expect(fresh.status).toBe('available');
       if (fresh.status !== 'available') return;
       expect(fresh.stale).toBe(false);
 
-      // Past the 12h fresh window, with the provider now refusing.
-      const laterMs = NOW() + 13 * 60 * 60_000;
+      // Past the 24h last-known-good window, with both providers now refusing.
+      const laterMs = NOW() + 30 * 60 * 60_000;
       vi.setSystemTime(laterMs);
       failing = true;
       const later = await loadEarningsSchedule('AAPL', {
-        ...options(), cache, fetcher, now: () => laterMs,
+        ...options(), cache, store, fetcher, now: () => laterMs,
       });
       expect(later.status).toBe('available');
       if (later.status !== 'available') return;
@@ -206,9 +215,117 @@ describe('loadEarningsSchedule — typed failure reasons and stale-if-error', ()
       expect(later.reportDate).toBe('2026-07-30');
       // asOf still points at the ORIGINAL successful fetch, never at "now".
       expect(Date.parse(later.asOf)).toBe(NOW());
+      // And the countdown is recomputed against the NEW today, not replayed.
+      expect(later.daysToEarnings).toBe(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /*
+   * The failure this whole path exists to prevent, stated as the product rule:
+   * a symbol whose earnings date is already known must keep its event-risk
+   * penalty when the calendar providers go down. A live card moved from 53 to 60
+   * confidence on an eight-days-out report because both providers refused and
+   * the date was simply dropped — the score improved because the data got worse.
+   */
+  it('keeps a known earnings date, and its risk, when every provider refuses', async () => {
+    const store = createInMemoryEarningsScheduleStore();
+    await store.write({
+      symbol: 'AAPL',
+      reportDate: '2026-08-05',
+      timeOfDay: 'post-market',
+      epsEstimate: 1.88,
+      provider: 'alpha-vantage',
+      // Fetched a week ago: far outside the TTL, so the providers are asked and
+      // this row is only reached because they all fail.
+      fetchedAt: new Date(NOW() - 7 * 86_400_000).toISOString(),
+    });
+
+    const result = await loadEarningsSchedule('AAPL', {
+      ...options(),
+      store,
+      fetcher: fetcherFor({
+        alphavantage: () => new Response(AV_QUOTA_NOTICE, { status: 200 }),
+        financialmodelingprep: () => new Response('{"Error":"premium"}', { status: 402 }),
+      }),
+    });
+
+    expect(result.status).toBe('available');
+    if (result.status !== 'available') return;
+    expect(result.stale).toBe(true);
+    expect(result.reportDate).toBe('2026-08-05');
+    // 2026-07-28 to 2026-08-05, counted from today rather than stored.
+    expect(result.daysToEarnings).toBe(8);
+  });
+
+  it('does not call a provider at all while the remembered date is inside its TTL', async () => {
+    const store = createInMemoryEarningsScheduleStore();
+    await store.write({
+      symbol: 'AAPL',
+      reportDate: '2026-08-05',
+      timeOfDay: 'post-market',
+      epsEstimate: 1.88,
+      provider: 'alpha-vantage',
+      fetchedAt: new Date(NOW() - 6 * 60 * 60_000).toISOString(),
+    });
+    const alphavantage = vi.fn(() => new Response(AV_CSV, { status: 200 }));
+    const financialmodelingprep = vi.fn(() => new Response(JSON.stringify(FMP_JSON), { status: 200 }));
+
+    const result = await loadEarningsSchedule('AAPL', {
+      ...options(), store, fetcher: fetcherFor({ alphavantage, financialmodelingprep }),
+    });
+
+    expect(alphavantage).not.toHaveBeenCalled();
+    expect(financialmodelingprep).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'available', reportDate: '2026-08-05', stale: false });
+  });
+
+  /*
+   * The one case where the remembered date is correctly given up. A stored date
+   * that has already passed is history, not event risk: serving it would print a
+   * negative countdown and apply the imminent-earnings penalty to a print that
+   * already happened.
+   */
+  it('refuses a remembered date that is already in the past', async () => {
+    const store = createInMemoryEarningsScheduleStore();
+    await store.write({
+      symbol: 'AAPL',
+      reportDate: '2026-07-01',
+      timeOfDay: 'post-market',
+      epsEstimate: 1.88,
+      provider: 'alpha-vantage',
+      fetchedAt: new Date(NOW() - 3 * 60 * 60_000).toISOString(),
+    });
+
+    const result = await loadEarningsSchedule('AAPL', {
+      ...options(),
+      store,
+      fetcher: fetcherFor({
+        alphavantage: () => new Response(AV_QUOTA_NOTICE, { status: 200 }),
+        financialmodelingprep: () => new Response('{"Error":"premium"}', { status: 402 }),
+      }),
+    });
+
+    expect(result.status).toBe('unavailable');
+  });
+
+  it('remembers a date the providers answered with, for the next request', async () => {
+    const store = createInMemoryEarningsScheduleStore();
+    await loadEarningsSchedule('AAPL', {
+      ...options(),
+      store,
+      fetcher: fetcherFor({
+        alphavantage: () => new Response(AV_CSV, { status: 200 }),
+        financialmodelingprep: () => new Response('[]', { status: 200 }),
+      }),
+    });
+    expect(await store.read('AAPL')).toMatchObject({
+      symbol: 'AAPL',
+      reportDate: '2026-07-30',
+      timeOfDay: 'post-market',
+      provider: 'alpha-vantage',
+    });
   });
 
   it('reports no-scheduled-report only when the provider really returned no future date', async () => {

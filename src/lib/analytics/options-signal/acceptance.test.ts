@@ -647,14 +647,27 @@ describe('G · one published timestamp, and an honest badge when sources diverge
 
 describe('H · a clamped momentum ratio says it was clamped', () => {
   it('reports three decimals and flags a genuine cap', () => {
+    /*
+     * Written against the CONFIGURED ceiling rather than a literal, because the
+     * ceiling moved once already: it was 1.0 ATR, where it clamped 22 of the 30
+     * regression tickers, and is now 3.5. A test that hardcodes the old number
+     * stops testing the clamp the moment the clamp is retuned.
+     */
+    const saturation = OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation;
     const capped = calculateOptionsSignal(input({
-      momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.5 }),
+      momentum: available<MomentumInput>({
+        squeeze: 'OFF', squeezeMomentum: saturation * 2.4, atr: 2, relativeVolume: 1.5,
+      }),
     }));
     expect(capped.diagnostics.squeeze.normalizedMomentum).toBe(1);
     expect(capped.diagnostics.squeeze.normalizedMomentumCapped).toBe(true);
+    // The reading itself is still reported in ATR, unclamped.
+    expect(capped.diagnostics.squeeze.breakdown.rawAtr).toBeCloseTo(saturation * 1.2, 3);
 
     const inRange = calculateOptionsSignal(input({
-      momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 1.234_5, atr: 2, relativeVolume: 1.5 }),
+      momentum: available<MomentumInput>({
+        squeeze: 'OFF', squeezeMomentum: saturation * 1.234_5, atr: 2, relativeVolume: 1.5,
+      }),
     }));
     expect(inRange.diagnostics.squeeze.normalizedMomentum).toBe(0.617);
     expect(inRange.diagnostics.squeeze.normalizedMomentumCapped).toBe(false);

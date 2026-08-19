@@ -514,4 +514,48 @@ describe('capture time decides whether a spread is a cost or an artefact', () =>
     expect(built.riskReward.value.expectedMove).toBeCloseTo(2.2, 6);
     expect(built.riskReward.value.expectedMoveDte).toBe(25);
   });
+
+  /*
+   * Reading the expected move at the recommended 45-day horizon costs a SECOND
+   * full options snapshot per card, on top of the front chain the card actually
+   * shows — and only two numbers survive that fetch. A caller holding those two
+   * from its own cache passes them straight in, which is what lets the server
+   * fetch the horizon chain once per window instead of once per reader.
+   *
+   * The point of this test is that the two paths cannot drift: whatever the
+   * chain path derives, the pre-derived path must be able to state.
+   */
+  it('accepts an already-derived expected move in place of a second chain fetch', () => {
+    const context = {
+      symbol: 'TEST', timeframe: '1D' as const, calculatedAt: ASOF, latestCandleAt: '2026-07-27',
+      finalizedCandles: 250,
+      macro: { status: 'unavailable' as const, state: 'UNAVAILABLE' as const, reason: 'x', provider: null, asOf: null },
+      trend: { status: 'unavailable' as const, state: 'UNAVAILABLE' as const, reason: 'x', provider: null, asOf: null },
+      momentum: { status: 'unavailable' as const, state: 'UNAVAILABLE' as const, reason: 'x', provider: null, asOf: null },
+      levels,
+      event: { status: 'unavailable' as const, state: 'UNAVAILABLE' as const, reason: 'x', provider: null, asOf: null },
+      realizedVolatility: { value: 0.3, observations: 250 },
+    };
+    const fromChain = assembleOptionsSignalInput(context, {
+      chain: chain(0.24), optionsSr: availableSr, acceptedPrice: 100,
+    });
+    const fromCache = assembleOptionsSignalInput(context, {
+      chain: chain(0.24), optionsSr: availableSr, acceptedPrice: 100,
+      expectedMove: { move: 2.2, dte: 25 },
+    });
+    if (fromChain.riskReward.status !== 'available') throw new Error('expected levels');
+    if (fromCache.riskReward.status !== 'available') throw new Error('expected levels');
+    expect(fromCache.riskReward.value.expectedMove)
+      .toBeCloseTo(fromChain.riskReward.value.expectedMove as number, 6);
+    expect(fromCache.riskReward.value.expectedMoveDte).toBe(fromChain.riskReward.value.expectedMoveDte);
+
+    // And it WINS over the chain, or the cache would be decorative.
+    const overridden = assembleOptionsSignalInput(context, {
+      chain: chain(0.24), optionsSr: availableSr, acceptedPrice: 100,
+      expectedMove: { move: 7.5, dte: 45 },
+    });
+    if (overridden.riskReward.status !== 'available') throw new Error('expected levels');
+    expect(overridden.riskReward.value.expectedMove).toBe(7.5);
+    expect(overridden.riskReward.value.expectedMoveDte).toBe(45);
+  });
 });
