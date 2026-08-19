@@ -146,6 +146,7 @@ const result: OptionsSignalResult = {
       detail: 'test',
     },
     squeeze: {
+      breakdown: { rawAtr: 0, saturation: 1, clamped: 0, afterSqueeze: 0, multiplier: 0.8 },
       state: 'OFF',
       momentum: 0,
       normalizedMomentum: 0,

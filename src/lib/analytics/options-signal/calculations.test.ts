@@ -131,6 +131,65 @@ describe('factor scoring', () => {
     expect(outcome.normalized).toBeCloseTo(OPTIONS_SIGNAL_CONFIG.momentum.unconfirmedMultiplier, 6);
   });
 
+  it('prints a breakdown that multiplies back out to the points it published', () => {
+    /*
+     * The reported case: "ไม่มี Squeeze · RVOL 0.92× · ยืนยัน 38%" printed beside
+     * +19 of a possible 25. Nothing in those words accounts for 76% of the full
+     * weight, and the missing term was a momentum of 3.19 ATR clamped to 1.00.
+     * The clamp is not an edge case — across the 30 regression tickers it fires
+     * on 22 — so it has to be in the sentence, and the sentence has to be
+     * checkable by hand.
+     */
+    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 3.19, atr: 1, relativeVolume: 0.92 });
+    const { rawAtr, saturation, clamped, afterSqueeze, multiplier } = outcome.breakdown;
+
+    expect(rawAtr).toBeCloseTo(3.19, 6);
+    expect(clamped).toBe(saturation);
+    expect(afterSqueeze).toBe(clamped);
+    expect(outcome.normalizedMomentumCapped).toBe(true);
+    // The published value IS the product of the terms shown, with nothing hidden.
+    expect(outcome.normalized).toBeCloseTo((afterSqueeze as number) * multiplier, 6);
+    expect(outcome.normalized! * OPTIONS_SIGNAL_WEIGHTS.momentum).toBeCloseTo(18.8, 1);
+
+    // And the reader is told the ceiling was hit, with the raw reading beside it.
+    expect(outcome.detail).toContain('3.19 ATR');
+    expect(outcome.detail).toContain('เกินเพดาน');
+    expect(outcome.detail).toContain('RVOL 0.92');
+  });
+
+  it('says nothing about a ceiling it did not hit', () => {
+    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 0.5, atr: 1, relativeVolume: 1.2 });
+    expect(outcome.normalizedMomentumCapped).toBe(false);
+    expect(outcome.detail).not.toContain('เกินเพดาน');
+    expect(outcome.detail).toContain('0.5 ATR');
+    expect(outcome.normalized).toBeCloseTo(0.5 * outcome.breakdown.multiplier, 6);
+  });
+
+  it('keeps TTM momentum and the EMA stack as two separate measurements', () => {
+    /*
+     * Trend −8 with Momentum +19 on one chart is not a sign bug, and this pins
+     * the reason so the next reader does not have to re-derive it.
+     *
+     * `scoreTrend` votes on where price sits against EMA20/EMA50 and how those
+     * two are stacked — a statement about the last ten weeks. TTM momentum is
+     * the linear-regression endpoint of the close's distance from a 20-bar
+     * midline — a statement about the last month, and specifically about
+     * ACCELERATION rather than level. A stock that fell for two months and
+     * bounced hard for three weeks is genuinely below both averages and
+     * genuinely accelerating upward, and the model is supposed to show both.
+     *
+     * What WOULD be a bug is a mirrored input producing a non-mirrored sign, and
+     * that is asserted here too.
+     */
+    const bearishTrend = scoreTrend({ close: 90, ema20: 100, ema50: 110 });
+    const risingMomentum = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 3.19, atr: 1, relativeVolume: 0.92 });
+    expect(Math.sign(bearishTrend.normalized!)).toBe(-1);
+    expect(Math.sign(risingMomentum.normalized!)).toBe(1);
+
+    const mirrored = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: -3.19, atr: 1, relativeVolume: 0.92 });
+    expect(mirrored.normalized).toBeCloseTo(-risingMomentum.normalized!, 12);
+  });
+
   it('reports momentum unavailable when neither the histogram nor a fire exists', () => {
     expect(scoreMomentum({ squeeze: 'OFF', squeezeMomentum: null, atr: null, relativeVolume: 1.2 }).normalized).toBeNull();
   });

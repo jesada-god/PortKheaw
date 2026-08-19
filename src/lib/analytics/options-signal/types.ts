@@ -440,6 +440,23 @@ export interface OptionsSignalDiagnostics {
     normalizedMomentumCapped: boolean;
     relativeVolume: number | null;
     confirmation: number | null;
+    /**
+     * Every term between the raw indicator and the published momentum points,
+     * so the factor's number can be re-derived rather than taken on trust.
+     *
+     * `rawAtr` clamped to ±`saturation` gives `clamped`; the squeeze state turns
+     * that into `afterSqueeze`; `× multiplier` gives the normalized value the
+     * weight is applied to. The clamp is the term worth watching — it fires on
+     * most symbols on most days, which makes the ceiling, not the measurement,
+     * the usual source of a large momentum score.
+     */
+    breakdown: {
+      rawAtr: number | null;
+      saturation: number;
+      clamped: number | null;
+      afterSqueeze: number | null;
+      multiplier: number;
+    };
   };
   macro: {
     benchmarks: Array<{ symbol: string; close: number; ema20: number | null; aboveEma20: boolean | null }>;

@@ -169,6 +169,7 @@ const eliteSignal: OptionsSignalDto = {
         detail: 'OI กลาง 2,400 · Volume กลาง 310',
       },
       squeeze: {
+        breakdown: { rawAtr: 2.4, saturation: 1, clamped: 1, afterSqueeze: 1, multiplier: 0.98 },
         state: 'FIRED_BULLISH',
         momentum: 2.4,
         normalizedMomentum: 1,

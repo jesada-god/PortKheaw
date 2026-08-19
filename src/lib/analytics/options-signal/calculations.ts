@@ -148,6 +148,28 @@ export interface MomentumOutcome extends FactorOutcome {
   /** True when the raw |momentum ÷ ATR| exceeded 1 and the value shown is the clamp. */
   normalizedMomentumCapped: boolean;
   confirmation: number | null;
+  /**
+   * Every term between the raw indicator and the published points, in order.
+   *
+   * Written down because the factor's own sentence could not previously explain
+   * its own number: "ไม่มี Squeeze · RVOL 0.92× · ยืนยัน 38%" was printed beside
+   * +19 of a possible 25, and nothing in those words says where 76% of the full
+   * weight came from. It came from a momentum of 3.19 ATR clamped to 1.00, which
+   * the reader was never shown. These are the terms of `rawAtr -> capped ->
+   * squeeze adjustment -> × multiplier = normalized`, and they multiply out.
+   */
+  breakdown: {
+    /** Raw TTM momentum in ATR units, BEFORE the saturation clamp. */
+    rawAtr: number | null;
+    /** The clamp itself, so a reader can see the ceiling that was hit. */
+    saturation: number;
+    /** After the clamp, before the squeeze state adjusts it. */
+    clamped: number | null;
+    /** After squeeze damping or a fired-release bonus. */
+    afterSqueeze: number | null;
+    /** The RVOL confirmation multiplier actually applied. Never flips a sign. */
+    multiplier: number;
+  };
 }
 
 /**
@@ -195,6 +217,13 @@ export function scoreMomentum(
       normalizedMomentum,
       normalizedMomentumCapped,
       confirmation: null,
+      breakdown: {
+        rawAtr: rawNormalized,
+        saturation: config.momentumAtrSaturation,
+        clamped: normalizedMomentum,
+        afterSqueeze: null,
+        multiplier: 1,
+      },
     };
   }
 
@@ -217,13 +246,39 @@ export function scoreMomentum(
     ? 'ไม่มีข้อมูล RVOL ยืนยัน'
     : `RVOL ${round(relativeVolume, 2)}× · ยืนยัน ${Math.round((confirmation ?? 0) * 100)}%`;
 
+  /*
+   * The arithmetic, printed.
+   *
+   * The saturation clamp is not a rare edge: measured across the 30 regression
+   * tickers it fires on 22 of them, so for most symbols most days the published
+   * momentum is the CEILING and not the measurement. A factor whose usual value
+   * is its own maximum has to say so, or the reader is left to infer a large
+   * number from three small ones.
+   *
+   * `momentumText` is the raw reading with the clamp disclosed; `mathText` is
+   * the last multiplication, so the points beside it can be checked by hand.
+   */
+  const momentumText = rawNormalized === null
+    ? 'ไม่มีค่าโมเมนตัมเทียบ ATR'
+    : normalizedMomentumCapped
+      ? `โมเมนตัม ${round(rawNormalized, 2)} ATR (เกินเพดาน ${round(config.momentumAtrSaturation, 2)} จึงคิดเท่าเพดาน)`
+      : `โมเมนตัม ${round(rawNormalized, 2)} ATR`;
+  const mathText = `คิดเป็น ${round(base, 2)} × ตัวคูณ ${round(multiplier, 2)} = ${round(clamp(base * multiplier, -1, 1), 2)} ของน้ำหนักเต็ม`;
+
   return {
     normalized: clamp(base * multiplier, -1, 1),
-    detail: `${squeezeText} · ${volumeText}`,
+    detail: `${squeezeText} · ${momentumText} · ${volumeText} · ${mathText}`,
     partial: relativeVolume === null,
     normalizedMomentum,
     normalizedMomentumCapped,
     confirmation,
+    breakdown: {
+      rawAtr: rawNormalized,
+      saturation: config.momentumAtrSaturation,
+      clamped: normalizedMomentum,
+      afterSqueeze: base,
+      multiplier,
+    },
   };
 }
 
@@ -1001,6 +1056,10 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     squeeze: {
       state: null, momentum: null, normalizedMomentum: null,
       normalizedMomentumCapped: false, relativeVolume: null, confirmation: null,
+      breakdown: {
+        rawAtr: null, saturation: OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation,
+        clamped: null, afterSqueeze: null, multiplier: 1,
+      },
     },
     macro: { benchmarks: [] },
     provenance: summariseProvenance(provenanceSlots(input)),
@@ -1080,6 +1139,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     : {
       normalized: null, detail: input.momentum.reason, partial: false,
       normalizedMomentum: null, normalizedMomentumCapped: false, confirmation: null,
+      breakdown: {
+        rawAtr: null, saturation: config.momentum.momentumAtrSaturation,
+        clamped: null, afterSqueeze: null, multiplier: 1,
+      },
     };
   const sentimentOutcome = input.sentiment.status === 'available'
     ? scoreSentiment(input.sentiment.value, { historyUnavailable: input.historyDegraded === true })
@@ -1295,6 +1358,13 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       normalizedMomentumCapped: momentumOutcome.normalizedMomentumCapped,
       relativeVolume: input.momentum.status === 'available' ? roundOrNull(input.momentum.value.relativeVolume, 4) : null,
       confirmation: roundOrNull(momentumOutcome.confirmation, 4),
+      breakdown: {
+        rawAtr: roundOrNull(momentumOutcome.breakdown.rawAtr, 3),
+        saturation: momentumOutcome.breakdown.saturation,
+        clamped: roundOrNull(momentumOutcome.breakdown.clamped, 3),
+        afterSqueeze: roundOrNull(momentumOutcome.breakdown.afterSqueeze, 3),
+        multiplier: round(momentumOutcome.breakdown.multiplier, 3),
+      },
     },
     macro: { benchmarks: macroOutcome.benchmarks ?? [] },
     provenance,
