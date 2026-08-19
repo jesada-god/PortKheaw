@@ -234,7 +234,7 @@ function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
               <span className="text-sm font-normal text-slate-400"> / 100</span>
             </span>
           </p>
-          <p className="flex flex-col items-center gap-0.5 border-l border-white/15 pl-4">
+          <p className="flex flex-col items-center gap-0.5 border-l border-white/20 pl-4">
             <span className="inline-flex items-center gap-1 text-[11px] font-normal leading-tight text-slate-400">
               Confidence
               <InfoHint term="optionsSignalConfidence" align="end" />
@@ -539,8 +539,17 @@ function DetailBody({ breakdown, summary }: {
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} term="ttmSqueeze" />
           <Detail label="Squeeze Momentum" value={numberText(squeeze.momentum)} />
+          {/*
+            * The measurement and the scale it was put on, as two rows.
+            *
+            * They were one row while the saturation was 1.0 ATR, because the two
+            * numbers were then identical. At 3.5 they are not, and collapsing
+            * them would print "0.68" beside the words "Momentum ÷ ATR" for a
+            * chart whose momentum is 2.4 ATR.
+            */}
+          <Detail label="Momentum ÷ ATR" value={numberText(squeeze.breakdown.rawAtr)} />
           <Detail
-            label="Momentum ÷ ATR (normalize)"
+            label={`หลัง normalize (เพดาน ${squeeze.breakdown.saturation} ATR)`}
             value={squeeze.normalizedMomentum === null
               ? '—'
               : `${squeeze.normalizedMomentum.toFixed(3)}${squeeze.normalizedMomentumCapped ? ' (capped)' : ''}`}
@@ -550,7 +559,8 @@ function DetailBody({ breakdown, summary }: {
         </dl>
         <p className="mt-2 text-xs leading-5 text-slate-500">
           Squeeze ON คือความผันผวนกำลังบีบตัว ไม่ได้แปลว่าขาขึ้น และ RVOL บอกความคึกคักของการซื้อขาย จึงใช้ยืนยันทิศทางเดิมเท่านั้น ไม่สร้างทิศทางใหม่
-          {squeeze.normalizedMomentumCapped && ' · ค่า Momentum ÷ ATR จริงเกิน 1 จึงถูกจำกัดไว้ที่ 1 (capped) ตัวเลขที่แสดงคือค่าหลังจำกัดแล้ว'}
+          {squeeze.normalizedMomentumCapped
+            && ` · ค่า Momentum ÷ ATR จริงเกินเพดาน ${squeeze.breakdown.saturation} ATR จึงคิดเท่าเพดาน (capped) ค่าหลัง normalize ที่แสดงคือ 1 เต็ม`}
         </p>
         <p className="mt-1 text-xs leading-5 text-slate-500">
           ระดับการยืนยันจาก RVOL เป็นเส้นโค้งต่อเนื่องรอบ 1.00× ไม่ใช่การกระโดดเป็นขั้น RVOL 1.00× คือ 50%

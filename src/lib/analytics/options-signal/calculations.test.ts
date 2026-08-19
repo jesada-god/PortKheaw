@@ -125,10 +125,16 @@ describe('factor scoring', () => {
   });
 
   it('marks momentum partial (never zero) when RVOL is unavailable', () => {
-    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 2, atr: 2, relativeVolume: null });
+    const config = OPTIONS_SIGNAL_CONFIG.momentum;
+    // A reading that saturates whatever the ceiling is, so what is asserted is
+    // the unconfirmed MULTIPLIER and not the saturation it happens to sit at.
+    const outcome = scoreMomentum({
+      squeeze: 'OFF', squeezeMomentum: config.momentumAtrSaturation * 2, atr: 1, relativeVolume: null,
+    });
     expect(outcome.partial).toBe(true);
     expect(outcome.confirmation).toBeNull();
-    expect(outcome.normalized).toBeCloseTo(OPTIONS_SIGNAL_CONFIG.momentum.unconfirmedMultiplier, 6);
+    expect(outcome.breakdown.multiplier).toBe(config.unconfirmedMultiplier);
+    expect(outcome.normalized).toBeCloseTo(config.unconfirmedMultiplier, 6);
   });
 
   it('prints a breakdown that multiplies back out to the points it published', () => {
@@ -136,33 +142,48 @@ describe('factor scoring', () => {
      * The reported case: "ไม่มี Squeeze · RVOL 0.92× · ยืนยัน 38%" printed beside
      * +19 of a possible 25. Nothing in those words accounts for 76% of the full
      * weight, and the missing term was a momentum of 3.19 ATR clamped to 1.00.
-     * The clamp is not an edge case — across the 30 regression tickers it fires
-     * on 22 — so it has to be in the sentence, and the sentence has to be
-     * checkable by hand.
+     *
+     * The clamp was not an edge case — at a 1.0 ATR ceiling it fired on 22 of
+     * the 30 regression tickers, which is what drove the ceiling out to 3.5 —
+     * and at 3.5 it still fires on 4 of them. So it stays in the sentence, and
+     * the sentence stays checkable by hand.
      */
-    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 3.19, atr: 1, relativeVolume: 0.92 });
-    const { rawAtr, saturation, clamped, afterSqueeze, multiplier } = outcome.breakdown;
+    const saturation = OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation;
+    // Comfortably past the ceiling whatever the ceiling is set to, so this test
+    // keeps testing the CLAMP rather than one particular number.
+    const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: saturation * 2, atr: 1, relativeVolume: 0.92 });
+    const { rawAtr, clamped, afterSqueeze, multiplier } = outcome.breakdown;
 
-    expect(rawAtr).toBeCloseTo(3.19, 6);
-    expect(clamped).toBe(saturation);
+    /*
+     * `rawAtr` is the reading in ATR, and `clamped` is that reading placed on the
+     * factor's own [-1, 1] scale. They were the same number while the saturation
+     * was 1.0 ATR; at 3.5 they are not, and the sentence prints the first while
+     * the arithmetic uses the second.
+     */
+    expect(rawAtr).toBeCloseTo(saturation * 2, 6);
+    expect(outcome.breakdown.saturation).toBe(saturation);
+    expect(clamped).toBe(1);
     expect(afterSqueeze).toBe(clamped);
     expect(outcome.normalizedMomentumCapped).toBe(true);
     // The published value IS the product of the terms shown, with nothing hidden.
     expect(outcome.normalized).toBeCloseTo((afterSqueeze as number) * multiplier, 6);
     expect(outcome.normalized! * OPTIONS_SIGNAL_WEIGHTS.momentum).toBeCloseTo(18.8, 1);
 
-    // And the reader is told the ceiling was hit, with the raw reading beside it.
-    expect(outcome.detail).toContain('3.19 ATR');
-    expect(outcome.detail).toContain('เกินเพดาน');
+    // And the reader is told the ceiling was hit, in ATR, with the raw reading
+    // beside it — both in the units the word "ATR" in the sentence refers to.
+    expect(outcome.detail).toContain(`${saturation * 2} ATR`);
+    expect(outcome.detail).toContain(`เกินเพดาน ${saturation} ATR`);
     expect(outcome.detail).toContain('RVOL 0.92');
   });
 
   it('says nothing about a ceiling it did not hit', () => {
     const outcome = scoreMomentum({ squeeze: 'OFF', squeezeMomentum: 0.5, atr: 1, relativeVolume: 1.2 });
+    const saturation = OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation;
     expect(outcome.normalizedMomentumCapped).toBe(false);
     expect(outcome.detail).not.toContain('เกินเพดาน');
     expect(outcome.detail).toContain('0.5 ATR');
-    expect(outcome.normalized).toBeCloseTo(0.5 * outcome.breakdown.multiplier, 6);
+    expect(outcome.breakdown.rawAtr).toBeCloseTo(0.5, 6);
+    expect(outcome.normalized).toBeCloseTo(0.5 / saturation * outcome.breakdown.multiplier, 6);
   });
 
   it('keeps TTM momentum and the EMA stack as two separate measurements', () => {

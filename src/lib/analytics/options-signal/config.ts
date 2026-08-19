@@ -16,8 +16,12 @@
  * Bump on ANY change to a number below, or to the arithmetic that reads them.
  * Every history record carries it, so a row recorded under an older model can
  * never be silently compared against one recorded under a newer one.
+ *
+ * The suffix letter exists because two changes can land on one day and a date
+ * alone would then describe two different models. `2026.08.19b` is the momentum
+ * saturation widening from 1.0 to 3.5 ATR; `2026.08.19` is everything before it.
  */
-export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19';
+export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19b';
 
 export const OPTIONS_SIGNAL_WEIGHTS = {
   macro: 15,
@@ -87,8 +91,42 @@ export const OPTIONS_SIGNAL_CONFIG = {
     /**
      * |TTM momentum| / ATR14 at which the momentum factor saturates. Normalizing
      * by ATR keeps a $400 and a $4 stock on the same scale.
+     *
+     * It used to be 1.0, which is the same defect the Risk/Reward tilt band had
+     * before it was widened to `tiltSaturationRatio: 4.5`: a ceiling set inside
+     * the ordinary range of the thing being measured, so the number published
+     * was the ceiling and not the measurement. Measured across the 30 regression
+     * tickers on 2026-08-19, |momentum ÷ ATR14| ran:
+     *
+     *     min 0.22 · p10 0.60 · p25 0.93 · MEDIAN 1.78 · p75 2.69 · p90 3.62 · max 5.39
+     *
+     * The median symbol was 78% ABOVE the old ceiling. 22 of 30 (73%) saturated,
+     * so for three symbols in four the factor could not tell a 1.1 from a 5.4 —
+     * and the card printed +19 of a possible 25 for both.
+     *
+     * 3.5 is the measured p90, rounded down to a value that can be written in a
+     * sentence. Nine symbols in ten are now MEASURED and the tenth is genuinely
+     * extreme, which is what a saturation point is supposed to mean. Candidates
+     * were compared over the same 30 symbols by re-running the shipped engine:
+     *
+     *     saturation   capped   labels changed   PRIME
+     *     1.0 (old)    73%      —                7
+     *     2.5          27%      2 (7%)           7
+     *     3.5 (new)    13%      2 (7%)           7
+     *     4.5           7%      2 (7%)           7
+     *     5.0           3%      3 (10%)          6
+     *
+     * 4.5 buys six more percentage points of headroom for no further resolution
+     * — only ROKU at 3.54 sits between them — and pushes full weight further out
+     * of reach for no measured benefit. 5.0 starts costing PRIME membership.
+     *
+     * Widening cuts BOTH ways on purpose, exactly as it did for Risk/Reward: a
+     * full ±25 now needs 3.5 ATR of momentum rather than 1.0, so the factor gives
+     * up some of its ability to shout in exchange for being able to speak. It
+     * stays an ODD function of the momentum — the clamp is symmetric about zero —
+     * so the put and call mirrors remain exact.
      */
-    momentumAtrSaturation: 1,
+    momentumAtrSaturation: 3.5,
     /** A squeeze that is still ON has not chosen a side; its conviction is halved. */
     squeezeOnDamping: 0.5,
     /** Bars after a squeeze releases during which the release still counts as "fired". */

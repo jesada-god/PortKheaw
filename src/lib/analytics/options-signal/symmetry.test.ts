@@ -69,7 +69,8 @@ const screenshotCase: OptionsSignalInput = {
   }),
   // above both EMAs but EMA20 still under EMA50 -> votes [1, 1, -1] -> 1/3 -> 8 points
   trend: available<TrendInput>({ close: 110, ema20: 105, ema50: 106 }),
-  // 1.6/2 = 0.8, scaled by an RVOL of 0.915 -> 0.6 -> 15 points
+  // 1.6/2 = 0.8 ATR, normalized against the 3.5 ATR ceiling -> 0.229, scaled by
+  // an RVOL of 0.915 -> 0.171 -> 4 points. It was 15 while the ceiling was 1.0.
   momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 1.6, atr: 2, relativeVolume: 0.915 }),
   // the 1.51 from the card, saturated bearish -> -10 points
   sentiment: available<SentimentInput>({
@@ -94,7 +95,17 @@ describe('screenshot-baseline', () => {
     // The four factors that decide which side Risk/Reward is measured on.
     expect(diagnostics.factors.macro.points).toBe(15);
     expect(diagnostics.factors.trend.points).toBe(8);
-    expect(diagnostics.factors.momentum.points).toBe(15);
+    /*
+     * WIDENED MOMENTUM SATURATION (1.0 ATR -> 3.5 ATR): 15 -> 4.
+     *
+     * This chart's momentum is 0.8 ATR. The old ceiling of 1.0 sat inside the
+     * ordinary range of the measurement — the median of the 30 regression
+     * tickers is 1.78 ATR and 22 of them saturated — so a distinctly
+     * below-average reading was scoring 60% of the factor's full weight. At the
+     * measured p90 of 3.5 it scores 4 of 25, which is what a below-average
+     * reading is worth.
+     */
+    expect(diagnostics.factors.momentum.points).toBe(4);
     expect(diagnostics.factors.sentiment.points).toBe(-10);
 
     /*
@@ -122,27 +133,35 @@ describe('screenshot-baseline', () => {
     expect(diagnostics.factors.riskReward.points)
       .toBeGreaterThan(-OPTIONS_SIGNAL_WEIGHTS.riskReward);
 
-    expect(diagnostics.rawDirectionPoints).toBe(14);
+    expect(diagnostics.rawDirectionPoints).toBe(3);
     expect(diagnostics.availableWeight).toBe(90);
-    expect(diagnostics.directionScore0to100).toBe(58);
-    expect(diagnostics.scoreFormula).toBe('(+14 + 90) ÷ (2 × 90) × 100 = 58');
+    expect(diagnostics.directionScore0to100).toBe(52);
+    expect(diagnostics.scoreFormula).toBe('(+3 + 90) ÷ (2 × 90) × 100 = 52');
 
     // THE INVARIANT: the answer this case gives must not move. The evidence is
-    // genuinely mixed and SIDEWAYS is the honest label for it.
+    // genuinely mixed and SIDEWAYS is the honest label for it. Two retunes have
+    // now passed through this fixture and neither changed the answer, which is
+    // the property the invariant was written to protect.
     expect(result.signalType).toBe('SIDEWAYS');
     expect(result.underlyingBias).toBe('neutral');
 
-    // Agreement is 23%, and the old weighted average published 62% on this.
-    expect(diagnostics.agreement).toBeCloseTo(0.2258, 4);
+    /*
+     * Agreement fell from 23% to 6% because the momentum retune took the summed
+     * points from +14 to +3 while the absolute total barely moved. That is not
+     * the model losing its nerve — it is the model finally saying out loud that
+     * a chart with +15 macro, -10 sentiment and -14 geometry is a coin flip.
+     * The old weighted average published 62% confidence on exactly this shape.
+     */
+    expect(diagnostics.agreement).toBeCloseTo(0.0588, 4);
     expect(diagnostics.coverage).toBe(1);
-    expect(diagnostics.evidenceStrength).toBeCloseTo(0.6889, 4);
-    expect(result.confidenceScore).toBe(40);
+    expect(diagnostics.evidenceStrength).toBeCloseTo(0.5667, 4);
+    expect(result.confidenceScore).toBe(18);
     expect(result.confidenceScore).toBeLessThan(45);
 
     // And both surfaces still read the one field.
     const projected = projectOptionsSignal(result, { includeBreakdown: true });
-    expect(projected.summary.directionScore0to100).toBe(58);
-    expect(projected.breakdown?.diagnostics.directionScore0to100).toBe(58);
+    expect(projected.summary.directionScore0to100).toBe(52);
+    expect(projected.breakdown?.diagnostics.directionScore0to100).toBe(52);
   });
 
   it('shows the damping is unreachable here because the lead is not neutral', () => {
@@ -178,17 +197,25 @@ describe('screenshot-baseline', () => {
     expect(gap).toBeGreaterThanOrEqual(3);
   });
 
-  it('records that only confidence moved, not the direction score', () => {
-    // The old model scored this identically on direction: same factors, same
-    // call-side geometry, same raw 13 of 90. The rework changed what the card
-    // CLAIMS about it, not where it points.
+  it('records how far the geometric mean sits below the old weighted average', () => {
+    /*
+     * The Risk/Reward rework left this chart's direction where it was and only
+     * changed what the card CLAIMED about it. The momentum retune since then did
+     * move the direction — 58 to 52 — because a 0.8 ATR momentum stopped being
+     * scored as though it were a 3.5 ATR one. What has never moved is the label.
+     *
+     * The legacy weighted average is recomputed here from the CURRENT terms, so
+     * the gap it shows is the gap the product still closes on this shape today:
+     * a coin-flip chart that the old arithmetic would call better than half sure.
+     */
     const result = calculateOptionsSignal(screenshotCase);
-    expect(result.diagnostics.directionScore0to100).toBe(58);
+    expect(result.diagnostics.directionScore0to100).toBe(52);
     const legacyConfidence = Math.round(
       (0.3 * 1 + 0.35 * result.diagnostics.agreement + 0.35 * result.diagnostics.evidenceStrength) * 100,
     );
-    expect(legacyConfidence).toBe(62);
-    expect(result.confidenceScore).toBe(40);
+    expect(legacyConfidence).toBe(52);
+    expect(result.confidenceScore).toBe(18);
+    expect(result.confidenceScore).toBeLessThan(legacyConfidence);
   });
 });
 
