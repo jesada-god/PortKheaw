@@ -54,7 +54,7 @@ const summary: OptionsSignalDto['summary'] = {
   finalizedCandles: 250,
   status: 'available',
   signalType: 'CALL_WATCH',
-  score: 82,
+  directionScore0to100: 82,
   scoreFormula: '(+64 + 100) ÷ (2 × 100) × 100 = 82',
   confidenceScore: 74,
   underlyingBias: 'bullish',
@@ -90,11 +90,10 @@ const eliteSignal: OptionsSignalDto = {
         sentiment: factor('sentiment', 8, 15, 'Put/Call OI = 0.72'),
         riskReward: factor('riskReward', 12, 20, 'Call R:R = 2.4'),
       },
-      directionScore: 64,
+      rawDirectionPoints: 64,
       availableWeight: 100,
       totalWeight: 100,
-      normalizedScore: 64,
-      score: 82,
+      directionScore0to100: 82,
       scoreFormula: '(+64 + 100) ÷ (2 × 100) × 100 = 82',
       coverage: 1,
       agreement: 0.86,
@@ -448,7 +447,7 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     mocks.requestOptionsSignal.mockResolvedValue({
       status: 'ready',
       signal: {
-        summary: { ...summary, score: null, scoreFormula: null, asOf: null, liquidityGrade: null },
+        summary: { ...summary, directionScore0to100: null, scoreFormula: null, asOf: null, liquidityGrade: null },
         breakdown: null,
       },
     });

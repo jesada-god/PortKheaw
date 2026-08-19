@@ -153,7 +153,7 @@ function legacyReading(input: OptionsSignalInput): ModelReading {
     return { score: null, confidence: 0, signalType: null, bias: null, agreement: 0 };
   }
 
-  const normalizedScore = Math.round(clamp(directionScore / availableWeight * 100, -100, 100));
+  const legacyBalance = Math.round(clamp(directionScore / availableWeight * 100, -100, 100));
   const coverage = availableWeight / OPTIONS_SIGNAL_TOTAL_WEIGHT;
   const agreement = absoluteScore > 0 ? Math.abs(directionScore) / absoluteScore : 0;
   const strength = clamp(absoluteScore / availableWeight, 0, 1);
@@ -162,9 +162,9 @@ function legacyReading(input: OptionsSignalInput): ModelReading {
   const confidenceBase = 0.3 * coverage + 0.35 * agreement + 0.35 * strength;
   const confidence = Math.round(clamp(confidenceBase - current.diagnostics.penaltyTotal, 0, 1) * 100);
 
-  const bias: UnderlyingBias = normalizedScore >= OPTIONS_SIGNAL_CONFIG.direction.bullish
+  const bias: UnderlyingBias = legacyBalance >= OPTIONS_SIGNAL_CONFIG.direction.bullish
     ? 'bullish'
-    : normalizedScore <= OPTIONS_SIGNAL_CONFIG.direction.bearish ? 'bearish' : 'neutral';
+    : legacyBalance <= OPTIONS_SIGNAL_CONFIG.direction.bearish ? 'bearish' : 'neutral';
 
   const quality = OPTIONS_SIGNAL_CONFIG.quality;
   const scoreDrivenBlockers = new Set([
@@ -179,12 +179,12 @@ function legacyReading(input: OptionsSignalInput): ModelReading {
   const primeEligible = structuralBlockers.length === 0
     && bias !== 'neutral'
     && !trendOpposes
-    && Math.abs(normalizedScore) >= quality.primeScore
+    && Math.abs(legacyBalance) >= quality.primeScore
     && confidence >= quality.primeConfidence
     && agreement >= quality.primeAgreement;
 
   let signalType: OptionsSignalType;
-  if (bias === 'neutral' || Math.abs(normalizedScore) < quality.watchScore) signalType = 'SIDEWAYS';
+  if (bias === 'neutral' || Math.abs(legacyBalance) < quality.watchScore) signalType = 'SIDEWAYS';
   else if (primeEligible) signalType = bias === 'bullish' ? 'PRIME_CALL' : 'PRIME_PUT';
   else signalType = bias === 'bullish' ? 'CALL_WATCH' : 'PUT_WATCH';
 
@@ -297,7 +297,7 @@ async function main() {
         symbol, cap,
         status: next.status,
         oldScore: previous.score,
-        newScore: next.status === 'available' ? next.score : null,
+        newScore: next.status === 'available' ? next.directionScore0to100 : null,
         oldConfidence: previous.confidence,
         newConfidence: next.confidenceScore,
         oldType: previous.signalType,

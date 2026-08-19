@@ -85,7 +85,7 @@ describe('signal history stores every computation with its inputs and config ver
     const record = buildSignalHistoryRecord(source, result, '2026-08-19T02:00:00.000Z');
     expect(record.configVersion).toBe(OPTIONS_SIGNAL_CONFIG_VERSION);
     expect(record.input).toEqual(source);
-    expect(record.score).toBe(result.status === 'available' ? result.score : null);
+    expect(record.score).toBe(result.status === 'available' ? result.directionScore0to100 : null);
     expect(record.iv).toBe(0.24);
     expect(record.putCallOi).toBe(0.9);
     // The finalized-candle date, never the write date: two readings either side

@@ -105,14 +105,14 @@ describe('A · the card and the modal show the same score, always', () => {
     const result = calculateOptionsSignal(input());
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
-    expect(result.score).toBe(result.diagnostics.score);
+    expect(result.directionScore0to100).toBe(result.diagnostics.directionScore0to100);
 
     // The card reads the SUMMARY (a Pro reader has no breakdown at all); the
     // modal reads the DIAGNOSTICS. Both projections must carry the same number.
     const elite = projectOptionsSignal(result, { includeBreakdown: true });
     const pro = projectOptionsSignal(result, { includeBreakdown: false });
-    expect(pro.summary.score).toBe(elite.summary.score);
-    expect(elite.summary.score).toBe(elite.breakdown?.diagnostics.score);
+    expect(pro.summary.directionScore0to100).toBe(elite.summary.directionScore0to100);
+    expect(elite.summary.directionScore0to100).toBe(elite.breakdown?.diagnostics.directionScore0to100);
     expect(pro.breakdown).toBeNull();
   });
 
@@ -128,7 +128,7 @@ describe('A · the card and the modal show the same score, always', () => {
       const result = calculateOptionsSignal(candidate);
       if (result.status !== 'available') continue;
       const projected = projectOptionsSignal(result, { includeBreakdown: true });
-      expect(projected.summary.score).toBe(projected.breakdown?.diagnostics.score);
+      expect(projected.summary.directionScore0to100).toBe(projected.breakdown?.diagnostics.directionScore0to100);
       expect(projected.summary.scoreFormula).toBe(projected.breakdown?.diagnostics.scoreFormula);
     }
   });
@@ -145,9 +145,9 @@ describe('A · the card and the modal show the same score, always', () => {
   it('writes the formula out of the SAME numbers the total row shows', () => {
     const result = calculateOptionsSignal(input());
     if (result.status !== 'available') return;
-    const { directionScore, availableWeight, scoreFormula, score } = result.diagnostics;
-    expect(scoreFormula).toBe(directionScoreFormula(directionScore, availableWeight));
-    expect(scoreFormula.endsWith(`= ${score}`)).toBe(true);
+    const { rawDirectionPoints, availableWeight, scoreFormula, directionScore0to100 } = result.diagnostics;
+    expect(scoreFormula).toBe(directionScoreFormula(rawDirectionPoints, availableWeight));
+    expect(scoreFormula.endsWith(`= ${directionScore0to100}`)).toBe(true);
   });
 });
 
@@ -252,21 +252,20 @@ describe('the published score is built from post-damping points over live weight
     // would be -15 and the published score 42 instead of 48.
     expect(diagnostics.factors.riskReward.points).toBe(-4);
     expect(diagnostics.factors.riskReward.normalized).toBe(-0.25);
-    expect(diagnostics.directionScore).toBe(-4);
+    expect(diagnostics.rawDirectionPoints).toBe(-4);
     expect(diagnostics.availableWeight).toBe(90);
-    expect(diagnostics.normalizedScore).toBe(-4);
-    expect(diagnostics.score).toBe(48);
+    expect(diagnostics.directionScore0to100).toBe(48);
     expect(diagnostics.scoreFormula).toBe('(-4 + 90) ÷ (2 × 90) × 100 = 48');
 
     // The counterfactual, stated so a regression to the undamped value is loud.
     expect(directionScoreOutOf100(-15, 90)).toBe(42);
-    expect(diagnostics.score).not.toBe(42);
+    expect(diagnostics.directionScore0to100).not.toBe(42);
   });
 
   it('agrees with the standalone converter on the engine’s own numbers', () => {
     const result = calculateOptionsSignal(sideways());
-    const { directionScore, availableWeight, score } = result.diagnostics;
-    expect(score).toBe(directionScoreOutOf100(directionScore, availableWeight));
+    const { rawDirectionPoints, availableWeight, directionScore0to100 } = result.diagnostics;
+    expect(directionScore0to100).toBe(directionScoreOutOf100(rawDirectionPoints, availableWeight));
   });
 
   it('shrinks the divisor by the weight of every factor that had no data', () => {
@@ -288,10 +287,11 @@ describe('the published score is built from post-damping points over live weight
     expect(noSentimentOrMacro.diagnostics.availableWeight).toBe(65);
   });
 
-  it('moves the NORMALIZED score too, not only the raw sum', () => {
+  it('divides by the shrinking weight, and prints the divisor it used', () => {
     // The raw sum is identical in all three (the dropped factors scored 0), so
-    // this is the assertion that proves the DIVISOR shrank: a fixed 90 would
-    // leave the normalized score pinned and drag every thin signal toward 50.
+    // the DIVISOR is the only thing that can move — and it is the number the
+    // formula has to name, or a reader doing the arithmetic gets a different
+    // answer from the one printed beside it.
     const full = calculateOptionsSignal(sideways());
     const noSentiment = calculateOptionsSignal(sideways({
       sentiment: missing<SentimentInput>('ไม่มี Open Interest'),
@@ -301,13 +301,93 @@ describe('the published score is built from post-damping points over live weight
       macro: missing<MacroInput>('ไม่มีดัชนีอ้างอิง'),
     }));
 
-    expect(full.diagnostics.directionScore).toBe(-4);
-    expect(noSentiment.diagnostics.directionScore).toBe(-4);
-    expect(noSentimentOrMacro.diagnostics.directionScore).toBe(-4);
+    for (const result of [full, noSentiment, noSentimentOrMacro]) {
+      expect(result.diagnostics.rawDirectionPoints).toBe(-4);
+    }
+    expect(full.diagnostics.availableWeight).toBe(90);
+    expect(noSentiment.diagnostics.availableWeight).toBe(80);
+    expect(noSentimentOrMacro.diagnostics.availableWeight).toBe(65);
 
-    expect(full.diagnostics.normalizedScore).toBe(-4);
-    expect(noSentiment.diagnostics.normalizedScore).toBe(-5);
-    expect(noSentimentOrMacro.diagnostics.normalizedScore).toBe(-6);
+    expect(full.diagnostics.scoreFormula).toBe('(-4 + 90) ÷ (2 × 90) × 100 = 48');
+    expect(noSentiment.diagnostics.scoreFormula).toBe('(-4 + 80) ÷ (2 × 80) × 100 = 48');
+    expect(noSentimentOrMacro.diagnostics.scoreFormula).toBe('(-4 + 65) ÷ (2 × 65) × 100 = 47');
+  });
+
+  /**
+   * The strongest form of the guarantee: do the printed arithmetic and check it
+   * lands on the printed answer. A formula is a promise to the reader that they
+   * can check the number themselves, and this is that check, run.
+   */
+  it('produces a formula whose own arithmetic lands on the number beside it', () => {
+    const cases = [
+      ['full coverage', sideways()],
+      ['one factor missing', sideways({ sentiment: missing<SentimentInput>('ไม่มี Open Interest') })],
+      ['two factors missing', sideways({
+        sentiment: missing<SentimentInput>('ไม่มี Open Interest'),
+        macro: missing<MacroInput>('ไม่มีดัชนีอ้างอิง'),
+      })],
+      ['a bullish signal', input()],
+      ['a bearish signal', input({
+        macro: available(bearishMacro),
+        trend: available(bearishTrend),
+        momentum: available<MomentumInput>({
+          squeeze: 'FIRED_BEARISH', squeezeMomentum: -2.4, atr: 2, relativeVolume: 1.8,
+        }),
+      })],
+    ] as const;
+
+    for (const [label, candidate] of cases) {
+      const result = calculateOptionsSignal(candidate);
+      if (result.status !== 'available') throw new Error(`${label}: expected a signal`);
+      const { rawDirectionPoints, availableWeight, directionScore0to100, scoreFormula } = result.diagnostics;
+
+      // Read the numbers back out of the string the reader is shown.
+      const parsed = /^\(([+-]?\d+) \+ (\d+)\) ÷ \(2 × (\d+)\) × 100 = (\d+)$/.exec(scoreFormula);
+      expect(parsed, `${label}: formula did not parse -> ${scoreFormula}`).not.toBeNull();
+      const [, printedRaw, printedMaxAbs, printedDivisorMaxAbs, printedAnswer] = parsed as RegExpExecArray;
+
+      // Every number in the sentence is one of the numbers shown above it.
+      expect(Number(printedRaw), label).toBe(rawDirectionPoints);
+      expect(Number(printedMaxAbs), label).toBe(availableWeight);
+      expect(Number(printedDivisorMaxAbs), label).toBe(availableWeight);
+
+      // And doing the sum by hand gives the answer printed at the end of it,
+      // which is the same field the card renders.
+      const byHand = Math.round(
+        (Number(printedRaw) + Number(printedMaxAbs)) / (2 * Number(printedDivisorMaxAbs)) * 100,
+      );
+      expect(byHand, `${label}: hand arithmetic disagreed with the printed answer`)
+        .toBe(Number(printedAnswer));
+      expect(Number(printedAnswer), label).toBe(directionScore0to100);
+
+      // The card and the dialog read this same field, so agreeing with it is
+      // agreeing with both surfaces.
+      const projected = projectOptionsSignal(result, { includeBreakdown: true });
+      expect(projected.summary.directionScore0to100, label).toBe(directionScore0to100);
+      expect(projected.breakdown?.diagnostics.directionScore0to100, label).toBe(directionScore0to100);
+      expect(projected.summary.scoreFormula, label).toBe(scoreFormula);
+    }
+  });
+
+  it('never divides by the full model weight when a factor had no data', () => {
+    const thin = calculateOptionsSignal(sideways({
+      sentiment: missing<SentimentInput>('ไม่มี Open Interest'),
+      macro: missing<MacroInput>('ไม่มีดัชนีอ้างอิง'),
+    }));
+    // 65, not 90: the divisor in the sentence is the weight that actually voted.
+    expect(thin.diagnostics.scoreFormula).toContain('2 × 65');
+    expect(thin.diagnostics.scoreFormula).not.toContain('90');
+    expect(thin.diagnostics.availableWeight).toBe(65);
+    expect(thin.diagnostics.totalWeight).toBe(OPTIONS_SIGNAL_TOTAL_WEIGHT);
+  });
+
+  it('publishes no second ruler for a reader to trip over', () => {
+    const diagnostics = calculateOptionsSignal(sideways()).diagnostics as unknown as Record<string, unknown>;
+    // The bipolar figure used to sit here beside the 0-100 one, and the two
+    // disagreed on sight (-5 next to a formula ending in 48). It is internal now.
+    expect('normalizedScore' in diagnostics).toBe(false);
+    expect('directionScore' in diagnostics).toBe(false);
+    expect('score' in diagnostics).toBe(false);
   });
 
   it('moves the published 0-100 score when the shrinking divisor is decisive', () => {
@@ -319,9 +399,9 @@ describe('the published score is built from post-damping points over live weight
 
     const before = calculateOptionsSignal(bullish).diagnostics;
     const after = calculateOptionsSignal(withoutSentiment).diagnostics;
-    expect(before.directionScore).toBe(after.directionScore);
+    expect(before.rawDirectionPoints).toBe(after.rawDirectionPoints);
     expect(after.availableWeight).toBeLessThan(before.availableWeight);
-    expect(after.score).toBeGreaterThan(before.score);
+    expect(after.directionScore0to100).toBeGreaterThan(before.directionScore0to100);
   });
 
   it('prints the divisor it actually used, never the full weight', () => {
@@ -344,8 +424,8 @@ describe('the published score is built from post-damping points over live weight
     for (const candidate of cases) {
       const diagnostics = calculateOptionsSignal(candidate).diagnostics;
       expect(diagnostics.availableWeight).toBeLessThan(OPTIONS_SIGNAL_TOTAL_WEIGHT);
-      expect(diagnostics.score).toBe(
-        directionScoreOutOf100(diagnostics.directionScore, diagnostics.availableWeight),
+      expect(diagnostics.directionScore0to100).toBe(
+        directionScoreOutOf100(diagnostics.rawDirectionPoints, diagnostics.availableWeight),
       );
       expect(diagnostics.scoreFormula.split('÷')[0]).toContain(String(diagnostics.availableWeight));
     }
@@ -420,8 +500,10 @@ describe('a factor without data leaves the denominator, it never scores zero', (
     // which is the whole point: a 0 kept in the denominator would dilute the rest.
     const withZero = calculateOptionsSignal(input());
     const withoutIt = calculateOptionsSignal(input({ sentiment: missing<SentimentInput>('ไม่มี OI') }));
-    expect(withZero.diagnostics.directionScore).toBe(withoutIt.diagnostics.directionScore);
-    expect(withoutIt.diagnostics.normalizedScore).toBeGreaterThan(withZero.diagnostics.normalizedScore);
+    expect(withZero.diagnostics.rawDirectionPoints).toBe(withoutIt.diagnostics.rawDirectionPoints);
+    expect(withoutIt.diagnostics.availableWeight).toBeLessThan(withZero.diagnostics.availableWeight);
+    expect(withoutIt.diagnostics.directionScore0to100)
+      .toBeGreaterThan(withZero.diagnostics.directionScore0to100);
   });
 });
 
@@ -697,7 +779,7 @@ describe('liquidity is graded from real chain numbers, and never scores directio
   it('changes the badge but never the direction score', () => {
     const withLiquid = calculateOptionsSignal(input({ liquidity: available(liquid) }));
     const withThin = calculateOptionsSignal(input({ liquidity: available(thin) }));
-    expect(withLiquid.diagnostics.score).toBe(withThin.diagnostics.score);
+    expect(withLiquid.diagnostics.directionScore0to100).toBe(withThin.diagnostics.directionScore0to100);
     expect(withLiquid.liquidityGrade).toBe('good');
     expect(withThin.liquidityGrade).toBe('thin');
     expect(withThin.suggestedOptionsSetup.warnings.some((warning) => warning.includes('บาง'))).toBe(true);
@@ -770,7 +852,7 @@ describe('a bid-ask spread quoted while the book is shut is not a liquidity grad
     const shut = calculateOptionsSignal(input({
       liquidity: available<LiquidityInput>({ ...thinLookingAfterHours, marketOpenAtCapture: false }),
     }));
-    expect(open.diagnostics.score).toBe(shut.diagnostics.score);
+    expect(open.diagnostics.directionScore0to100).toBe(shut.diagnostics.directionScore0to100);
     expect(open.confidenceScore).toBe(shut.confidenceScore);
   });
 });
@@ -899,9 +981,9 @@ describe('no NaN and no undefined ever reaches the card', () => {
   it('keeps the published score inside 0-100 even with nothing to score', () => {
     const result = calculateOptionsSignal(input({ finalizedCandles: 3 }));
     expect(result.status).toBe('insufficient-data');
-    expect(result.diagnostics.score).toBeGreaterThanOrEqual(0);
-    expect(result.diagnostics.score).toBeLessThanOrEqual(100);
-    expect(result.score).toBeNull();
+    expect(result.diagnostics.directionScore0to100).toBeGreaterThanOrEqual(0);
+    expect(result.diagnostics.directionScore0to100).toBeLessThanOrEqual(100);
+    expect(result.directionScore0to100).toBeNull();
     expect(unrenderable(projectOptionsSignal(result, { includeBreakdown: true }))).toEqual([]);
   });
 });

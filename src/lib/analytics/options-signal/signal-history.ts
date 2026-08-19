@@ -108,7 +108,7 @@ export function buildSignalHistoryRecord(
     status: result.status,
     signalType: result.signalType,
     underlyingBias: result.underlyingBias,
-    score: result.status === 'available' ? result.score : null,
+    score: result.status === 'available' ? result.directionScore0to100 : null,
     confidenceScore: result.confidenceScore,
     coverage: result.diagnostics.coverage,
     agreement: result.diagnostics.agreement,
