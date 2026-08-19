@@ -1295,7 +1295,19 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const provisionalBias = biasFromDirectionBalance(directionBalance(summedPoints, availableWeight));
   const trendOpposition = trendOppositionAgainst(factors.trend, provisionalBias);
   const vetoMultiplier = 1 - config.trendVeto.strength * trendOpposition;
-  const directionScore = summedPoints * vetoMultiplier;
+  /*
+   * Rounded to whole points, like every factor row it is a sum of.
+   *
+   * The multiplication is the only step in the model that can produce a
+   * fraction of a point, and leaving it fractional put the published score and
+   * the published FORMULA half a point apart — the formula printed its own raw
+   * total rounded, then converted that, while the score converted the unrounded
+   * one. On RKLB that read as "= 66" beside a 65. Rounding here is what makes
+   * every printed number on the card the same number.
+   *
+   * `round` is sign-symmetric, so the put and call mirrors are unaffected.
+   */
+  const directionScore = round(summedPoints * vetoMultiplier, 0);
   const trendVetoApplied = trendOpposition > 0 && vetoMultiplier < 1;
 
   const directionScore0to100 = directionScoreOutOf100(directionScore, availableWeight);

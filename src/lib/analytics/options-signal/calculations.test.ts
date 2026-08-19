@@ -561,7 +561,25 @@ describe('the trend veto', () => {
       .toBe(Math.round(veto.pointsBeforeVeto * veto.multiplier));
     // And the step is shown, not folded away.
     expect(result.diagnostics.scoreFormula).toContain('แนวโน้มสวนทาง');
+    /*
+     * The formula ENDS at the score the card prints. It once did not: the
+     * multiplication is the only step that can produce a fraction of a point,
+     * and while it stayed fractional the formula converted its own rounded total
+     * while the score converted the unrounded one, printing "= 66" beside a 65.
+     */
+    expect(result.diagnostics.scoreFormula.trim())
+      .toMatch(new RegExp(`= ${result.directionScore0to100}$`));
     expect(result.reasoning.some((reason) => reason.id === 'trend-veto')).toBe(true);
+  });
+
+  it('ends its formula on the score the card prints, veto or no veto', () => {
+    for (const trend of [bullishTrend, bearishTrend, { close: 100, ema20: 105, ema50: 104 }]) {
+      const result = calculateOptionsSignal(input({ trend: available<TrendInput>(trend) }));
+      if (result.status !== 'available') continue;
+      expect(result.diagnostics.scoreFormula.trim(), JSON.stringify(trend))
+        .toMatch(new RegExp(`= ${result.directionScore0to100}$`));
+      expect(result.diagnostics.directionScore0to100).toBe(result.directionScore0to100);
+    }
   });
 
   it('can only move a score toward neutral, never across it', () => {
