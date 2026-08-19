@@ -968,3 +968,59 @@ strength ≥ 24/100 · แล้ว Options Signal หยิบ**ตัวที
 เพราะฉะนั้น **downside 12.53% ในภาพคือแนวจริง ไม่ใช่ artefact ของ lookback**
 งานค้างเรื่อง cap lookback / เพิ่มน้ำหนัก recency ยังคงอยู่ (ROKU 1650 วัน)
 แต่ไม่ใช่สาเหตุของเคสนี้ และไม่ควรถูกใช้เป็นเหตุผลในการแก้ R:R
+
+---
+
+## งานค้าง — สองฟิลด์ที่ต้องเข้า payload ก่อนแปล reason ได้ครบ
+
+**สถานะ:** ค้างโดยตั้งใจ ไม่ใช่ลืม · เปิดไว้ตอนทำ `REASON_COPY`
+(`src/components/analytics/market-signal/reason-copy.ts`)
+
+`REASON_COPY` แปล reason ของ engine เป็นภาษาที่มือใหม่อ่านได้ โดย**ประกอบประโยคใหม่
+จากฟิลด์ชุดเดียวกับที่ engine ใช้** ไม่ได้ parse `reason.text` ดังนั้น id ไหนที่ต้องใช้
+ข้อมูลซึ่ง payload ไม่ได้ส่งออกมา จะแปลไม่ได้โดยไม่ทำข้อมูลหาย และจะ fallback ไปใช้
+ประโยคเดิมของ engine แทน (ดู `REASON_IDS_WITHOUT_COPY`)
+
+### ที่ค้างอยู่ตอนนี้: `macd-histogram`
+
+ประโยค engine: `MACD Histogram เป็นบวกและขยายตัว` / `แต่หดตัว`
+
+ท่อน "ขยายตัว / หดตัว" มาจากการเทียบกับ `previousHistogram` (ค่าแท่งก่อนหน้า)
+ซึ่ง **ไม่มีใน `MarketSignalMetrics`** — มีแค่ `macdHistogram` ของแท่งล่าสุด
+
+**วัดแล้วว่าเติมไม่ได้ตอนนี้:** ลองเติม `histogramExpanding: boolean | null`
+เข้า `MarketSignalMetrics` แล้วรัน `npm run snapshot:signal -- --check --symbols=IREN`
+ผลคือ
+
+```
+IREN     DIFF
+       "emaCompressionRatio": 0.061621,
+  -    "keltnerLower": 34.809382961249554,
+  +    "histogramExpanding": true,
+GATE FAILED · 1 symbol(s) differ
+```
+
+`scripts/snapshot-signal.ts` serialize `MarketSignalResult` **ทั้งก้อน** ผ่าน
+`stableStringify(result)` — คีย์ใหม่ใต้ `metrics` จึงเพิ่มบรรทัดใน JSON และทำให้
+`--check` แตกทุก symbol
+
+**ทางแก้เมื่อจะทำจริง** (ต้องทำพร้อมกันในคอมมิตเดียว):
+1. เติม `histogramExpanding: boolean | null` ใน `MarketSignalMetrics`
+   (`types.ts`) และใน `emptyMetrics()` (`calculations.ts`)
+2. คำนวณจาก `previousHistogram` ที่ `calculations.ts` มีอยู่แล้วในสโคปนั้น
+3. `npm run snapshot:signal` (เขียนทับ golden) แล้ว **review diff ให้เห็นว่ามีแต่
+   คีย์ใหม่** ไม่มีค่าเดิมตัวไหนขยับ — นี่คือขั้นที่ห้ามข้าม
+4. เพิ่ม entry `macd-histogram` ใน `REASON_COPY` และลบออกจาก
+   `REASON_IDS_WITHOUT_COPY` (test บังคับว่าห้ามอยู่ทั้งสองที่)
+
+### ที่แก้ได้แล้วโดยไม่ต้องแตะ payload: `bullish/bearish-divergence`
+
+เคยคิดว่าต้องใช้ `divergenceStrength` ซึ่งไม่อยู่ใน payload **แต่ไม่ต้อง** —
+engine ต่อท้ายวงเล็บ "จึงถ่วงน้ำหนักต่ำ" เมื่อ `gateOn && strength < minimumFlagWeight`
+และ gate chip ออกเมื่อ `!gateOn || strength >= minimumFlagWeight` ซึ่งเป็น
+**เงื่อนไขตรงข้ามกันพอดี** ดังนั้น
+
+> มี `result.gate` **และ** ไม่มี flag `${direction}_divergence` ⟺ ตัวที่ถูกถ่วงน้ำหนักต่ำ
+
+UI จึงสร้างเงื่อนไขขึ้นใหม่ได้ครบ ไม่มีข้อมูลหาย ไม่ต้อง parse string
+มี test คุมไว้แล้ว — ถ้าวันหนึ่ง engine แยกสองเงื่อนไขนี้ออกจากกัน test จะแดง

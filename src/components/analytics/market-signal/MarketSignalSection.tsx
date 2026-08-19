@@ -10,6 +10,7 @@ import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
+import { reasonContextFor, reasonText, type ReasonBaseContext } from './reason-copy';
 
 const DISCLAIMER = 'Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย';
 
@@ -345,6 +346,9 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
    * so a reader with every flag off sees the pixels they saw yesterday.
    */
   const chipsOrdered = Boolean(result.gate ?? result.zones);
+  /* Gathered once: every reason row reads the same payload, and rebuilding it
+     per row would be the same object seven times. */
+  const reasonContext = reasonContextFor(result);
 
   return (
     <section aria-label="Technical Outlook" data-state={result.state} className={`rounded-2xl border p-5 ${presentation.tone}`}>
@@ -559,8 +563,8 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             </div>
           </section>
 
-          <ReasonList title="4. ปัจจัยสนับสนุน" reasons={supporting} empty="ยังไม่มีปัจจัยสนับสนุนเด่นที่ผ่านกฎ" />
-          <ReasonList title="5. ปัจจัยที่ต้องระวัง" reasons={cautions} empty="ยังไม่มีปัจจัยขัดแย้งเด่นที่ผ่านกฎ" />
+          <ReasonList title="4. ปัจจัยสนับสนุน" reasons={supporting} empty="ยังไม่มีปัจจัยสนับสนุนเด่นที่ผ่านกฎ" context={reasonContext} />
+          <ReasonList title="5. ปัจจัยที่ต้องระวัง" reasons={cautions} empty="ยังไม่มีปัจจัยขัดแย้งเด่นที่ผ่านกฎ" context={reasonContext} />
           <TextList title="6. สิ่งที่ยังไม่ยืนยัน" items={unconfirmed} empty="ตัวชี้วัดหลักพร้อมและยังไม่มีคำเตือนเพิ่มเติม" />
 
           {result.zones ? (
@@ -2338,13 +2342,32 @@ function ActionableRows({ zones, actionable, size }: {
   );
 }
 
-function ReasonList({ title, reasons, empty }: { title: string; reasons: MarketSignalResult['reasons']; empty: string }) {
+/**
+ * The reasons, in the card's own words.
+ *
+ * `reason.text` is the engine's sentence and it stays in the payload untouched;
+ * `reasonText` is a lookup over it that rebuilds the same fact from the same
+ * fields in the vocabulary the rest of this card uses. An id with no entry
+ * falls through to `reason.text`, so a reason the engine adds tomorrow shows up
+ * in full rather than disappearing — see `reason-copy.ts`.
+ */
+function ReasonList({ title, reasons, empty, context }: {
+  title: string;
+  reasons: MarketSignalResult['reasons'];
+  empty: string;
+  context: ReasonBaseContext;
+}) {
   return (
     <section>
       <h3 className="font-semibold text-white">{title}</h3>
       {reasons.length ? (
         <ul className="mt-2 space-y-2">
-          {reasons.map((reason) => <li key={reason.id} className="flex gap-2"><span aria-hidden="true">•</span><span>{reason.text}</span></li>)}
+          {reasons.map((reason) => (
+            <li key={reason.id} className="flex gap-2">
+              <span aria-hidden="true">•</span>
+              <span data-reason-id={reason.id}>{reasonText(reason, context)}</span>
+            </li>
+          ))}
         </ul>
       ) : <p className="mt-2 text-slate-500">{empty}</p>}
     </section>
