@@ -3,7 +3,8 @@ import 'server-only';
 import { computeOptionsSupportResistance, type OptionsSrResult } from '@/src/lib/analytics/options-sr';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import type { OptionsChain } from '@/src/lib/market-data/options/contracts';
-import { assembleOptionsSignalInput } from './assemble';
+import { SharedRequestCache } from '@/src/lib/shared-request-cache';
+import { assembleOptionsSignalInput, atmStraddleExpectedMove, chainDte } from './assemble';
 import { calculateOptionsSignal } from './calculations';
 import { OPTIONS_SIGNAL_CONFIG } from './config';
 import { loadOptionsSignalContext } from './service';
@@ -38,9 +39,45 @@ function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
+/** The two numbers a horizon chain contributes. Nothing else survives the fetch. */
+interface ExpectedMoveReading {
+  move: number | null;
+  dte: number | null;
+}
+
+/**
+ * The expected move, cached per symbol, ON ITS OWN.
+ *
+ * Reading it at the recommended 45-day horizon rather than off the front chain
+ * is what stopped "this level is further than the option can reach" firing on 24
+ * of 30 tickers — but it cost a SECOND full options snapshot on every card, on
+ * top of the front chain the card actually displays. The shared options cache
+ * holds a chain fresh for 60 seconds, so every card opened more than a minute
+ * apart paid that second fetch again.
+ *
+ * Only two numbers survive that fetch: the ATM straddle price and the DTE it was
+ * read at. They are what is cached here, keyed by symbol, so the fetch happens
+ * once per window instead of once per reader.
+ *
+ * FIFTEEN MINUTES, not hours. A 45-day straddle is genuinely slow — it reprices
+ * with the underlying, not with the tick — and it is used here as a coarse
+ * yardstick ("is this level one expected move away, or four"), not as a quote.
+ * But it is still a price, and a price cached for an afternoon would be a
+ * different statement from the one the card implies. Fifteen minutes is inside
+ * the engine's own `staleMixHours` and well inside the resolution of the
+ * comparison it feeds.
+ */
+const EXPECTED_MOVE_CACHE_POLICY = {
+  freshMs: 15 * 60_000,
+  staleMs: 2 * 60 * 60_000,
+  errorMs: 60_000,
+} as const;
+
+const expectedMoveCache = new SharedRequestCache();
+
 async function loadNearestChain(
   symbol: string,
-): Promise<{ chain: OptionsChain; result: OptionsSrResult; expectedMoveChain: OptionsChain | null } | null> {
+): Promise<{ chain: OptionsChain; result: OptionsSrResult; expectedMove: ExpectedMoveReading | null } | null> {
   try {
     const service = getOptionsMarketDataService();
     const expirations = await service.getExpirations(symbol);
@@ -75,15 +112,27 @@ async function loadNearestChain(
     /*
      * Failing to resolve it costs the expected-move comparison, never the card:
      * the risk/reward factor already reports its distances in ATR and in percent
-     * without one.
+     * without one. `null` here means "use the front chain", which is what the
+     * assembler falls back to.
+     *
+     * Keyed on the EXPIRATION as well as the symbol, so the day the horizon
+     * rolls to the next monthly the cache does not serve yesterday's contract
+     * under today's DTE.
      */
-    const expectedMoveChain = expectedMoveExpiration === null || expectedMoveExpiration === nearest
+    const expectedMove = expectedMoveExpiration === null || expectedMoveExpiration === nearest
       ? null
-      : (await service.getChain(symbol, expectedMoveExpiration).catch(() => null))?.data ?? null;
+      : await expectedMoveCache.resolve<ExpectedMoveReading>(
+        `options-expected-move:${symbol.toUpperCase()}:${expectedMoveExpiration}`,
+        async () => {
+          const horizonChain = (await service.getChain(symbol, expectedMoveExpiration)).data;
+          return { move: atmStraddleExpectedMove(horizonChain), dte: chainDte(horizonChain) };
+        },
+        EXPECTED_MOVE_CACHE_POLICY,
+      ).then((resolution) => resolution.value).catch(() => null);
 
     return {
       chain,
-      expectedMoveChain,
+      expectedMove,
       result: computeOptionsSupportResistance({
         symbol: chain.underlyingSymbol,
         expiration: chain.expiration,
@@ -125,7 +174,7 @@ export async function computeServerOptionsSignal(symbol: string): Promise<Server
     chain: options?.chain ?? null,
     optionsSr: options?.result ?? null,
     acceptedPrice: options?.chain.spot ?? null,
-    expectedMoveChain: options?.expectedMoveChain ?? null,
+    expectedMove: options?.expectedMove ?? null,
     // This symbol's own recorded readings are what make a raw IV or a raw
     // Put/Call comparable at all.
     ownHistory,

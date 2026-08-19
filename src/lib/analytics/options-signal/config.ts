@@ -412,6 +412,21 @@ export const OPTIONS_SIGNAL_CONFIG = {
      * Matches the table's symbol check, and the retention sweep clears old ones.
      */
     canarySymbol: 'ZZ-CANARY',
+    /**
+     * How long a canary row is kept, which is NOT `retentionDays`.
+     *
+     * The canary writes one row per day per deploy and nothing ever reads a row
+     * older than the one it just wrote — the probe is "is the row I just wrote
+     * there", and yesterday's answer is not evidence about today. Under the
+     * 400-day retention those rows simply accumulated: a year of daily writes
+     * under a reserved symbol that no percentile, no card and no query reads.
+     *
+     * Seven days rather than one, so a week of them survives as a record of when
+     * the store was last reachable — which is the only question these rows can
+     * answer after the fact — and the sweep counts and deletes them separately
+     * so a canary clear-out can never be mistaken for real history being lost.
+     */
+    canaryRetentionDays: 7,
   },
 } as const;
 

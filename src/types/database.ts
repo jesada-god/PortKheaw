@@ -1004,10 +1004,23 @@ export interface Database {
         Args: { retention_days: number; apply?: boolean };
         Returns: Array<{ due: number; deleted: number }>;
       };
-      /** Options Signal history retention. `apply => false` reports and deletes nothing. */
+      /**
+       * Options Signal history retention. `apply => false` reports and deletes
+       * nothing.
+       *
+       * Two windows, counted separately and never summed: real readings past
+       * `retention_days`, and access-canary rows past `canary_retention_days`.
+       * A run that clears three hundred canary rows must not read the same as
+       * one that threw away three hundred percentile readings.
+       */
       sweep_options_signal_history: {
-        Args: { retention_days: number; apply?: boolean };
-        Returns: Array<{ due: number; deleted: number }>;
+        Args: {
+          retention_days: number;
+          apply?: boolean;
+          canary_symbol?: string;
+          canary_retention_days?: number;
+        };
+        Returns: Array<{ due: number; deleted: number; canary_due: number; canary_deleted: number }>;
       };
       get_or_create_default_watchlist: {
         Args: Record<PropertyKey, never>;
