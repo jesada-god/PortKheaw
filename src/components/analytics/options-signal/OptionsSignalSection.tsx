@@ -546,7 +546,18 @@ function DetailBody({ breakdown, summary }: {
             label="ระยะขึ้น / ระยะลง (เทียบ Expected Move)"
             value={`${atrText(riskReward.upsideExpectedMoves)} / ${atrText(riskReward.downsideExpectedMoves)}`}
           />
-          <Detail label="Expected Move (ATM straddle)" value={numberText(riskReward.expectedMove)} />
+          {/*
+            * The expected move NEVER appears without its horizon. Six dollars
+            * over four days and six dollars over sixty are not the same
+            * statement about the same chart, and the ratio above is measured in
+            * whichever one this straddle happens to be.
+            */}
+          <Detail
+            label="Expected Move (ATM straddle)"
+            value={riskReward.expectedMove === null
+              ? '—'
+              : `${numberText(riskReward.expectedMove)} · ${riskReward.expectedMoveDte === null ? 'ไม่ทราบอายุสัญญา' : `เหลือ ${riskReward.expectedMoveDte} วัน`}`}
+          />
           <Detail label="R:R ฝั่ง Call" value={numberText(riskReward.callRewardRisk)} />
           <Detail label="R:R ฝั่ง Put" value={numberText(riskReward.putRewardRisk)} />
           <Detail
@@ -562,6 +573,11 @@ function DetailBody({ breakdown, summary }: {
             value={riskReward.setupQuality === null ? '—' : `${Math.round(riskReward.setupQuality * 100)}%`}
           />
         </dl>
+        {riskReward.expectedMoveHorizonWarning && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-em-horizon-warning">
+            {riskReward.expectedMoveHorizonWarning}
+          </p>
+        )}
         <p className="mt-2 text-xs leading-5 text-slate-500">
           Risk:Reward วัดจากฝั่งที่หลักฐานอื่นชี้ไป ไม่ได้วัดจากฝั่ง Call เสมอ ถ้ายังไม่มีทิศทาง คะแนนจะถูกลดทอนเพราะเรขาคณิตของราคาบอกได้แค่คุณภาพของ setup ไม่ได้บอกทิศทาง
         </p>
@@ -605,6 +621,18 @@ function DetailBody({ breakdown, summary }: {
             value={liquidity.grade === null ? 'ไม่พร้อมใช้งาน' : LIQUIDITY_BADGE[liquidity.grade].label}
           />
           <Detail label="คะแนนรวม" value={liquidity.score === null ? '—' : `${liquidity.score} / 100`} />
+          <Detail
+            label="ตลาดเปิดตอนเก็บข้อมูล"
+            value={liquidity.marketOpenAtCapture === null
+              ? '—'
+              : liquidity.marketOpenAtCapture ? 'เปิด' : 'ปิด'}
+          />
+          {liquidity.offHoursAssessment && (
+            <Detail
+              label="ถ้าดูเฉพาะ OI และ Volume"
+              value={`${LIQUIDITY_BADGE[liquidity.offHoursAssessment.grade].label} · ${liquidity.offHoursAssessment.score} / 100`}
+            />
+          )}
           <Detail label="Open Interest (ค่ากลาง)" value={numberText(liquidity.medianOpenInterest)} />
           <Detail label="Volume (ค่ากลาง)" value={numberText(liquidity.medianVolume)} />
           <Detail
@@ -617,6 +645,11 @@ function DetailBody({ breakdown, summary }: {
         <p className="mt-2 text-xs leading-5 text-slate-500">
           สภาพคล่องไม่ได้เป็นส่วนหนึ่งของคะแนนทิศทาง หุ้นจะขึ้นหรือลงไม่เกี่ยวกับว่า chain ซื้อขายง่ายแค่ไหน แต่สัญญาณบน chain ที่ออกยากคือสัญญาณที่ผู้เริ่มต้นไม่ควรลงมือตาม
         </p>
+        {liquidity.marketOpenAtCapture === false && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-liquidity-closed">
+            ส่วนต่าง Bid/Ask ที่เห็นเก็บตอนตลาดปิด ซึ่งกว้างกว่าตอนเปิดเป็นปกติ จึงยังไม่ใช้ตัดสินสภาพคล่อง ให้ดูอีกครั้งตอนตลาดเปิด
+          </p>
+        )}
         {liquidity.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{liquidity.reason}</p>}
       </section>
 

@@ -317,6 +317,8 @@ export interface RiskRewardOutcome extends FactorOutcome {
   upsideExpectedMoves: number | null;
   downsideExpectedMoves: number | null;
   expectedMove: number | null;
+  expectedMoveDte: number | null;
+  expectedMoveHorizonWarning: string | null;
 }
 
 /** How workable a side is on its own terms: 0 at 1:1, 1 at the saturation ratio. */
@@ -343,6 +345,7 @@ export function scoreRiskReward(
   input: RiskRewardInput,
   options: { direction?: UnderlyingBias } = {},
   config = OPTIONS_SIGNAL_CONFIG.riskReward,
+  expectedMoveConfig = OPTIONS_SIGNAL_CONFIG.expectedMove,
 ): RiskRewardOutcome {
   const empty: RiskRewardOutcome = {
     normalized: null,
@@ -359,6 +362,8 @@ export function scoreRiskReward(
     upsideExpectedMoves: null,
     downsideExpectedMoves: null,
     expectedMove: null,
+    expectedMoveDte: null,
+    expectedMoveHorizonWarning: null,
   };
   const price = finite(input.price);
   if (price === null || price <= 0) return empty;
@@ -387,6 +392,29 @@ export function scoreRiskReward(
       : distancePercent / 100 * price / expectedMove
   );
 
+  const expectedMoveDte = finite(input.expectedMoveDte);
+  const upsideExpectedMoves = inExpectedMoves(upside);
+  const downsideExpectedMoves = inExpectedMoves(downside);
+
+  /*
+   * A level further away than the straddle's own pricing says price can reach
+   * before expiry is not a target with a worse reward — it is a target this
+   * contract is the wrong instrument for, and a Risk:Reward measured against it
+   * flatters the setup. Said out loud rather than left in the ratio.
+   */
+  const beyond = [
+    upsideExpectedMoves !== null && upsideExpectedMoves > expectedMoveConfig.reachableWithin
+      ? `แนวต้านอยู่ไกล ${round(upsideExpectedMoves, 2)} เท่าของ Expected Move`
+      : null,
+    downsideExpectedMoves !== null && downsideExpectedMoves > expectedMoveConfig.reachableWithin
+      ? `แนวรับอยู่ไกล ${round(downsideExpectedMoves, 2)} เท่าของ Expected Move`
+      : null,
+  ].filter((part): part is string => part !== null);
+  const expectedMoveHorizonWarning = beyond.length === 0
+    ? null
+    : `${beyond.join(' และ ')} · สัญญาที่ใช้อ้างอิงเหลืออายุ ${expectedMoveDte ?? '—'} วัน `
+      + 'ราคาจึงมีโอกาสน้อยที่จะไปถึงก่อนหมดอายุ และ R:R ที่วัดจากระยะนี้จะดูดีเกินจริง';
+
   const geometry = {
     upsidePercent: upside,
     downsidePercent: downside,
@@ -394,9 +422,11 @@ export function scoreRiskReward(
     putRewardRisk,
     upsideAtr: inAtr(upside),
     downsideAtr: inAtr(downside),
-    upsideExpectedMoves: inExpectedMoves(upside),
-    downsideExpectedMoves: inExpectedMoves(downside),
+    upsideExpectedMoves,
+    downsideExpectedMoves,
     expectedMove,
+    expectedMoveDte,
+    expectedMoveHorizonWarning,
     partial: upside === null || downside === null,
   };
 
@@ -456,7 +486,8 @@ export function scoreRiskReward(
   const ratioText = `R:R Call ${round(callRewardRisk as number, 2)} · R:R Put ${round(putRewardRisk as number, 2)}`;
   const expectedMoveText = geometry.upsideExpectedMoves === null || geometry.downsideExpectedMoves === null
     ? ''
-    : ` · เทียบ Expected Move: ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
+    : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× `
+      + `ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
 
   // The signed tilt of the geometry itself, on the call frame of reference.
   const tilt = clamp(Math.log((callRewardRisk as number)) / Math.log(config.saturationRatio), -1, 1);
@@ -511,8 +542,31 @@ export interface LiquidityOutcome {
   grade: LiquidityGrade | null;
   score: number | null;
   detail: string;
+  /** OI and volume only, with the spread excluded. Present when the book was shut. */
+  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
 }
 
+const liquidityVerdict = (grade: Exclude<LiquidityGrade, 'unknown'>) => (
+  grade === 'good'
+    ? 'เข้า-ออกได้ตามปกติ'
+    : grade === 'fair'
+      ? 'พอเข้า-ออกได้ แต่ควรใช้คำสั่งจำกัดราคา'
+      : 'บาง เข้า-ออกยากและต้นทุนแฝงสูง'
+);
+
+/**
+ * Grade the chain a reader would actually have to trade.
+ *
+ * The three components are averaged with any absent one dropped from BOTH the
+ * numerator and the divisor, the same rule the directional factors follow.
+ *
+ * The one case that is not a data problem is an after-hours capture. A bid-ask
+ * spread quoted while the book is shut measures the hour, not the instrument:
+ * market makers widen or pull quotes overnight, and the same chain that costs
+ * 2% to cross at 10:00 can quote 40% at 02:00. Calling that "ระวัง" would send a
+ * reader away from a perfectly liquid contract, so the badge reports `unknown`
+ * and the open-interest and volume evidence is kept beside it, labelled.
+ */
 export function gradeLiquidity(
   input: LiquidityInput,
   config = OPTIONS_SIGNAL_CONFIG.liquidity,
@@ -520,37 +574,72 @@ export function gradeLiquidity(
   const openInterest = finite(input.medianOpenInterest);
   const volume = finite(input.medianVolume);
   const spread = finite(input.medianSpreadPercent);
+  const marketOpen = input.marketOpenAtCapture ?? null;
 
-  const parts: number[] = [];
-  if (openInterest !== null) parts.push(clamp(openInterest / config.openInterestGood, 0, 1));
-  if (volume !== null) parts.push(clamp(volume / config.volumeGood, 0, 1));
-  if (spread !== null) {
-    parts.push(clamp(
+  const standing: number[] = [];
+  if (openInterest !== null) standing.push(clamp(openInterest / config.openInterestGood, 0, 1));
+  if (volume !== null) standing.push(clamp(volume / config.volumeGood, 0, 1));
+  const spreadScore = spread === null
+    ? null
+    : clamp(
       (config.spreadPoorPercent - spread) / (config.spreadPoorPercent - config.spreadGoodPercent),
       0,
       1,
-    ));
-  }
-  if (!parts.length || input.contractsExamined <= 0) {
-    return { grade: null, score: null, detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง' };
-  }
+    );
 
-  const score = round(parts.reduce((sum, part) => sum + part, 0) / parts.length * 100, 0);
-  const grade: LiquidityGrade = score >= config.goodFrom ? 'good' : score >= config.fairFrom ? 'fair' : 'thin';
   const measured = [
     openInterest === null ? null : `OI กลาง ${Math.round(openInterest).toLocaleString('en-US')}`,
     volume === null ? null : `Volume กลาง ${Math.round(volume).toLocaleString('en-US')}`,
     spread === null ? null : `ส่วนต่าง Bid/Ask ${round(spread, 1)}% ของราคากลาง`,
   ].filter((part): part is string => part !== null).join(' · ');
-  const verdict = grade === 'good'
-    ? 'เข้า-ออกได้ตามปกติ'
-    : grade === 'fair'
-      ? 'พอเข้า-ออกได้ แต่ควรใช้คำสั่งจำกัดราคา'
-      : 'บาง เข้า-ออกยากและต้นทุนแฝงสูง';
+  const context = `สัญญาใกล้ราคาปัจจุบัน ${input.contractsExamined} สัญญา`;
+
+  const compose = (parts: readonly number[]) => {
+    if (!parts.length) return null;
+    const score = round(parts.reduce((sum, part) => sum + part, 0) / parts.length * 100, 0);
+    const grade: Exclude<LiquidityGrade, 'unknown'> = score >= config.goodFrom
+      ? 'good'
+      : score >= config.fairFrom ? 'fair' : 'thin';
+    return { grade, score };
+  };
+
+  if (input.contractsExamined <= 0 || (!standing.length && spreadScore === null)) {
+    return {
+      grade: null,
+      score: null,
+      detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
+      offHoursAssessment: null,
+    };
+  }
+
+  if (marketOpen === false) {
+    const standingOnly = compose(standing);
+    return {
+      grade: 'unknown',
+      score: null,
+      detail: `${measured} · ${context} · เก็บข้อมูลตอนตลาดปิด ส่วนต่าง Bid/Ask นอกเวลาทำการกว้างผิดปกติเป็นปกติ `
+        + 'จึงยังประเมินสภาพคล่องไม่ได้'
+        + (standingOnly === null
+          ? ''
+          : ` · ถ้าดูเฉพาะ OI และ Volume: ${liquidityVerdict(standingOnly.grade)}`),
+      offHoursAssessment: standingOnly,
+    };
+  }
+
+  const composed = compose(spreadScore === null ? standing : [...standing, spreadScore]);
+  if (composed === null) {
+    return {
+      grade: null,
+      score: null,
+      detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
+      offHoursAssessment: null,
+    };
+  }
   return {
-    grade,
-    score,
-    detail: `${measured} · สัญญาใกล้ราคาปัจจุบัน ${input.contractsExamined} สัญญา · ${verdict}`,
+    grade: composed.grade,
+    score: composed.score,
+    detail: `${measured} · ${context} · ${liquidityVerdict(composed.grade)}`,
+    offHoursAssessment: null,
   };
 }
 
@@ -728,6 +817,9 @@ function setupWarnings(daysToEarnings: number | null, liquidity: LiquidityOutcom
   if (liquidity?.grade === 'thin') {
     warnings.push('สภาพคล่องของ chain นี้บาง การเข้า-ออกอาจเสียราคามากกว่าที่คิด');
   }
+  if (liquidity?.grade === 'unknown') {
+    warnings.push('ข้อมูล chain เก็บตอนตลาดปิด ให้ตรวจส่วนต่าง Bid/Ask อีกครั้งตอนตลาดเปิดก่อนเข้าสถานะ');
+  }
   warnings.push(daysToEarnings === null
     ? 'ยังไม่ทราบวันประกาศงบ ให้ตรวจสอบปฏิทินของบริษัทเองก่อนเปิดสถานะ'
     : `วันประกาศงบครั้งถัดไปอีก ${daysToEarnings} วัน`);
@@ -792,6 +884,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
+      marketOpenAtCapture: null, offHoursAssessment: null,
       state: 'UNAVAILABLE', reason: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
       detail: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
     };
@@ -801,6 +894,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
+      marketOpenAtCapture: null, offHoursAssessment: null,
       state: 'UNAVAILABLE', reason, detail: reason,
     };
   }
@@ -812,6 +906,8 @@ function liquidityDiagnostics(
     medianSpreadPercent: roundOrNull(slot.value.medianSpreadPercent, 2),
     contractsExamined: slot.value.contractsExamined,
     expiration: slot.value.expiration,
+    marketOpenAtCapture: slot.value.marketOpenAtCapture ?? null,
+    offHoursAssessment: outcome.offHoursAssessment,
     state: slot.state,
     reason: outcome.grade === null ? outcome.detail : null,
     detail: outcome.detail,
@@ -847,6 +943,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       downsidePercent: null, callRewardRisk: null, putRewardRisk: null,
       scoredSide: null, setupQuality: null, upsideAtr: null, downsideAtr: null,
       upsideExpectedMoves: null, downsideExpectedMoves: null, expectedMove: null,
+      expectedMoveDte: null, expectedMoveHorizonWarning: null,
       state: input.riskReward.state,
     },
     iv: {
@@ -970,6 +1067,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       downsidePercent: null, callRewardRisk: null, putRewardRisk: null, scoredSide: null,
       setupQuality: null, upsideAtr: null, downsideAtr: null,
       upsideExpectedMoves: null, downsideExpectedMoves: null, expectedMove: null,
+      expectedMoveDte: null, expectedMoveHorizonWarning: null,
     } satisfies RiskRewardOutcome;
 
   const factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore> = {
@@ -1118,6 +1216,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       upsideExpectedMoves: roundOrNull(riskRewardOutcome.upsideExpectedMoves, 2),
       downsideExpectedMoves: roundOrNull(riskRewardOutcome.downsideExpectedMoves, 2),
       expectedMove: roundOrNull(riskRewardOutcome.expectedMove, 4),
+      expectedMoveDte: riskRewardOutcome.expectedMoveDte,
+      expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       state: input.riskReward.state,
     },
     iv: {
@@ -1180,6 +1280,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       pricingReason: input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       percentilePending: input.ivPercentilePending ?? null,
       liquidity: liquidityOutcome,
+      expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       staleMix: provenance.staleMix,
       spreadHours: provenance.spreadHours,
     }),
@@ -1207,6 +1308,7 @@ function buildReasoning(context: {
   pricingReason: string | null;
   percentilePending: OptionsSignalInput['ivPercentilePending'];
   liquidity: LiquidityOutcome | null;
+  expectedMoveHorizonWarning: string | null;
   staleMix: boolean;
   spreadHours: number | null;
 }): OptionsSignalReason[] {
@@ -1257,6 +1359,14 @@ function buildReasoning(context: {
       id: 'liquidity',
       polarity: context.liquidity.grade === 'thin' ? 'caution' : 'information',
       text: `สภาพคล่องของ chain: ${context.liquidity.detail}`,
+    });
+  }
+
+  if (context.expectedMoveHorizonWarning) {
+    reasons.push({
+      id: 'expected-move-horizon',
+      polarity: 'caution',
+      text: context.expectedMoveHorizonWarning,
     });
   }
 
