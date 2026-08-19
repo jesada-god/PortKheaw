@@ -149,6 +149,24 @@ export function InfoHint({
         which put its label 15.1px and its number 30.3px below the score's. The
         icon carries its own target, so the floor here is not what makes it
         reachable and it can go.
+
+        AND IT REACHES EVERY ROW A HINT SITS IN, which the commit that landed it
+        claimed it did not. Measured afterwards, at 1280px, one row per call site
+        with the class strings taken verbatim from them:
+
+          DecisionPanel  side label / anchor / heading / resistance   44 -> 18px
+          DecisionPanel  dataLabels / proximity / wall hints          44 -> 24px
+          OptionsSignal  IV and Earnings rows                         44 -> 44px
+
+        The last line is the exception and the reason the mistaken claim was
+        plausible: those two rows carry `min-h-11` themselves, so the floor was
+        never theirs to lose. Nothing else does. A 10px caption occupying 44px
+        was not a design anybody chose, so the tightening is the intended
+        rendering rather than a regression — but it is a VISIBLE change to the
+        decision panel and it was not measured before it shipped.
+
+        `npm run qa:options-signal-header` is where the header numbers are kept
+        honest; the rows above have no probe of their own yet.
       */}
       <button
         ref={triggerRef}
