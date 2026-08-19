@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
 import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
-import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { formatBangkokDateTime, formatThaiDateOnly } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
@@ -737,11 +737,17 @@ function percentText(distance: number, reference: number): string {
  * Deriving the percentage from the ENGINE's distance rather than from the two
  * prices is deliberate — it is the same number the payload reports, in another
  * unit, and cannot drift away from it.
+ *
+ * It says "สูงกว่าราคาปิด" and never "สูงกว่าตอนนี้". The base is the last
+ * finalized close, which on an open market is not the price on screen, so a
+ * percentage that called itself "ตอนนี้" was measured from one number and named
+ * after another. Naming the base is the whole fix: the reader can now tell,
+ * without opening anything, which of the two prices on the bar this is off.
  */
 function relativeCopy(distance: number | null, reference: number, side: 'above' | 'below'): string {
   if (distance === null || !Number.isFinite(distance) || !Number.isFinite(reference) || reference === 0) return '';
   if (distance < 0) return side === 'above' ? 'ราคาผ่านขึ้นไปแล้ว' : 'ราคาหลุดลงมาแล้ว';
-  return `${side === 'above' ? 'สูงกว่า' : 'ต่ำกว่า'}ตอนนี้ ${percentText(distance, reference)}`;
+  return `${side === 'above' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิด ${percentText(distance, reference)}`;
 }
 
 /**
@@ -776,7 +782,7 @@ const LABEL_GLYPH_PX = {
 } as const;
 
 /**
- * The Thai combining marks the captions on this bar use: ตอนนี้, ปิด, สด.
+ * The Thai combining marks the captions on this bar use: ปิดเมื่อวาน, ราคาตอนนี้.
  * Written as code points rather than as glyphs because a mark on its own is
  * invisible in most editors, and an invisible character in a character class is
  * a bug nobody can see.
@@ -843,8 +849,8 @@ function labelLeftPx(track: number, label: FloatingLabel): number {
  * required argument rather than a constant. The version this replaced answered
  * it on a hypothetical 216px track at every width, so a 640px bar with 90px of
  * clear air between two captions merged them anyway — and a merged caption is
- * strictly worse than two, because "ปิด 44.9 · สด 42.14" over two marks a
- * centimetre apart no longer says which number belongs to which line.
+ * strictly worse than two, because "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" over two
+ * marks a centimetre apart no longer says which number belongs to which line.
  *
  * The two boxes are the whole rule. Not the distance between the prices, not a
  * percentage of the frame, not a threshold: where the two captions are actually
@@ -877,7 +883,7 @@ function labelLeft(label: FloatingLabel): string {
  * centred over a line is the arrangement a reader does not have to think about.
  * And it is CLAMPED into the track, because at 390px there is no gutter to hang
  * into — an unclamped caption on a six-figure price runs out under the card's
- * padding, which `qa:signal-zone-bar` caught on "ตอนนี้ 121,884".
+ * padding, which `qa:signal-zone-bar` caught on "ปิดเมื่อวาน 121,884".
  *
  * The clamp is done in CSS rather than here on purpose. The previous version
  * switched to an edge-anchored position at fixed percentages (below 40%, above
@@ -1109,9 +1115,9 @@ function useZoneMetrics(probeKey: string): [ZoneMetrics | null, React.RefObject<
  * the header is showing a live price that on an open market is a different
  * number. Drawing only the close would quietly invite a reader to compare a
  * trigger against the price they can see at the top of the screen, which is not
- * the price the trigger was measured from. The close is the one labelled
- * "ตอนนี้", because it is the price every percentage on this card is measured
- * from; the live one is labelled as live and is never the base of a percentage.
+ * the price the trigger was measured from. The close is labelled "ปิดเมื่อวาน"
+ * and it is the price every percentage on this card is measured from; the live
+ * one is labelled "ราคาตอนนี้" and is never the base of a percentage.
  */
 function ZoneBar({ zones, livePrice, actionable }: {
   zones: MarketSignalZones;
@@ -1185,12 +1191,22 @@ function ZoneBar({ zones, livePrice, actionable }: {
    * rather than by a row of padding is what makes that unrepeatable: a price the
    * card measures from is above the bar, a level the frame is made of is below
    * it, and neither row can grow into the other.
+   *
+   * WHAT EACH ONE IS CALLED. The close used to be "ตอนนี้" and the live price
+   * "สด", which is the naming a reader arrives with turned exactly backwards:
+   * "ตอนนี้" sat on yesterday's close and the price actually trading right now
+   * was called by a word that names nothing a beginner owns. Each mark is now
+   * named by WHEN it happened — "ปิดเมื่อวาน" and "ราคาตอนนี้" — and every
+   * percentage on the card says which of the two it was measured from. The
+   * names stay short because they are drawn ON the track: the full statement of
+   * what "ปิดเมื่อวาน" means, with the session date, is the footnote at the
+   * bottom of the block, where a long sentence costs nothing.
    */
-  const closeText = `ตอนนี้ ${markerPriceText(referenceClose)}`;
-  const liveText = liveAt === null ? null : `สด ${markerPriceText(livePrice as number)}`;
+  const closeText = `ปิดเมื่อวาน ${markerPriceText(referenceClose)}`;
+  const liveText = liveAt === null ? null : `ราคาตอนนี้ ${markerPriceText(livePrice as number)}`;
   const mergedText = liveText === null
     ? ''
-    : `ปิด ${markerPriceText(referenceClose)} · สด ${markerPriceText(livePrice as number)}`;
+    : `ปิดเมื่อวาน ${markerPriceText(referenceClose)} · ราคาตอนนี้ ${markerPriceText(livePrice as number)}`;
   const lowerText = markerPriceText(lowerTrigger);
   const upperText = markerPriceText(upperTrigger);
   const edgesText = `${lowerText} · ${upperText}`;
@@ -1242,22 +1258,37 @@ function ZoneBar({ zones, livePrice, actionable }: {
    *
    * The merged caption is anchored on the CLOSE and leads to the close mark
    * alone. It used to sit at the midpoint with a leader to each mark, which put
-   * "ปิด 44.9 · สด 42.14" between two lines while pointing at both — a reader
-   * who cannot pair a number with a line is worse off than one who has to look
-   * up a second number. The close is the mark that gets the caption because it
+   * "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" between two lines while pointing at
+   * both — a reader who cannot pair a number with a line is worse off than one
+   * who has to look up a second number. The close is the mark that gets it because it
    * is the price every figure on this card is measured from; the live mark is
    * still drawn, and the sentence under the bar still states the live price in
    * full.
    *
    * What does NOT collapse is the marks. Two prices are always two lines on the
    * bar, because the lines are the fact and the caption is only the reading.
+   *
+   * AND ONE LAST RUNG, for the case where even the merged caption does not fit.
+   * Naming the two marks by when they happened made both captions longer, and
+   * "ปิดเมื่อวาน 121,884 · ราคาตอนนี้ 122,402" is 225px of text on the 220px
+   * track a 320px phone leaves for a six-figure instrument — `qa:signal-zone-bar`
+   * measured it hanging 5px past the end of its own row. A caption wider than
+   * its track cannot be placed anywhere: `labelLeft` clamps it to the left edge
+   * and it runs out under the card's padding. So when the merge does not fit
+   * either, the bar draws the CLOSE caption alone. It is the price every figure
+   * on the card is measured from, the live mark is still drawn on the bar, and
+   * the live price is still stated in full in the sentence two rows below — the
+   * same trade the fields make when one is too narrow to carry its own name.
+   * Shortening the words instead would put the old cryptic labels back, which is
+   * what this naming exists to undo.
    */
   const captions = ((): Caption[] => {
     if (liveCaption === null) return [closeCaption];
     if (track === 0) return [closeCaption, liveCaption];
     const spread = spreadLabels(closeCaption, liveCaption, track);
     if (spread) return spread;
-    return [caption('prices', mergedText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('prices') })];
+    const merged = caption('prices', mergedText, closeAt, [{ key: 'close', at: closeAt }], { width: measured('prices') });
+    return merged.width <= track ? [merged] : [closeCaption];
   })();
 
   /*
@@ -1571,7 +1602,7 @@ function ZoneBar({ zones, livePrice, actionable }: {
           data-diverges={liveDiverges ? 'true' : 'false'}
           className={`mt-2 text-[11px] leading-5 ${liveDiverges ? 'font-semibold text-amber-200' : 'text-slate-400'}`}
         >
-          ราคาสด {priceText(livePrice as number)}
+          ราคาตอนนี้ {priceText(livePrice as number)}
           {!hasFrame || liveSide === null
             ? ''
             : liveDiverges
@@ -1587,9 +1618,17 @@ function ZoneBar({ zones, livePrice, actionable }: {
         price every number here came from, and what counts as that price. Two
         greyed lines at the bottom of a card read as boilerplate and get skipped
         together; one reads as a footnote and gets read.
+
+        This is also where "ปิดเมื่อวาน" is spelled out in full. The caption on
+        the bar has to stay short — it is drawn on the track, and a label 28
+        characters long lands on the name of the field beside it — so the mark
+        carries the short name and this line carries the whole sentence: which
+        session it was, and that only closes count. The date is in the reader's
+        own calendar rather than as the ISO string the payload carries, because
+        this line is read by a person and not by a machine.
       */}
       <p className="mt-2 text-[11px] leading-5 text-slate-500" data-zone-row="source">
-        ตัวเลขทั้งหมดวัดจากราคาปิด {priceText(referenceClose)} วันที่ {zones.referenceDate} · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน
+        วัดจากราคาปิดตลาดรอบล่าสุด {priceText(referenceClose)} ({formatThaiDateOnly(zones.referenceDate)}) · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน
       </p>
     </div>
   );
@@ -1625,7 +1664,7 @@ function ActionableRows({ zones, actionable }: { zones: MarketSignalZones; actio
   const invalidationRelative = invalidation === null
     ? ''
     : invalidationPct !== null
-      ? `${invalidationBasis === 'zone_ceiling' ? 'สูงกว่า' : 'ต่ำกว่า'}ตอนนี้ ${Math.abs(invalidationPct).toFixed(1)}%`
+      ? `${invalidationBasis === 'zone_ceiling' ? 'สูงกว่า' : 'ต่ำกว่า'}ราคาปิด ${Math.abs(invalidationPct).toFixed(1)}%`
       : relativeCopy(Math.abs(invalidation - close), close, invalidation > close ? 'above' : 'below');
   const targetRelative = target === null
     ? ''
@@ -1786,7 +1825,7 @@ function ZoneDetails({ zones, actionable, atr }: {
             ? 'ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่าระยะไปถึงเป้า'
             : 'ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่าโซนนี้จบ'}
           {actionable.notes.includes('risk_leg_inside_noise')
-            ? ' · แต่ตอนนี้ราคาอยู่ชิดจุดที่โซนจะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
+            ? ' · แต่ราคาปิดอยู่ชิดจุดที่โซนจะจบมาก การเทียบนี้จึงแกว่งแรงทุกวัน และไม่ได้แปลว่าโอกาสดีกว่า'
             : ''}
         </p>
       )}

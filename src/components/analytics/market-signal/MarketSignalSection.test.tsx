@@ -391,7 +391,7 @@ describe('MarketSignalSection', () => {
       await render(zoned);
       const source = zoneBar().querySelector('[data-zone-row="source"]')!;
       expect(source.textContent).toBe(
-        'ตัวเลขทั้งหมดวัดจากราคาปิด 44.06 วันที่ 2026-08-14 · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน',
+        'วัดจากราคาปิดตลาดรอบล่าสุด 44.06 (14 ส.ค. 2569) · นับเฉพาะราคาปิดของวัน ไม่นับที่แตะระหว่างวัน',
       );
       // One footnote, not two greyed lines that get skipped as a pair.
       expect(zoneBar().querySelectorAll('[data-zone-row="source"]').length).toBe(1);
@@ -469,7 +469,7 @@ describe('MarketSignalSection', () => {
       const text = zoneBar().textContent ?? '';
       expect(text).not.toContain('ถือว่าเข้าโซนขาลง');
       expect(text).not.toContain('ถือว่าเข้าโซนขาขึ้น');
-      expect(text).not.toContain('ต่ำกว่าตอนนี้ 13.2%');
+      expect(text).not.toContain('ต่ำกว่าราคาปิด 13.2%');
       // Still drawn, under their own cuts.
       expect(zoneBar().querySelector('[data-label="edge-lower"]')!.textContent).toBe('38.26');
       expect(zoneBar().querySelector('[data-label="edge-upper"]')!.textContent).toBe('47.24');
@@ -518,7 +518,7 @@ describe('MarketSignalSection', () => {
 
       it('labels the price marker so a reader knows which mark is now', async () => {
         await render(zoned);
-        expect(zoneBar().textContent).toContain('ตอนนี้ 44.06');
+        expect(zoneBar().textContent).toContain('ปิดเมื่อวาน 44.06');
       });
 
       /*
@@ -623,13 +623,14 @@ describe('MarketSignalSection', () => {
        * run measured on Chrome at the size these captions actually render.
        */
       it('estimates a label at least as wide as Chrome draws it', () => {
-        expect(estimateLabelWidth('ตอนนี้ 44.06', { padding: 12 })).toBeGreaterThanOrEqual(78);
-        expect(estimateLabelWidth('สด 42.38', { padding: 12 })).toBeGreaterThanOrEqual(62);
+        // Chrome draws these two at 102.5px and 104.5px.
+        expect(estimateLabelWidth('ปิดเมื่อวาน 44.06', { padding: 12 })).toBeGreaterThanOrEqual(102);
+        expect(estimateLabelWidth('ราคาตอนนี้ 42.38', { padding: 12 })).toBeGreaterThanOrEqual(104);
         expect(estimateLabelWidth('38.26', { mono: true })).toBeGreaterThanOrEqual(33);
         expect(estimateLabelWidth('103,192', { mono: true })).toBeGreaterThanOrEqual(47);
         // And not wildly over: an estimate twice the truth would merge captions
         // that had room to stand apart.
-        expect(estimateLabelWidth('ตอนนี้ 44.06', { padding: 12 })).toBeLessThan(100);
+        expect(estimateLabelWidth('ปิดเมื่อวาน 44.06', { padding: 12 })).toBeLessThan(125);
         // Thai tone marks stack on their consonant, so they cost almost nothing.
         expect(estimateLabelWidth('ปิด')).toBeLessThan(estimateLabelWidth('ปดด'));
       });
@@ -700,23 +701,28 @@ describe('MarketSignalSection', () => {
         // they do.
         await render(zoned, 'elite', 44.07);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ตอนนี้ 44.06');
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 44.07');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 44.07');
       });
 
       /*
-       * 44.06 and 43.85 sit 1.3% of the drawn extent apart. On a 216px track
-       * that is 2.8px between the two captions once each has been grown away
+       * 44.06 and 43.85 sit 1.3% of the drawn extent apart. On a 280px track
+       * that is 3.6px between the two captions once each has been grown away
        * from the other — under the 4px that keeps them from reading as one run
        * of text — so they merge. The same two prices on a 640px track are 8.3px
        * apart, and the same code leaves them alone. One picture per width,
        * because at those two widths they genuinely are different pictures.
+       *
+       * The track was 216px here until the marks were renamed. At seven pixels
+       * a glyph "ปิดเมื่อวาน 44.06 · ราคาตอนนี้ 43.85" is 252px of caption, so
+       * 216 is now the width where the merge itself does not fit — which is the
+       * case below this one, not this one.
        */
       it('merges when the measured boxes touch', async () => {
-        measuring(216, SEVEN_PX_PER_GLYPH);
+        measuring(280, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
         const merged = zoneBar().querySelector<HTMLElement>('[data-label="prices"]')!;
-        expect(merged.textContent).toBe('ปิด 44.06 · สด 43.85');
+        expect(merged.textContent).toBe('ปิดเมื่อวาน 44.06 · ราคาตอนนี้ 43.85');
         expect(zoneBar().querySelector('[data-label="close"]')).toBeNull();
         expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
         // The MARKS never collapse: the lines are the fact, the caption is the
@@ -725,12 +731,41 @@ describe('MarketSignalSection', () => {
         expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
       });
 
+      /*
+       * The rung below the merge, and why it exists.
+       *
+       * A merged caption is only worth drawing if it fits on the track. Naming
+       * the marks by when they happened made both captions longer, and at 320px
+       * a six-figure instrument produced a merge 5px wider than the row it lives
+       * in — `qa:signal-zone-bar` measured it hanging past the end. A caption
+       * wider than its track cannot be placed: it is clamped to the left edge
+       * and runs out under the card's padding.
+       *
+       * So the last arrangement is the CLOSE alone. It is the price every figure
+       * on the card is measured from, both marks are still drawn, and the live
+       * price is still stated in full in the sentence under the bar.
+       */
+      it('draws the close alone when even the merged caption is wider than the track', async () => {
+        measuring(216, SEVEN_PX_PER_GLYPH);
+        await render(zoned, 'elite', 43.85);
+        expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
+        expect(zoneBar().querySelector('[data-label="live"]')).toBeNull();
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        // Both marks, still. Nothing about a caption that would not fit changes
+        // what the picture says happened.
+        expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
+        expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
+        // And the price the caption could not carry is in the sentence below.
+        expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
+          .toContain('ราคาตอนนี้ 43.85');
+      });
+
       it('keeps the two captions on the same prices once the bar is wide enough', async () => {
         measuring(640, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
         expect(zoneBar().querySelector('[data-label="prices"]')).toBeNull();
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ตอนนี้ 44.06');
-        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('สด 43.85');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="close"]')!.textContent).toBe('ปิดเมื่อวาน 44.06');
+        expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 43.85');
         // And each one still points at its own mark rather than at the pair.
         for (const key of ['close', 'live']) {
           const leaders = [...zoneBar().querySelectorAll<HTMLElement>(`[data-leader-for="${key}"]`)]
@@ -743,13 +778,13 @@ describe('MarketSignalSection', () => {
        * The merged caption points at ONE mark, and it is the close.
        *
        * It used to be anchored at the midpoint between the two marks with a
-       * leader running to each — "ปิด 44.9 · สด 42.14" hanging between two lines
+       * leader running to each — "ปิดเมื่อวาน 44.9 · ราคาตอนนี้ 42.14" hanging between two lines
        * and claiming both. A reader who cannot tell which number belongs to
        * which line is worse off than one who has to read the live price out of
        * the sentence underneath, which is where it still is in full.
        */
       it('anchors the merged caption on the close and leads to that mark alone', async () => {
-        measuring(216, SEVEN_PX_PER_GLYPH);
+        measuring(280, SEVEN_PX_PER_GLYPH);
         await render(zoned, 'elite', 43.85);
         const leaders = [...zoneBar().querySelectorAll<HTMLElement>('[data-leader-for="prices"]')];
         expect(leaders.map((node) => node.dataset.leader)).toEqual(['close']);
@@ -768,7 +803,7 @@ describe('MarketSignalSection', () => {
         })));
         // The live price is still on the card in full, in the sentence below.
         expect(container.querySelector('[data-testid="signal-live-price"]')!.textContent)
-          .toContain('ราคาสด 43.85');
+          .toContain('ราคาตอนนี้ 43.85');
       });
 
       /*
@@ -894,14 +929,16 @@ describe('MarketSignalSection', () => {
      */
     it('draws the live price as its own marker, captioned, beside the close', async () => {
       await render(zoned, 'elite', 46.31);
-      expect(zoneBar().textContent).toContain('ราคาสด 46.31');
+      expect(zoneBar().textContent).toContain('ราคาตอนนี้ 46.31');
       expect(zoneBar().textContent).toContain('ยังอยู่ในกรอบเดิมเหมือนราคาปิด');
       // The caption ON the bar, so the thin mark is identifiable without the
-      // sentence underneath it.
-      expect(zoneBar().textContent).toContain('สด 46.31');
+      // sentence underneath it. Asserted on the caption itself rather than on
+      // the card's text: both now say "ราคาตอนนี้ 46.31", which is the point —
+      // one name for one price, wherever the reader meets it.
+      expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 46.31');
       expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
       // And it is not the price the percentages are measured from.
-      expect(zoneBar().textContent).toContain('ตอนนี้ 44.06');
+      expect(zoneBar().textContent).toContain('ปิดเมื่อวาน 44.06');
     });
 
     it('never drops the live marker, whatever the caption does', async () => {
@@ -910,7 +947,7 @@ describe('MarketSignalSection', () => {
       await render(zoned, 'elite', 44.07);
       expect(zoneBar().querySelector('[data-marker="live"]')).not.toBeNull();
       expect(zoneBar().querySelector('[data-marker="close"]')).not.toBeNull();
-      expect(zoneBar().textContent).toContain('สด 44.07');
+      expect(zoneBar().querySelector<HTMLElement>('[data-label="live"]')!.textContent).toBe('ราคาตอนนี้ 44.07');
     });
 
     /*
@@ -920,7 +957,7 @@ describe('MarketSignalSection', () => {
      */
     it('says so out loud when the live price has left the close’s field', async () => {
       await render(zoned, 'elite', 47.9);
-      expect(zoneBar().textContent).toContain('ราคาสด 47.9 ขึ้นไปเหนือกรอบเดิมแล้ว');
+      expect(zoneBar().textContent).toContain('ราคาตอนนี้ 47.9 ขึ้นไปเหนือกรอบเดิมแล้ว');
       expect(zoneBar().textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
     });
 
@@ -955,7 +992,7 @@ describe('MarketSignalSection', () => {
       it('says the live price fell back inside the frame, and what would change the zone', async () => {
         await render(crossedBack, 'elite', 42.38);
         const line = container.querySelector('[data-testid="signal-live-price"]')!;
-        expect(line.textContent).toContain('ราคาสด 42.38 ตกกลับเข้ากรอบเดิมแล้ว');
+        expect(line.textContent).toContain('ราคาตอนนี้ 42.38 ตกกลับเข้ากรอบเดิมแล้ว');
         expect(line.textContent).toContain('โซนจะเปลี่ยนก็ต่อเมื่อปิดแบบนี้');
       });
 
@@ -994,7 +1031,7 @@ describe('MarketSignalSection', () => {
       it('says the other direction when the live price breaks out of the frame', async () => {
         await render({ ...zoned, zones: { ...zoned.zones!, zone: 'sideways' } }, 'elite', 37.1);
         const line = container.querySelector('[data-testid="signal-live-price"]')!;
-        expect(line.textContent).toContain('ราคาสด 37.1 หลุดลงใต้กรอบเดิมแล้ว');
+        expect(line.textContent).toContain('ราคาตอนนี้ 37.1 หลุดลงใต้กรอบเดิมแล้ว');
         expect(line.getAttribute('data-diverges')).toBe('true');
       });
     });
@@ -1153,7 +1190,7 @@ describe('MarketSignalSection', () => {
         expect(rows.textContent).toContain('ถ้าปิดต่ำกว่า');
         expect(rows.textContent).toContain('42.24');
         // The brief's own example: "0.45 ATR · 4.13% จากราคาปิด" becomes this.
-        expect(rows.textContent).toContain('ต่ำกว่าตอนนี้ 4.1%');
+        expect(rows.textContent).toContain('ต่ำกว่าราคาปิด 4.1%');
         expect(rows.textContent).not.toContain('ATR');
         // Nothing that tells a reader what to do with the number.
         ['ตั้ง stop', 'ควรซื้อ', 'ควรขาย', 'แนะนำ', 'เข้าซื้อ'].forEach((phrase) => {
@@ -1165,7 +1202,7 @@ describe('MarketSignalSection', () => {
         await render(actionable);
         const rows = container.querySelector('[data-testid="signal-actionable"]')!;
         expect(rows.textContent).toContain('58.51');
-        expect(rows.textContent).toContain('สูงกว่าตอนนี้ 32.8%');
+        expect(rows.textContent).toContain('สูงกว่าราคาปิด 32.8%');
         expect(rows.textContent).toContain('เป็นการคาดคะเนตามธรรมเนียมการอ่านกราฟ ยังไม่เคยทดสอบว่าแม่นจริงไหม');
       });
 
