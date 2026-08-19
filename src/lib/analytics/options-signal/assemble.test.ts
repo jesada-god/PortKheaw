@@ -3,12 +3,19 @@ import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options
 import type { OptionsSrResult } from '@/src/lib/analytics/options-sr/types';
 import {
   assembleOptionsSignalInput,
+  atmStraddleExpectedMove,
+  buildLiquiditySlot,
   buildPricingSlot,
   buildRiskRewardSlot,
   buildSentimentSlot,
+  chainDte,
   dataStateFromChainStatus,
+  ivPercentilePendingOf,
+  putCallVolumeRatio,
+  realizedWindowForDte,
   type OptionsSignalServerContext,
 } from './assemble';
+import { OPTIONS_SIGNAL_CONFIG } from './config';
 import type { OptionsSignalInputSlot, PriceLevelsInput } from './types';
 
 const ASOF = '2026-07-27T20:00:00.000Z';
@@ -102,7 +109,7 @@ describe('buildRiskRewardSlot', () => {
     const slot = buildRiskRewardSlot(levels, 102);
     expect(slot.status).toBe('available');
     if (slot.status !== 'available') return;
-    expect(slot.value).toEqual({ price: 102, support: 95, resistance: 110 });
+    expect(slot.value).toEqual({ price: 102, support: 95, resistance: 110, atr: null, expectedMove: null });
   });
 
   it('falls back to the finalized close when no accepted price exists', () => {
@@ -303,3 +310,155 @@ describe('stale-if-error fallback (429/5xx keeps Put/Call and IV readable)', () 
     expect(input.pricing.state).toBe('STALE');
   });
 });
+
+/**
+ * The assembly-layer half of the rework: the bases that make a raw IV or a raw
+ * Put/Call mean something, the two yardsticks a percentage cannot supply, and
+ * the chain tradeability the card was already telling readers to check.
+ */
+
+const realizedWindows = {
+  long: { value: 0.30, observations: 250 },
+  near: { value: 0.45, observations: 20 },
+  far: { value: 0.40, observations: 30 },
+};
+
+describe('realized-volatility window follows the contract, not the calendar', () => {
+  it('uses the 1-year window for a genuinely long-dated contract', () => {
+    expect(realizedWindowForDte(90, realizedWindows, realizedWindows.long)?.windowDays)
+      .toBe(OPTIONS_SIGNAL_CONFIG.iv.realizedWindowDays);
+  });
+
+  it('switches to a short window once DTE drops under the threshold', () => {
+    // A 30-day option is not priced against a year of realized volatility.
+    expect(realizedWindowForDte(30, realizedWindows, realizedWindows.long)?.windowDays).toBe(30);
+    expect(realizedWindowForDte(14, realizedWindows, realizedWindows.long)?.windowDays).toBe(20);
+  });
+
+  it('sits on the threshold without switching', () => {
+    expect(realizedWindowForDte(
+      OPTIONS_SIGNAL_CONFIG.iv.shortDatedDteThreshold,
+      realizedWindows,
+      realizedWindows.long,
+    )?.windowDays).toBe(OPTIONS_SIGNAL_CONFIG.iv.realizedWindowDays);
+  });
+
+  it('falls back to the long window rather than reporting nothing', () => {
+    expect(realizedWindowForDte(20, { long: realizedWindows.long, near: null, far: null }, realizedWindows.long)?.windowDays)
+      .toBe(OPTIONS_SIGNAL_CONFIG.iv.realizedWindowDays);
+    expect(realizedWindowForDte(20, { long: null, near: null, far: null }, null)).toBeNull();
+  });
+
+  it('labels the basis with the window the slot actually used', () => {
+    const slot = buildPricingSlot(
+      { chain: chain(0.5), optionsSr: availableSr },
+      realizedWindows.long,
+      realizedWindows,
+    );
+    expect(slot.status).toBe('available');
+    if (slot.status !== 'available' || slot.value.basis !== 'iv-vs-realized') throw new Error('expected the realized basis');
+    // The fixture chain expires 25 calendar days after its asOf.
+    expect(chainDte(chain(0.5))).toBe(25);
+    expect(slot.value.dte).toBe(25);
+    expect(slot.value.realizedWindowDays).toBe(20);
+    expect(slot.value.realizedVolatility).toBe(0.45);
+  });
+});
+
+describe('IV percentile prefers the readings this symbol has published before', () => {
+  it('reports the percentile once enough of that history exists', () => {
+    const history = Array.from({ length: 60 }, (_value, index) => 0.2 + index * 0.002);
+    const slot = buildPricingSlot(
+      { chain: chain(0.5), optionsSr: availableSr, ownHistory: { atmIv: history } },
+      realizedWindows.long,
+      realizedWindows,
+    );
+    if (slot.status !== 'available' || slot.value.basis !== 'iv-percentile') throw new Error('expected the percentile basis');
+    expect(slot.value.ivPercentile).toBe(100);
+    expect(slot.value.observations).toBe(60);
+  });
+
+  it('says how many days are still missing rather than reporting a failure', () => {
+    expect(ivPercentilePendingOf(undefined)).toEqual({ observations: 0, required: 60, missingDays: 60 });
+    expect(ivPercentilePendingOf(Array.from({ length: 12 }, () => 0.3)))
+      .toEqual({ observations: 12, required: 60, missingDays: 48 });
+    expect(ivPercentilePendingOf(Array.from({ length: 60 }, () => 0.3))).toBeNull();
+  });
+});
+
+describe('Put/Call gains a volume ratio and a self-relative percentile', () => {
+  it('sums traded volume off the same chain', () => {
+    // The fixture puts 10 contracts of volume on each of six legs.
+    expect(putCallVolumeRatio(chain(0.24))).toBe(1);
+    expect(putCallVolumeRatio(null)).toBeNull();
+  });
+
+  it('carries the percentile through only when there are enough readings', () => {
+    const history = Array.from({ length: 30 }, (_value, index) => 0.3 + index * 0.01);
+    const withHistory = buildSentimentSlot({
+      chain: chain(0.24), optionsSr: availableSr, ownHistory: { putCallRatio: history },
+    });
+    if (withHistory.status !== 'available') throw new Error('expected a sentiment reading');
+    expect(withHistory.value.ownPercentile).not.toBeNull();
+    expect(withHistory.value.percentileObservations).toBe(30);
+    expect(withHistory.value.volumeRatio).toBe(1);
+
+    const withoutHistory = buildSentimentSlot({ chain: chain(0.24), optionsSr: availableSr });
+    if (withoutHistory.status !== 'available') throw new Error('expected a sentiment reading');
+    expect(withoutHistory.value.ownPercentile).toBeNull();
+    expect(withoutHistory.value.percentileObservations).toBe(0);
+  });
+});
+
+describe('expected move comes from the real ATM straddle', () => {
+  it('adds the two ATM legs at the same strike', () => {
+    // Every fixture leg is bid 1 / ask 1.2, so each mid is 1.1.
+    expect(atmStraddleExpectedMove(chain(0.24))).toBeCloseTo(2.2, 6);
+  });
+
+  it('returns nothing rather than substituting a model when the legs are unpriced', () => {
+    const priced = chain(0.24);
+    const stripped: OptionsChain = {
+      ...priced,
+      calls: priced.calls.map((leg) => ({ ...leg, bid: null, ask: null, mark: null, last: null })),
+      puts: priced.puts.map((leg) => ({ ...leg, bid: null, ask: null, mark: null, last: null })),
+    };
+    expect(atmStraddleExpectedMove(stripped)).toBeNull();
+  });
+
+  it('reaches the risk/reward slot so the modal can quote distances in expected moves', () => {
+    const slot = buildRiskRewardSlot({ ...levels, value: { ...levels.value, atr: 2 } }, 100, 2.2);
+    if (slot.status !== 'available') throw new Error('expected levels');
+    expect(slot.value.expectedMove).toBe(2.2);
+    expect(slot.value.atr).toBe(2);
+  });
+});
+
+describe('liquidity is measured off the near-the-money strikes only', () => {
+  it('takes medians over the strikes inside the ATM window', () => {
+    const slot = buildLiquiditySlot({ chain: chain(0.24), optionsSr: availableSr });
+    if (slot.status !== 'available') throw new Error('expected a liquidity reading');
+    expect(slot.value.contractsExamined).toBe(6);
+    expect(slot.value.medianOpenInterest).toBe(100);
+    expect(slot.value.medianVolume).toBe(10);
+    // bid 1 / ask 1.2 -> mid 1.1 -> spread 0.2 / 1.1 = 18.18%.
+    expect(slot.value.medianSpreadPercent).toBeCloseTo(18.18, 2);
+  });
+
+  it('ignores the wings, which are thin on every chain', () => {
+    const base = chain(0.24);
+    const withWings: OptionsChain = {
+      ...base,
+      calls: [...base.calls, contract({ type: 'call', strike: 500 })],
+      puts: [...base.puts, contract({ type: 'put', strike: 5 })],
+    };
+    const slot = buildLiquiditySlot({ chain: withWings, optionsSr: availableSr });
+    if (slot.status !== 'available') throw new Error('expected a liquidity reading');
+    expect(slot.value.contractsExamined).toBe(6);
+  });
+
+  it('is unavailable, not zero, when no chain has loaded', () => {
+    expect(buildLiquiditySlot({ chain: null, optionsSr: null }).status).toBe('unavailable');
+  });
+});
+

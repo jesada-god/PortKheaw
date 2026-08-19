@@ -136,3 +136,23 @@ export function realizedVolatility(
   if (!Number.isFinite(variance) || variance < 0) return null;
   return { value: Math.sqrt(variance) * Math.sqrt(252), observations: returns.length };
 }
+
+/**
+ * Where `value` sits inside `history`, as a fraction in [0, 1].
+ *
+ * The share of observations at or below the value — the ordinary empirical
+ * percentile. Returns `null` rather than an estimate when there are fewer than
+ * `minimumObservations` real readings, because a "percentile" drawn from four
+ * days is a number with a misleading name rather than a weak measurement.
+ */
+export function percentileRank(
+  value: number,
+  history: readonly number[],
+  minimumObservations: number,
+): { percentile: number; observations: number } | null {
+  if (!Number.isFinite(value)) return null;
+  const usable = history.filter((entry) => Number.isFinite(entry));
+  if (usable.length < minimumObservations) return null;
+  const atOrBelow = usable.filter((entry) => entry <= value).length;
+  return { percentile: atOrBelow / usable.length, observations: usable.length };
+}

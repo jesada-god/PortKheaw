@@ -1,6 +1,8 @@
 import type { DisplayDataStatus } from '@/src/components/market-data/DataProvenance';
 import type {
   IvLevel,
+  IvPricingInput,
+  LiquidityGrade,
   OptionsSignalDataState,
   OptionsSignalFactorId,
   OptionsSignalType,
@@ -97,9 +99,52 @@ export function signedPoints(points: number | null): string {
   return points === null ? '—' : `${points > 0 ? '+' : ''}${points}`;
 }
 
-/** Describe the IV basis truthfully — the fallback is never labelled "IV Rank". */
-export function ivBasisLabel(basis: 'iv-rank' | 'iv-vs-realized' | null): string {
+/**
+ * Describe the IV basis truthfully — the fallback is never labelled "IV Rank",
+ * and the realized-volatility fallback names the window it actually used rather
+ * than claiming a year it may not have measured.
+ */
+export function ivBasisLabel(
+  basis: IvPricingInput['basis'] | null,
+  realizedWindowDays: number | null = null,
+): string {
   if (basis === 'iv-rank') return 'IV Rank';
-  if (basis === 'iv-vs-realized') return 'IV เทียบความผันผวนจริง 1 ปี';
+  if (basis === 'iv-percentile') return 'IV Percentile (เทียบตัวเอง)';
+  if (basis === 'iv-vs-realized') {
+    return realizedWindowDays === null
+      ? 'IV เทียบความผันผวนจริง'
+      : `IV เทียบความผันผวนจริง ${realizedWindowDays} วัน`;
+  }
   return 'IV Rank';
 }
+
+/**
+ * What to print where an IV percentile would go.
+ *
+ * "ไม่พร้อมใช้งาน" was the wrong word for a number that fills itself in one
+ * reading per day: it reads as broken when the honest answer is a countdown.
+ */
+export function ivPercentileText(
+  percentile: number | null,
+  pending: { observations: number; required: number; missingDays: number } | null,
+): string {
+  if (percentile !== null) return String(percentile);
+  if (pending && pending.missingDays > 0) {
+    return `ต้องการข้อมูลอีก ${pending.missingDays} วัน (มีแล้ว ${pending.observations}/${pending.required})`;
+  }
+  return 'ไม่พร้อมใช้งาน';
+}
+
+/** The liquidity badge. Three words a beginner can act on, not a raw score. */
+export const LIQUIDITY_BADGE = {
+  good: { label: 'สภาพคล่องดี', tone: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200' },
+  fair: { label: 'สภาพคล่องพอใช้', tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200' },
+  thin: { label: 'สภาพคล่องต้องระวัง', tone: 'border-red-500/40 bg-red-500/15 text-red-200' },
+} as const satisfies Record<LiquidityGrade, { label: string; tone: string }>;
+
+/** Sources that disagree by more than the configured window say so, once. */
+export const STALE_MIX_BADGE = {
+  label: 'STALE-MIX',
+  tone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+  helper: 'แหล่งข้อมูลของสัญญาณนี้มาจากคนละเวลากันเกินเกณฑ์ จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ',
+} as const;

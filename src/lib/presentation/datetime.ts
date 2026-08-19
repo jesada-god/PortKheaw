@@ -21,6 +21,28 @@ export function formatBangkokDateTime(
   }).format(date);
 }
 
+/**
+ * The same Bangkok wall clock, but always with a Gregorian (CE) year.
+ *
+ * `th-TH` defaults to the Buddhist calendar, so a page that mixes this helper
+ * with a raw ISO date shows 2569 beside 2026 and asks the reader to work out
+ * that they are the same day. Surfaces that print machine timestamps next to
+ * formatted ones use this so every year on the page is the same era.
+ */
+export function formatBangkokDateTimeCE(
+  value: string | Date | null | undefined,
+  options: { withSeconds?: boolean } = {},
+): string {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) return '—';
+  return new Intl.DateTimeFormat(`${THAI_LOCALE}-u-ca-gregory`, {
+    dateStyle: 'medium',
+    timeStyle: options.withSeconds ? 'medium' : 'short',
+    timeZone: BANGKOK_TIME_ZONE,
+  }).format(date);
+}
+
 export function formatThaiDateOnly(value: string | null | undefined): string {
   const datePart = value?.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.000)?Z)?$/)?.[1];
   if (!datePart) return '—';

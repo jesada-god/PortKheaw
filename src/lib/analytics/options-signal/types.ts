@@ -61,9 +61,12 @@ export interface MomentumInput {
  * Options pricing richness.
  *
  * `iv-rank` is the spec's canonical basis and needs a real historical IV series.
- * `iv-vs-realized` is an explicitly-labelled fallback computed from two real
- * measurements — today's ATM implied volatility from the live chain and the
- * underlying's own realized volatility — and is always disclosed as such.
+ * `iv-percentile` is the same idea computed from THIS symbol's own recorded ATM
+ * IV readings, which accumulate one per computed signal. `iv-vs-realized` is an
+ * explicitly-labelled fallback computed from two real measurements — today's ATM
+ * implied volatility from the live chain and the underlying's own realized
+ * volatility over a window matched to the contract's DTE — and is always
+ * disclosed as such, window included.
  */
 export type IvPricingInput =
   | {
@@ -73,12 +76,34 @@ export type IvPricingInput =
     observations: number;
   }
   | {
+    basis: 'iv-percentile';
+    /** Share of recorded readings at or below today's, as a 0-100 percentile. */
+    ivPercentile: number;
+    impliedVolatility: number;
+    observations: number;
+  }
+  | {
     basis: 'iv-vs-realized';
     impliedVolatility: number;
     realizedVolatility: number;
     ratio: number;
     observations: number;
+    /** Trading days of realized volatility the ratio was measured against. */
+    realizedWindowDays: number;
+    /** Calendar days to the expiration the IV was read from, when known. */
+    dte: number | null;
   };
+
+/**
+ * Why an IV percentile could not be published yet. Distinguished from a plain
+ * absence because "we need N more days" is a schedule, not a failure, and the
+ * card must not say "unavailable" for something that fills itself in.
+ */
+export interface IvPercentilePending {
+  observations: number;
+  required: number;
+  missingDays: number;
+}
 
 export interface SentimentInput {
   putCallRatio: number;
@@ -86,6 +111,20 @@ export interface SentimentInput {
   putTotal: number;
   callTotal: number;
   expiration: string;
+  /**
+   * Same-chain Put/Call by traded VOLUME. Volume is today's activity where open
+   * interest is an accumulated book, so when both exist the pair is far more
+   * informative than either alone.
+   */
+  volumeRatio?: number | null;
+  /**
+   * Where today's ratio sits inside this symbol's own recent readings, 0-1.
+   * `null` until enough of the symbol's own history has been recorded — a raw
+   * ratio is not comparable across tickers and is never treated as if it were.
+   */
+  ownPercentile?: number | null;
+  /** How many of the symbol's own readings the percentile was drawn from. */
+  percentileObservations?: number;
 }
 
 /**
@@ -97,6 +136,8 @@ export interface PriceLevelsInput {
   close: number;
   support: number | null;
   resistance: number | null;
+  /** ATR14 at the same candle, so a distance can be quoted in volatility units. */
+  atr?: number | null;
 }
 
 export interface RiskRewardInput {
@@ -105,7 +146,30 @@ export interface RiskRewardInput {
   support: number | null;
   /** Nearest confirmed resistance at or above `price`. */
   resistance: number | null;
+  /** ATR14, for expressing each distance in units of daily range. */
+  atr?: number | null;
+  /** ATM straddle expected move to expiration, in price units. */
+  expectedMove?: number | null;
 }
+
+/**
+ * Chain tradeability. Never scored into the direction — a liquid chain does not
+ * make a stock go up — but a signal on a chain nobody can get out of is a signal
+ * a beginner should not act on, and the card already tells them to check.
+ */
+export interface LiquidityInput {
+  /** Median open interest across the near-ATM strikes examined. */
+  medianOpenInterest: number | null;
+  /** Median traded volume across the same strikes. */
+  medianVolume: number | null;
+  /** Median bid-ask spread as a percentage of the midpoint. */
+  medianSpreadPercent: number | null;
+  /** How many near-ATM contracts the medians were taken over. */
+  contractsExamined: number;
+  expiration: string;
+}
+
+export type LiquidityGrade = 'good' | 'fair' | 'thin';
 
 export interface EventRiskInput {
   reportDate: string;
@@ -127,6 +191,10 @@ export interface OptionsSignalInput {
   sentiment: OptionsSignalInputSlot<SentimentInput>;
   riskReward: OptionsSignalInputSlot<RiskRewardInput>;
   event: OptionsSignalInputSlot<EventRiskInput>;
+  /** Optional: absent on any path that has no options chain to judge. */
+  liquidity?: OptionsSignalInputSlot<LiquidityInput>;
+  /** Optional: how far today's IV percentile still is from being publishable. */
+  ivPercentilePending?: IvPercentilePending | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +258,38 @@ export type SuggestedOptionsSetup =
     warnings: string[];
   };
 
+/**
+ * The ONE published provenance of a whole signal.
+ *
+ * Each factor keeps its own source and timestamp for the audit trail; this is
+ * the number a reader is entitled to treat as "how current is this card", and it
+ * is the OLDEST of them, because a signal cannot be fresher than its stalest
+ * input. `staleMix` says the sources disagree enough that the card should say so.
+ */
+export interface OptionsSignalProvenanceSummary {
+  /** Oldest `asOf` across every available source. Null when none carried one. */
+  asOf: string | null;
+  /** Newest `asOf` across the same set. */
+  newestAsOf: string | null;
+  /** Hours between the two, or null when fewer than two timestamps exist. */
+  spreadHours: number | null;
+  staleMix: boolean;
+  sources: Array<{ id: string; provider: string | null; asOf: string | null }>;
+}
+
+export interface OptionsSignalLiquidityDiagnostics {
+  grade: LiquidityGrade | null;
+  score: number | null;
+  medianOpenInterest: number | null;
+  medianVolume: number | null;
+  medianSpreadPercent: number | null;
+  contractsExamined: number | null;
+  expiration: string | null;
+  state: OptionsSignalDataState;
+  reason: string | null;
+  detail: string;
+}
+
 export interface OptionsSignalDiagnostics {
   factors: Record<OptionsSignalFactorId, OptionsSignalFactorScore>;
   /** Raw sum of factor points, in the same units as the weights. */
@@ -198,6 +298,13 @@ export interface OptionsSignalDiagnostics {
   totalWeight: number;
   /** directionScore rescaled to [-100, 100] against the AVAILABLE weight only. */
   normalizedScore: number;
+  /**
+   * THE published direction number, 0-100, and the only one any surface shows.
+   * `(raw + maxAbs) / (2 * maxAbs) * 100`, where `maxAbs` is `availableWeight`.
+   */
+  score: number;
+  /** That conversion written out, so the card and the modal cannot drift apart. */
+  scoreFormula: string;
   coverage: number;
   agreement: number;
   evidenceStrength: number;
@@ -218,14 +325,31 @@ export interface OptionsSignalDiagnostics {
     downsidePercent: number | null;
     callRewardRisk: number | null;
     putRewardRisk: number | null;
+    /** Which side's R:R the factor was scored on, or null when nothing led. */
+    scoredSide: 'call' | 'put' | null;
+    /** 0-1 quality of the BEST available side, independent of any direction. */
+    setupQuality: number | null;
+    /** Distances in units of ATR14, which a percentage alone cannot convey. */
+    upsideAtr: number | null;
+    downsideAtr: number | null;
+    /** Distances as a share of the ATM straddle's expected move to expiration. */
+    upsideExpectedMoves: number | null;
+    downsideExpectedMoves: number | null;
+    expectedMove: number | null;
     state: OptionsSignalDataState;
   };
   iv: {
     level: IvLevel | null;
     basis: IvPricingInput['basis'] | null;
     ivRank: number | null;
+    ivPercentile: number | null;
+    /** Set when a percentile is still accumulating; the card shows the countdown. */
+    percentilePending: IvPercentilePending | null;
     impliedVolatility: number | null;
     realizedVolatility: number | null;
+    /** Which realized-volatility window the ratio used. */
+    realizedWindowDays: number | null;
+    dte: number | null;
     ratio: number | null;
     observations: number | null;
     state: OptionsSignalDataState;
@@ -235,6 +359,7 @@ export interface OptionsSignalDiagnostics {
     /** When that measurement was taken — the disclosure that makes STALE meaningful. */
     fetchedAt: string | null;
   };
+  liquidity: OptionsSignalLiquidityDiagnostics;
   event: {
     reportDate: string | null;
     daysToEarnings: number | null;
@@ -249,12 +374,15 @@ export interface OptionsSignalDiagnostics {
     state: SqueezeState | null;
     momentum: number | null;
     normalizedMomentum: number | null;
+    /** True when |momentum ÷ ATR| exceeded the saturation and was clamped to ±1. */
+    normalizedMomentumCapped: boolean;
     relativeVolume: number | null;
     confirmation: number | null;
   };
   macro: {
     benchmarks: Array<{ symbol: string; close: number; ema20: number | null; aboveEma20: boolean | null }>;
   };
+  provenance: OptionsSignalProvenanceSummary;
   gates: {
     ivWarning: boolean;
     ivWarningReasons: string[];
@@ -268,6 +396,12 @@ interface OptionsSignalBase {
   calculatedAt: string;
   latestCandleAt: string | null;
   finalizedCandles: number;
+  /** The oldest source timestamp behind this signal. See {@link OptionsSignalProvenanceSummary}. */
+  asOf: string | null;
+  /** True when the sources behind this signal span more than the configured window. */
+  staleMix: boolean;
+  /** Config revision the numbers were produced under. */
+  configVersion: string;
   reasoning: OptionsSignalReason[];
   suggestedOptionsSetup: SuggestedOptionsSetup;
   diagnostics: OptionsSignalDiagnostics;
@@ -277,14 +411,19 @@ export type OptionsSignalResult = OptionsSignalBase & (
   | {
     status: 'available';
     signalType: OptionsSignalType;
+    /** The 0-100 direction score. Identical to `diagnostics.score`, by construction. */
+    score: number;
     confidenceScore: number;
     underlyingBias: UnderlyingBias;
+    liquidityGrade: LiquidityGrade | null;
   }
   | {
     status: 'insufficient-data';
     signalType: null;
+    score: null;
     confidenceScore: 0;
     underlyingBias: null;
+    liquidityGrade: null;
     reason: string;
   }
 );
