@@ -25,7 +25,9 @@ import { MARKET_SIGNAL_MEASURED, MARKET_SIGNAL_THRESHOLDS } from '@/src/config/s
  * never drift away from the number in the payload, and a wording change in the
  * engine can never silently corrupt a translation here. Where a fact is not in
  * the payload at all, the entry is absent and the engine's own sentence is
- * shown instead; see `macd-histogram`.
+ * shown instead — `REASON_IDS_WITHOUT_COPY` is where such an id is named, and
+ * it is empty today because `macd-histogram`, the last one on it, got the field
+ * it was waiting for (`metrics.histogramExpanding`).
  *
  * THE LANGUAGE STANDARD every entry is held to, enforced by
  * `reason-copy.test.ts`:
@@ -122,18 +124,47 @@ export const REASON_COPY: Record<string, (context: ReasonContext) => string | nu
   },
 
   /*
-   * `macd-histogram` IS DELIBERATELY ABSENT, and this is the note that says so.
+   * The row that waited for a field, and the field it waited for.
    *
-   * The engine's sentence carries whether the histogram is GROWING or shrinking
-   * ("และขยายตัว" / "แต่หดตัว"), which it reads off the previous bar's value.
-   * `previousHistogram` is not in the payload, and adding it was measured
-   * against the gate: a new key under `metrics` changes the serialized result
-   * and `snapshot:signal --check` reports a DIFF on every symbol. Translating
-   * the row without that clause would drop a fact the reader is being shown
-   * today, so the row keeps the engine's own words until the field exists.
+   * The engine's own sentence says two things: which side the momentum bar is
+   * on, and whether it grew or shrank against the bar before it. The first was
+   * always in `metrics.macdHistogram`; the second lived only inside the factor
+   * that wrote the sentence, so this row could not be restated without dropping
+   * half of it and shipped the engine's words instead. `histogramExpanding` is
+   * that second half published, and this is the translation it unblocked.
    *
-   * Tracked in `docs/signal-handover.md`.
+   * WHICH WAY "EXPANDING" POINTS. The field is the engine's reading, not a
+   * plain length comparison: it is true when a POSITIVE bar is longer than the
+   * one before it and when a NEGATIVE bar is shorter — the two cases where the
+   * engine nudges the score up. So the length word here is derived from the two
+   * fields TOGETHER (`macdHistogram > 0` against `histogramExpanding`) rather
+   * than read off the flag alone, which would print "ยาวกว่า" for a shrinking
+   * bar on the falling side and tell the reader the opposite of the chart.
+   *
+   * `null` is the engine saying neither, and gets its own sentence rather than
+   * a guessed one: no previous bar, or a bar that matched it exactly.
    */
+  'macd-histogram': ({ metrics }) => {
+    if (metrics.macdHistogram === null) return null;
+    if (metrics.macdHistogram === 0) return 'แท่งวัดแรงส่ง (MACD Histogram) อยู่พอดีที่ศูนย์ — แรงฝั่งขึ้นกับฝั่งลงเท่ากัน จึงยังไม่ช่วยตัดสินทิศทาง';
+    const up = metrics.macdHistogram > 0;
+    if (metrics.histogramExpanding === null) {
+      return up
+        ? 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งบวก แต่เทียบกับแท่งก่อนหน้าแล้วยังบอกไม่ได้ว่าแรงเพิ่มหรือแผ่วลง — จึงรู้แค่ว่าแรงอยู่ฝั่งขึ้น'
+        : 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งลบ แต่เทียบกับแท่งก่อนหน้าแล้วยังบอกไม่ได้ว่าแรงเพิ่มหรือแผ่วลง — จึงรู้แค่ว่าแรงอยู่ฝั่งลง';
+    }
+    // Longer means the bar moved the way its own sign points, which is the
+    // move the engine scored up: a positive bar growing, a negative one deeper.
+    const longer = up === metrics.histogramExpanding;
+    if (up) {
+      return longer
+        ? 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งบวกและยาวกว่าแท่งก่อนหน้า — แปลว่าแรงฝั่งขึ้นกำลังเพิ่มขึ้น ไม่ใช่แค่ค้างอยู่เท่าเดิม'
+        : 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งบวกแต่สั้นกว่าแท่งก่อนหน้า — แรงฝั่งขึ้นยังมีอยู่ แต่กำลังแผ่วลงเรื่อย ๆ';
+    }
+    return longer
+      ? 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งลบและยาวกว่าแท่งก่อนหน้า — แปลว่าแรงฝั่งลงกำลังเพิ่มขึ้น ไม่ใช่แค่ค้างอยู่เท่าเดิม'
+      : 'แท่งวัดแรงส่ง (MACD Histogram) อยู่ฝั่งลบแต่สั้นกว่าแท่งก่อนหน้า — แรงฝั่งลงยังมีอยู่ แต่กำลังแผ่วลงเรื่อย ๆ';
+  },
 
   'adx-dmi': ({ metrics }) => {
     if (metrics.adx14 === null) return null;
@@ -223,9 +254,43 @@ export const REASON_COPY: Record<string, (context: ReasonContext) => string | nu
       : 'กรอบตอนนี้วัดความสูงไม่ได้ — ธรรมเนียมที่ใช้ตั้งเป้าต้องใช้ความสูงของกรอบ ระบบจึงไม่แสดงเป้าและไม่แสดงการเทียบระยะ'
   ),
 
-  'structure-volume-unconfirmed': ({ metrics }) => {
+  /*
+   * THREE WORDS THIS ENTRY MAY NOT USE, and what it says instead.
+   *
+   * The engine raises this id off `breakoutDirection(...)` — a close through
+   * the nearest CONFIRMED SWING PIVOT within 120 bars, buffered by a 0.1%
+   * ratio. Naming that object is the whole difficulty:
+   *
+   *   "กรอบ"       belongs to the rectangle on the zone bar, which is a
+   *                different object measured a different way (`frame.resistance`
+   *                buffered by 0.25 ATR). The two can sit on opposite sides of
+   *                one close by design — that state is `pendingBreakout`. This
+   *                line once said "ราคาปิดออกนอกกรอบแล้ว" while the bar a
+   *                thumb-length above said "ราคายังอยู่ในกรอบเดิม"; both were
+   *                right about their own measurement and the card read as
+   *                broken. See ONE WORD FOR ONE THING in `MarketSignalSection`.
+   *   "จุดสวิง"    is "swing" in Thai letters. The ban list caught the Latin
+   *                spelling and let the transliteration through, which moves the
+   *                jargon rather than removing it. `reason-copy.test.ts` now
+   *                bans "สวิง" too.
+   *   "จุดกลับตัว" is already spoken for: `ZONE_MODE_COPY.structural` uses it to
+   *                say where the FRAME's edges come from. Borrowing it here
+   *                would repeat the exact collision the first bullet describes,
+   *                one word over.
+   *
+   * What is left is the plainest true description — the high, or the low, that
+   * price has now closed past. Direction comes from `reasonIds`, i.e. from the
+   * engine's own `breakoutDirection()` answer as published on the sibling row;
+   * see the field's note above for why it cannot be recomputed here. When the
+   * sibling is absent the sentence simply does not name a side, because a
+   * guessed direction is worse than an unspecified one.
+   */
+  'structure-volume-unconfirmed': ({ metrics, reasonIds }) => {
     const seen = metrics.relativeVolume20 === null ? 'ยังไม่ถึง' : `อยู่ที่ ${n(metrics.relativeVolume20, 2)} เท่า ยังไม่ถึง`;
-    return `ราคาปิดออกนอกกรอบแล้ว แต่ปริมาณซื้อขาย${seen} ${T.volume.relativeVolumeConfirmation} เท่าของค่าเฉลี่ย — การออกนอกกรอบที่ไม่มีคนตามมักไม่อยู่นาน`;
+    const passed = reasonIds.includes('structure-breakout') ? 'ราคาปิดผ่านจุดสูงเดิมแล้ว'
+      : reasonIds.includes('structure-breakdown') ? 'ราคาปิดผ่านจุดต่ำเดิมแล้ว'
+      : 'ราคาปิดผ่านจุดเดิมแล้ว';
+    return `${passed} แต่ปริมาณซื้อขาย${seen} ${T.volume.relativeVolumeConfirmation} เท่าของค่าเฉลี่ย — การผ่านที่ไม่มีคนตามมักอยู่ได้ไม่นาน`;
   },
 };
 
@@ -270,6 +335,7 @@ export function reasonContextFor(result: MarketSignalResult): ReasonBaseContext 
     zones: result.zones ?? null,
     actionable: result.actionable ?? null,
     flags: result.flags,
+    reasonIds: result.reasons.map((reason) => reason.id),
     timeframe: result.timeframe,
   };
 }
@@ -303,7 +369,11 @@ export const ENGINE_REASON_IDS = [
  * because translating it would DROP something the reader is shown today, and
  * the test treats an id that quietly disappears from the table without landing
  * here as a failure.
+ *
+ * EMPTY IS A STATE, NOT A DELETION. `macd-histogram` was the only entry and it
+ * left by being fixed rather than by being excused: the clause it could not say
+ * is `metrics.histogramExpanding` now. The table stays because the rule it
+ * carries has not changed — the next id that cannot be said from the payload
+ * has to be written down here, with its reason, rather than quietly omitted.
  */
-export const REASON_IDS_WITHOUT_COPY: Record<string, string> = {
-  'macd-histogram': 'ประโยคของ engine บอกว่าแรงส่งกำลังขยายหรือหดตัว ซึ่งต้องใช้ค่าแท่งก่อนหน้า (previousHistogram) ที่ payload ยังไม่ส่งออกมา',
-};
+export const REASON_IDS_WITHOUT_COPY: Record<string, string> = {};

@@ -151,7 +151,15 @@ const FLAG_COPY: Record<string, string> = {
   stale_or_partial_data: 'ข้อมูลไม่สดหรือไม่ครบ',
   earnings_imminent: 'ใกล้ประกาศงบมาก',
   earnings_soon: 'ใกล้ประกาศงบ',
-  pre_earnings_breakout: 'ออกนอกกรอบก่อนงบ',
+  /*
+   * NOT "กรอบ". This chip is raised from `breakout || breakdown` — the
+   * CONFIRMED-PIVOT break, the same pair that raises
+   * `structure-volume-unconfirmed` — and not from `zones`, so the frame's word
+   * would be describing a boundary the frame does not own. The two chips above
+   * it are the frame's and keep the word. Direction is unnamed here because
+   * the flag is raised from either side and carries none.
+   */
+  pre_earnings_breakout: 'ผ่านจุดเดิมก่อนงบ',
   weak_confirmation: 'ยังยืนยันไม่ชัด',
   unfavorable_risk_reward: 'ระยะเสี่ยงมากกว่าระยะเป้า',
   risk_leg_inside_noise: 'ราคาชิดจุดที่รอบนี้จะจบ',
