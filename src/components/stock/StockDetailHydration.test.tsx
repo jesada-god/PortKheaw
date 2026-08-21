@@ -157,6 +157,7 @@ const props: React.ComponentProps<typeof StockDetailClient> = {
       macd: 1.2,
       macdSignal: 1,
       macdHistogram: 0.2,
+      histogramExpanding: true,
       adx14: 28,
       plusDi14: 31,
       minusDi14: 18,

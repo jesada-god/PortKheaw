@@ -151,6 +151,7 @@ function emptyMetrics(): MarketSignalMetrics {
     macd: null,
     macdSignal: null,
     macdHistogram: null,
+    histogramExpanding: null,
     adx14: null,
     plusDi14: null,
     minusDi14: null,
@@ -1132,6 +1133,25 @@ export function calculateMarketSignal(
   const macdPoints = technical.indicators.macd.status === 'available' ? technical.indicators.macd.points : [];
   const previousHistogram = finiteOrNull(macdPoints.at(-2)?.histogram);
   const macdHistogram = finiteOrNull(macdLatest?.histogram);
+  /*
+   * The histogram's own direction, lifted out of the momentum factor so the
+   * payload can carry the same answer the factor's sentence is built from.
+   *
+   * It stays ONE expression, read twice. The reason row says the histogram is
+   * growing or shrinking off the sign of this product, and
+   * `metrics.histogramExpanding` is that same sign published; computing it a
+   * second time next to the metrics object would let the two drift apart on a
+   * day the guards disagree, which is the drift the copy layer exists to stop.
+   *
+   * Three states, not two, because the engine's sentence has three branches.
+   * `null` is "the engine said neither" - no previous bar to compare against, a
+   * histogram sitting on zero, or a bar that matched the one before it - and it
+   * is the state that tells the copy layer to leave the clause off rather than
+   * to print a direction nobody measured.
+   */
+  const histogramExpansionSign = macdHistogram === null || previousHistogram === null ? 0
+    : Math.sign(macdHistogram) * Math.sign(Math.abs(macdHistogram) - Math.abs(previousHistogram));
+  const histogramExpanding = histogramExpansionSign === 0 ? null : histogramExpansionSign > 0;
   const atr14 = latest<IndicatorPoint>(technical.indicators.atr)?.value ?? null;
   const adxLatest = latest<AdxPoint>(technical.indicators.adx);
   const bollingerLatest = latest<BollingerPoint>(technical.indicators.bollinger);
@@ -1181,8 +1201,7 @@ export function calculateMarketSignal(
   }
   if (macdHistogram !== null && macdScale !== null) {
     const baseScore = clamp(macdHistogram / macdScale, -1, 1) * 0.75;
-    const expansion = previousHistogram === null ? 0
-      : Math.sign(macdHistogram) * Math.sign(Math.abs(macdHistogram) - Math.abs(previousHistogram)) * 0.25;
+    const expansion = histogramExpansionSign * 0.25;
     momentumFactors.push({ id: 'macd-histogram', score: clamp(baseScore + expansion, -1, 1), text: `MACD Histogram ${macdHistogram > 0 ? 'เป็นบวก' : macdHistogram < 0 ? 'เป็นลบ' : 'เป็นศูนย์'}${expansion > 0 ? 'และขยายตัว' : expansion < 0 ? 'แต่หดตัว' : ''}` });
   }
 
@@ -1288,6 +1307,7 @@ export function calculateMarketSignal(
     macd: macdLatest?.value ?? null,
     macdSignal: macdLatest?.signal ?? null,
     macdHistogram,
+    histogramExpanding,
     adx14: adxLatest?.value ?? null,
     plusDi14: adxLatest?.plusDi ?? null,
     minusDi14: adxLatest?.minusDi ?? null,

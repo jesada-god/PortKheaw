@@ -63,6 +63,26 @@ export type ReasonContext = {
   zones: MarketSignalZones | null;
   actionable: MarketSignalActionable | null;
   flags: readonly string[];
+  /**
+   * Every reason id in THIS payload, so an entry can read a fact the engine
+   * published on a sibling row rather than re-deriving it.
+   *
+   * The engine decides some things once and reports them across several rows.
+   * `breakoutDirection()` is the case that forced this field: it returns
+   * -1/0/1, and the engine spends that one answer on `structure-breakout` /
+   * `structure-breakdown` — while `structure-volume-unconfirmed`, raised from
+   * the very same booleans, carries no direction of its own. The direction is
+   * not recoverable from `metrics`: `previousClose` is not in the payload, and
+   * `nearestSupport`/`nearestResistance` are the CLOSEST levels to price, not
+   * the confirmed pivots the break was measured against (see the P2 note in
+   * `calculations.ts`). Calling `breakoutDirection()` here with those would
+   * produce a direction the engine never computed.
+   *
+   * So the direction is transported, not recomputed — ids only, never text.
+   * This keeps the file's contract intact: nothing here parses `reason.text`,
+   * and no entry can state a fact the payload does not already contain.
+   */
+  reasonIds: readonly string[];
   timeframe: string;
 };
 

@@ -38,7 +38,7 @@ const metrics = {
   close: 44.06, ema20: 43.1, ema50: 43.35, ema200: 40.2,
   ema20SlopePct: 1.24, ema50SlopePct: -2.43, ema200SlopePct: 0.31,
   emaCompressionRatio: 0.0616, rsi14: 78.2, macd: 2.1, macdSignal: 1.8,
-  macdHistogram: 0.3, adx14: 24.3, plusDi14: 31, minusDi14: 18,
+  macdHistogram: 0.3, histogramExpanding: true, adx14: 24.3, plusDi14: 31, minusDi14: 18,
   relativeVolume20: 1.42, obvTrend: 'rising' as const,
   bollingerUpper: 48, bollingerMiddle: 44, bollingerLower: 40,
   keltnerUpper: 49, keltnerMiddle: 44, keltnerLower: 39,
@@ -57,6 +57,7 @@ const baseContext: ReasonBaseContext = {
   zones: { pendingBreakout: true, pendingBreakdown: false } as never,
   actionable: { notes: ['measured_move_reached'] } as never,
   flags: [],
+  reasonIds: [],
   timeframe: '1D',
 };
 
@@ -77,6 +78,26 @@ function everyString(): Array<{ id: string; label: string; text: string }> {
     ['divergence-weighted-down', { ...baseContext, flags: [] }],
     ['divergence-full-weight', { ...baseContext, flags: ['bullish_divergence', 'bearish_divergence'] }],
     ['no-gate', { ...baseContext, gate: null }],
+    // The two sibling rows that carry `breakoutDirection()`'s answer, so both
+    // named sides of `structure-volume-unconfirmed` are swept for length and
+    // banned words alongside the unnamed one `baseContext` already produces.
+    ['structure-up', { ...baseContext, reasonIds: ['structure-breakout'] }],
+    ['structure-down', { ...baseContext, reasonIds: ['structure-breakdown'] }],
+    /*
+     * `macd-histogram` is the one row built from TWO fields at once, so a
+     * single variant sweeps a sixth of it. Its sentence is chosen by
+     * `macdHistogram`'s side crossed with `histogramExpanding`, and both of the
+     * length words it can print sit on the diagonal — a positive bar is longer
+     * when the flag is true, a negative one when it is false — so a variant
+     * that moves only the flag would never build the two negative-side
+     * sentences at all. All six branches are named here instead.
+     */
+    ['histogram-fading', { ...baseContext, metrics: { ...metrics, histogramExpanding: false } }],
+    ['histogram-uncompared', { ...baseContext, metrics: { ...metrics, histogramExpanding: null } }],
+    ['histogram-below-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: -0.3 } }],
+    ['histogram-deepening', { ...baseContext, metrics: { ...metrics, macdHistogram: -0.3, histogramExpanding: false } }],
+    ['histogram-below-uncompared', { ...baseContext, metrics: { ...metrics, macdHistogram: -0.3, histogramExpanding: null } }],
+    ['histogram-at-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: 0 } }],
   ];
   for (const [id, build] of Object.entries(REASON_COPY)) {
     for (const [variant, context] of variants) {
@@ -293,6 +314,10 @@ describe('reason copy', () => {
     'โซน', 'ไซด์เวย์', 'เบรก', 'breakout', 'breakdown', 'sideways',
     'หลุด', 'พลิกกลับ', 'ตกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง',
     'swing', 'divergence', 'pivot', 'confirmed', 'Histogram',
+    // The Latin spellings above were not enough: "จุดสวิง" shipped for a day
+    // because "swing" in Thai letters matched none of them. A transliteration
+    // is the jargon moved, not removed.
+    'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์',
   ];
 
   it('keeps every sentence clear of the terms the card bans', () => {
@@ -380,6 +405,10 @@ describe('reason copy', () => {
 describe('the dialog renders the table, not the payload', () => {
   const result = {
     metrics, timeframe: '1D', flags: [], gate: null, zones: null, actionable: null,
+    // Required on a real payload, and `reasonContextFor` reads it for the
+    // sibling-row direction, so the fixture carries it like every other
+    // non-optional field above.
+    reasons: [],
   } as unknown as MarketSignalResult;
 
   it('shows the written sentence where there is one and the engine string otherwise', () => {
@@ -391,11 +420,27 @@ describe('the dialog renders the table, not the payload', () => {
     expect(translated).toContain('ปริมาณซื้อขายสะสมเพิ่มขึ้น');
     expect(translated).not.toBe('OBV มีแนวโน้มสูงขึ้น');
 
-    // The one row that deliberately keeps the engine's words.
+    /*
+     * The other half: a row with no entry still reaches the reader in full.
+     *
+     * This used to be `macd-histogram`, the one id that kept the engine's words
+     * on purpose. It has copy now, and `REASON_IDS_WITHOUT_COPY` is empty — so
+     * there is no real id left to stand for the fallback, and pinning the test
+     * to one that HAS copy would only re-check the line above. An id the table
+     * has never heard of is the same code path and cannot go stale.
+     */
     const kept = reasonText(
-      { id: 'macd-histogram', polarity: 'positive', text: 'MACD Histogram เป็นบวกและขยายตัว', impact: 3 },
+      { id: 'macd-crossover-next-quarter', polarity: 'positive', text: 'MACD Histogram เป็นบวกและขยายตัว', impact: 3 },
       context,
     );
     expect(kept).toBe('MACD Histogram เป็นบวกและขยายตัว');
+
+    // And the row that was the fallback until this change now translates.
+    const nowTranslated = reasonText(
+      { id: 'macd-histogram', polarity: 'positive', text: 'MACD Histogram เป็นบวกและขยายตัว', impact: 3 },
+      context,
+    );
+    expect(nowTranslated).not.toBe('MACD Histogram เป็นบวกและขยายตัว');
+    expect(nowTranslated).toContain('ยาวกว่าแท่งก่อนหน้า');
   });
 });

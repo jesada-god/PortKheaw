@@ -298,6 +298,22 @@ export interface MarketSignalMetrics {
   macd: number | null;
   macdSignal: number | null;
   macdHistogram: number | null;
+  /**
+   * Whether the latest histogram bar is longer than the one before it, in the
+   * engine's own reading of "longer".
+   *
+   * `macdHistogram` is a single bar, and the reason row the engine writes about
+   * it says more than the bar does: it says whether the bar GREW or shrank,
+   * which it reads off the previous bar. That comparison had no field, so the
+   * card could not restate the row without dropping half of it. This is the
+   * comparison, published.
+   *
+   * `null` is a real answer, not missing data: no previous bar, a histogram on
+   * zero, or a bar identical to the one before it. On those the engine's own
+   * sentence carries no growth clause either, so a reader is told nothing the
+   * engine did not measure.
+   */
+  histogramExpanding: boolean | null;
   adx14: number | null;
   plusDi14: number | null;
   minusDi14: number | null;

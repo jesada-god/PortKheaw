@@ -65,6 +65,7 @@ const blankMetrics = (): MarketSignalMetrics => ({
   macd: null,
   macdSignal: null,
   macdHistogram: null,
+  histogramExpanding: null,
   adx14: null,
   plusDi14: null,
   minusDi14: null,

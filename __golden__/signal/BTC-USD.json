@@ -46,6 +46,7 @@
     "ema50": 64286.86105625798,
     "ema50SlopePct": -0.4953,
     "emaCompressionRatio": 0.122073,
+    "histogramExpanding": true,
     "keltnerLower": 61953.13813763148,
     "keltnerMiddle": 63770.54719725148,
     "keltnerUpper": 65587.95625687148,

@@ -49,7 +49,7 @@ const base: MarketSignalResult = {
   metrics: {
     close: 44.06, ema20: 42, ema50: 40, ema200: 33,
     ema20SlopePct: 1.2, ema50SlopePct: 0.8, ema200SlopePct: 0.3, emaCompressionRatio: 0.04,
-    rsi14: 62, macd: 2.1, macdSignal: 1.8, macdHistogram: 0.3,
+    rsi14: 62, macd: 2.1, macdSignal: 1.8, macdHistogram: 0.3, histogramExpanding: true,
     adx14: 24, plusDi14: 31, minusDi14: 18, relativeVolume20: 1.4, obvTrend: 'rising',
     bollingerUpper: 48, bollingerMiddle: 44, bollingerLower: 40,
     keltnerUpper: 49, keltnerMiddle: 44, keltnerLower: 39,

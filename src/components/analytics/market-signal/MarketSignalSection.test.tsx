@@ -54,6 +54,7 @@ const result: MarketSignalResult = {
     macd: 2.1,
     macdSignal: 1.8,
     macdHistogram: 0.3,
+    histogramExpanding: true,
     adx14: 24,
     plusDi14: 31,
     minusDi14: 18,
