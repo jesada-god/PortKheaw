@@ -433,6 +433,40 @@ export const MARKET_SIGNAL_MEASURED = {
     labelChangedNearTriggerFiveBars: 65,
     labelChangedDeepRangeFiveBars: 51,
   },
+  /*
+   * The SIDEWAYS card's own base rate, and the gap it exists to disclose.
+   *
+   * §6.6 of `docs/signal-handover.md`, and the "### Sideways" table in the run
+   * named above. Followed from every observation the engine labelled
+   * `zone === 'sideways'`: twenty bars later the LABEL is still sideways 72.6%
+   * of the time, while price has stayed inside the frame that label named only
+   * 25.7% of the time. Three quarters of the population has left the rectangle
+   * the card is still describing.
+   *
+   * The card used to say "ราคายังไม่ไปทางไหนชัด" with nothing attached, which
+   * reads as a state that will keep being true. These four figures are what let
+   * it say the measured thing instead — the label outlives the story it tells —
+   * and `signal-measured.test.ts` reads them straight out of the run's
+   * `report.md`, so a fresh calibration pass cannot leave the sentence behind.
+   *
+   * `claimHoldsAboveGapPp` is the editorial line, in the same shape as
+   * `directionalEdge.claimHoldsBelowPp` but pointing the other way: the wording
+   * only works while the label rate is far ABOVE the inside-frame rate. If a
+   * later run closes that gap, "ป้ายมักอยู่ต่อ ส่วนราคามักออกจากกรอบไปก่อน" has
+   * stopped being what was measured and the copy has to be rewritten.
+   *
+   * NOT A FORECAST, and the copy built on it may not become one. This is what
+   * happened to past observations over a fixed window; it says nothing about
+   * which side price leaves on, or when. See §6.8: nothing here may be turned
+   * into "this label has stood a long time, so trust it".
+   */
+  sidewaysPersistence: {
+    horizonBars: 20,
+    labelStillSidewaysPct: 72.6,
+    priceInsideFramePct: 25.7,
+    sampleSize: 10525,
+    claimHoldsAboveGapPp: 20,
+  },
 } as const;
 
 /**

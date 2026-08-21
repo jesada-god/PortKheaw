@@ -52,7 +52,8 @@
     "signal:history": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-history-probe.ts",
     "signal:distribution": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-distribution-regression.ts",
     "signal:levels": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-level-audit.ts",
-    "signal:iv-horizon": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-iv-horizon-probe.ts"
+    "signal:iv-horizon": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-iv-horizon-probe.ts",
+    "signal:sideways-pressure": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sideways-pressure-probe.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

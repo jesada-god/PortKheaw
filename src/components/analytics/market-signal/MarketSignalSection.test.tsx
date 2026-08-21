@@ -2352,4 +2352,209 @@ describe('the history strip discloses without ranking', () => {
     expect(container.querySelector('[data-testid="signal-history"]')).toBeNull();
   });
 });
+
+/*
+ * SIDEWAYS, and the gap between what the label says and what was measured.
+ *
+ * §6.6 followed 10,525 sideways calls: twenty bars on, the LABEL is still
+ * sideways 72.6% of the time and price is still inside the frame it named only
+ * 25.7% of the time. The card used to answer that with "ราคายังไม่ไปทางไหนชัด"
+ * — a sentence with no moment in it, which a reader takes as a description of
+ * how the instrument IS rather than of where it stands today. These tests hold
+ * the two halves of the fix: the wording is bound to now, and the base rate is
+ * on the card rather than in a report.
+ */
+describe('the SIDEWAYS label says when it is talking about', () => {
+  /*
+   * Thai has no spaces between words, so the length rule needs the platform's
+   * own segmentation rather than `split(' ')` — the same ruler
+   * `reason-copy.test.ts` holds the reason table to, for the same reason.
+   */
+  const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+  const wordCount = (text: string): number =>
+    [...segmenter.segment(text)].filter((piece) => piece.isWordLike).length;
+
+  const frame: MarketSignalResult['zones'] = {
+    mode: 'structural',
+    zone: 'sideways',
+    support: 39.2727,
+    resistance: 46.2297,
+    upperTrigger: 47.244,
+    lowerTrigger: 38.2583,
+    positionPct: 68.8,
+    upperDistance: 3.184,
+    upperDistanceAtr: 0.78,
+    lowerDistance: 5.8017,
+    lowerDistanceAtr: 1.43,
+    frameAgeBars: 12,
+    proximity: 'near_trigger',
+    nearestTriggerAtr: 0.78,
+    zoneAgeBars: 9,
+    lastTestedBarsAgo: 0,
+    triggerCrossings: 14,
+    pendingBreakout: false,
+    pendingBreakdown: false,
+    entry: null,
+    referenceClose: 44.06,
+    referenceDate: '2026-08-14',
+  };
+
+  /* `Partial<MarketSignalResult>` would widen `status` back to the union and
+     leave the fixture assignable to neither half of it. */
+  type AvailableSignal = Extract<MarketSignalResult, { status: 'available' }>;
+
+  const sideways = (over: Partial<AvailableSignal> = {}): MarketSignalResult => ({
+    ...(result as AvailableSignal), state: 'SIDEWAYS', bias: 'neutral', score: 8, ...over,
+  });
+  const framed = (over: Partial<AvailableSignal> = {}) => sideways({ zones: frame, ...over });
+
+  const headline = () => container.querySelector('[data-testid="signal-state-headline"]')!.textContent ?? '';
+  const description = () => container.querySelector('[data-testid="signal-state-description"]')!.textContent ?? '';
+  const baseRate = () => container.querySelector('[data-testid="signal-sideways-base-rate"]');
+  const baseRateSentences = () => [...(baseRate()?.querySelectorAll('p') ?? [])].map((node) => node.textContent ?? '');
+
+  /*
+   * THE DEFECT, RESTATED AS AN ASSERTION. The old wording named no moment, and
+   * every replacement — on both card shapes — has to.
+   */
+  it('never states the label without saying it is about now', async () => {
+    for (const payload of [sideways(), sideways({ bias: 'bullish' }), framed(), framed({ bias: 'bearish' })]) {
+      await render(payload);
+      expect(headline(), `"${headline()}" could be about any day`).toContain('ตอนนี้');
+      expect(description(), `"${description()}" could be about any day`).toContain('ตอนนี้');
+      expect(`${headline()} ${description()}`).not.toContain('ยังไม่ไปทางไหนชัด');
+    }
+  });
+
+  it('names the frame on a card that draws one, and the direction on a card that does not', async () => {
+    await render(framed());
+    expect(headline()).toBe('ตอนนี้ราคายังอยู่ในกรอบ');
+    expect(description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
+
+    /*
+     * The other half, and the reason there are two wordings at all. With
+     * `SIGNAL_ZONES` off there is no frame in the payload and no rectangle on
+     * the card — CL-F ships in exactly this state — so the frame's word would
+     * be naming an object the reader cannot see. That is the collision
+     * `market-signal/no-unsourced-frame-word` exists to stop.
+     */
+    await render(sideways());
+    expect(headline()).toBe('ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง');
+    expect(`${headline()} ${description()}`).not.toContain('กรอบ');
+  });
+
+  it('says the lean without denying the label above it', async () => {
+    await render(framed({ bias: 'bullish' }));
+    expect(description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
+    expect(description()).toContain('แต่คะแนนรวมเอนไปทางขึ้น');
+
+    await render(sideways({ bias: 'bearish' }));
+    expect(description()).toContain('แต่คะแนนรวมเอนไปทางลง');
+  });
+
+  /*
+   * The disclosure itself, and the one thing that makes it worth having: every
+   * figure is READ from the run rather than typed here, so a calibration pass
+   * that moves them moves this line too. `signal-measured.test.ts` is the other
+   * end of that wire — it fails when the config stops matching the newest run's
+   * own `report.md`.
+   */
+  it('puts the measured base rate under the label, from the config and not from memory', async () => {
+    await render(framed());
+    const measured = MARKET_SIGNAL_MEASURED.sidewaysPersistence;
+    const text = baseRate()!.textContent ?? '';
+    expect(text).toContain(measured.sampleSize.toLocaleString('en-US'));
+    expect(text).toContain(`${measured.horizonBars} แท่ง`);
+    expect(text).toContain(`${measured.labelStillSidewaysPct}%`);
+    expect(text).toContain(`${measured.priceInsideFramePct}%`);
+    // Both halves of the finding, never the reassuring one alone.
+    expect(text).toContain('ป้ายมักอยู่ต่อ');
+    expect(text).toContain('ราคามักออกจากกรอบไปก่อน');
+  });
+
+  it('repeats it in "ทำไม?" beside the reasons', async () => {
+    await render(framed());
+    await act(async () => buttonContaining('ทำไม?').click());
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    const inDialog = dialog.querySelector('[data-testid="signal-sideways-base-rate-dialog"]')!;
+    expect(inDialog.textContent).toContain(`${MARKET_SIGNAL_MEASURED.sidewaysPersistence.labelStillSidewaysPct}%`);
+  });
+
+  /*
+   * WHERE IT MAY NOT APPEAR. The measurement is `zone === 'sideways'` followed
+   * against `frame.support/resistance`. With no frame there is no "inside" for
+   * the second figure to be about, so quoting it would attach a number to a
+   * mechanism it never measured — and on any other zone it is simply not that
+   * zone's evidence.
+   */
+  it('withholds the base rate where the measurement does not reach', async () => {
+    await render(sideways());
+    expect(baseRate(), 'quoted at a label with no frame behind it').toBeNull();
+
+    await render(framed({ state: 'BULLISH', bias: 'bullish', zones: { ...frame, zone: 'uptrend' } }));
+    expect(baseRate(), 'quoted at a zone it was not measured on').toBeNull();
+  });
+
+  /*
+   * The two things §6.8 forbids outright, and the one this card forbids itself.
+   *
+   * A base rate is a fact about past observations. The moment it is written as
+   * what price will do next, or as a reason a label that lasts can be trusted,
+   * it has stopped being the measurement and started being the claim the
+   * measurement rules out.
+   */
+  it('reports a base rate rather than making a forecast out of it', async () => {
+    await render(framed());
+    const text = [headline(), description(), ...baseRateSentences()].join(' ');
+    for (const forecast of ['จะขึ้น', 'จะลง', 'คาดว่า', 'พยากรณ์', 'มีโอกาส', 'โอกาสที่']) {
+      expect(text, `"${forecast}" turns the base rate into a forecast`).not.toContain(forecast);
+    }
+    for (const endorsement of ['น่าเชื่อถือ', 'ยืนยันแล้ว', 'ยืนนาน', 'แข็งแรง', 'มั่นใจได้']) {
+      expect(text, `"${endorsement}" reads a long-standing label as a trustworthy one`).not.toContain(endorsement);
+    }
+    // Past tense, stated as such: the sentence has to name where the figures
+    // came from rather than presenting them as a property of this instrument.
+    expect(baseRateSentences()[0]).toContain('จากการวัดย้อนหลัง');
+  });
+
+  /*
+   * THE LENGTH RULE, on the prose and not on the labels.
+   *
+   * 15-35 words is the band `reason-copy.test.ts` holds every reason sentence
+   * to, and these sentences are read in the same breath as those. The two
+   * headlines are deliberately outside it: they are LABELS, in the same
+   * register as the other six states' (four to eleven words each), and a
+   * fifteen-word floor would stop them being headlines at all.
+   */
+  it('keeps every SIDEWAYS sentence inside the 15-35 word band', async () => {
+    const sentences: string[] = [];
+    for (const bias of ['neutral', 'bullish', 'bearish'] as const) {
+      await render(framed({ bias }));
+      sentences.push(description(), ...baseRateSentences());
+      await render(sideways({ bias }));
+      sentences.push(description());
+    }
+    expect(sentences.length).toBeGreaterThan(5);
+    for (const sentence of sentences) {
+      const words = wordCount(sentence);
+      expect(words, `${words} words: "${sentence}"`).toBeGreaterThanOrEqual(15);
+      expect(words, `${words} words: "${sentence}"`).toBeLessThanOrEqual(35);
+    }
+  });
+
+  /*
+   * And the card's own ban list, applied to the new sentences directly. The
+   * sweep further up covers the zoned fixture; this covers the no-frame card,
+   * which that fixture never renders.
+   */
+  it('keeps the new sentences clear of the terms the card bans', async () => {
+    for (const payload of [framed(), sideways({ bias: 'bullish' })]) {
+      await render(payload);
+      const text = [headline(), description(), ...baseRateSentences()].join(' ');
+      for (const banned of ['โซน', 'ไซด์เวย์', 'เบรก', 'sideways', 'หลุด', 'พลิกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง', 'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์', 'ของกรอบ']) {
+        expect(text, `"${banned}" is in the SIDEWAYS copy`).not.toContain(banned);
+      }
+    }
+  });
+});
 });

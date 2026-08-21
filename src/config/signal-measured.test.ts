@@ -126,3 +126,71 @@ describe('the "no edge was found" sentence survives its own evidence', () => {
     expect(Number(largest.toFixed(1))).toBe(MARKET_SIGNAL_MEASURED.directionalEdge.largestAbsolutePp);
   });
 });
+
+/*
+ * The SIDEWAYS base rate, wired the same way and to the same run.
+ *
+ * The manifest carries the DIRECTIONAL headline and nothing else — sideways is
+ * excluded from every hit rate in it, because no direction was claimed — so the
+ * figures the card quotes for it live only in the run's `report.md`. That is
+ * what this reads. Parsing a report rather than a JSON field is the honest cost
+ * of the harness not emitting one; the table is fixed-width and machine-written
+ * by `scripts/calibrate.ts`, and a shape change breaks the parse loudly rather
+ * than silently returning a stale number.
+ */
+const sidewaysRow = (horizon: number) => {
+  const report = readFileSync(
+    join(CALIBRATION_ROOT, MARKET_SIGNAL_MEASURED.runId, 'report.md'),
+    'utf8',
+  );
+  const section = report.split('### Sideways')[1] ?? '';
+  const table = section.split('```')[1] ?? '';
+  const row = table.split('\n')
+    .map((line) => line.split('|').map((cell) => cell.trim()))
+    .find((cells) => cells.length === 4 && cells[0] === String(horizon));
+  if (!row) throw new Error(`the run's report has no sideways row at ${horizon} bars`);
+  return {
+    stillSidewaysPct: Number(row[1].replace('%', '')),
+    insideFramePct: Number(row[2].replace('%', '')),
+    n: Number(row[3]),
+  };
+};
+
+describe('the SIDEWAYS base rate the card discloses is the one that was measured', () => {
+  const measured = MARKET_SIGNAL_MEASURED.sidewaysPersistence;
+
+  it('quotes the run at the horizon it says it is quoting', () => {
+    const row = sidewaysRow(measured.horizonBars);
+    expect(row.stillSidewaysPct).toBe(measured.labelStillSidewaysPct);
+    expect(row.insideFramePct).toBe(measured.priceInsideFramePct);
+    expect(row.n).toBe(measured.sampleSize);
+  });
+
+  /*
+   * The other direction, and the reason the copy exists at all. The card says
+   * the label usually holds while price usually does not — that sentence is
+   * only true while the two rates are far apart, so the distance is asserted
+   * rather than assumed. A run that closes the gap fails here, which is the
+   * signal to rewrite the wording rather than to move the number.
+   */
+  it('keeps the gap the wording is built on', () => {
+    const row = sidewaysRow(measured.horizonBars);
+    const gap = row.stillSidewaysPct - row.insideFramePct;
+    expect(
+      gap,
+      `the label/price gap is now ${gap.toFixed(1)}pp — "ป้ายมักอยู่ต่อ ส่วนราคามักออกจากกรอบไปก่อน" has to be rewritten`,
+    ).toBeGreaterThan(measured.claimHoldsAboveGapPp);
+  });
+
+  /*
+   * And that the population is the one §6.6 describes: every horizon is
+   * followed over the same rows, so the sample size cannot differ between them.
+   * A parse that drifted onto another table would show up here first.
+   */
+  it('reads the same population at every horizon the run prints', () => {
+    for (const horizon of [5, 10, 20]) {
+      expect(sidewaysRow(horizon).n, `horizon ${horizon} is a different population`)
+        .toBe(measured.sampleSize);
+    }
+  });
+});

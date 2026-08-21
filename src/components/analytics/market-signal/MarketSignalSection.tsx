@@ -37,6 +37,8 @@ const DISCLAIMER = 'Market Signal เป็นการสรุปข้อม�
  */
 const NOT_A_FORECAST = 'การ์ดนี้อธิบายสิ่งที่ราคาทำไปแล้ว ไม่ได้พยากรณ์สิ่งที่ราคาจะทำ — ผลทดสอบย้อนหลังยังไม่พบว่าทิศทางที่ระบุแม่นกว่าอัตราพื้นฐานของตลาด';
 const MEASURED_PROVENANCE = `วัดจาก ${MARKET_SIGNAL_MEASURED.corpusInstruments} สินทรัพย์ · ${MARKET_SIGNAL_MEASURED.period.thai}`;
+/** §6.6's four figures, so the SIDEWAYS disclosure reads them and never types them. */
+const SIDEWAYS_MEASURED = MARKET_SIGNAL_MEASURED.sidewaysPersistence;
 
 /**
  * The card's footer, in one component so that no render path can ship without it.
@@ -75,9 +77,29 @@ export const MARKET_SIGNAL_PRESENTATION = {
     icon: TrendingUp,
     tone: 'border-green-500/35 bg-green-500/10 text-green-300',
   },
+  /*
+   * SIDEWAYS, bound to now instead of to a state that keeps being true.
+   *
+   * "ราคายังไม่ไปทางไหนชัด" is unconditional: it names no moment, so a reader
+   * takes it as a description of how this instrument IS. §6.6 measured what
+   * that is worth — twenty bars on from a sideways call the LABEL is still
+   * sideways 72.6% of the time and price is still inside the frame it named
+   * 25.7% of the time (n=10525). Three quarters of the population has already
+   * left; the sentence had been describing the label's own inertia.
+   *
+   * "ตอนนี้" is the whole fix in one word, and it is deliberately the smallest
+   * one available: nothing here promises the reading will change, which would
+   * be the same mistake pointed the other way.
+   *
+   * THIS ENTRY IS THE NO-FRAME WORDING and may not say "กรอบ". With
+   * `SIGNAL_ZONES` off there is no frame in the payload and no rectangle on the
+   * card — CL-F renders SIDEWAYS in exactly that state today — so the frame's
+   * word would name nothing the reader can see. `descriptionFor` carries the
+   * wording for the cards that do have one, where it can read `zones`.
+   */
   SIDEWAYS: {
-    thai: 'ราคายังไม่ไปทางไหนชัด',
-    description: 'ราคายังไม่ไปทางไหนชัดเจน • ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง',
+    thai: 'ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง',
+    description: 'ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง',
     icon: Minus,
     tone: 'border-sky-500/30 bg-slate-500/10 text-sky-200',
   },
@@ -347,7 +369,43 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
     || (result.bias === 'bearish' && reason.polarity === 'positive'));
   const unconfirmed = result.warnings;
   const biasLabel = result.bias === 'bullish' ? 'Bullish Bias' : result.bias === 'bearish' ? 'Bearish Bias' : 'Neutral Bias';
-  const beginnerDescription = descriptionFor(result.state, result.bias, presentation.description);
+  const beginnerDescription = descriptionFor(result.state, result.bias, result.zones ?? null, presentation.description);
+  const beginnerHeadline = headlineFor(result.state, result.zones ?? null, presentation.thai);
+  /*
+   * THE BASE RATE, SAID UNDER THE LABEL RATHER THAN LEFT IN A REPORT.
+   *
+   * The state line says where price stands now. This says what "now" has been
+   * worth: §6.6 followed 10,525 sideways calls and found the LABEL still
+   * sideways at twenty bars 72.6% of the time while price was still inside the
+   * frame it named 25.7% of the time. A reader who is told only the first half
+   * of that reads a durable state; both halves together are the finding.
+   *
+   * Every figure is interpolated from `MARKET_SIGNAL_MEASURED`, never typed in,
+   * and `src/config/signal-measured.test.ts` reads the same four numbers out of
+   * the run's own `report.md`. A fresh calibration pass that moves them fails
+   * the suite rather than leaving this paragraph quoting a run nobody re-read.
+   *
+   * IT IS DRAWN ONLY WHERE THE FRAME IS. The measurement is `zone === 'sideways'`
+   * against `frame.support/resistance`; with no frame in the payload there is
+   * no "inside" for the second number to be about, and quoting it at a label
+   * derived some other way would be attaching a measurement to a mechanism it
+   * did not measure.
+   *
+   * PAST TENSE THROUGHOUT, and no advice. It reports what happened to earlier
+   * observations over a fixed window — not which side price leaves on, not
+   * when, and not what to do about it. §6.8 additionally forbids the opposite
+   * reading, that a label which lasts is a label that can be trusted; the
+   * second sentence exists to close that door rather than to leave it ajar.
+   */
+  const sidewaysBaseRate = frameNamedTheLabel(result.state, result.zones ?? null)
+    ? [
+      `จากการวัดย้อนหลัง ${SIDEWAYS_MEASURED.sampleSize.toLocaleString('en-US')} ครั้ง`
+      + ` เมื่อผ่านไป ${SIDEWAYS_MEASURED.horizonBars} แท่ง`
+      + ` ป้ายนี้ยังเป็นแบบเดิม ${SIDEWAYS_MEASURED.labelStillSidewaysPct}%`
+      + ` แต่ราคายังอยู่ในกรอบเดิมเพียง ${SIDEWAYS_MEASURED.priceInsideFramePct}%`,
+      'แปลว่าป้ายมักอยู่ต่อ ส่วนราคามักออกจากกรอบไปก่อนแล้ว จึงอ่านป้ายนี้เป็นสถานะตอนนี้ ไม่ใช่สิ่งที่จะอยู่ต่อไป',
+    ]
+    : null;
   /*
    * Thai wording and the four-chip cap arrive with the first phase that adds
    * flags. Without a phase on, the card keeps the raw list it has always drawn,
@@ -370,8 +428,20 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <p className="mt-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
             {result.state} <span className="text-slate-500" aria-hidden="true">•</span> {biasLabel}
           </p>
-          <p className="mt-1 text-sm font-semibold">{presentation.thai}</p>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">{beginnerDescription}</p>
+          <p className="mt-1 text-sm font-semibold" data-testid="signal-state-headline">{beginnerHeadline}</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300" data-testid="signal-state-description">{beginnerDescription}</p>
+          {/* Directly under the label it is about, not folded into "ทำไม?".
+              A disclosure a reader has to open a dialog to meet is a disclosure
+              made to the readers who least needed it.
+
+              One sentence per line: the first is the measurement and the second
+              is how to read it, and running them together as one block is how a
+              disclosure becomes a paragraph nobody finishes. */}
+          {sidewaysBaseRate ? (
+            <div className="mt-2 max-w-2xl space-y-1 text-xs leading-5 text-slate-400" data-testid="signal-sideways-base-rate">
+              {sidewaysBaseRate.map((sentence) => <p key={sentence}>{sentence}</p>)}
+            </div>
+          ) : null}
         </div>
         <button
           type="button"
@@ -436,6 +506,14 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <section>
             <h3 className="font-semibold text-white">1. สถานะนี้แปลว่าอะไร</h3>
             <p className="mt-2 leading-6">{beginnerDescription}</p>
+            {/* The same two sentences the card carries, kept here so the
+                reader who opens "ทำไม?" to check the working meets the base
+                rate beside the reasons rather than instead of them. */}
+            {sidewaysBaseRate ? (
+              <div className="mt-2 space-y-1 leading-6 text-slate-400" data-testid="signal-sideways-base-rate-dialog">
+                {sidewaysBaseRate.map((sentence) => <p key={sentence}>{sentence}</p>)}
+              </div>
+            ) : null}
           </section>
 
           {result.gate ? (
@@ -631,7 +709,42 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
   );
 }
 
-function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallback: string): string {
+/**
+ * Is the rectangle on the card the thing that named this label?
+ *
+ * True only when the payload carries a frame AND the frame's own answer is
+ * `sideways`, which is the exact population `MARKET_SIGNAL_MEASURED
+ * .sidewaysPersistence` was measured over (`row.zone === 'sideways'`, on a
+ * calibration run with zones on). Everything that says "กรอบ" about the state
+ * line — the headline, the description, the base-rate disclosure — is gated on
+ * this, so the frame's word is never used on a card that has no frame, and the
+ * measured figures are never quoted at a label they were not measured on.
+ *
+ * With `SIGNAL_ZONES` off — the shipping default — this is always false, and
+ * the state line keeps the no-frame wording from `MARKET_SIGNAL_PRESENTATION`.
+ */
+const frameNamedTheLabel = (state: MarketSignalState, zones: MarketSignalZones | null): boolean =>
+  state === 'SIDEWAYS' && zones !== null && zones.zone === 'sideways';
+
+/**
+ * The bold line under the state name, on the one state that needed a moment.
+ *
+ * Every other state keeps `MARKET_SIGNAL_PRESENTATION[state].thai` untouched;
+ * this exists so the SIDEWAYS headline can name the frame when there is one to
+ * name. It is a LABEL and not a sentence — five to eleven words, the same
+ * register as the other six — so the 15-35 word rule the prose is held to does
+ * not apply to it.
+ */
+function headlineFor(state: MarketSignalState, zones: MarketSignalZones | null, fallback: string): string {
+  return frameNamedTheLabel(state, zones) ? 'ตอนนี้ราคายังอยู่ในกรอบ' : fallback;
+}
+
+function descriptionFor(
+  state: MarketSignalState,
+  bias: MarketSignalBias,
+  zones: MarketSignalZones | null,
+  fallback: string,
+): string {
   if (state === 'SQUEEZE') {
     if (bias === 'bullish') return 'ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า';
     if (bias === 'bearish') return 'ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางลงมากกว่า';
@@ -642,19 +755,41 @@ function descriptionFor(state: MarketSignalState, bias: MarketSignalBias, fallba
     if (bias === 'bearish') return 'แนวโน้มโดยรวมยังลง แต่ราคาลงไกลจากค่าเฉลี่ยของตัวเองมาก';
   }
   if (state === 'SIDEWAYS') {
-    if (bias === 'neutral') return 'แรงซื้อกับแรงขายใกล้เคียงกัน หลักฐานยังไม่เอนไปทางขึ้นหรือทางลง';
     /*
-     * SIDEWAYS with a lean, which the fallback denied outright.
+     * The same sentence twice, because the card is two cards.
      *
-     * With zones on, STRUCTURE names the label and the score describes the lean
-     * inside it, so "SIDEWAYS • Bullish Bias" is a normal reading. The fallback
-     * under it said "ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน" — a flat denial of
-     * the two words directly above it. These say both things, in the same shape
-     * SQUEEZE already uses for exactly this situation.
+     * WITH A FRAME the description says where price stands relative to the
+     * rectangle drawn a few rows below it, in the rectangle's own words — the
+     * headline, this line and the bar then teach each other, which is the ONE
+     * WORD FOR ONE THING rule applied upward from the picture to the state.
+     *
+     * WITHOUT ONE it says the same thing about direction and stops. There is no
+     * frame in the payload to be inside of, so claiming one would be the card
+     * describing an object it cannot see.
+     *
+     * "แรงซื้อกับแรงขายใกล้เคียงกัน" is gone from the neutral line for the
+     * reason FRESH_ZONE_COPY's block gives: buyers and sellers are a cast of
+     * characters this card never introduces and never measures. What it does
+     * measure is where the evidence points, which is what the clause now says.
      */
-    return bias === 'bullish'
-      ? 'ราคายังไม่ไปทางไหนชัดเจน • แต่คะแนนรวมเอนไปทางขึ้น'
-      : 'ราคายังไม่ไปทางไหนชัดเจน • แต่คะแนนรวมเอนไปทางลง';
+    const leaning = bias === 'bullish' ? 'ขึ้น' : 'ลง';
+    if (frameNamedTheLabel(state, zones)) {
+      if (bias === 'neutral') {
+        return 'ตอนนี้ราคายังอยู่ในกรอบ ยังไม่มีราคาปิดพ้นขอบบนหรือขอบล่าง และหลักฐานยังไม่เอนไปทางขึ้นหรือทางลง';
+      }
+      /*
+       * SIDEWAYS with a lean, which the fallback denied outright.
+       *
+       * With zones on, STRUCTURE names the label and the score describes the
+       * lean inside it, so "SIDEWAYS • Bullish Bias" is a normal reading. The
+       * fallback under it said "ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน" — a flat
+       * denial of the two words directly above it. These say both things, in
+       * the same shape SQUEEZE already uses for exactly this situation.
+       */
+      return `ตอนนี้ราคายังอยู่ในกรอบ ยังไม่มีราคาปิดพ้นขอบบนหรือขอบล่าง • แต่คะแนนรวมเอนไปทาง${leaning}`;
+    }
+    if (bias === 'neutral') return fallback;
+    return `ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง • แต่คะแนนรวมเอนไปทาง${leaning}`;
   }
   return fallback;
 }
