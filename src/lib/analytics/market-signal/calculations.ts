@@ -6,6 +6,8 @@ import {
   MARKET_SIGNAL_EXPECTED_FACTORS,
   MARKET_SIGNAL_GATE,
   MARKET_SIGNAL_MEASURED,
+  MARKET_SIGNAL_PERSISTENCE,
+  MARKET_SIGNAL_RANGE_DIRECTION,
   MARKET_SIGNAL_SCORE_WEIGHTS,
   MARKET_SIGNAL_THRESHOLDS,
   MARKET_SIGNAL_ZONE,
@@ -24,6 +26,7 @@ import type {
   MarketSignalFlag,
   MarketSignalGate,
   MarketSignalMetrics,
+  MarketSignalPersistence,
   MarketSignalReason,
   MarketSignalResult,
   MarketSignalScoreBreakdown,
@@ -1011,12 +1014,63 @@ export function calculateActionable(input: {
   };
 }
 
+/** Band order, weakest first. `bandAtLeast` is the only reader. */
+const BAND_ORDER: readonly MarketSignalBand[] = ['neutral', 'weak', 'moderate', 'strong'];
+
+/** Whether `band` is at least as strong as `minimum`, by the order above. */
+export const bandAtLeast = (band: MarketSignalBand, minimum: MarketSignalBand): boolean =>
+  BAND_ORDER.indexOf(band) >= BAND_ORDER.indexOf(minimum);
+
+/**
+ * The direction a range is allowed to carry, or `null` for none.
+ *
+ * P7. `trend_diagnosis.md` §B: `zone === 'sideways'` accounted for 100% of the
+ * 11,330 bars where the ground truth called a move and this engine said
+ * SIDEWAYS, while the flags-OFF engine named the right direction on 95.3% of
+ * those same bars. The direction was in the evidence; the range swallowed it.
+ * This is the reading that lets it out, under three conditions that are all
+ * already defined elsewhere:
+ *
+ *   1. conflicts must be empty. Evidence pointing two ways cannot speak for a
+ *      range it has not left. This is the ONE veto the range keeps.
+ *   2. the score must reach `MARKET_SIGNAL_RANGE_DIRECTION.minimumBand` — or,
+ *      when the previous bar already named this direction, only
+ *      `retentionBand`. That asymmetry is the buffer margin; see the config.
+ *   3. the score's sign is the direction. There is no fourth condition and no
+ *      new threshold: every number here is read off `MARKET_SIGNAL_GATE.bands`.
+ *
+ * `previousDirection` is the direction the bar before this one published, or
+ * `null` when it is not known — which is the case for every caller that does
+ * not replay, and makes the rule fall back to `minimumBand` on both edges.
+ */
+export function rangeDirection(input: {
+  score: number;
+  band: MarketSignalBand;
+  conflicts: readonly MarketSignalConflict[];
+  previousDirection: 'bullish' | 'bearish' | null;
+}): 'bullish' | 'bearish' | null {
+  const { score, band, conflicts, previousDirection } = input;
+  if (conflicts.length > 0) return null;
+  if (score === 0) return null;
+  const direction = score > 0 ? 'bullish' as const : 'bearish' as const;
+  const required = previousDirection === direction
+    ? MARKET_SIGNAL_RANGE_DIRECTION.retentionBand
+    : MARKET_SIGNAL_RANGE_DIRECTION.minimumBand;
+  return bandAtLeast(band, required) ? direction : null;
+}
+
 /**
  * The label a zone implies.
  *
  * Regime states still win. A squeeze is a statement about volatility that a
  * zone does not contradict, and "coiling" serves a reader better than
  * "sideways" when both are true.
+ *
+ * P7 changed exactly one line of this function: a sideways zone no longer
+ * returns SIDEWAYS unconditionally. It asks `rangeDirection` first, and only
+ * says SIDEWAYS when the evidence has nothing clear to say either. `gate` is
+ * optional so that every caller written before P7 — and every test that
+ * exercises the zone rule on its own — keeps the pre-P7 behaviour unchanged.
  */
 export function zonePresentationState(input: {
   zone: MarketSignalZoneName;
@@ -1025,11 +1079,26 @@ export function zonePresentationState(input: {
   scoreBreakdown: MarketSignalScoreBreakdown;
   adx: number | null;
   relativeVolume: number | null;
+  /** P7. Absent -> a sideways zone erases the direction, exactly as before. */
+  gate?: {
+    band: MarketSignalBand;
+    conflicts: readonly MarketSignalConflict[];
+    previousDirection: 'bullish' | 'bearish' | null;
+  } | null;
 }): MarketSignalState {
-  const { zone, regime, score, scoreBreakdown, adx, relativeVolume } = input;
+  const { zone, regime, score, scoreBreakdown, adx, relativeVolume, gate } = input;
   if (regime.squeeze) return 'SQUEEZE';
   if (regime.overextended) return 'OVEREXTENDED';
-  if (zone === 'sideways') return 'SIDEWAYS';
+  if (zone === 'sideways') {
+    const spoken = gate ? rangeDirection({ ...gate, score }) : null;
+    if (spoken === null) return 'SIDEWAYS';
+    /*
+     * A direction named from inside a frame is never STRONG_*. STRONG says the
+     * move is confirmed by structure as well as evidence, and price that has
+     * not left its own frame has no structural confirmation to offer.
+     */
+    return spoken === 'bullish' ? 'BULLISH' : 'BEARISH';
+  }
   const bias: MarketSignalBias = zone === 'uptrend' ? 'bullish' : 'bearish';
   const confirmed = presentationState(score, bias, regime, scoreBreakdown, adx, relativeVolume);
   if (confirmed === 'STRONG_BULLISH' || confirmed === 'STRONG_BEARISH') return confirmed;
@@ -1330,6 +1399,63 @@ export function calculateMarketSignal(
   const regime = classifyRegimeEvidence(metrics);
 
   /*
+   * P8. The engine has no memory, so it borrows one.
+   *
+   * `calculateMarketSignal` is a pure function of the candles in front of it —
+   * that is the property `docs/signal-handover.md` relies on everywhere, and it
+   * is not being given up here. The previous bars' labels are obtained the only
+   * way a pure function can obtain them: by running this same function on the
+   * same candles with the last k finalized bars removed. No state, no store, no
+   * clock, and a replay of the whole file reproduces every one of these.
+   *
+   * `replayDepth` is what stops it recursing: a call that carries one publishes
+   * its raw label and does no replay of its own. So the cost of the whole
+   * mechanism is exactly `lookbackBars` extra evaluations, once, at the top
+   * call — not a tree.
+   *
+   * The bars are sliced off `finalized`, not off `candles`, because dropping
+   * the last raw candle could drop an unfinalized one and replay the same bar
+   * back to itself.
+   *
+   * WHAT THIS IS NOT. It is not a record of what the card SAID yesterday — that
+   * is `market_signal_history`, and the reason that table exists is precisely
+   * that replaying today's engine over yesterday's bars answers a different
+   * question. The replay keeps today's left edge, so it reads "what would this
+   * engine, on this history, have called the bar before this one" — which is
+   * the question the hold rule is asking, and is answerable without a database.
+   */
+  const isReplay = context.replayDepth !== undefined;
+  const replayedStates: MarketSignalState[] = [];
+  if (!isReplay) {
+    for (let back = 1; back <= MARKET_SIGNAL_PERSISTENCE.lookbackBars; back += 1) {
+      if (finalized.length - back < MARKET_SIGNAL_THRESHOLDS.minimumSignalCandles) break;
+      const earlier = calculateMarketSignal(
+        finalized.slice(0, finalized.length - back).map((candle) => ({ ...candle, finalized: true })),
+        { ...context, replayDepth: back },
+      );
+      if (earlier.status !== 'available') break;
+      replayedStates.push(earlier.state);
+    }
+  }
+
+  /** The direction a state claims, or `neutral` for the three that claim none. */
+  const directionOf = (value: MarketSignalState | null): MarketSignalBias =>
+    value === 'BULLISH' || value === 'STRONG_BULLISH' ? 'bullish'
+      : value === 'BEARISH' || value === 'STRONG_BEARISH' ? 'bearish' : 'neutral';
+
+  /*
+   * P7's buffer margin reads this, and it is ONE BAR DEEP on purpose.
+   *
+   * The replayed bar is computed without a buffer of its own (it is handed no
+   * previous direction), so a direction held open by the margin does not
+   * compound: it survives one quiet bar, not a chain of them. That is the
+   * cheapest version of the rule that still does what the margin is for, and
+   * the alternative — letting each replay buffer itself — would make the label
+   * depend on how far back the replay happened to reach.
+   */
+  const previousDirection = isReplay ? null : directionOf(replayedStates[0] ?? null);
+
+  /*
    * P1 decisions. Every one of these is computed only when the gate is on and
    * every consumer below falls back to the v1 value when it is off, so the
    * flags-OFF payload keeps every field it had, unchanged.
@@ -1365,6 +1491,23 @@ export function calculateMarketSignal(
    * statement that the evidence cannot be read, which survives price being on
    * one side of a line.
    */
+  /*
+   * P7. The gate is handed to the zone rule instead of being skipped past.
+   *
+   * `trend_diagnosis.md` §B measured the cost of skipping it: 11,330 bars where
+   * the ground truth called a move, this engine said SIDEWAYS, and the line
+   * `zone === 'sideways'` was the whole reason on 100% of them. Only reached
+   * when the gate is actually on — with `SIGNAL_GATE` off there is no band and
+   * no conflict list to consult, so the pre-P7 behaviour stands.
+   */
+  const zoneGate = zonesOn && gateOn
+    ? {
+      band: band as MarketSignalBand,
+      conflicts,
+      // `neutral` is not a direction to retain, so it reads the same as absent.
+      previousDirection: previousDirection === 'neutral' ? null : previousDirection,
+    }
+    : null;
   const zoneState = zones
     ? zonePresentationState({
       zone: zones.zone,
@@ -1373,6 +1516,7 @@ export function calculateMarketSignal(
       scoreBreakdown,
       adx: metrics.adx14,
       relativeVolume: metrics.relativeVolume20,
+      gate: zoneGate,
     })
     : null;
   /*
@@ -1388,8 +1532,19 @@ export function calculateMarketSignal(
    */
   const demoteStrong = (state: MarketSignalState): MarketSignalState => state === 'STRONG_BULLISH' ? 'BULLISH'
     : state === 'STRONG_BEARISH' ? 'BEARISH' : state;
+  /*
+   * P7: a range that carries a direction carries it in `bias` too.
+   *
+   * Leaving `bias` neutral while `state` says BULLISH would publish a bullish
+   * headline in neutral colours and give the two fields different answers to
+   * the same question. The zone still decides on every other bar — see §5 of
+   * `docs/signal-handover.md`, "ราคาอยู่ตรงไหนก็คือตรงนั้น".
+   */
   const zoneBias: MarketSignalBias | null = zones
-    ? (zones.zone === 'uptrend' ? 'bullish' : zones.zone === 'downtrend' ? 'bearish' : 'neutral')
+    ? (zones.zone === 'uptrend' ? 'bullish'
+      : zones.zone === 'downtrend' ? 'bearish'
+        : zoneState === 'BULLISH' ? 'bullish'
+          : zoneState === 'BEARISH' ? 'bearish' : 'neutral')
     : null;
   const gateVetoes = gateOn && conflicts.length > 0;
 
@@ -1558,6 +1713,77 @@ export function calculateMarketSignal(
   if (gateOn && dataDegraded) warnings.push(`ข้อมูลจากผู้ให้บริการอยู่ในสถานะ ${context.freshness.status} จึงลดความมั่นใจลง`);
   if (volumeCapped) warnings.push(`Relative Volume ${round(relativeVolume20 ?? 0, 2)}× ต่ำกว่าค่าเฉลี่ย จึงจำกัดคะแนน Volume`);
 
+  /*
+   * P8. The hold rule, applied last, to the label and to nothing else.
+   *
+   * `trend_agreement.md` §1: the card changed its word 13994 times while the
+   * move it describes changed 8603 times (flip 1.63 with flags off, 1.17 with
+   * GATE+ZONES on). A reading that lasts one bar and is gone is not a
+   * description of anything; this publishes the last reading that stood for
+   * `minDurationBars` instead.
+   *
+   * DELIBERATELY NOT UPSTREAM OF ANYTHING. `score`, `evidenceAgreement`,
+   * `confidenceBreakdown`, `regimeClarity`, `reasons`, `flags` and `gate` are
+   * all computed from `state` — the RAW reading — and none of them is
+   * recomputed here. The hold changes the word on the card and leaves every
+   * number that explains the word describing the evidence that was actually
+   * measured today. `docs/signal-handover.md` §6.8 forbids label age feeding a
+   * threshold; this is the same rule read forwards, so that a held label cannot
+   * quietly raise its own confidence.
+   */
+  const rawSequence: MarketSignalState[] = [state, ...replayedStates];
+  const previousBar = finalized.at(-2) ?? null;
+  const latestBar = finalized.at(-1)!;
+  const atrPoints = technical.indicators.atr.status === 'available' ? technical.indicators.atr.points : [];
+  const previousAtr = finiteOrNull(atrPoints.at(-2)?.value);
+  const exceptionLimit = previousAtr === null || previousAtr <= 0
+    ? null : previousAtr * MARKET_SIGNAL_PERSISTENCE.exceptionAtrMultiple;
+  const gapSize = previousBar === null ? null : Math.abs(latestBar.open - previousBar.close);
+  const trueRange = previousBar === null ? null : Math.max(
+    latestBar.high - latestBar.low,
+    Math.abs(latestBar.high - previousBar.close),
+    Math.abs(latestBar.low - previousBar.close),
+  );
+  const exemption: MarketSignalPersistence['exemption'] = exceptionLimit === null ? null
+    : gapSize !== null && gapSize >= exceptionLimit ? 'gap'
+      : trueRange !== null && trueRange >= exceptionLimit ? 'volatility_spike'
+        : null;
+
+  /**
+   * The most recent reading that has stood `minDurationBars` consecutive bars,
+   * or today's if none in the window has.
+   *
+   * Defined over the raw sequence alone rather than over yesterday's PUBLISHED
+   * label, which is what keeps it bounded: a rule that read its own output
+   * would need the whole history to answer for today, and this needs
+   * `lookbackBars` bars.
+   */
+  const heldState = ((): MarketSignalState => {
+    if (isReplay || exemption !== null) return state;
+    const required = MARKET_SIGNAL_PERSISTENCE.minDurationBars;
+    for (let offset = 0; offset + required - 1 < rawSequence.length; offset += 1) {
+      let run = 1;
+      while (run < required && rawSequence[offset + run] === rawSequence[offset]) run += 1;
+      if (run >= required) return rawSequence[offset];
+    }
+    return state;
+  })();
+  let rawRunBars = 1;
+  while (rawRunBars < rawSequence.length && rawSequence[rawRunBars] === state) rawRunBars += 1;
+  const persistence: MarketSignalPersistence = {
+    rawState: state,
+    rawBias: effectiveBias,
+    held: heldState !== state,
+    rawRunBars,
+    exemption,
+  };
+  /*
+   * A held label takes its own colour with it. Publishing BULLISH beside a
+   * neutral `bias` would give a reader two answers to one question, and `bias`
+   * is what the card colours from.
+   */
+  const publishedBias: MarketSignalBias = heldState === state ? effectiveBias : directionOf(heldState);
+
   const gate: MarketSignalGate | undefined = gateOn && band !== null && gatedConfidenceResult !== null
     ? {
       band,
@@ -1572,8 +1798,8 @@ export function calculateMarketSignal(
   return {
     ...base,
     status: 'available',
-    state,
-    bias: effectiveBias,
+    state: heldState,
+    bias: publishedBias,
     score,
     /*
      * The same number twice, under two names, on purpose. `confidence` is
@@ -1602,6 +1828,7 @@ export function calculateMarketSignal(
     // Spread rather than assigned, so the key is absent (not `undefined`) with
     // the flag off — `JSON.stringify` keeps an explicit `undefined` out too, but
     // deep-equality assertions and the golden gate both see the difference.
+    persistence,
     ...(gate ? { gate } : {}),
     ...(zones ? { zones } : {}),
     ...(actionable ? { actionable } : {}),

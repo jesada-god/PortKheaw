@@ -88,6 +88,7 @@ async function attachHistory(result: MarketSignalResult): Promise<MarketSignalRe
     snapshot ? [...entries.filter((entry) => entry.asOf !== snapshot.asOf), {
       asOf: snapshot.asOf,
       state: snapshot.state,
+      rawState: snapshot.rawState,
       bias: snapshot.bias,
       zone: snapshot.zone,
       score: snapshot.score,

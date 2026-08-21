@@ -78,6 +78,7 @@
     "ema50": 79.68636930233966,
     "ema50SlopePct": -2.6856,
     "emaCompressionRatio": 0.084277,
+    "histogramExpanding": false,
     "keltnerLower": 70.91179868164937,
     "keltnerMiddle": 74.74430328152971,
     "keltnerUpper": 78.57680788141005,
@@ -92,6 +93,13 @@
     "relativeVolume20": 0.7354239286611728,
     "rsi14": 56.266517773544805,
     "squeezeOn": false
+  },
+  "persistence": {
+    "exemption": null,
+    "held": false,
+    "rawBias": "neutral",
+    "rawRunBars": 3,
+    "rawState": "SIDEWAYS"
   },
   "reasons": [
     {

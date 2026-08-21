@@ -61,6 +61,13 @@
     "rsi14": 54.86175677980208,
     "squeezeOn": false
   },
+  "persistence": {
+    "exemption": null,
+    "held": false,
+    "rawBias": "neutral",
+    "rawRunBars": 3,
+    "rawState": "BULLISH"
+  },
   "reasons": [
     {
       "id": "macd-histogram",

@@ -65,10 +65,43 @@ export function summariseHistory(
   const recentFlip = ordered.some((entry) => entry.state !== newest.state
     && daysBetween(entry.asOf, newest.asOf) <= options.recentFlipDays);
 
+  /*
+   * The same run, counted over the reading the hold rule did not touch.
+   *
+   * P8 keeps a changed label for `MARKET_SIGNAL_PERSISTENCE.minDurationBars`
+   * before publishing it, so `currentLabelDays` above is now partly a fact
+   * about the hold rule. `docs/signal-handover.md` §6.8 forbids the card
+   * presenting a longer-standing label as a better one, and a number the engine
+   * itself lengthened is that claim wearing a fact's clothes. This counts the
+   * run of `rawState` instead, and the card reads THIS one.
+   *
+   * `null` rather than a guess in three cases, all of which are the same case:
+   * the count cannot be made honestly. A run of one recorded day says nothing
+   * about yesterday (same reason as above), and a row written before P8 has no
+   * `rawState` at all — so a run that reaches one stops being countable rather
+   * than silently treating "not recorded" as "unchanged".
+   */
+  const rawRunStart = (): number | null => {
+    if (newest.rawState === null) return null;
+    let index = ordered.length - 1;
+    while (index > 0) {
+      const earlier = ordered[index - 1];
+      if (earlier.rawState === null) return null;
+      if (earlier.rawState !== newest.rawState) break;
+      index -= 1;
+    }
+    return index;
+  };
+  const rawStart = rawRunStart();
+  const currentRawLabelDays = rawStart === null || rawStart === ordered.length - 1
+    ? null
+    : daysBetween(ordered[rawStart].asOf, newest.asOf);
+
   return {
     entries: ordered,
     windowDays: options.windowDays,
     currentLabelDays,
+    currentRawLabelDays,
     recentFlip,
   };
 }
@@ -85,6 +118,8 @@ export interface MarketSignalSnapshot {
   symbol: string;
   asOf: string;
   state: MarketSignalHistoryEntry['state'];
+  /** P8. The reading before the hold rule — what `currentRawLabelDays` counts. */
+  rawState: MarketSignalHistoryEntry['rawState'];
   bias: MarketSignalHistoryEntry['bias'];
   zone: MarketSignalHistoryEntry['zone'];
   score: number | null;
@@ -115,6 +150,10 @@ export function snapshotOf(
     symbol: result.symbol,
     asOf: result.latestCandleAt.slice(0, 10),
     state: result.state,
+    // `?? null` rather than `?? result.state`: a result with no persistence
+    // block was not produced by a P8 engine, and recording the published label
+    // as though it were the raw one would put a run on the strip nobody read.
+    rawState: result.persistence?.rawState ?? null,
     bias: result.bias,
     zone: result.zones?.zone ?? null,
     score: result.score,

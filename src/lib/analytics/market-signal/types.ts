@@ -263,6 +263,52 @@ export interface MarketSignalActionable {
   notes: MarketSignalActionableNote[];
 }
 
+/**
+ * Why the label a reader sees may not be the reading this bar produced.
+ *
+ * P8. Present on every result, both flag states, because the hold rule is not a
+ * rollout phase — it sits below every path the same way the regime veto does.
+ *
+ * `rawState` IS THE ONE THAT AGES. `docs/signal-handover.md` §6.8 measured that
+ * a label standing longer says nothing about being right, and forbids the card
+ * from implying otherwise. A hold rule inflates every age it touches, so the
+ * age a reader is shown is counted over `rawState` — the reading before the
+ * hold — and never over `state`. `summariseHistory` publishes both numbers and
+ * the card is only allowed to read the raw one.
+ */
+export interface MarketSignalPersistence {
+  /** The label this bar's evidence produced, before the hold rule saw it. */
+  rawState: MarketSignalState;
+  /**
+   * The bias that went with it, published as a pair with `rawState`.
+   *
+   * `bias` at the top level follows the label the card actually shows, so a
+   * held day would otherwise leave no way to read what today's evidence said —
+   * and the two fields would disagree about which reading they describe.
+   */
+  rawBias: MarketSignalBias;
+  /** True when `state` is a held earlier reading and differs from `rawState`. */
+  held: boolean;
+  /**
+   * Consecutive bars `rawState` has now run, counted backwards and CAPPED at
+   * `MARKET_SIGNAL_PERSISTENCE.lookbackBars + 1`.
+   *
+   * Not an age, and deliberately not usable as one: the engine replays only far
+   * enough to answer the hold question. A reader who wants how long a label has
+   * stood wants `history.currentRawLabelDays`, which counts recorded days and
+   * can say a number larger than this one.
+   */
+  rawRunBars: number;
+  /**
+   * Why the wait was skipped, or `null` when nothing skipped it.
+   *
+   * `gap` is the open against the previous close; `volatility_spike` is the
+   * bar's own true range. Both are measured against the PREVIOUS bar's ATR14 so
+   * that a violent bar cannot widen the yardstick it is being judged by.
+   */
+  exemption: 'gap' | 'volatility_spike' | null;
+}
+
 export interface MarketSignalCandle extends HistoricalPrice {
   finalized: boolean;
 }
@@ -365,6 +411,12 @@ interface MarketSignalBase {
   actionable?: MarketSignalActionable;
   /** P6 only. Omitted entirely when `SIGNAL_HISTORY` is off, or when nothing is stored yet. */
   history?: MarketSignalHistory;
+  /**
+   * P8. Present whenever there is a label at all — the hold rule is not behind
+   * a flag, because a flag would mean two different answers to "what does the
+   * card say today" and the whole point is that there is one.
+   */
+  persistence?: MarketSignalPersistence;
 }
 
 export type MarketSignalResult = MarketSignalBase & ({
@@ -419,6 +471,14 @@ export interface MarketSignalHistoryEntry {
   /** The finalized candle's date, `YYYY-MM-DD`. Not the date the row was written. */
   asOf: string;
   state: MarketSignalState;
+  /**
+   * The reading before the hold rule, on days that recorded one.
+   *
+   * `null` for every row written before P8 existed, which is a fact about the
+   * row rather than about the market — `currentRawLabelDays` returns `null`
+   * rather than guessing whenever the run it would have to count crosses one.
+   */
+  rawState: MarketSignalState | null;
   bias: MarketSignalBias;
   /** `null` on days `SIGNAL_ZONES` was off, which is a fact worth keeping. */
   zone: MarketSignalZoneName | null;
@@ -458,6 +518,20 @@ export interface MarketSignalHistory {
    * a run of one has no length yet — and 0 would read as "changed today".
    */
   currentLabelDays: number | null;
+  /**
+   * The same count over `rawState`, and THE ONLY ONE THE CARD MAY SHOW.
+   *
+   * P8 holds a changed label for `minDurationBars`, which makes every published
+   * run at least as long as the reading behind it — so `currentLabelDays` now
+   * carries the hold rule's own influence inside it. §6.8 of
+   * `docs/signal-handover.md` forbids the card presenting a longer-standing
+   * label as a better one; printing a number the engine inflated would be that
+   * with an extra step. This is the run of the underlying reading.
+   *
+   * `null` when it cannot be counted honestly: a single recorded day, or any
+   * row in the run that predates P8 and so has no `rawState` to compare.
+   */
+  currentRawLabelDays: number | null;
   /** Whether the newest entry's label differs from any inside `recentFlipDays`. */
   recentFlip: boolean;
 }
@@ -471,4 +545,14 @@ export interface MarketSignalContext {
   features?: Partial<MarketSignalFeatures>;
   /** Optional by design: the engine degrades rather than fails without it. */
   earnings?: MarketSignalEarningsContext;
+  /**
+   * P8, INTERNAL. Set only by the engine's own replay, never by a caller.
+   *
+   * A call carrying a depth publishes its raw label and does no replay of its
+   * own, which is what bounds the recursion at
+   * `MARKET_SIGNAL_PERSISTENCE.lookbackBars` extra evaluations rather than a
+   * tree. Absent on every ordinary call, and absent is the behaviour a caller
+   * wants — so nobody can opt into a different label by forgetting a field.
+   */
+  replayDepth?: number;
 }

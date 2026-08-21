@@ -2271,9 +2271,13 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
  * tests are mostly about what it must NOT do.
  */
 describe('the history strip discloses without ranking', () => {
-  const day = (asOf: string, state: MarketSignalState) => ({
+  // `rawState` mirrors `state`: these fixtures are days where the hold rule
+  // had nothing to hold, which is what makes them a baseline for the days it
+  // does. The tests that exercise a held day set the two apart explicitly.
+  const day = (asOf: string, state: MarketSignalState, rawState: MarketSignalState | null = state) => ({
     asOf,
     state,
+    rawState,
     bias: 'neutral' as const,
     zone: 'sideways' as const,
     score: 4,
@@ -2291,6 +2295,7 @@ describe('the history strip discloses without ranking', () => {
       ],
       windowDays: 30,
       currentLabelDays: 2,
+      currentRawLabelDays: 2,
       recentFlip: false,
       ...over,
     },
@@ -2315,10 +2320,38 @@ describe('the history strip discloses without ranking', () => {
       .toContain('ยืนมา 2 วัน');
   });
 
-  it('will not call one recorded day a run', async () => {
-    await render(withHistory({ entries: [day('2026-08-12', 'SIDEWAYS')], currentLabelDays: null }));
+  /*
+   * P8 — the strip may only show the age the hold rule did not touch.
+   *
+   * Holding a changed label makes every published run at least as long as the
+   * reading under it, so `currentLabelDays` now carries the engine's own
+   * influence. §6.8 measured that an older label is not a more accurate one and
+   * forbids the card implying otherwise; printing a duration the engine
+   * lengthened would be that claim with an extra step. So the number on the
+   * card is `currentRawLabelDays`, and this test fails if anyone swaps it back.
+   */
+  it('shows the raw run and never the held one', async () => {
+    await render(withHistory({ currentLabelDays: 9, currentRawLabelDays: 2 }));
     const block = container.querySelector('[data-testid="signal-history"]')!;
-    expect(block.textContent).toContain('บันทึกไว้วันเดียว');
+    expect(block.textContent).toContain('ยืนมา 2 วัน');
+    expect(block.textContent).not.toContain('ยืนมา 9 วัน');
+  });
+
+  it('shows no age at all when the raw run cannot be counted honestly', async () => {
+    await render(withHistory({ currentLabelDays: 9, currentRawLabelDays: null }));
+    const block = container.querySelector('[data-testid="signal-history"]')!;
+    expect(block.textContent).toContain('ยังไม่มีวันที่บันทึกพอ');
+    expect(block.textContent).not.toContain('9 วัน');
+  });
+
+  it('will not call one recorded day a run', async () => {
+    await render(withHistory({
+      entries: [day('2026-08-12', 'SIDEWAYS')],
+      currentLabelDays: null,
+      currentRawLabelDays: null,
+    }));
+    const block = container.querySelector('[data-testid="signal-history"]')!;
+    expect(block.textContent).toContain('ยังไม่มีวันที่บันทึกพอ');
     expect(block.textContent).not.toContain('ยืนมา 0 วัน');
   });
 
@@ -2547,6 +2580,54 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    * sweep further up covers the zoned fixture; this covers the no-frame card,
    * which that fixture never renders.
    */
+  /*
+   * P7 — the reading that used to be impossible, and its one sentence.
+   *
+   * A directional label while the frame still says price has not left it.
+   * `trend_diagnosis.md` §B measured what suppressing it cost: 11,330 bars
+   * where the ground truth called a move, the GATE+ZONES engine said SIDEWAYS,
+   * and `zone === 'sideways'` was 100% of the reason — while the flags-OFF
+   * engine named the right direction on 95.3% of those same bars. The card now
+   * shows both facts, and these tests hold the sentence that joins them to the
+   * same rules every other sentence on the card obeys.
+   */
+  const inRange = (over: Partial<AvailableSignal> = {}) => sideways({
+    zones: frame, state: 'BULLISH', bias: 'bullish', score: 72, ...over,
+  });
+
+  it('says both facts when the evidence names a direction from inside the frame', async () => {
+    for (const [state, bias, leaning] of [
+      ['BULLISH', 'bullish', 'ขึ้น'],
+      ['BEARISH', 'bearish', 'ลง'],
+    ] as const) {
+      await render(inRange({ state, bias, score: state === 'BULLISH' ? 72 : -72 }));
+      const text = description();
+      // the direction, from the evidence
+      expect(text, state).toContain(`เอนไปทาง${leaning}`);
+      // and the frame, unmoved — neither erases the other
+      expect(text, state).toContain('ยังอยู่ในกรอบเดิม');
+    }
+  });
+
+  it('keeps that sentence inside the same 15-35 word band as the rest', async () => {
+    for (const state of ['BULLISH', 'BEARISH'] as const) {
+      await render(inRange({ state, bias: state === 'BULLISH' ? 'bullish' : 'bearish' }));
+      const words = wordCount(description());
+      expect(words, `${words} words: "${description()}"`).toBeGreaterThanOrEqual(15);
+      expect(words, `${words} words: "${description()}"`).toBeLessThanOrEqual(35);
+    }
+  });
+
+  it('keeps that sentence clear of the terms the card bans', async () => {
+    for (const state of ['BULLISH', 'BEARISH'] as const) {
+      await render(inRange({ state, bias: state === 'BULLISH' ? 'bullish' : 'bearish' }));
+      const text = [headline(), description()].join(' ');
+      for (const banned of ['โซน', 'ไซด์เวย์', 'เบรก', 'sideways', 'หลุด', 'พลิกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง', 'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์', 'ของกรอบ']) {
+        expect(text, `"${banned}" is in the in-range direction copy`).not.toContain(banned);
+      }
+    }
+  });
+
   it('keeps the new sentences clear of the terms the card bans', async () => {
     for (const payload of [framed(), sideways({ bias: 'bullish' })]) {
       await render(payload);

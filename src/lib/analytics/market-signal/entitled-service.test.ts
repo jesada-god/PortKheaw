@@ -106,6 +106,7 @@ describe('what an unentitled reader actually receives', () => {
       entries: [{
         asOf: '2026-01-01',
         state: 'SIDEWAYS',
+        rawState: 'SIDEWAYS',
         bias: 'neutral',
         zone: 'sideways',
         score: 4,
@@ -114,6 +115,7 @@ describe('what an unentitled reader actually receives', () => {
       }],
       windowDays: 30,
       currentLabelDays: null,
+      currentRawLabelDays: null,
       recentFlip: false,
     },
   });

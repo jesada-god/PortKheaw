@@ -61,6 +61,13 @@
     "rsi14": 52.48973345656292,
     "squeezeOn": false
   },
+  "persistence": {
+    "exemption": null,
+    "held": false,
+    "rawBias": "neutral",
+    "rawRunBars": 3,
+    "rawState": "SIDEWAYS"
+  },
   "reasons": [
     {
       "id": "swing-structure",

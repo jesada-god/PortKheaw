@@ -961,13 +961,16 @@ export interface Database {
       market_signal_history: {
         Row: {
           symbol: string; as_of: string;
-          state: string; bias: string; zone: string | null;
+          // `raw_state` is the P8 reading before the hold rule. Nullable because
+          // rows written before 202608210001 have none and it is never
+          // backfilled — see that migration for why it cannot be.
+          state: string; raw_state: string | null; bias: string; zone: string | null;
           score: number | null; evidence_agreement: number | null;
           flags: string[]; features: Record<string, boolean>; recorded_at: string;
         };
         Insert: {
           symbol: string; as_of: string;
-          state: string; bias: string; zone?: string | null;
+          state: string; raw_state?: string | null; bias: string; zone?: string | null;
           score?: number | null; evidence_agreement?: number | null;
           flags?: string[]; features?: Record<string, boolean>; recorded_at?: string;
         };

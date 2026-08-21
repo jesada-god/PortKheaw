@@ -11,9 +11,14 @@ import type { MarketSignalHistoryEntry, MarketSignalResult, MarketSignalState } 
  * for a fortnight.
  */
 
-const entry = (asOf: string, state: MarketSignalState): MarketSignalHistoryEntry => ({
+const entry = (
+  asOf: string,
+  state: MarketSignalState,
+  rawState: MarketSignalState | null = state,
+): MarketSignalHistoryEntry => ({
   asOf,
   state,
+  rawState,
   bias: state.includes('BULL') ? 'bullish' : state.includes('BEAR') ? 'bearish' : 'neutral',
   zone: state.includes('BULL') ? 'uptrend' : state.includes('BEAR') ? 'downtrend' : 'sideways',
   score: 12,

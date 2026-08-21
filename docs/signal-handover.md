@@ -369,7 +369,18 @@ if regime.squeeze:      state = SQUEEZE          # veto สูงสุด
 if regime.overextended: state = OVEREXTENDED     # veto รองลงมา
 
 if zones exists:                                  # (ก) โครงสร้างเป็นคนตั้งชื่อ
-    if zone == sideways: state = SIDEWAYS
+    if zone == sideways:
+        # ★ P7 — เดิมบรรทัดนี้คือ `state = SIDEWAYS` เฉยๆ
+        # trend_diagnosis.md §B วัดว่า บรรทัดเดียวนี้คือ 100% ของ 11,330 แท่ง
+        # ที่ ground truth บอกว่าเป็นเทรนด์แต่ engine ตอบ SIDEWAYS
+        # และบนแท่งชุดเดียวกัน engine flags-OFF เรียกทิศถูก 95.3%
+        if conflicts ว่าง and band >= RANGE_DIRECTION.minimumBand:
+            state = BULLISH/BEARISH ตาม sign(score)   # ไม่มีทาง STRONG_* จากในกรอบ
+        elif conflicts ว่าง and band >= RANGE_DIRECTION.retentionBand
+             and แท่งก่อนหน้าเรียกทิศเดียวกัน:
+            state = BULLISH/BEARISH ตามเดิม           # buffer margin (เข้ายากกว่าอยู่)
+        else:
+            state = SIDEWAYS
     else:
         state = STRONG_* ถ้า presentationState() ยืนยัน  มิฉะนั้น BULLISH/BEARISH ตาม zone
     if gateOn and conflicts ไม่ว่าง:
@@ -386,11 +397,33 @@ elif gateOn:                                      # (ข) gate อย่าง�
 else:                                             # (ค) v1
     state = presentationState(score, bias_v1, ...)
 
-# ---- ขั้นที่ 4: bias สุดท้าย ----
-bias = zoneBias  ถ้ามี zone           # ★ ราคาอยู่ตรงไหนก็คือตรงนั้น แม้หลักฐานจะเถียงกัน
+# ---- ขั้นที่ 4: hold rule (P8) — ทำหลังสุด กับ label เท่านั้น ----
+# trend_agreement.md §1 วัดว่า flip ratio = 1.63 (OFF) / 1.17 (ON)
+# เกิน 1.0 แปลว่าการ์ดเปลี่ยนคำบ่อยกว่าสิ่งที่มันอธิบายเปลี่ยน
+rawState = state
+if มี gap หรือ true range >= 2 × ATR14(แท่งก่อน):
+    published = rawState                          # ตลาด reprice แล้ว ไม่ต้องรอ
+else:
+    published = ค่าล่าสุดใน [raw(t), raw(t-1), raw(t-2)]
+                ที่ยืนติดกันครบ minDurationBars (2) แท่ง
+                มิฉะนั้น = rawState
+# raw(t-1), raw(t-2) ได้จากการเรียก calculateMarketSignal ซ้ำบน
+# finalized.slice(0, -k) — engine ยังเป็น pure function เหมือนเดิม
+# `replayDepth` กันไม่ให้ replay ซ้อน replay → ต้นทุน = lookbackBars ครั้ง (วัดได้ 92ms → 306ms)
+#
+# ★ score / evidenceAgreement / confidence / reasons / flags / gate
+#   คำนวณจาก rawState ทั้งหมด และ **ไม่** คำนวณใหม่ตรงนี้
+#   §6.8 ห้ามอายุ label เป็น input ของ threshold ใดๆ — นี่คือกฎเดียวกันอ่านกลับทาง
+
+# ---- ขั้นที่ 5: bias สุดท้าย ----
+bias = ทิศของ published            ถ้า hold rule เปลี่ยนคำ  # การ์ดต้องสีเดียวกับคำที่พูด
+     : zoneBias  ถ้ามี zone         # ★ ราคาอยู่ตรงไหนก็คือตรงนั้น แม้หลักฐานจะเถียงกัน
+       (P7: ถ้ากรอบ sideways แต่หลักฐานเรียกทิศ zoneBias ตามทิศนั้น)
      : gatedBias ถ้า gateOn
      : bias_v1
 ```
+
+**สองเลขอายุ ไม่ใช่เลขเดียว (P8).** hold rule ทำให้ป้ายที่เผยแพร่ยืนนานขึ้นเสมอ ถ้าการ์ดโชว์อายุของป้ายที่ถูก hold ตัวเลขจะโตขึ้นด้วยเหตุผลที่ไม่เกี่ยวกับตลาดเลย ซึ่ง §6.8 ห้ามไว้ตรงๆ payload จึงมี `persistence.rawState` และ history มีสองเลข: `currentLabelDays` (ป้ายที่เผยแพร่) กับ `currentRawLabelDays` (ค่าที่อ่านได้จริง) — **การ์ดอ่านตัวหลังเท่านั้น** และมี test บังคับข้อนี้
 
 `presentationState` (ตัวร่วมของทุกเส้นทาง) จะให้ `STRONG_*` ต่อเมื่อครบทุกข้อ: `|score| >= 60` **และ** หมวดเห็นด้วย ≥ 4 จาก 5 **และ** `ADX >= 25` **และ** rel-vol ≥ 1.5 **และ** trendStrength ชี้ทางเดียวกัน
 
@@ -405,13 +438,21 @@ bias = zoneBias  ถ้ามี zone           # ★ ราคาอยู่�
 | `conflicts` (gate) | **แค่ STRONG_*** ลดเป็น BULLISH/BEARISH | GATE **และ** ZONES เปิดพร้อมกัน |
 | `band == neutral` (\|score\| < 15) | ทิศทาง → SIDEWAYS | GATE เปิด **และ ZONES ปิด** |
 | `earningsPx == imminent` | STRONG_* เท่านั้น | GATE เปิด (เส้นทาง gate) |
-| `zone == sideways` | ทิศทางทั้งหมด ไม่ว่า score จะเป็นเท่าไร | ZONES เปิด |
+| ~~`zone == sideways`~~ | ~~ทิศทางทั้งหมด~~ → **P7: ไม่ veto แล้ว** ถ้า conflicts ว่าง และ band ถึง `minimumBand` | ZONES เปิด |
+| `conflicts` (P7, ในกรอบ) | ทิศทางที่จะมาจากหลักฐาน → SIDEWAYS | ZONES **และ** GATE เปิด และ zone == sideways |
+| `band < minimumBand` (P7) | ทิศทางที่จะมาจากหลักฐาน → SIDEWAYS | ZONES **และ** GATE เปิด และ zone == sideways |
+| hold rule (P8) | การ *เปลี่ยน* คำ จนกว่าค่าใหม่จะยืนครบ `minDurationBars` | เสมอ ทั้งสอง flag state |
+| gap / true range >= 2×ATR | ยกเลิก hold rule สำหรับแท่งนั้น | เสมอ |
 | hysteresis + confirmation | การ *เข้า* zone ใหม่ (ออกง่ายกว่าเข้า) | ZONES เปิด |
 | `mode == atr_band` | invalidation และ target ทั้งคู่ | ACTIONABLE เปิด |
 | `invalidation == null` | target และ R:R (ไม่มี target ถ้าไม่มี invalidation เด็ดขาด) | ACTIONABLE เปิด |
 
 **จุดที่ต้องอ่านสองรอบ:** เมื่อ ZONES เปิด `band` **ไม่บังคับ** SIDEWAYS อีกต่อไป และ conflict **ไม่ลบทิศทาง** เหตุผลที่บันทึกไว้: zone ตอบว่า "ราคาไปถึงไหนแล้ว" ซึ่งเป็น *ข้อเท็จจริง* ส่วน gate ตอบว่า "หลักฐานหนุนแค่ไหน" ซึ่งเป็น *คุณภาพ* — คนละคำถาม การ์ดจึงแสดงทั้งคู่แทนที่จะให้อันหนึ่งลบอีกอันทิ้ง
 วัดผลกระทบไว้แล้ว: 3 จาก 108 instrument (2.8%) เข้าเงื่อนไขนี้ ซึ่งอยู่ห่างจาก 30% ที่จะทำให้กฎนี้เป็นกฎที่ผิดมาก
+
+**P7 คือหลักการเดียวกันนี้ ใช้กับกรอบ.** `zone == sideways` เคยลบทิศทางทิ้งแบบไม่มีเงื่อนไข ซึ่งเป็นสิ่งเดียวกับที่ conflict เคยทำก่อนจะถูกแก้ — และ `trend_diagnosis.md` §B วัดราคาของมันไว้: **11,330 แท่ง** (100% ของแท่งที่ ON ตอบ SIDEWAYS ทั้งที่ ground truth บอกว่าเป็นเทรนด์) โดยที่ engine flags-OFF เรียกทิศถูกบน **95.3%** ของแท่งชุดเดียวกัน คำตอบมีอยู่แล้ว แค่ถูกปิดปาก
+§C ของไฟล์เดียวกันขยับ threshold ที่กรอบเป็นเจ้าของทั้งสองตัว ±20% แล้ววัดว่ากู้คืนได้เท่าไร: **มากสุด 428 จาก 11,330 แท่ง (3.8%)** — ต้นเหตุจึงไม่ใช่ตัวเลข และ P7 ไม่ได้ขยับตัวเลขไหนเลย (`minimumBand` อ้างชื่อ band ที่ `MARKET_SIGNAL_GATE.bands` นิยามไว้อยู่แล้ว)
+ผลที่วัดได้จริงอยู่ใน `trend_persistence.md` พร้อมเกณฑ์ผ่านที่เขียนก่อนรัน
 
 ---
 

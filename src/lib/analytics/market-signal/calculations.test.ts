@@ -18,7 +18,7 @@ import {
   relativeVolumeStrength,
 } from './calculations';
 import { MARKET_SIGNAL_SCORE_WEIGHTS, MARKET_SIGNAL_THRESHOLDS, MARKET_SIGNAL_TOTAL_WEIGHT } from '@/src/config/signal';
-import type { MarketSignalCandle, MarketSignalMetrics, MarketSignalScoreBreakdown, MarketSignalScoreComponent } from './types';
+import type { MarketSignalCandle, MarketSignalMetrics, MarketSignalResult, MarketSignalScoreBreakdown, MarketSignalScoreComponent, MarketSignalState } from './types';
 
 const freshness: DataFreshness = {
   status: 'end-of-day',
@@ -300,6 +300,24 @@ describe('causal confirmed-pivot divergence', () => {
 });
 
 describe('calculateMarketSignal integration', () => {
+  /*
+   * `classified` is what these tests mean by "the state".
+   *
+   * P8 put a hold rule between the classifier and `result.state`: a changed
+   * label is published only once the new reading has stood
+   * `MARKET_SIGNAL_PERSISTENCE.minDurationBars` bars, so on the last bar of a
+   * synthetic ramp the published word can still be the previous one. Every test
+   * in this block is about the CLASSIFIER — does this evidence read as bullish —
+   * and the classifier's own answer is `persistence.rawState`. The hold rule has
+   * its own file (`persistence.test.ts`) where it is the subject rather than a
+   * confounder.
+   */
+  const classified = (result: MarketSignalResult): MarketSignalState | null =>
+    (result.status === 'available' ? result.persistence?.rawState ?? result.state : null);
+  /** The bias that went with `classified`, for the same reason. */
+  const leaned = (result: MarketSignalResult) =>
+    (result.status === 'available' ? result.persistence?.rawBias ?? result.bias : null);
+
   it('classifies strong bullish, bullish, bearish, and strong bearish evidence with signed breakdowns', () => {
     const strongBullish = calculateMarketSignal(candles(260, (index) => 80 + index * 0.08, (index) => index === 259 ? 1_600 : 1_000, 0.4), context);
     const bullish = calculateMarketSignal(candles(260, (index) => 100 + index * 0.08 + Math.sin(index * 0.45) * 4, () => 1_000, 0.4), context);
@@ -307,15 +325,15 @@ describe('calculateMarketSignal integration', () => {
     const strongBearish = calculateMarketSignal(candles(260, (index) => 160 - index * 0.08, (index) => index === 259 ? 1_600 : 1_000, 0.4), context);
     for (const result of [strongBullish, bullish, bearish, strongBearish]) expect(result.status).toBe('available');
     if (strongBullish.status !== 'available' || bullish.status !== 'available' || bearish.status !== 'available' || strongBearish.status !== 'available') return;
-    expect(strongBullish.bias).toBe('bullish');
-    expect(strongBullish.state).toBe('STRONG_BULLISH');
+    expect(leaned(strongBullish)).toBe('bullish');
+    expect(classified(strongBullish)).toBe('STRONG_BULLISH');
     expect(strongBullish.score).toBeGreaterThanOrEqual(MARKET_SIGNAL_THRESHOLDS.directional.strongBullish);
-    expect(bullish.bias).toBe('bullish');
-    expect(['BULLISH', 'STRONG_BULLISH']).toContain(bullish.state);
-    expect(bearish.bias).toBe('bearish');
-    expect(['BEARISH', 'STRONG_BEARISH']).toContain(bearish.state);
-    expect(strongBearish.bias).toBe('bearish');
-    expect(strongBearish.state).toBe('STRONG_BEARISH');
+    expect(leaned(bullish)).toBe('bullish');
+    expect(['BULLISH', 'STRONG_BULLISH']).toContain(classified(bullish));
+    expect(leaned(bearish)).toBe('bearish');
+    expect(['BEARISH', 'STRONG_BEARISH']).toContain(classified(bearish));
+    expect(leaned(strongBearish)).toBe('bearish');
+    expect(classified(strongBearish)).toBe('STRONG_BEARISH');
     expect(strongBearish.score).toBeLessThanOrEqual(MARKET_SIGNAL_THRESHOLDS.directional.strongBearish);
     expect(aggregateDirectionalScore(strongBullish.scoreBreakdown)).toBe(strongBullish.score);
     expect(aggregateDirectionalScore(strongBearish.scoreBreakdown)).toBe(strongBearish.score);
@@ -338,8 +356,8 @@ describe('calculateMarketSignal integration', () => {
     const result = calculateMarketSignal(candles(260, (index) => 100 + Math.sin(index * 0.55) * 3, () => 1_000, 1), context);
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
-    expect(result.state).toBe('SIDEWAYS');
-    expect(result.bias).toBe('neutral');
+    expect(classified(result)).toBe('SIDEWAYS');
+    expect(leaned(result)).toBe('neutral');
   });
 
   it('preserves directional bias and score when bullish or bearish price is overextended', () => {

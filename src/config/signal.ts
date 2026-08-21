@@ -218,6 +218,116 @@ export const MARKET_SIGNAL_GATE = {
   },
 } as const;
 
+/**
+ * P7 — the direction a range is allowed to carry.
+ *
+ * WHAT THIS FIXES, MEASURED. `trend_diagnosis.md` §B attributed **100% of the
+ * 11,330 bars** where the ground truth called a move and the GATE+ZONES engine
+ * answered SIDEWAYS to a single line: `zone === 'sideways'` in
+ * `zonePresentationState`, which returned before the gate was ever consulted.
+ * The other three candidate causes were passengers on those same bars —
+ * `band == neutral` true on 4.7%, `conflicts` on 17.9%, `regime.sideways` on
+ * 0.2%, and none of them could have produced the label on that path. On the
+ * same bars the flags-OFF engine named the ground truth's direction **95.3%**
+ * of the time, so the direction was not missing from the evidence; it was
+ * withheld.
+ *
+ * WHY THIS IS NOT A THRESHOLD MOVE. §C of the same file moved both knobs the
+ * zone entry rule owns by +-20% and measured what came back: the best of the
+ * four runs recovered 428 of those 11,330 bars (3.8%). The number that decides
+ * these labels is not a number, so this block does not add one.
+ *
+ * WHAT IT IS INSTEAD. The rule already in `docs/signal-handover.md` §5 for
+ * conflicts, applied to the range: the zone answers "where has price got to",
+ * which is a fact, and the gate answers "how well does the evidence support a
+ * direction", which is a quality. A card should show both rather than let one
+ * erase the other. A sideways zone is a statement that price has not left its
+ * frame — it is NOT a statement that the evidence has no direction, and until
+ * now it silently claimed to be.
+ *
+ * `minimumBand` names one of `MARKET_SIGNAL_GATE.bands`, so this block holds no
+ * threshold of its own and moves none: it selects which band already defined
+ * there is strong enough for the card to name a direction while price is still
+ * inside its frame. Conflicts still veto — evidence that points two ways cannot
+ * speak for a range it has not left.
+ */
+export const MARKET_SIGNAL_RANGE_DIRECTION = {
+  /**
+   * Which band a score must reach before a range carries a direction.
+   *
+   * Three candidates were measured end to end over the pinned 108-instrument
+   * corpus before one was chosen; the run that picked it is in
+   * `trend_persistence.md`. The selection rule was written before the runs and
+   * is the pass criteria in that file, not a preference.
+   */
+  minimumBand: 'strong',
+  /**
+   * The buffer margin, and the reason it is a band name and not a number.
+   *
+   * Entering a direction from inside a frame needs `minimumBand`; keeping one
+   * the previous bar already named needs only this. The asymmetry is the same
+   * one `MARKET_SIGNAL_ZONE.confirmation` uses on the frame itself and exists
+   * for the same reason: a score grinding across one band edge would otherwise
+   * relabel the card on alternate days, which teaches a reader the label is
+   * noise. Set equal to `minimumBand` to switch the margin off.
+   */
+  retentionBand: 'moderate',
+} as const;
+
+/**
+ * P8 — how long a changed label has to mean it.
+ *
+ * WHAT THIS FIXES, MEASURED. `trend_agreement.md` §1 measured a flip ratio of
+ * **1.63 with every flag off and 1.17 with GATE+ZONES on** — label changes
+ * divided by changes in the move being described. Above 1.0 the card changes
+ * its word more often than the thing it is describing changes, and §4 of that
+ * file found the OFF value above 1.0 at all 27 definitions of the move it
+ * tested. The card is not late; it is twitchy.
+ *
+ * THE TARGET IS 1.0, NOT ZERO. The same table shows the two baselines at 0.33
+ * and 0.38, and §5 of its appendix says why that is not a win: B2 cannot say
+ * SIDEWAYS at all and 4179 of its 7852 catch-up events never resolve. A label
+ * that never moves describes nothing. So this block damps flicker and is
+ * measured against `|flip - 1.0|`, in both directions.
+ *
+ * WHAT IT DOES. A change of label is published once the new reading has stood
+ * for `minDurationBars` consecutive bars. Until then the card keeps the last
+ * reading that did. `lookbackBars` bounds the search — and bounds the cost,
+ * because the engine has no memory and gets the previous bars by replaying
+ * itself on `candles.slice(0, -k)`, which is `lookbackBars` extra evaluations
+ * per call and nothing else.
+ *
+ * WHAT IT MUST NEVER DO. `docs/signal-handover.md` §6.8 forbids label age from
+ * feeding any threshold, and forbids the card implying that an older label is a
+ * better one. A hold rule creates a new way to break that: it makes labels last
+ * longer, so every age the card prints would silently grow. The engine
+ * therefore publishes `persistence.rawState` — the reading before the hold —
+ * and `summariseHistory` counts the age over THAT. `currentLabelDays` (the held
+ * run) and `currentRawLabelDays` (the honest one) are both published, and the
+ * card is only allowed to show the second.
+ */
+export const MARKET_SIGNAL_PERSISTENCE = {
+  /** Consecutive bars a NEW reading must hold before the card adopts it. */
+  minDurationBars: 2,
+  /**
+   * How far back the replay looks for the last reading that met the duration.
+   *
+   * This is the cost knob: the engine runs itself this many extra times. It has
+   * to be at least `minDurationBars` for the rule to be expressible at all.
+   */
+  lookbackBars: 2,
+  /**
+   * A day this much bigger than normal skips the wait entirely.
+   *
+   * Waiting is a bet that a one-bar change is noise. A gap or a range several
+   * times the recent average is the case where that bet is wrong — the market
+   * repriced, and holding yesterday's word through it would publish a reading
+   * the chart has already contradicted. Measured against the PREVIOUS bar's
+   * ATR14, so the spike cannot raise its own bar.
+   */
+  exceptionAtrMultiple: 2,
+} as const;
+
 export const MARKET_SIGNAL_EXPECTED_FACTORS = {
   emaTrend: 4,
   momentum: 3,

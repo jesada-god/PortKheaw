@@ -61,6 +61,7 @@
     "ema50": 749.3640958608353,
     "ema50SlopePct": 1.4778,
     "emaCompressionRatio": 0.072583,
+    "histogramExpanding": false,
     "keltnerLower": 750.0266588657502,
     "keltnerMiddle": 761.4037223533936,
     "keltnerUpper": 772.7807858410371,
@@ -75,6 +76,13 @@
     "relativeVolume20": 0.646184679818662,
     "rsi14": 65.7612351512674,
     "squeezeOn": false
+  },
+  "persistence": {
+    "exemption": null,
+    "held": false,
+    "rawBias": "bullish",
+    "rawRunBars": 3,
+    "rawState": "BULLISH"
   },
   "reasons": [
     {

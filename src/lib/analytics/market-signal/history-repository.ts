@@ -37,6 +37,7 @@ const VALID_ZONES = new Set<string>(['uptrend', 'downtrend', 'sideways']);
 function toEntry(row: {
   as_of: string;
   state: string;
+  raw_state?: string | null;
   bias: string;
   zone: string | null;
   score: number | null;
@@ -48,6 +49,13 @@ function toEntry(row: {
   return {
     asOf: row.as_of,
     state: row.state as MarketSignalState,
+    /*
+     * P8. Absent on every row written before the column existed, and on any row
+     * whose value this build does not recognise — both are "not recorded", and
+     * `summariseHistory` stops counting the raw run rather than guessing.
+     */
+    rawState: row.raw_state != null && VALID_STATES.has(row.raw_state)
+      ? row.raw_state as MarketSignalState : null,
     bias: row.bias,
     zone: row.zone !== null && VALID_ZONES.has(row.zone) ? row.zone as MarketSignalZoneName : null,
     score: row.score,
@@ -73,7 +81,7 @@ export async function readSignalHistory(
   try {
     const { data, error } = await client
       .from(TABLE)
-      .select('as_of, state, bias, zone, score, evidence_agreement, flags')
+      .select('as_of, state, raw_state, bias, zone, score, evidence_agreement, flags')
       .eq('symbol', symbol)
       .gte('as_of', since)
       .order('as_of', { ascending: true });
@@ -101,6 +109,7 @@ export async function writeSignalSnapshot(snapshot: MarketSignalSnapshot): Promi
       symbol: snapshot.symbol,
       as_of: snapshot.asOf,
       state: snapshot.state,
+      raw_state: snapshot.rawState,
       bias: snapshot.bias,
       zone: snapshot.zone,
       score: snapshot.score,

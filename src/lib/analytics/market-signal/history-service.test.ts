@@ -52,7 +52,7 @@ vi.mock('@/src/lib/market-data/candles', () => ({
 const { loadMarketSignal } = await import('./service');
 
 const entry = (asOf: string, state: 'SIDEWAYS' | 'BULLISH'): MarketSignalHistoryEntry => ({
-  asOf, state, bias: 'neutral', zone: 'sideways', score: 3, evidenceAgreement: 60, flags: [],
+  asOf, state, rawState: state, bias: 'neutral', zone: 'sideways', score: 3, evidenceAgreement: 60, flags: [],
 });
 
 beforeEach(() => {

@@ -754,6 +754,27 @@ function descriptionFor(
     if (bias === 'bullish') return 'แนวโน้มโดยรวมยังขึ้น แต่ราคาวิ่งไกลจากค่าเฉลี่ยของตัวเองมาก';
     if (bias === 'bearish') return 'แนวโน้มโดยรวมยังลง แต่ราคาลงไกลจากค่าเฉลี่ยของตัวเองมาก';
   }
+  /*
+   * P7 — the reading the card could not previously produce.
+   *
+   * A directional label while the frame still says price has not left it. It
+   * used to be impossible: `zone === 'sideways'` returned SIDEWAYS before the
+   * evidence was consulted, and `trend_diagnosis.md` §B measured what that cost
+   * — 11,330 bars where the move was real, the direction was in the evidence
+   * (the flags-OFF engine named it correctly on 95.3% of them) and the frame
+   * spoke over it.
+   *
+   * So the card now shows both, and this sentence is the join. Without it a
+   * reader gets a bullish headline directly above a picture of price sitting in
+   * the middle of a rectangle and has to invent the reconciliation themselves.
+   * The two facts answer different questions — where price has got to, and how
+   * far the evidence leans — which is the same shape §5 of the handover already
+   * uses for a conflict.
+   */
+  if ((state === 'BULLISH' || state === 'BEARISH') && zones !== null && zones.zone === 'sideways') {
+    const leaning = state === 'BULLISH' ? 'ขึ้น' : 'ลง';
+    return `คะแนนรวมเอนไปทาง${leaning}มากพอจะบอกทิศได้ แต่ราคายังอยู่ในกรอบเดิม ยังไม่ปิดพ้นขอบบนหรือขอบล่าง การ์ดจึงบอกทั้งสองอย่าง`;
+  }
   if (state === 'SIDEWAYS') {
     /*
      * The same sentence twice, because the card is two cards.
@@ -833,7 +854,24 @@ const HISTORY_CELL_TONE: Record<MarketSignalState, string> = {
  * stated plainly, that a reader must not mistake for a confidence.
  */
 function HistoryStrip({ history }: { history: MarketSignalHistory }) {
-  const { entries, windowDays, currentLabelDays, recentFlip } = history;
+  /*
+   * `currentRawLabelDays`, NOT `currentLabelDays`, and the difference is the
+   * whole reason both exist.
+   *
+   * P8 holds a changed label until the new reading has stood two bars, so every
+   * published run is at least as long as the reading underneath it and some are
+   * longer. `currentLabelDays` therefore now carries the hold rule's own
+   * influence. §6.8 of `docs/signal-handover.md` measured that an older label is
+   * not a better one — 49.2% against 49.9% at the extremes — and forbids the
+   * card implying otherwise; printing a duration the engine itself lengthened
+   * would be exactly that claim with an extra step. This is the run of the
+   * reading, before any holding.
+   *
+   * `null` is a real answer here and it is more common than it was: one
+   * recorded day, or any day in the run written before P8 stored a raw reading.
+   * The card says it cannot tell rather than falling back to the held number.
+   */
+  const { entries, windowDays, currentRawLabelDays, recentFlip } = history;
   const latest = entries[entries.length - 1];
 
   return (
@@ -861,9 +899,9 @@ function HistoryStrip({ history }: { history: MarketSignalHistory }) {
           sentence says exactly that rather than leaving a number to be read as
           endorsement.
         */}
-        {currentLabelDays === null
-          ? `${latest.state} บันทึกไว้วันเดียว ยังบอกไม่ได้ว่ายืนมานานแค่ไหน`
-          : `ป้าย ${latest.state} นี้ยืนมา ${currentLabelDays} วัน`}
+        {currentRawLabelDays === null
+          ? `${latest.state} ยังไม่มีวันที่บันทึกพอจะบอกได้ว่ายืนมานานแค่ไหน`
+          : `ป้าย ${latest.state} นี้ยืนมา ${currentRawLabelDays} วัน`}
         {' · '}
         บันทึกได้ {entries.length} วัน จาก {windowDays} วันที่ผ่านมา
       </p>

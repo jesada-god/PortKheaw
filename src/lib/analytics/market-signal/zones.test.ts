@@ -25,15 +25,30 @@ const capture = (symbol: string) => JSON.parse(
   readFileSync(join(process.cwd(), '__golden__', 'candles', `${symbol}.json`), 'utf8'),
 ) as { source: string | null; freshness: DataFreshness; candles: MarketSignalCandle[] };
 
+/*
+ * Memoised, because P8 made each call three engine evaluations rather than one:
+ * the hold rule gets the previous bars' labels by replaying the engine on the
+ * same candles minus the last k finalized bars. The result is a pure function of
+ * (symbol, zones) — `calculations.test.ts` asserts that determinism directly —
+ * so caching changes no answer here, only how many times the same answer is
+ * computed. Without it a ten-symbol sweep re-reads and re-runs thirty times and
+ * the suite spends its budget proving the engine is deterministic again.
+ */
+const runs = new Map<string, ReturnType<typeof calculateMarketSignal>>();
 const run = (symbol: string, zones: boolean) => {
+  const key = `${symbol}:${zones}`;
+  const cached = runs.get(key);
+  if (cached) return cached;
   const frozen = capture(symbol);
-  return calculateMarketSignal(frozen.candles, {
+  const result = calculateMarketSignal(frozen.candles, {
     symbol,
     source: frozen.source,
     freshness: frozen.freshness,
     calculatedAt: '2026-01-01T00:00:00.000Z',
     ...(zones ? { features: { gate: false, zones: true } } : {}),
   });
+  runs.set(key, result);
+  return result;
 };
 
 const SYMBOLS = ['IREN', 'SPY', 'QQQ', 'DIA', 'IWM', 'REMX', 'GC-F', 'SI-F', 'CL-F', 'BTC-USD'];

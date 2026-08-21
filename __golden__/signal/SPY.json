@@ -61,6 +61,13 @@
     "rsi14": 65.7612351512674,
     "squeezeOn": false
   },
+  "persistence": {
+    "exemption": null,
+    "held": false,
+    "rawBias": "bullish",
+    "rawRunBars": 3,
+    "rawState": "BULLISH"
+  },
   "reasons": [
     {
       "id": "macd-signal",
