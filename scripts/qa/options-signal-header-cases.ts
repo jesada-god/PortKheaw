@@ -180,6 +180,7 @@ function signalOf(options: {
           expiration: '2026-09-19',
           marketOpenAtCapture: true,
           offHoursAssessment: null,
+      closedSpreadWarning: null,
           state: 'DELAYED',
           reason: null,
           detail: 'OI กลาง 2,400 · Volume กลาง 310',

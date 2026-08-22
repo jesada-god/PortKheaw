@@ -311,6 +311,20 @@ export const OPTIONS_SIGNAL_CONFIG = {
     /** Bid-ask spread as % of mid: at or below `good` scores 1.0, at `poor` scores 0. */
     spreadGoodPercent: 5,
     spreadPoorPercent: 25,
+    /**
+     * A spread captured while the book was SHUT is not scored — market makers
+     * widen or pull quotes overnight, and the same chain that costs 2% to cross
+     * at 10:00 can quote 40% at 02:00. It is still an UPPER BOUND, and above this
+     * the card says so rather than discarding the observation.
+     *
+     * 10, which is twice `spreadGoodPercent`. The reasoning is the halving: a
+     * closed-book spread is expected to be several times its open-book value, so
+     * the bar has to sit well clear of the open-book threshold to mean anything.
+     * At 10% even a spread that halves on the open still fails `spreadGoodPercent`,
+     * which is the weakest claim that is worth printing — and the case that
+     * prompted this, a 6.2% capture, correctly stays quiet.
+     */
+    closedSpreadWarnPercent: 10,
     /** Composite score bands for the badge. */
     goodFrom: 70,
     fairFrom: 45,

@@ -28,6 +28,7 @@ import {
 import type {
   EventRiskInput,
   IvPricingInput,
+  LiquidityInput,
   MacroInput,
   MomentumInput,
   OptionsSignalInput,
@@ -384,6 +385,38 @@ describe('a distance to a level is written one way everywhere', () => {
     expect(distancePercentText(null)).toBe('—');
     expect(distanceAtrText(-1.2)).toBe('1.20 ATR');
     expect(directedDistanceText('down', 'แนวรับ', -6.23)).toBe('ลงถึงแนวรับ 6.23%');
+  });
+});
+
+describe('a liquidity gate that did not pass awards no marks', () => {
+  const closedBook: LiquidityInput = {
+    medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 6.18,
+    contractsExamined: 12, expiration: '2026-10-02', marketOpenAtCapture: false,
+  };
+
+  it('publishes no grade and no score anywhere in the payload for that chain', () => {
+    const result = calculateOptionsSignal(baseInput({ liquidity: available<LiquidityInput>(closedBook) }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { liquidity } = result.diagnostics;
+
+    expect(result.liquidityGrade).toBe('unknown');
+    expect(liquidity.score).toBeNull();
+    // The one thing standing interest can honestly say, said as a pass and not
+    // as a mark out of a hundred.
+    expect(liquidity.offHoursAssessment).toEqual({ standingPassed: true });
+    expect(liquidity.detail).not.toContain('100');
+  });
+
+  it('keeps liquidity out of the direction, exactly as before', () => {
+    const withChain = calculateOptionsSignal(baseInput({ liquidity: available<LiquidityInput>(closedBook) }));
+    const withoutChain = calculateOptionsSignal(baseInput());
+    if (withChain.status !== 'available' || withoutChain.status !== 'available') throw new Error('expected signals');
+
+    // Not a rule this work is allowed to change, and the easiest one to break by
+    // accident while rearranging the box that displays it.
+    expect(withChain.diagnostics.directionScore0to100).toBe(withoutChain.diagnostics.directionScore0to100);
+    expect(withChain.diagnostics.availableWeight).toBe(withoutChain.diagnostics.availableWeight);
+    expect(withChain.confidenceScore).toBe(withoutChain.confidenceScore);
   });
 });
 

@@ -736,8 +736,25 @@ export interface LiquidityOutcome {
   grade: LiquidityGrade | null;
   score: number | null;
   detail: string;
-  /** OI and volume only, with the spread excluded. Present when the book was shut. */
-  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
+  /**
+   * What the STANDING interest alone says, when the book was shut.
+   *
+   * Deliberately NOT a grade and NOT a score. It used to publish
+   * `{ grade: 'good', score: 100 }`, and the card rendered that as a green
+   * "สภาพคล่องดี · 100 / 100" badge one line under "คะแนนรวม: —". A reader
+   * remembers the 100, not the dash — so the box was simultaneously refusing to
+   * judge and awarding full marks.
+   */
+  offHoursAssessment: { standingPassed: boolean } | null;
+  /**
+   * The closed-book spread, kept as an UPPER BOUND rather than discarded.
+   *
+   * 6.18% was being thrown away whole because the market was shut. Overnight
+   * spreads really are unusable for grading, but a spread that wide would still
+   * be expensive at half the width, and silently dropping the observation is how
+   * a reader ends up in a chain nobody can get out of.
+   */
+  closedSpreadWarning: string | null;
 }
 
 const liquidityVerdict = (grade: Exclude<LiquidityGrade, 'unknown'>) => (
@@ -803,20 +820,41 @@ export function gradeLiquidity(
       score: null,
       detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
       offHoursAssessment: null,
+      closedSpreadWarning: null,
     };
   }
 
   if (marketOpen === false) {
     const standingOnly = compose(standing);
+    /*
+     * ONE sentence, not a verdict beside a refusal to give one.
+     *
+     * The two facts are different in kind and the box has to say so in the same
+     * breath: open interest and volume were measured and cleared their bar, and
+     * the spread was captured while the book was shut so it cannot be graded at
+     * all. Splitting them across a badge and a footnote is what let "100 / 100"
+     * be the part a reader took away.
+     */
+    const standingPassed = standingOnly !== null && standingOnly.grade === 'good';
+    const standingText = standingOnly === null
+      ? 'ยังไม่มี OI หรือ Volume พอจะดู'
+      : standingPassed
+        ? `OI/Volume ผ่านเกณฑ์ (${Math.round(openInterest ?? 0).toLocaleString('en-US')} / ${Math.round(volume ?? 0).toLocaleString('en-US')})`
+        : `OI/Volume ยังบาง (${Math.round(openInterest ?? 0).toLocaleString('en-US')} / ${Math.round(volume ?? 0).toLocaleString('en-US')})`;
+    const spreadText = spread === null
+      ? 'ไม่มีข้อมูลส่วนต่าง Bid/Ask'
+      : `สเปรดยังตัดสินไม่ได้ — เก็บตอนตลาดปิดที่ ${round(spread, 1)}% ต้องดูซ้ำตอนเปิด`;
+    const closedSpreadWarning = spread !== null && spread > config.closedSpreadWarnPercent
+      ? `สเปรดกว้างผิดปกติแม้เผื่อผลของตลาดปิดแล้ว (${round(spread, 1)}% ตอนปิด) `
+        + `ถ้าหดลงครึ่งหนึ่งตอนเปิดก็ยังเกินเกณฑ์ ${config.spreadGoodPercent}%`
+      : null;
     return {
       grade: 'unknown',
       score: null,
-      detail: `${measured} · ${context} · เก็บข้อมูลตอนตลาดปิด ส่วนต่าง Bid/Ask นอกเวลาทำการกว้างผิดปกติเป็นปกติ `
-        + 'จึงยังประเมินสภาพคล่องไม่ได้'
-        + (standingOnly === null
-          ? ''
-          : ` · ถ้าดูเฉพาะ OI และ Volume: ${liquidityVerdict(standingOnly.grade)}`),
-      offHoursAssessment: standingOnly,
+      detail: `${standingText} · ${spreadText} · ${context}`
+        + (closedSpreadWarning === null ? '' : ` · ${closedSpreadWarning}`),
+      offHoursAssessment: standingOnly === null ? null : { standingPassed },
+      closedSpreadWarning,
     };
   }
 
@@ -827,6 +865,7 @@ export function gradeLiquidity(
       score: null,
       detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
       offHoursAssessment: null,
+      closedSpreadWarning: null,
     };
   }
   return {
@@ -834,6 +873,7 @@ export function gradeLiquidity(
     score: composed.score,
     detail: `${measured} · ${context} · ${liquidityVerdict(composed.grade)}`,
     offHoursAssessment: null,
+    closedSpreadWarning: null,
   };
 }
 
@@ -1231,7 +1271,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
-      marketOpenAtCapture: null, offHoursAssessment: null,
+      marketOpenAtCapture: null, offHoursAssessment: null, closedSpreadWarning: null,
       state: 'UNAVAILABLE', reason: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
       detail: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
     };
@@ -1241,7 +1281,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
-      marketOpenAtCapture: null, offHoursAssessment: null,
+      marketOpenAtCapture: null, offHoursAssessment: null, closedSpreadWarning: null,
       state: 'UNAVAILABLE', reason, detail: reason,
     };
   }
@@ -1255,6 +1295,7 @@ function liquidityDiagnostics(
     expiration: slot.value.expiration,
     marketOpenAtCapture: slot.value.marketOpenAtCapture ?? null,
     offHoursAssessment: outcome.offHoursAssessment,
+    closedSpreadWarning: outcome.closedSpreadWarning,
     state: slot.state,
     reason: outcome.grade === null ? outcome.detail : null,
     detail: outcome.detail,

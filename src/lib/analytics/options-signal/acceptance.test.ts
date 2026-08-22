@@ -903,10 +903,53 @@ describe('a bid-ask spread quoted while the book is shut is not a liquidity grad
 
   it('keeps the open-interest and volume evidence rather than throwing it away', () => {
     const shut = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: false });
-    // The badge stops making a claim; the measurement is still there, labelled.
-    expect(shut.offHoursAssessment).toEqual({ grade: 'fair', score: 60 });
-    expect(shut.detail).toContain('ตลาดปิด');
-    expect(shut.detail).toContain('OI กลาง 400');
+    /*
+     * A PASS/FAIL, not a grade and not a score.
+     *
+     * This used to publish `{ grade: 'fair', score: 60 }` and the card rendered
+     * the pair as a badge one line under "คะแนนรวม: —". The measurement is still
+     * kept and still labelled — what it no longer does is dress a partial view up
+     * as a liquidity verdict with a number beside it.
+     */
+    expect(shut.offHoursAssessment).toEqual({ standingPassed: false });
+    expect(shut.detail).toContain('OI/Volume ยังบาง');
+    expect(shut.detail).toContain('สเปรดยังตัดสินไม่ได้');
+    expect(shut.detail).toContain('42%');
+  });
+
+  it('never publishes a score or a green grade in a box whose gate did not pass', () => {
+    const shut = gradeLiquidity({
+      // The case from the report: standing interest comfortably through, and a
+      // spread nobody can grade because the book was shut.
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 6.18,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(shut.grade).toBe('unknown');
+    expect(shut.score).toBeNull();
+    expect(shut.offHoursAssessment).toEqual({ standingPassed: true });
+    // The two facts, in one sentence, in the order a reader needs them.
+    expect(shut.detail).toContain('OI/Volume ผ่านเกณฑ์ (899 / 533)');
+    expect(shut.detail).toContain('สเปรดยังตัดสินไม่ได้ — เก็บตอนตลาดปิดที่ 6.2% ต้องดูซ้ำตอนเปิด');
+    // Nothing anywhere in the box claims a full mark.
+    expect(shut.detail).not.toContain('100');
+    expect(shut.detail).not.toContain('สภาพคล่องดี');
+  });
+
+  it('keeps a very wide closed-book spread as an upper bound instead of discarding it', () => {
+    const wide = gradeLiquidity({
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 42,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(wide.closedSpreadWarning).toContain('กว้างผิดปกติแม้เผื่อผลของตลาดปิด');
+
+    // 6.18% is wide but not wide enough to survive the halving argument, so it
+    // stays a "look again", not a warning. A warning that fires on every closed
+    // book is the flag nobody reads.
+    const ordinary = gradeLiquidity({
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 6.18,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(ordinary.closedSpreadWarning).toBeNull();
   });
 
   it('treats an unknown capture time as unknown, not as closed', () => {
@@ -922,7 +965,7 @@ describe('a bid-ask spread quoted while the book is shut is not a liquidity grad
     }));
     expect(result.liquidityGrade).toBe('unknown');
     expect(result.diagnostics.liquidity.marketOpenAtCapture).toBe(false);
-    expect(result.diagnostics.liquidity.offHoursAssessment?.grade).toBe('fair');
+    expect(result.diagnostics.liquidity.offHoursAssessment).toEqual({ standingPassed: false });
     // And the setup warns the reader to look again when the book reopens.
     expect(result.suggestedOptionsSetup.warnings.some((warning) => warning.includes('ตลาดปิด'))).toBe(true);
     // It is NOT the thin-chain warning: that would be the false claim.

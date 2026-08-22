@@ -179,6 +179,7 @@ const eliteSignal: OptionsSignalDto = {
         expiration: '2026-08-21',
         marketOpenAtCapture: true,
         offHoursAssessment: null,
+      closedSpreadWarning: null,
         state: 'DELAYED',
         reason: null,
         detail: 'OI กลาง 2,400 · Volume กลาง 310',
@@ -720,7 +721,8 @@ describe('OptionsSignalSection gated DTO rendering', () => {
               score: null,
               medianSpreadPercent: 42,
               marketOpenAtCapture: false,
-              offHoursAssessment: { grade: 'fair', score: 60 },
+              offHoursAssessment: { standingPassed: false },
+              closedSpreadWarning: 'สเปรดกว้างผิดปกติแม้เผื่อผลของตลาดปิดแล้ว (42% ตอนปิด) ถ้าหดลงครึ่งหนึ่งตอนเปิดก็ยังเกินเกณฑ์ 5%',
             },
           },
         },
@@ -739,7 +741,24 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     // ...and the measurement behind it is still on screen, labelled.
     expect(document.body.querySelector('[data-testid="options-signal-liquidity-closed"]')).not.toBeNull();
     expect(document.body.textContent).toContain('ถ้าดูเฉพาะ OI และ Volume');
-    expect(document.body.textContent).toContain('สภาพคล่องพอใช้');
+
+    /*
+     * NO GRADE AND NO SCORE ANYWHERE IN THIS BOX.
+     *
+     * It used to print "สภาพคล่องดี · 100 / 100" one line under "คะแนนรวม: —",
+     * which is a refusal to judge and a full mark in the same breath — and the
+     * full mark is the half a reader keeps.
+     */
+    const box = document.body
+      .querySelector('[data-testid="options-signal-liquidity-section"]')?.textContent ?? '';
+    expect(box).not.toBe('');
+    expect(box).not.toContain('สภาพคล่องพอใช้');
+    expect(box).not.toContain('สภาพคล่องดี');
+    expect(box).not.toContain('/ 100');
+
+    // The closed-book spread survives as an upper bound rather than vanishing.
+    expect(document.body.querySelector('[data-testid="options-signal-liquidity-spread-warning"]')?.textContent)
+      .toContain('กว้างผิดปกติแม้เผื่อผลของตลาดปิด');
   });
 
   it('shows an outage as an outage, never as the accumulating countdown', async () => {

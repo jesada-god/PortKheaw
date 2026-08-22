@@ -156,6 +156,7 @@ const result: OptionsSignalResult = {
       expiration: null,
       marketOpenAtCapture: null,
       offHoursAssessment: null,
+      closedSpreadWarning: null,
       state: 'UNAVAILABLE',
       reason: 'test',
       detail: 'test',

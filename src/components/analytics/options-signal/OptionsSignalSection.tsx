@@ -780,7 +780,7 @@ function DetailBody({ breakdown, summary }: {
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
       </section>
 
-      <section>
+      <section data-testid="options-signal-liquidity-section">
         <h3 className="font-semibold text-white">5. สภาพคล่องของ chain</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail
@@ -794,10 +794,19 @@ function DetailBody({ breakdown, summary }: {
               ? '—'
               : liquidity.marketOpenAtCapture ? 'เปิด' : 'ปิด'}
           />
+          {/*
+            * PASS/FAIL, never a grade and never a score.
+            *
+            * This row used to read "สภาพคล่องดี · 100 / 100" one line under
+            * "คะแนนรวม: —" — the box refusing to judge and awarding full marks in
+            * the same breath, and 100/100 is the half a reader remembers. What
+            * the standing interest can honestly say is whether it cleared its own
+            * bar, which is not a liquidity verdict and must not look like one.
+            */}
           {liquidity.offHoursAssessment && (
             <Detail
               label="ถ้าดูเฉพาะ OI และ Volume"
-              value={`${LIQUIDITY_BADGE[liquidity.offHoursAssessment.grade].label} · ${liquidity.offHoursAssessment.score} / 100`}
+              value={liquidity.offHoursAssessment.standingPassed ? 'ผ่านเกณฑ์' : 'ยังบาง'}
             />
           )}
           <Detail label="Open Interest (ค่ากลาง)" value={numberText(liquidity.medianOpenInterest)} />
@@ -815,6 +824,17 @@ function DetailBody({ breakdown, summary }: {
         {liquidity.marketOpenAtCapture === false && (
           <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-liquidity-closed">
             ส่วนต่าง Bid/Ask ที่เห็นเก็บตอนตลาดปิด ซึ่งกว้างกว่าตอนเปิดเป็นปกติ จึงยังไม่ใช้ตัดสินสภาพคล่อง ให้ดูอีกครั้งตอนตลาดเปิด
+          </p>
+        )}
+        {/*
+          * The closed-book spread kept as an UPPER BOUND rather than discarded.
+          * A spread this wide would still be expensive at half the width, and
+          * dropping the observation because the market was shut is how a reader
+          * ends up in a chain nobody can get out of.
+          */}
+        {liquidity.closedSpreadWarning && (
+          <p className="mt-2 text-xs leading-5 text-red-300" data-testid="options-signal-liquidity-spread-warning">
+            {liquidity.closedSpreadWarning}
           </p>
         )}
         {liquidity.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{liquidity.reason}</p>}

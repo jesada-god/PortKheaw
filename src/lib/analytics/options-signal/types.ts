@@ -441,7 +441,15 @@ export interface OptionsSignalLiquidityDiagnostics {
    * spread excluded. Present when the market was shut, so the reader keeps the
    * measurement even though the badge stops making a claim.
    */
-  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
+  /**
+   * What the STANDING interest alone says, when the book was shut. A pass/fail,
+   * never a grade and never a score: the pair used to be `{ grade: 'good',
+   * score: 100 }` and the card rendered it as a green "สภาพคล่องดี · 100 / 100"
+   * badge directly under "คะแนนรวม: —".
+   */
+  offHoursAssessment: { standingPassed: boolean } | null;
+  /** Set when a closed-book spread is wide enough to be worth saying out loud. */
+  closedSpreadWarning: string | null;
   state: OptionsSignalDataState;
   reason: string | null;
   detail: string;
