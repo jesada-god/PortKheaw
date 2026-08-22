@@ -440,10 +440,11 @@ export const REASON_IDS_WITHOUT_COPY: Record<string, string> = {};
  * payload fields. Nothing here states a fact the sentence above does not, and
  * nothing here is a number the payload did not publish.
  *
- * THE 15-35 WORD RULE DOES NOT APPLY, for the reason `headlineFor` gives about
- * the state line: these are labels in the register of the seven state names,
- * not prose. Everything else does — the ban list especially, checked by
- * `reason-copy.test.ts` over this table as well as over `REASON_COPY`.
+ * THE 15-35 WORD RULE DOES NOT APPLY, for the reason the block above
+ * `MARKET_SIGNAL_PRESENTATION` gives about the state line's gloss: these are
+ * labels in the register of the seven state names, not prose. Everything else
+ * does — the ban list especially, checked by `reason-copy.test.ts` over this
+ * table as well as over `REASON_COPY`.
  *
  * An id with no entry falls back to the full sentence, which is long in a place
  * that wants short and is still the right answer: a bullet that says nothing is

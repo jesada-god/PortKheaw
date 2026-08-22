@@ -194,15 +194,58 @@ function SignalFooter({ tone }: { tone: string }) {
   );
 }
 
+/**
+ * The seven states, and the Thai that is now printed ON the same line as each.
+ *
+ * `thai` used to be a headline in its own paragraph under the state name, and
+ * on a framed SIDEWAYS card it was not drawn at all — `headlineFor` returned
+ * null there because "ตอนนี้ราคายังอยู่ในกรอบ" was the zone bar's first sentence
+ * repeated a thumb higher. The cost of that fix was the card most readers see:
+ * an English identifier standing alone with no Thai beside it anywhere above
+ * the picture.
+ *
+ * So it is a GLOSS now, set beside `result.state` rather than under it, and it
+ * is drawn on every card. A beginner meeting `STRONG_BEARISH` reads "ขาลง
+ * ชัดเจน" in the same glance instead of translating, which is the one job this
+ * line has ever had.
+ *
+ * THREE RULES IT IS HELD TO, all of them asserted in
+ * `MarketSignalSection.test.tsx`:
+ *
+ *  - SQUEEZE and OVEREXTENDED may not say "ขาขึ้น" or "ขาลง". Neither state
+ *    carries a direction — SQUEEZE is a narrowing range and OVEREXTENDED is a
+ *    distance from the mean, and both occur on the way up and on the way down.
+ *    Giving either one a direction word would be the label inventing the fact
+ *    the engine specifically declined to name.
+ *  - None of the seven may say what to do. These describe; `NOT_A_FORECAST`
+ *    two rows below says the card does not advise, and a gloss reading "น่าซื้อ"
+ *    would contradict it in the same column.
+ *  - SIDEWAYS says "ตอนนี้". §6.6 followed 10,525 sideways calls: at twenty
+ *    bars the LABEL was still sideways 72.6% of the time while price was still
+ *    inside the frame it named 25.7% of the time. A gloss with no moment in it
+ *    reads as how this instrument IS, which is the reading that measurement
+ *    rules out.
+ *
+ * They are four to nine words each — labels, not prose — so the 15-35 word band
+ * the sentences are held to does not apply. `description` is the prose, and it
+ * lives in the dialog.
+ *
+ * WHY HERE AND NOT ON THE ZONE BAR. The bar answers "where is price standing
+ * relative to the rectangle"; this answers "which way do the five categories of
+ * evidence lean". §5's conflict veto makes the two come apart on real cards — a
+ * close through the upper trigger under a SIDEWAYS label is a shipping
+ * reading — so a state name written on a bar field would put the card in
+ * contradiction with itself on exactly those days. See `ZONE_SEGMENT_COPY`.
+ */
 export const MARKET_SIGNAL_PRESENTATION = {
   STRONG_BULLISH: {
-    thai: 'กำลังขึ้นอย่างแข็งแรง',
+    thai: 'ขาขึ้นชัดเจน',
     description: 'ราคากำลังขึ้นอย่างแข็งแรง • ทั้งตัวราคาและแรงส่งของราคาไปทางเดียวกัน และมีแรงซื้อหนุนอยู่',
     icon: TrendingUp,
     tone: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300',
   },
   BULLISH: {
-    thai: 'แนวโน้มกำลังขึ้น',
+    thai: 'กำลังเป็นขาขึ้น',
     description: 'แนวโน้มโดยรวมกำลังขึ้น • แต่ยังไม่มีอะไรยืนยันหนักแน่น ควรดูต่ออีกสักพัก',
     icon: TrendingUp,
     tone: 'border-green-500/35 bg-green-500/10 text-green-300',
@@ -228,31 +271,31 @@ export const MARKET_SIGNAL_PRESENTATION = {
    * wording for the cards that do have one, where it can read `zones`.
    */
   SIDEWAYS: {
-    thai: 'ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง',
+    thai: 'ตอนนี้ยังไม่มีทิศทางชัดเจน',
     description: 'ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง',
     icon: Minus,
     tone: 'border-sky-500/30 bg-slate-500/10 text-sky-200',
   },
   SQUEEZE: {
-    thai: 'ราคาแกว่งแคบลงกว่าปกติ',
+    thai: 'ราคาแกว่งแคบลงเรื่อย ๆ',
     description: 'ช่วงที่ราคาแกว่งในแต่ละวันแคบลงกว่าปกติ • ยังบอกไม่ได้ว่าจะออกทางไหน',
     icon: Zap,
     tone: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
   },
   OVEREXTENDED: {
-    thai: 'ราคาไกลจากค่าเฉลี่ย',
+    thai: 'ราคาวิ่งไปไกลจากค่าเฉลี่ยมาก',
     description: 'ราคาอยู่ห่างจากค่าเฉลี่ยของตัวเองมากกว่าปกติ • ยังไม่ได้แปลว่าจะกลับ แต่ระยะห่างนี้ผิดจากที่เคยเป็น',
     icon: TriangleAlert,
     tone: 'border-orange-400/40 bg-orange-500/10 text-orange-200',
   },
   BEARISH: {
-    thai: 'แนวโน้มกำลังลง',
+    thai: 'กำลังเป็นขาลง',
     description: 'แนวโน้มโดยรวมกำลังลง • แรงขายยังมีมากกว่าแรงซื้อ',
     icon: TrendingDown,
     tone: 'border-red-500/35 bg-red-500/10 text-red-300',
   },
   STRONG_BEARISH: {
-    thai: 'กำลังลงอย่างแข็งแรง',
+    thai: 'ขาลงชัดเจน',
     description: 'ราคากำลังลงอย่างแข็งแรง • ทั้งตัวราคา แรงส่งของราคา และแรงขายไปทางเดียวกัน',
     icon: TrendingDown,
     tone: 'border-red-700/50 bg-red-950/40 text-red-300',
@@ -494,9 +537,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
   const cautions = result.reasons.filter((reason) => readsAsCaution(reason, result.metrics, result.bias));
   const supporting = result.reasons.filter((reason) => !readsAsCaution(reason, result.metrics, result.bias));
   const unconfirmed = result.warnings;
-  const biasLabel = result.bias === 'bullish' ? 'Bullish Bias' : result.bias === 'bearish' ? 'Bearish Bias' : 'Neutral Bias';
   const beginnerDescription = descriptionFor(result.state, result.bias, result.zones ?? null, presentation.description);
-  const beginnerHeadline = headlineFor(result.state, result.zones ?? null, presentation.thai);
   /*
    * THE BASE RATE, SAID UNDER THE LABEL RATHER THAN LEFT IN A REPORT.
    *
@@ -599,15 +640,38 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             going. On SIDEWAYS it was also the same fact twice: the state IS the
             neutral one, so the second half of the line restated the first.
 
-            The bias is not gone — it names the dialog this button opens, where
-            it sits beside the score it is derived from and can be read as the
-            arithmetic it is rather than as a forecast.
+            It is not in the dialog's title either, as of this change: see the
+            block on `ResponsiveDialog` below. What the reader gets instead is
+            the arithmetic the word was a name for — the signed score, and §1's
+            sentence saying which way it leans — rather than a label that reads
+            as a forecast wherever it is printed.
           */}
-          <p className="mt-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
-            {result.state}
+          {/*
+            THE STATE, AND WHAT IT SAYS IN THAI, ON ONE LINE.
+
+            The English identifier is what the payload carries, what the history
+            strip is keyed on and what every doc in `docs/market-signal` calls
+            this reading, so it stays and it stays first. Beside it is
+            `presentation.thai` — see the block on `MARKET_SIGNAL_PRESENTATION`
+            for the three rules that wording is held to, and for why a reader
+            who cannot translate `STRONG_BEARISH` should not have to scroll to
+            find out which way it points.
+
+            `flex-wrap` with a baseline alignment, not a nowrap row: at 320px
+            "OVEREXTENDED · ราคาวิ่งไปไกลจากค่าเฉลี่ยมาก" does not fit on one
+            line, and the half that would be clipped is the half a beginner
+            needs. It wraps to a second line instead.
+          */}
+          <p className="mt-2 flex flex-wrap items-baseline gap-x-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
+            <span>{result.state}</span>
+            <span aria-hidden="true" className="font-sans text-sm font-normal opacity-40">·</span>
+            <span className="font-sans text-sm font-semibold opacity-90" data-testid="signal-state-headline">
+              {presentation.thai}
+            </span>
           </p>
           {/*
-            NEITHER OF THE TWO SENTENCES THAT USED TO SIT HERE, ON A FRAMED CARD.
+            THE SECOND PARAGRAPH THAT USED TO SIT HERE IS GONE, AND SO IS THE
+            THIRD.
 
             `beginnerDescription` said "ตอนนี้ราคายังอยู่ในกรอบ ยังไม่มีราคาปิดพ้น
             ขอบบนหรือขอบล่าง…" directly under a headline reading "ตอนนี้ราคายังอยู่
@@ -615,16 +679,16 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             thing a third time. Three tellings of one fact in one column is not
             emphasis, it is a reader checking whether they missed a difference.
 
-            The description went first, into §1 of the dialog. The headline goes
-            now, for the same reason and by the same test — the bar below is the
-            only one of the three that also shows WHERE, with both edge prices
-            under the track, so it is the one the pair collapses onto. See
-            `headlineFor`, which returns `null` on exactly those cards; every
-            other state still draws its own label here.
+            The description went into §1 of the dialog first. The headline went
+            next — but by being MOVED rather than deleted: it is the gloss on the
+            line above, where it is beside the state name instead of below it and
+            is drawn on every card rather than on the ones with no frame. What
+            that costs is the `headlineFor` special case, which existed to stop a
+            framed SIDEWAYS card saying the bar's own sentence twice. The gloss
+            cannot: "ตอนนี้ยังไม่มีทิศทางชัดเจน" is about the evidence and the bar
+            is about the rectangle, which is the same split `ZONE_SEGMENT_COPY`
+            is named for.
           */}
-          {beginnerHeadline === null ? null : (
-            <p className="mt-1 text-sm font-semibold" data-testid="signal-state-headline">{beginnerHeadline}</p>
-          )}
         </div>
         <button
           type="button"
@@ -749,7 +813,23 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
       <ResponsiveDialog
         isOpen={open}
         onClose={() => setOpen(false)}
-        title={`ทำไมเป็น ${result.state} • ${biasLabel}?`}
+        /*
+          THE TITLE, WITH THE BIAS OUT OF IT TOO.
+
+          `SIDEWAYS • Neutral Bias` came off the card in the block above, on the
+          grounds that "bias" is a sentence about where price is going printed
+          over a footer saying the card does not say that. It was kept here on
+          the grounds that the dialog is where it sits beside the score it is
+          derived from — and it never did sit beside it. The score is §0, the
+          title is chrome above §0, and on a neutral card the two halves said
+          the same word twice ("ทำไมเป็น SIDEWAYS • Neutral Bias?").
+
+          Nothing is lost by dropping it. The lean is in the dialog three ways
+          over: signed in `signal-numbers`, spelled out in §1's sentence
+          ("แต่คะแนนรวมเอนไปทาง…"), and summed row by row in §3. The title now
+          asks the one question the reader tapped to have answered.
+        */
+        title={`ทำไมเป็น ${result.state}?`}
       >
         <div className="space-y-6 text-sm text-slate-300">
           {/*
@@ -1220,35 +1300,6 @@ function reasonNote(reason: MarketSignalReason, metrics: MarketSignalMetrics): s
 const frameNamedTheLabel = (state: MarketSignalState, zones: MarketSignalZones | null): boolean =>
   state === 'SIDEWAYS' && zones !== null && zones.zone === 'sideways';
 
-/**
- * The bold line under the state name — on every card except the one that has
- * the same sentence drawn twelve pixels lower with numbers attached.
- *
- * WHAT THIS USED TO RETURN, AND WHY IT IS GONE. On a framed SIDEWAYS card it
- * returned "ตอนนี้ราคายังอยู่ในกรอบ", and the zone bar directly below it heads
- * its own block with `ZONE_COPY.sideways` — "ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไป
- * หรือลงไปพ้นกรอบ". One fact, two sentences, a thumb apart. That column has now
- * been trimmed twice for the same reason: `beginnerDescription` moved into the
- * dialog when it was the third telling, and this is the second one going.
- *
- * THE BAR IS WHAT SURVIVES, and it is the right half of the pair to keep: it
- * says the same thing AND draws where the edges are, with both trigger prices
- * printed under the track. The headline said it with no numbers at all, so
- * everything it carried the bar carries and the bar carries more. Deleting the
- * bar instead would have cost the reader the two prices.
- *
- * `null` and not an empty string, so the paragraph is not rendered at all
- * rather than rendered blank — an empty `<p>` still takes its margin, and the
- * gap would read as something that failed to load.
- *
- * Every other state keeps `MARKET_SIGNAL_PRESENTATION[state].thai` untouched.
- * It is a LABEL and not a sentence — five to eleven words, the same register as
- * the other six — so the 15-35 word rule the prose is held to does not apply.
- */
-function headlineFor(state: MarketSignalState, zones: MarketSignalZones | null, fallback: string): string | null {
-  return frameNamedTheLabel(state, zones) ? null : fallback;
-}
-
 function descriptionFor(
   state: MarketSignalState,
   bias: MarketSignalBias,
@@ -1695,10 +1746,40 @@ const ZONE_FRAME_NOTE_COPY = {
  * same three states off the same two triggers, so the name on the field, the
  * headline and the live row cannot drift apart.
  */
+/*
+ * AND THEY NAME A POSITION, NEVER A STATE. `MarketSignalSection.test.tsx` fails
+ * the build if any of the three ever contains one of the seven state names or
+ * its Thai gloss, in either language.
+ *
+ * That is not a style rule, it is the conflict veto in §5 written down as an
+ * assertion. This bar answers ONE question — which side of the two triggers is
+ * price on — and the state line answers a different one: which way the five
+ * categories of evidence lean. They are computed from different things and §5
+ * lets them disagree on purpose, so a close through the upper trigger under a
+ * SIDEWAYS label is a shipping reading, not a bug. Write "SIDEWAYS" on the
+ * middle field and that card contradicts itself in front of the reader: the
+ * headline says SIDEWAYS, the highlighted field says the price left the one
+ * named SIDEWAYS. The names below cannot produce that sentence, because none of
+ * them is a claim about direction at all.
+ *
+ * WHY THEY GREW A VERB. "ใต้กรอบ / ในกรอบ / เหนือกรอบ" were positions already,
+ * and they were positions relative to the whole rectangle — which is not what
+ * the geometry cuts on. Both cuts are TRIGGERS, one per edge, and both edge
+ * prices are printed under the track directly beneath these words. So the names
+ * now say which edge and what happened to it, in the vocabulary §1 of the
+ * dialog already uses for the same two lines ("ยังไม่มีราคาปิดพ้นขอบบนหรือขอบล่าง").
+ *
+ * "พ้น" on both sides and not "หลุด" on the lower one. "หลุด" is the chartist's
+ * verb for leaving a level downward, it is on the card's ban list for carrying a
+ * verdict the payload does not support, and it would have made the pair
+ * asymmetric — a neutral word above and a loaded one below, on a bar whose two
+ * edges are the same arithmetic mirrored. See the ONE WORD FOR ONE THING block
+ * above `ZONE_COPY`, which is where "หลุด" was removed the first time.
+ */
 const ZONE_SEGMENT_COPY = {
-  downtrend: 'ใต้กรอบ',
-  sideways: 'ในกรอบ',
-  uptrend: 'เหนือกรอบ',
+  downtrend: 'พ้นขอบล่าง',
+  sideways: 'ยังอยู่ในกรอบ',
+  uptrend: 'พ้นขอบบน',
 } as const;
 
 /**
@@ -2757,9 +2838,9 @@ function ZoneBar({ zones, livePrice, actionable }: {
         Position only, and no direction at all.
 
         This line used to open with the tilt — "ยังไม่เอียงไปทางไหน" on a card
-        whose headline three lines above it reads "BULLISH · Bullish Bias". Two
-        sentences a thumb-length apart said opposite things, and the one a fast
-        reader believes is the big one at the top. Direction is the headline's
+        whose state line three rows above it reads "BULLISH · กำลังเป็นขาขึ้น".
+        Two sentences a thumb-length apart said opposite things, and the one a
+        fast reader believes is the big one at the top. Direction is the headline's
         job and the chips' job; the score itself is one tap away, at the head of
         the dialog, under `SCORE_LABEL`. What is left here is where price is STANDING,
         which is the one thing the bar underneath is drawing.

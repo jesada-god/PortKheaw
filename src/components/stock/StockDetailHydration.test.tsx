@@ -391,8 +391,10 @@ describe('Stock Detail hydration regression', () => {
     /* The signal card's own content, named by what its beginner layer carries.
        The score moved behind `ดูรายละเอียดการคำนวณ` — a figure that has to ship
        with a warning against reading it as a percentage does not belong on a
-       ten-second read — so this asserts the line that replaced it. */
-    expect(signalCard?.textContent).toContain('แนวโน้มกำลังขึ้น');
+       ten-second read — so this asserts the line that replaced it: the Thai
+       gloss now set beside the state name rather than under it. */
+    expect(signalCard?.textContent).toContain('BULLISH');
+    expect(signalCard?.textContent).toContain('กำลังเป็นขาขึ้น');
     expect(signalCard?.textContent).toContain('หลักฐานไปทางเดียวกันบ้าง');
     expect(signalCard?.textContent).not.toContain('$55.00');
 

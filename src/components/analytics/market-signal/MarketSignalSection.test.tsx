@@ -212,19 +212,25 @@ describe('MarketSignalSection', () => {
   });
 
   /*
-   * THE BEGINNER LAYER, AND THE LINE THAT IS NO LONGER ON IT.
+   * THE BEGINNER LAYER, AND THE WORD THAT IS NO LONGER ANYWHERE ON IT.
    *
    * The state line used to read `SQUEEZE • Bullish Bias`. "Bias" is a word
    * about where price is going, printed above a footer saying the card does not
    * say where price is going, and on SIDEWAYS it restated the state name. It
-   * moved to the dialog's own title, where it sits beside the score it comes
-   * from — so this asserts both halves: gone from the card, kept one tap away.
+   * moved to the dialog's own title — and has now gone from there too, on the
+   * grounds that a title is not "beside the score" in any sense a reader
+   * experiences; the score is the first thing inside the dialog and it is
+   * signed, so the lean is still one tap away with none of the vocabulary.
+   *
+   * What replaced it on the card is a TRANSLATION rather than a second claim:
+   * `presentation.thai`, set beside the state name on the same line.
    */
-  it('shows the state, the one-line reading, its reasons, the agreement word and the chips', async () => {
+  it('shows the state, its Thai gloss, the reasons, the agreement word and the chips', async () => {
     await render();
     expect(container.textContent).toContain('SQUEEZE');
     expect(container.textContent).not.toContain('Bullish Bias');
-    expect(container.textContent).toContain('ราคาแกว่งแคบลงกว่าปกติ');
+    expect(container.querySelector('[data-testid="signal-state-headline"]')!.textContent)
+      .toBe('ราคาแกว่งแคบลงเรื่อย ๆ');
     // The reasons are on the card now, as labels rather than as sentences.
     const reasons = container.querySelector('[data-testid="signal-beginner-reasons"]')!;
     expect(reasons.textContent).toContain('ราคายืนเหนือเส้นค่าเฉลี่ยราคา');
@@ -251,7 +257,27 @@ describe('MarketSignalSection', () => {
     const dialog = await openAdvanced();
     expect(dialog.textContent).toContain('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
     expect(dialog.textContent).toContain('ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า');
-    expect(dialog.textContent).toContain('SQUEEZE • Bullish Bias');
+  });
+
+  /*
+   * THE TITLE, AND THE LAST PLACE "BIAS" WAS STILL PRINTED.
+   *
+   * It read "ทำไมเป็น SQUEEZE • Bullish Bias?" — the word the card had already
+   * refused, surviving in the chrome above the layer it was said to belong to.
+   * On a neutral card it was also the same word twice: "ทำไมเป็น SIDEWAYS •
+   * Neutral Bias?" asks one question and names its answer in the asking.
+   *
+   * The sweep is over the whole dialog, in both languages, because the point is
+   * not the title string: it is that nothing one tap from the card reintroduces
+   * a vocabulary of leaning. The score's sign and §1's sentence carry the lean.
+   */
+  it('asks why the state, and says "bias" nowhere in the dialog', async () => {
+    await render();
+    const dialog = await openAdvanced();
+    expect(dialog.textContent).toContain('ทำไมเป็น SQUEEZE?');
+    for (const word of ['Bias', 'bias', 'BIAS', 'Bullish Bias', 'Neutral Bias', 'Bearish Bias']) {
+      expect(dialog.textContent, `"${word}" is back in the advanced layer`).not.toContain(word);
+    }
   });
 
   /*
@@ -390,6 +416,79 @@ describe('MarketSignalSection', () => {
       expect(container.textContent).toContain(MARKET_SIGNAL_PRESENTATION[state].thai);
     }
   }, 15_000);
+
+  /*
+   * THE GLOSS BESIDE THE STATE NAME, AND THE THREE RULES IT IS HELD TO.
+   *
+   * A beginner meeting `STRONG_BEARISH` should not have to translate it, and
+   * before this they had to: the Thai was a separate paragraph that a framed
+   * SIDEWAYS card did not draw at all. It is on the same line as the identifier
+   * now, on every card, which is why these rules need asserting rather than
+   * assuming — a label read in the same glance as the state name is read AS the
+   * state name, so anything it claims the engine has not is the card lying in
+   * its own headline.
+   */
+  describe('the Thai beside the state name', () => {
+    /* Rendered on the state line itself, so a reader never meets the English
+       identifier without it. */
+    it('is drawn beside the identifier on the same line, not underneath it', async () => {
+      await render();
+      const stateLine = container.querySelector('[data-testid="signal-state-headline"]')!.parentElement!;
+      expect(stateLine.textContent).toContain('SQUEEZE');
+      expect(stateLine.textContent).toContain('ราคาแกว่งแคบลงเรื่อย ๆ');
+    });
+
+    /*
+     * SQUEEZE is a narrowing range and OVEREXTENDED is a distance from a mean.
+     * Both happen on the way up and on the way down, and the engine deliberately
+     * names no direction on either — `descriptionFor` opens the SQUEEZE case
+     * with "ยังบอกไม่ได้ว่าราคาจะออกทางไหน". A gloss saying "ขาขึ้น" over that
+     * sentence would be the label inventing the fact the engine withheld.
+     */
+    it('gives the two directionless states no direction', async () => {
+      for (const state of ['SQUEEZE', 'OVEREXTENDED'] as const) {
+        const thai = MARKET_SIGNAL_PRESENTATION[state].thai;
+        /* The compounds, not the bare syllables: "แคบลง" is "narrower" and the
+           "ลง" in it is a resultative, not a direction. What may not appear is
+           a phrase that names a way for PRICE to be going. */
+        for (const direction of ['ขาขึ้น', 'ขาลง', 'ทางขึ้น', 'ทางลง', 'ราคาขึ้น', 'ราคาลง', 'กำลังขึ้น', 'กำลังลง']) {
+          expect(thai, `${state} says "${direction}"`).not.toContain(direction);
+        }
+      }
+    });
+
+    /*
+     * And none of the seven may tell anybody what to do. The footer two rows
+     * below says this card does not advise; a gloss reading "น่าซื้อ" would
+     * contradict it in the same column, in larger type, above the disclaimer.
+     */
+    it('describes and never advises, on any of the seven', async () => {
+      for (const state of Object.keys(MARKET_SIGNAL_PRESENTATION) as MarketSignalState[]) {
+        const thai = MARKET_SIGNAL_PRESENTATION[state].thai;
+        for (const advice of ['ซื้อ', 'ขาย', 'ควร', 'น่า', 'รอ', 'เข้า', 'ออก', 'ถือ', 'เสี่ยง']) {
+          expect(thai, `${state} advises: "${advice}"`).not.toContain(advice);
+        }
+      }
+    });
+
+    /*
+     * §6.6, in the one place it can still be lost. 10,525 sideways calls: at
+     * twenty bars the LABEL was still sideways 72.6% of the time while price was
+     * still inside the frame it named 25.7% of the time. A gloss with no moment
+     * in it reads as how this instrument IS, which is the reading that
+     * measurement rules out.
+     */
+    it('binds the SIDEWAYS gloss to now', async () => {
+      expect(MARKET_SIGNAL_PRESENTATION.SIDEWAYS.thai).toContain('ตอนนี้');
+    });
+
+    /* Seven distinct readings: a duplicate would mean two states a reader
+       cannot tell apart from the only Thai on the card. */
+    it('says something different for each of the seven', async () => {
+      const glosses = Object.values(MARKET_SIGNAL_PRESENTATION).map((entry) => entry.thai);
+      expect(new Set(glosses).size).toBe(7);
+    });
+  });
 
   it('resets open dialog state when the symbol changes', async () => {
     await render();
@@ -643,9 +742,9 @@ describe('MarketSignalSection', () => {
 
       it('names each field on the bar itself, not underneath it', async () => {
         await render(zoned);
-        expect(segment('downtrend').textContent).toBe('ใต้กรอบ');
-        expect(segment('sideways').textContent).toBe('ในกรอบ');
-        expect(segment('uptrend').textContent).toBe('เหนือกรอบ');
+        expect(segment('downtrend').textContent).toBe('พ้นขอบล่าง');
+        expect(segment('sideways').textContent).toBe('ยังอยู่ในกรอบ');
+        expect(segment('uptrend').textContent).toBe('พ้นขอบบน');
       });
 
       it('marks the field the current label is in, and only that one', async () => {
@@ -1174,8 +1273,8 @@ describe('MarketSignalSection', () => {
     it('draws down on the left and up on the right, each named on its own field', async () => {
       await render(zoned);
       expect(leftOf('downtrend')).toBeLessThan(leftOf('uptrend'));
-      expect(segment('downtrend').textContent).toBe('ใต้กรอบ');
-      expect(segment('uptrend').textContent).toBe('เหนือกรอบ');
+      expect(segment('downtrend').textContent).toBe('พ้นขอบล่าง');
+      expect(segment('uptrend').textContent).toBe('พ้นขอบบน');
     });
 
     /*
@@ -2172,7 +2271,7 @@ describe('MarketSignalSection', () => {
     it('calls the bar fields and the sentences around them by the same names', async () => {
       await render(zoned, 'elite', 47.9);
       const names = ['downtrend', 'sideways', 'uptrend'].map((id) => segment(id).textContent ?? '');
-      expect(names).toEqual(['ใต้กรอบ', 'ในกรอบ', 'เหนือกรอบ']);
+      expect(names).toEqual(['พ้นขอบล่าง', 'ยังอยู่ในกรอบ', 'พ้นขอบบน']);
       const text = zoneBar().textContent ?? '';
       // Every field name the bar draws is a phrase the prose actually uses, so a
       // reader can carry a word from the picture to the sentence and back.
@@ -2182,6 +2281,47 @@ describe('MarketSignalSection', () => {
       // And the noun is the same one throughout: no row may reach for a synonym.
       for (const synonym of ['ช่วงราคา', 'ระดับราคา', 'โซนราคา']) {
         expect(text).not.toContain(synonym);
+      }
+    });
+
+    /*
+     * NO FIELD ON THIS BAR MAY BE NAMED AFTER A STATE, in either language.
+     *
+     * The bar and the state line answer different questions. The bar asks which
+     * side of the two triggers price closed on; the state line asks which way
+     * the five categories of evidence lean, and §5 lets the two disagree — the
+     * conflict veto is what produces a close through the upper trigger under a
+     * SIDEWAYS label, which is a shipping reading and not a defect. The day that
+     * happens, a middle field labelled "SIDEWAYS" would put the card in
+     * contradiction with itself: the headline naming a state and the highlighted
+     * field, an inch below, saying price has left the field of that name.
+     *
+     * Both vocabularies, because the card now carries both. The English
+     * identifiers are what the payload and the history strip use, and
+     * `MARKET_SIGNAL_PRESENTATION[state].thai` is what a reader actually sees
+     * beside them — a field reading "กำลังเป็นขาขึ้น" would be the same
+     * collision with the translation done for it.
+     *
+     * Read off the presentation table rather than typed here, so an eighth state
+     * is covered the day it is added.
+     */
+    it('names the fields by position and never by a state, in either language', async () => {
+      await render(zoned, 'elite', 47.9);
+      const names = ['downtrend', 'sideways', 'uptrend'].map((id) => segment(id).textContent ?? '');
+      const states = Object.keys(MARKET_SIGNAL_PRESENTATION) as MarketSignalState[];
+      expect(states.length).toBe(7);
+      for (const name of names) {
+        for (const state of states) {
+          expect(name.toUpperCase(), `the bar field "${name}" is named after ${state}`)
+            .not.toContain(state);
+          expect(name, `the bar field "${name}" is named after ${state} in Thai`)
+            .not.toContain(MARKET_SIGNAL_PRESENTATION[state].thai);
+        }
+        // …and not the bare direction words either, which are what the two
+        // strongest glosses are built out of.
+        for (const direction of ['ขาขึ้น', 'ขาลง', 'ไซด์เวย์', 'ทิศทาง']) {
+          expect(name, `the bar field "${name}" claims a direction`).not.toContain(direction);
+        }
       }
     });
 
@@ -2817,18 +2957,21 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   const framed = (over: Partial<AvailableSignal> = {}) => sideways({ zones: frame, ...over });
 
   /*
-   * THE COLUMN, AFTER BOTH TRIMS.
+   * THE COLUMN, AFTER BOTH TRIMS AND THE MOVE.
    *
    * The card used to carry the state name, a headline, the description AND the
    * frame's own caption on the bar — three tellings of one fact stacked in one
    * column. The description went into the advanced layer first. The headline
-   * followed, on framed cards only, because the bar says the same sentence and
-   * prints both edge prices under it while the headline printed no number at
-   * all. A card with no frame keeps its headline: there is no bar for it to
-   * collide with, and the state would otherwise have no reading beside it.
+   * then stopped being a line of its own: it is the gloss printed beside
+   * `result.state`, one line up, and it is `MARKET_SIGNAL_PRESENTATION[state]
+   * .thai` on all seven states with no per-card suppression left.
    *
-   * `?.` and not `!` for exactly that reason — "not drawn" is now a legitimate
-   * answer on one card shape, and the sweeps below join this into a string.
+   * That works because the gloss no longer says what the bar says. The old
+   * framed-SIDEWAYS headline was "ตอนนี้ราคายังอยู่ในกรอบ", which is the bar's
+   * own first sentence; the gloss is "ตอนนี้ยังไม่มีทิศทางชัดเจน", which is
+   * about the evidence and mentions no rectangle at all.
+   *
+   * `?.` is kept: the insufficient-data card renders no state line.
    */
   const headline = () => container.querySelector('[data-testid="signal-state-headline"]')?.textContent ?? '';
   const zoneBarHeadline = () => container
@@ -2845,40 +2988,36 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    * every replacement — on both card shapes — has to.
    */
   it('never states the label without saying it is about now', async () => {
-    /* The framed cards are absent from this loop because they no longer draw a
-       headline at all; the sentence that replaced it is asserted on the bar in
-       the two tests below. `description()` is still checked on all four. */
-    for (const payload of [sideways(), sideways({ bias: 'bullish' })]) {
+    /* All four card shapes now, framed included: the gloss is drawn on every
+       one of them, so there is no longer a shape where the only thing asserted
+       is the dialog's sentence. */
+    for (const payload of [sideways(), sideways({ bias: 'bullish' }), framed(), framed({ bias: 'bearish' })]) {
       await render(payload);
       const spelled = await description();
       expect(headline(), `"${headline()}" could be about any day`).toContain('ตอนนี้');
       expect(spelled, `"${spelled}" could be about any day`).toContain('ตอนนี้');
       expect(`${headline()} ${spelled}`).not.toContain('ยังไม่ไปทางไหนชัด');
     }
-    for (const payload of [framed(), framed({ bias: 'bearish' })]) {
-      await render(payload);
-      const spelled = await description();
-      expect(spelled, `"${spelled}" could be about any day`).toContain('ตอนนี้');
-      expect(spelled).not.toContain('ยังไม่ไปทางไหนชัด');
-    }
   });
 
   /*
-   * THE DUPLICATE, AND WHICH OF THE PAIR SURVIVED.
+   * THE DUPLICATE, AND HOW IT WAS RESOLVED THE SECOND TIME.
    *
    * A framed SIDEWAYS card drew "ตอนนี้ราคายังอยู่ในกรอบ" as its headline and
    * "ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ" as the first line of the
    * bar a few pixels below it. Two sentences, one fact, no difference for the
-   * reader to find. The bar is what stays: it says the same thing and prints
-   * both trigger prices under the track, so nothing the headline carried was
-   * lost and two numbers were gained.
+   * reader to find. The first fix was to draw no headline here at all, which
+   * cost this card the only Thai it had above the picture.
+   *
+   * The fix now is that the two lines have stopped making the same claim. The
+   * gloss beside the state name is about the EVIDENCE and says no word about a
+   * rectangle; the bar is about the rectangle and prints both trigger prices
+   * under the track. Same split as `ZONE_SEGMENT_COPY`, one line apart.
    */
-  it('says the frame once, on the block that also draws the edges', async () => {
+  it('says the frame once — on the bar — and the direction once, beside the state', async () => {
     await render(framed());
-    expect(
-      container.querySelector('[data-testid="signal-state-headline"]'),
-      'the headline is back above a bar that says the same thing',
-    ).toBeNull();
+    expect(headline(), 'the state has no Thai beside it').toBe('ตอนนี้ยังไม่มีทิศทางชัดเจน');
+    expect(headline(), 'the gloss is repeating the bar').not.toContain('กรอบ');
     expect(zoneBarHeadline()).toContain('ราคายังอยู่ในกรอบเดิม');
     // …and the edge prices the headline never had, which is why the bar is the
     // half of the pair that was kept.
@@ -2897,9 +3036,9 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    * `market-signal/no-unsourced-frame-word` exists to stop. There is also no
    * bar to duplicate, so this card keeps its headline.
    */
-  it('names the direction on a card that draws no frame, and keeps its headline', async () => {
+  it('names the direction on a card that draws no frame, and keeps its gloss', async () => {
     await render(sideways());
-    expect(headline()).toBe('ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง');
+    expect(headline()).toBe('ตอนนี้ยังไม่มีทิศทางชัดเจน');
     expect(`${headline()} ${await description()}`).not.toContain('กรอบ');
     expect(container.querySelector('[data-testid="signal-zone-bar"]')).toBeNull();
   });
