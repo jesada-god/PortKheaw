@@ -8,7 +8,7 @@
  * one-digit confidence — something a person can write down rather than
  * something a market has to happen to produce.
  */
-import { confidenceFormulaText } from '@/src/lib/analytics/options-signal/calculations';
+import { confidenceFormulaText, rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
 import type { OptionsSignalDto } from '@/src/lib/analytics/options-signal/dto';
 import type {
   OptionsSignalFactorId,
@@ -193,6 +193,7 @@ function signalOf(options: {
           normalizedMomentumCapped: false,
           relativeVolume: 1.8,
           confirmation: 0.8,
+      confirmationFormula: rvolConfirmationFormula(1.06),
         },
         macro: {
           benchmarks: [

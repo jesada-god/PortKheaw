@@ -213,6 +213,37 @@ export function rvolConfirmation(
   return 1 / (1 + Math.exp(-config.rvolSteepness * (value - config.rvolMidpoint)));
 }
 
+/**
+ * The RVOL curve, written out — WHICH curve, and the substitution.
+ *
+ * The card said "เป็นเส้นโค้งต่อเนื่องรอบ 1.00×" and stopped there, so the step
+ * from "RVOL 1.06× → ยืนยัน 58%" to "ตัวคูณ 0.83" had no stated derivation at
+ * all. It is a LOGISTIC curve, and naming it is what lets a reader work out that
+ * 1.06 sits barely above the midpoint and therefore barely above 50%.
+ *
+ * Both constants come from the config the arithmetic reads.
+ */
+export function rvolConfirmationFormula(
+  relativeVolume: number | null,
+  config = OPTIONS_SIGNAL_CONFIG.momentum,
+): string {
+  const shape = `เส้นโค้งโลจิสติก: ยืนยัน = 1 ÷ (1 + e^(−${config.rvolSteepness} × (RVOL − ${config.rvolMidpoint.toFixed(2)})))`;
+  const value = finite(relativeVolume);
+  if (value === null) return shape;
+  const confirmation = rvolConfirmation(value, config);
+  /*
+   * And the second step, which was the one with no stated derivation: the
+   * confirmation is not the multiplier. It is mapped onto the band between
+   * `minimumConfirmation` and 1, so a 58% confirmation lands at 0.83 rather than
+   * at 0.58 — the factor is scaled, never cancelled.
+   */
+  const multiplier = config.minimumConfirmation + (1 - config.minimumConfirmation) * confirmation;
+  return `${shape}`
+    + ` · แทนค่า RVOL ${round(value, 2)} → ยืนยัน ${Math.round(confirmation * 100)}%`
+    + ` · ตัวคูณ = ${config.minimumConfirmation} + ${round(1 - config.minimumConfirmation, 2)} × ${round(confirmation, 2)}`
+    + ` = ${round(multiplier, 2)}`;
+}
+
 export function scoreMomentum(
   input: MomentumInput,
   config = OPTIONS_SIGNAL_CONFIG.momentum,
@@ -1382,6 +1413,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     squeeze: {
       state: null, momentum: null, normalizedMomentum: null,
       normalizedMomentumCapped: false, relativeVolume: null, confirmation: null,
+      confirmationFormula: rvolConfirmationFormula(null),
       breakdown: {
         rawAtr: null, saturation: OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation,
         clamped: null, afterSqueeze: null, multiplier: 1,
@@ -1793,6 +1825,9 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       normalizedMomentum: roundOrNull(momentumOutcome.normalizedMomentum, 3),
       normalizedMomentumCapped: momentumOutcome.normalizedMomentumCapped,
       relativeVolume: input.momentum.status === 'available' ? roundOrNull(input.momentum.value.relativeVolume, 4) : null,
+      confirmationFormula: rvolConfirmationFormula(
+        input.momentum.status === 'available' ? input.momentum.value.relativeVolume : null,
+      ),
       confirmation: roundOrNull(momentumOutcome.confirmation, 4),
       breakdown: {
         rawAtr: roundOrNull(momentumOutcome.breakdown.rawAtr, 3),

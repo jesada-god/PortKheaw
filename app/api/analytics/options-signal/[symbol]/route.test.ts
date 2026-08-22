@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   OptionsSignalFactorId,
@@ -169,6 +170,7 @@ const result: OptionsSignalResult = {
       normalizedMomentumCapped: false,
       relativeVolume: 1,
       confirmation: 0,
+      confirmationFormula: rvolConfirmationFormula(1.06),
     },
     macro: { benchmarks: [] },
     provenance: {

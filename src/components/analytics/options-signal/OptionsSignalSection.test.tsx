@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -192,6 +193,7 @@ const eliteSignal: OptionsSignalDto = {
         normalizedMomentumCapped: true,
         relativeVolume: 1.8,
         confirmation: 0.8,
+      confirmationFormula: rvolConfirmationFormula(1.06),
       },
       macro: {
         benchmarks: [
@@ -287,7 +289,17 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(trigger).toBeDefined();
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(document.body.textContent).toContain('คะแนนทิศทางมาจากอะไร');
-    expect(document.body.textContent).toContain('TTM Squeeze');
+    /*
+     * The heading names the mechanism the POINTS come from. It said "TTM
+     * Squeeze" on a card whose Squeeze read OFF and whose whole +9 came from the
+     * momentum histogram — a title claiming one thing while another did the
+     * scoring. The squeeze is still reported; it is a damping state, not the
+     * source.
+     */
+    expect(document.body.textContent).toContain('Momentum (TTM histogram + สถานะ Squeeze)');
+    // …and the RVOL curve names itself, instead of being "a continuous curve".
+    expect(document.body.querySelector('[data-testid="options-signal-rvol-formula"]')?.textContent)
+      .toContain('เส้นโค้งโลจิสติก');
     expect(document.body.textContent).toContain('Confidence');
   });
 

@@ -603,7 +603,20 @@ function DetailBody({ breakdown, summary }: {
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">2. TTM Squeeze และ RVOL</h3>
+        {/*
+          * NAMED FOR WHAT SCORES, not for what is merely reported.
+          *
+          * The heading said "TTM Squeeze" on a card where the Squeeze read OFF
+          * and the whole +9 came from the momentum histogram — the title claimed
+          * one mechanism and the points came from another. The squeeze is still
+          * here and still matters (it halves conviction while ON, and blocks
+          * PRIME), but it is a STATE that damps, not the source of the points.
+          */}
+        <h3 className="font-semibold text-white">2. Momentum (TTM histogram + สถานะ Squeeze)</h3>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          คะแนนมาจาก <b className="text-slate-300">momentum histogram</b> เป็นหลัก ส่วนสถานะ Squeeze เป็นตัวลดทอน
+          (ON = ยังไม่เลือกทาง จึงหั่นความเชื่อมั่นลงครึ่งหนึ่ง) และ RVOL เป็นตัวคูณยืนยัน ทั้งสองอย่างไม่สร้างทิศทางเอง
+        </p>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} term="ttmSqueeze" />
           <Detail label="Squeeze Momentum" value={numberText(squeeze.momentum)} />
@@ -630,8 +643,16 @@ function DetailBody({ breakdown, summary }: {
           {squeeze.normalizedMomentumCapped
             && ` · ค่า Momentum ÷ ATR จริงเกินเพดาน ${squeeze.breakdown.saturation} ATR จึงคิดเท่าเพดาน (capped) ค่าหลัง normalize ที่แสดงคือ 1 เต็ม`}
         </p>
+        {/*
+          * WHICH curve, and both steps of the substitution. "เส้นโค้งต่อเนื่อง
+          * รอบ 1.00×" named a shape without naming the shape, and left the jump
+          * from "ยืนยัน 58%" to "ตัวคูณ 0.83" with no derivation at all.
+          */}
         <p className="mt-1 text-xs leading-5 text-slate-500">
           ระดับการยืนยันจาก RVOL เป็นเส้นโค้งต่อเนื่องรอบ 1.00× ไม่ใช่การกระโดดเป็นขั้น RVOL 1.00× คือ 50%
+        </p>
+        <p className="mt-1 font-mono text-xs leading-5 text-slate-400" data-testid="options-signal-rvol-formula">
+          {squeeze.confirmationFormula}
         </p>
       </section>
 

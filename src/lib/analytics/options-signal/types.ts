@@ -626,6 +626,15 @@ export interface OptionsSignalDiagnostics {
     relativeVolume: number | null;
     confirmation: number | null;
     /**
+     * WHICH curve, and the substitution through it.
+     *
+     * The card said the confirmation was "เส้นโค้งต่อเนื่องรอบ 1.00×" and left it
+     * there, so the step from "RVOL 1.06× → ยืนยัน 58%" to "ตัวคูณ 0.83" had no
+     * stated derivation — two of them, in fact: the logistic, and the mapping of
+     * a confirmation onto the multiplier band above `minimumConfirmation`.
+     */
+    confirmationFormula: string;
+    /**
      * Every term between the raw indicator and the published momentum points,
      * so the factor's number can be re-derived rather than taken on trust.
      *

@@ -13,6 +13,7 @@ import {
   calculateOptionsSignal,
   confidenceFormulaText,
   confidenceFromTerms,
+  rvolConfirmationFormula,
 } from './calculations';
 import {
   OPTIONS_SIGNAL_COMPLETENESS_TOTAL_WEIGHT,
@@ -507,6 +508,33 @@ describe('every multiplier that moved a number is printed beside it', () => {
     // as its own object rather than folded into a total.
     expect(trendVeto).toHaveProperty('multiplier');
     expect(trendVeto).toHaveProperty('pointsBeforeVeto');
+  });
+});
+
+describe('the RVOL curve names itself, and its substitution reconciles', () => {
+  it('names the curve and reads both constants from the config', () => {
+    const { rvolMidpoint, rvolSteepness, minimumConfirmation } = OPTIONS_SIGNAL_CONFIG.momentum;
+    const text = rvolConfirmationFormula(1.06);
+    expect(text).toContain('เส้นโค้งโลจิสติก');
+    expect(text).toContain(`e^(−${rvolSteepness} × (RVOL − ${rvolMidpoint.toFixed(2)}))`);
+    // The second step, which had no stated derivation at all: a confirmation is
+    // not the multiplier, it is mapped onto the band above the floor.
+    expect(text).toContain(`ตัวคูณ = ${minimumConfirmation}`);
+  });
+
+  it('substitutes to the multiplier the engine actually applied', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { squeeze } = result.diagnostics;
+    const printed = /= ([\d.]+)$/.exec(squeeze.confirmationFormula);
+    expect(printed).not.toBeNull();
+    expect(Number(printed?.[1])).toBeCloseTo(squeeze.breakdown.multiplier, 2);
+  });
+
+  it('states the shape even when there is no RVOL to substitute', () => {
+    const text = rvolConfirmationFormula(null);
+    expect(text).toContain('เส้นโค้งโลจิสติก');
+    expect(text).not.toContain('แทนค่า');
   });
 });
 

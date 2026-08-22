@@ -71,7 +71,7 @@ export const OPTIONS_SIGNAL_PRESENTATION = {
 export const FACTOR_COPY = {
   macro: { label: 'Macro', helper: 'ภาพรวมตลาด: SPY และ QQQ ยืนเหนือหรือต่ำกว่า EMA20' },
   trend: { label: 'Trend', helper: 'ราคาหุ้นเทียบเส้นค่าเฉลี่ย EMA20 และ EMA50' },
-  momentum: { label: 'Momentum', helper: 'TTM Squeeze บอกการบีบตัว/ปลดล็อก และ RVOL ใช้ยืนยันเท่านั้น' },
+  momentum: { label: 'Momentum', helper: 'คะแนนมาจาก TTM momentum histogram · สถานะ Squeeze ลดทอน และ RVOL ใช้ยืนยันเท่านั้น' },
   sentiment: { label: 'Options Sentiment', helper: 'Put/Call Ratio จาก Open Interest จริงของ chain' },
   riskReward: { label: 'Risk/Reward', helper: 'ระยะจากราคาปัจจุบันถึงแนวรับและแนวต้านที่ยืนยันแล้ว' },
 } as const satisfies Record<OptionsSignalFactorId, { label: string; helper: string }>;
