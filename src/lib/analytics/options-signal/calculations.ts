@@ -918,6 +918,37 @@ export function confidenceFromTerms(
 }
 
 /**
+ * The same arithmetic, written out for the reader — the confidence twin of
+ * {@link directionScoreFormula}.
+ *
+ * It exists because the modal described this as "การคูณกันของสามค่า", which is
+ * what a weighted geometric mean is NOT: a reader who multiplied the three
+ * printed percentages got `1.00 × 0.11 × 0.20 = 2%` beside a published 20%. The
+ * exponents are what closes that gap, so they are printed, and they are read
+ * from the same `config.exponents` the arithmetic above reads — there is no
+ * second copy of them in any sentence.
+ *
+ * The floored terms are printed, not the raw ones, so a genuinely-zero term
+ * shows the 0.01 the result was actually computed from rather than a 0.00 that
+ * would make the printed line unreproducible.
+ */
+export function confidenceFormulaText(
+  terms: { coverage: number; agreement: number; strength: number },
+  config = OPTIONS_SIGNAL_CONFIG.confidence,
+): string {
+  const floor = (value: number) => Math.max(config.termFloor, clamp(finite(value) ?? 0, 0, 1));
+  const parts: Array<[string, number, number]> = [
+    ['ความครบ', floor(terms.coverage), config.exponents.coverage],
+    ['ความสอดคล้อง', floor(terms.agreement), config.exponents.agreement],
+    ['ความหนักแน่น', floor(terms.strength), config.exponents.strength],
+  ];
+  const result = confidenceFromTerms(terms, config);
+  const names = parts.map(([name, , exponent]) => `${name}^${exponent}`).join(' × ');
+  const values = parts.map(([, value, exponent]) => `${value.toFixed(2)}^${exponent}`).join(' × ');
+  return `${names} = ${values} = ${result.toFixed(2)} → ${Math.round(result * 100)}%`;
+}
+
+/**
  * Fold every source timestamp into ONE published `asOf`, plus the honest spread.
  *
  * Sources genuinely disagree: the candle provider closes at one hour, the
@@ -1136,6 +1167,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     agreement: 0,
     evidenceStrength: 0,
     confidenceBase: 0,
+    confidenceFormula: confidenceFormulaText({ coverage: 0, agreement: 0, strength: 0 }),
     penalties: [],
     penaltyTotal: 0,
     dataSufficiency: { passed: false, missing: [], primeEligible: false, primeBlockers: ['data-insufficient'] },
@@ -1460,6 +1492,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     agreement: round(agreement, 4),
     evidenceStrength: round(evidenceStrength, 4),
     confidenceBase: round(confidenceBase, 4),
+    confidenceFormula: confidenceFormulaText({ coverage, agreement, strength: evidenceStrength }),
     penalties,
     penaltyTotal,
     dataSufficiency: {

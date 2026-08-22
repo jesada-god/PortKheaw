@@ -101,6 +101,7 @@ const eliteSignal: OptionsSignalDto = {
       agreement: 0.86,
       evidenceStrength: 0.8,
       confidenceBase: 0.74,
+      confidenceFormula: 'ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 1.00^0.2 × 0.74^0.55 × 0.74^0.25 = 0.74 → 74%',
       penalties: [],
       penaltyTotal: 0,
       dataSufficiency: {

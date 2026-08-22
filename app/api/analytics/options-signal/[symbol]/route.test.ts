@@ -83,6 +83,7 @@ const result: OptionsSignalResult = {
     agreement: 1,
     evidenceStrength: 1,
     confidenceBase: 74,
+    confidenceFormula: 'ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.74 → 74%',
     penalties: [],
     penaltyTotal: 0,
     dataSufficiency: { passed: true, missing: [], primeEligible: true, primeBlockers: [] },

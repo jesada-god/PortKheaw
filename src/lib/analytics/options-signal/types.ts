@@ -387,6 +387,16 @@ export interface OptionsSignalDiagnostics {
   agreement: number;
   evidenceStrength: number;
   confidenceBase: number;
+  /**
+   * The confidence arithmetic written out, exponents and all.
+   *
+   * Produced by the same function that produces `confidenceBase`, from the same
+   * `confidence.exponents` constants, for the reason `scoreFormula` exists: the
+   * modal used to describe this as "การคูณกัน ของสามค่า", and a reader who
+   * multiplied the three printed terms got 2% beside a published 20%. It is a
+   * weighted GEOMETRIC mean and always was — only the sentence was wrong.
+   */
+  confidenceFormula: string;
   penalties: OptionsSignalPenalty[];
   penaltyTotal: number;
   dataSufficiency: {

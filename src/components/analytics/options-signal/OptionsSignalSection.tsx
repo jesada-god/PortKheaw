@@ -776,8 +776,18 @@ function DetailBody({ breakdown, summary }: {
           Confidence วัดว่าหลักฐานหนักแน่นและไปทางเดียวกันแค่ไหน <b className="text-white">ไม่ใช่โอกาสทำกำไร</b>
         </p>
         <p className="mt-2 text-xs leading-5 text-slate-500">
-          คิดจากการ<b className="text-slate-300">คูณกัน</b>ของสามค่า (ความครบ × ความสอดคล้อง × ความหนักแน่น) ไม่ใช่การเฉลี่ย
-          ค่าใดค่าหนึ่งที่ต่ำมากจึงดึงผลรวมลงเสมอ และความสอดคล้องมีน้ำหนักมากที่สุด เพราะเป็นค่าที่การเฉลี่ยแบบเดิมกลบไว้
+          คิดจากการคูณสามค่าเข้าด้วยกัน โดย<b className="text-slate-300">ยกกำลังตามน้ำหนักของแต่ละค่าก่อน</b> (weighted geometric mean) ไม่ใช่การเฉลี่ย
+          ค่าใดค่าหนึ่งที่ต่ำมากจึงดึงผลรวมลงเสมอ และความสอดคล้องมีเลขชี้กำลังสูงที่สุด เพราะเป็นค่าที่การเฉลี่ยแบบเดิมกลบไว้
+        </p>
+        {/*
+          * The arithmetic, printed from the engine's own constants.
+          *
+          * Without the exponents this paragraph read as a plain product, and a
+          * reader who multiplied the three percentages below landed two orders
+          * of magnitude away from the number beside them.
+          */}
+        <p className="mt-2 font-mono text-xs leading-5 text-slate-400" data-testid="options-signal-confidence-formula">
+          {diagnostics.confidenceFormula}
         </p>
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
           <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.coverage * 100)}%`} />
