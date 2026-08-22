@@ -27,6 +27,7 @@ And one operational note:
 | File | What it is |
 | --- | --- |
 | `rollout-order.md` | The order to turn the five flags on, what to watch at each step, and the one step that touches the database. |
+| `rollout-checklist.md` | The executable half of the above: migrations and the SQL that verifies each one landed, every environment variable and what a wrong order costs, the queries to watch after each flag, and the rollback proof with its real output. |
 | `open-work.md` | What is known, decided and not done — including the second signal engine nobody has measured. |
 
 **The wording is yours.** These are drafts written to a brief — "a seller who

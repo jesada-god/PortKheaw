@@ -732,12 +732,12 @@ $ diff <report 20260818T092020Z> <report 20260818T113633Z>
 | --- | --- |
 | **commit งานใน working tree ทั้งสองกลุ่ม** | กลุ่ม copy ผ่านเทสต์แล้ว กลุ่ม expected-move ยังไม่มีเทสต์ — commit รวมกันจะเป็น commit ที่ครึ่งหนึ่งไม่มีอะไรค้ำ |
 | **`docs/market-signal/expected-move-collection.md`** | **ถูกอ้างถึงจาก 3 ที่** (`derive.ts`, `collect-expected-move.ts`, migration `202608180002`) แต่ไฟล์ยังไม่มี — เลขการรอ (12 เดือน / 3 ปี / 10 ปี) อยู่ใน `p5-context-findings.md` แล้ว ยังไม่ได้ย้ายมาเป็นไฟล์ของตัวเอง |
-| **`docs/market-signal/open-work.md`** | ถูกอ้างถึงจาก `technical-outlook-copy.test.ts` แต่ไฟล์ยังไม่มี |
+| ~~**`docs/market-signal/open-work.md`**~~ | **มีแล้ว** — 7 หัวข้อ ล่าสุดคือการชนของชื่อ `คะแนนทิศทาง` ระหว่างสอง engine และ test double สองตัวที่อ่านนาฬิกาจริง |
 | **test ของ expected-move** | `derive.ts` (139 บรรทัด) `repository.ts` (69) `collect-expected-move.ts` (134) และ migration 137 บรรทัด — **ศูนย์เทสต์** เทียบกับ `market_signal_history` ที่มี migration test รันกับ Postgres จริง นี่คือช่องว่างที่ชัดที่สุดในรีโปตอนนี้ |
 | **แก้คอมเมนต์ `completeness` ใน `signal.ts`** | P5 findings บอกไว้เองว่าคอมเมนต์นี้ผิดแล้ว และเว้นไว้ให้คนที่เปิดไฟล์ต่อไป เพราะการแก้แปลว่าต้อง commit ไฟล์ engine เพื่อคอมเมนต์ |
 | **`docs/market-signal/README.md` ยังไม่ list ไฟล์ใหม่** | README เขียนก่อน expected-move จะเกิด |
 | **`npm run test` เต็มชุด + `npm run lint`** | รันเฉพาะ path ของ signal ในเซสชันนี้ |
-| **regenerate `__golden__/preview/`** | preview ปัจจุบันสร้างจาก engine ก่อนงาน copy — แต่ **งาน copy ไม่แตะ payload** จึงไม่น่ากระทบ **ไม่ได้ตรวจ** ว่าตรงกันจริง |
+| ~~**regenerate `__golden__/preview/`**~~ | **ตรวจแล้ว ไม่ต้อง regenerate** — `SIGNAL_GATE=true SIGNAL_ZONES=true npm run snapshot:signal -- --check` ให้ `PREVIEW gate-zones PASSED · 10 symbol(s) byte-identical` และรอบ flags-OFF ให้ `GATE PASSED` ทั้งก่อนและหลัง ผลเต็มอยู่ใน `rollout-checklist.md` §4 |
 
 ### 7.2 ที่ต้องให้เจ้าของทำ (Claude ทำไม่ได้)
 
