@@ -600,7 +600,7 @@ describe('G · one published timestamp, and an honest badge when sources diverge
     expect(result.diagnostics.provenance.asOf).toBe(result.asOf);
   });
 
-  it('does NOT raise STALE-MIX at a 5-hour spread', () => {
+  it('does NOT raise STALE-MIX inside one session, whatever the clock says', () => {
     const result = calculateOptionsSignal(input({
       macro: available(bullishMacro, 'DELAYED', at(0)),
       trend: available(bullishTrend, 'DELAYED', at(0)),
@@ -613,34 +613,79 @@ describe('G · one published timestamp, and an honest badge when sources diverge
       event: available(farEarnings, 'DELAYED', at(0)),
     }));
     expect(result.diagnostics.provenance.spreadHours).toBe(5);
+    expect(result.diagnostics.provenance.spreadSessions).toBe(0);
     expect(result.staleMix).toBe(false);
     expect(result.diagnostics.provenance.staleMix).toBe(false);
   });
 
-  it('DOES raise STALE-MIX at a 7-hour spread', () => {
-    const result = calculateOptionsSignal(input({
-      macro: available(bullishMacro, 'DELAYED', at(0)),
-      trend: available(bullishTrend, 'DELAYED', at(0)),
-      momentum: available<MomentumInput>(
-        { squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }, 'DELAYED', at(0),
-      ),
-      pricing: available<IvPricingInput>(cheapIv, 'DELAYED', at(7)),
-      sentiment: available(ratedSentiment(0.5), 'DELAYED', at(7)),
-      riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }, 'DELAYED', at(0)),
-      event: available(farEarnings, 'DELAYED', at(0)),
-    }));
-    expect(result.diagnostics.provenance.spreadHours).toBe(7);
-    expect(result.staleMix).toBe(true);
-    expect(result.reasoning.some((reason) => reason.id === 'stale-mix')).toBe(true);
+  /*
+   * THE CASE THE FLAG WAS FIRING ON, AND SHOULD NEVER HAVE FIRED ON.
+   *
+   * 2026-08-21 is a Friday and 2026-08-22 a Saturday. A chain pulled at 23:11 on
+   * the Saturday is a snapshot of FRIDAY's session — the exchange did not open in
+   * between, so there is no newer chain to have pulled. Beside a Friday closing
+   * bar that is 26.7 clock hours and ZERO trading sessions, and only one of those
+   * two numbers is about how current the evidence is.
+   *
+   * Under the old wall-clock rule this fired on every signal computed at a
+   * weekend. A flag that is always up is a flag nobody reads on the day it is
+   * real, which is the entire cost of getting this wrong.
+   */
+  it('does NOT raise STALE-MIX for a Saturday capture of the Friday session', () => {
+    const fridayClose = '2026-08-21T20:00:00.000Z';
+    const saturdayNightPull = '2026-08-22T03:11:00.000Z';
+    const summary = summariseProvenance([
+      { id: 'trend', slot: available(1, 'DELAYED', fridayClose) },
+      { id: 'pricing', slot: available(2, 'DELAYED', saturdayNightPull) },
+    ]);
+    expect(summary.spreadHours).toBeGreaterThan(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours);
+    expect(summary.spreadSessions).toBe(0);
+    expect(summary.staleMix).toBe(false);
   });
 
-  it('sits exactly on the configured boundary without flipping', () => {
+  it('DOES raise STALE-MIX when the sources really are two sessions apart', () => {
+    // Wednesday's close against Friday's: two different days of a market, which
+    // is what the flag has always been for.
     const summary = summariseProvenance([
-      { id: 'a', slot: available(1, 'DELAYED', at(0)) },
-      { id: 'b', slot: available(2, 'DELAYED', at(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours)) },
+      { id: 'trend', slot: available(1, 'DELAYED', '2026-08-19T20:00:00.000Z') },
+      { id: 'pricing', slot: available(2, 'DELAYED', '2026-08-21T20:00:00.000Z') },
     ]);
-    expect(summary.spreadHours).toBe(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours);
-    expect(summary.staleMix).toBe(false);
+    expect(summary.spreadSessions).toBe(2);
+    expect(summary.staleMix).toBe(true);
+  });
+
+  it('raises it on the first FULL session of separation, and not before', () => {
+    const sameSession = summariseProvenance([
+      // Both inside Wednesday's session: 09:35 and 15:55 ET.
+      { id: 'a', slot: available(1, 'DELAYED', '2026-08-19T13:35:00.000Z') },
+      { id: 'b', slot: available(2, 'DELAYED', '2026-08-19T19:55:00.000Z') },
+    ]);
+    expect(sameSession.spreadSessions).toBe(0);
+    expect(sameSession.staleMix).toBe(false);
+
+    const oneApart = summariseProvenance([
+      { id: 'a', slot: available(1, 'DELAYED', '2026-08-19T20:00:00.000Z') },
+      { id: 'b', slot: available(2, 'DELAYED', '2026-08-20T20:00:00.000Z') },
+    ]);
+    expect(oneApart.spreadSessions).toBe(OPTIONS_SIGNAL_CONFIG.provenance.staleMixSessions);
+    expect(oneApart.staleMix).toBe(true);
+  });
+
+  it('carries the fetch time beside the data time, never instead of it', () => {
+    const summary = summariseProvenance([
+      {
+        id: 'pricing',
+        slot: {
+          status: 'available', state: 'DELAYED', value: 1, provider: 'alpaca',
+          asOf: '2026-08-21T20:00:00.000Z', fetchedAt: '2026-08-22T03:11:00.000Z',
+        },
+      },
+    ]);
+    const [source] = summary.sources;
+    expect(source.asOf).toBe('2026-08-21T20:00:00.000Z');
+    expect(source.fetchedAt).toBe('2026-08-22T03:11:00.000Z');
+    // The published signal time is the DATA time. The fetch never becomes it.
+    expect(summary.asOf).toBe('2026-08-21T20:00:00.000Z');
   });
 
   it('ignores the timestamps of sources that produced nothing', () => {

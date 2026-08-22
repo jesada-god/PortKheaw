@@ -852,25 +852,54 @@ function DetailBody({ breakdown, summary }: {
           แหล่งข้อมูลปิดคนละเวลากัน สัญญาณจึงยึด<b className="text-slate-300">เวลาที่เก่าที่สุด</b>เป็นเวลาของตัวเอง
           เพราะสัญญาณจะใหม่กว่าข้อมูลที่เก่าที่สุดของมันไม่ได้ ทุกปีในหน้านี้เป็น ค.ศ. ทั้งหมด
         </p>
+        {/*
+          * TWO columns, because the two were one field and the field meant
+          * different things per provider: the candle pipeline stamps a bar
+          * close, the options provider stamps the moment we asked it. Subtracting
+          * one from the other made a Friday bar and a Saturday-night pull of
+          * that same Friday chain look 26.7 hours apart.
+          */}
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          <b className="text-slate-300">เวลาของข้อมูล</b> คือข้อมูลนั้นเป็นภาพของเซสชันไหน ส่วน <b className="text-slate-300">เวลาที่ดึง</b> คือตอนที่ระบบไปขอมา
+          ทั้งคู่ไม่ใช่อย่างเดียวกัน — chain ที่ดึงคืนวันเสาร์ก็ยังเป็น chain ของวันศุกร์อยู่ดี
+          STALE-MIX จึงตัดสินจาก<b className="text-slate-300">เวลาของข้อมูล</b>เท่านั้น และนับเป็นจำนวนเซสชันเทรด ไม่ใช่ชั่วโมงตามนาฬิกา
+        </p>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="เวลาของสัญญาณ (เก่าที่สุด)" value={formatBangkokDateTimeCE(provenance.asOf)} />
           <Detail label="แหล่งที่ใหม่ที่สุด" value={formatBangkokDateTimeCE(provenance.newestAsOf)} />
           <Detail
-            label="ห่างกัน"
+            label="ห่างกัน (ใช้ตัดสิน)"
+            value={provenance.spreadSessions === null ? '—' : `${provenance.spreadSessions} เซสชันเทรด`}
+          />
+          <Detail
+            label="ห่างกันตามนาฬิกา (ไม่ใช้ตัดสิน)"
             value={provenance.spreadHours === null ? '—' : `${provenance.spreadHours} ชั่วโมง`}
           />
-          <Detail label="STALE-MIX" value={provenance.staleMix ? 'ใช่ · ข้อมูลมาจากคนละเวลากันเกินเกณฑ์' : 'ไม่'} />
+          <Detail
+            label="STALE-MIX"
+            value={provenance.staleMix ? 'ใช่ · ข้อมูลมาจากคนละเซสชันเทรดกัน' : 'ไม่ · ข้อมูลทุกแหล่งเป็นเซสชันเดียวกัน'}
+          />
         </dl>
-        <ul className="mt-2 space-y-1 text-xs text-slate-400">
+        <div className="mt-2 space-y-1 text-xs text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1 text-[11px] text-slate-500">
+            <span>แหล่ง</span>
+            <span className="flex gap-4">
+              <span className="w-40 text-right">เวลาของข้อมูล</span>
+              <span className="w-40 text-right">เวลาที่ดึง</span>
+            </span>
+          </div>
           {provenance.sources.map((source) => (
-            <li key={source.id} className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-slate-300">{source.id}</span>
-              <span className="font-mono">
-                {source.provider ?? 'ไม่ทราบผู้ให้บริการ'} · {formatBangkokDateTimeCE(source.asOf)}
+            <div key={source.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-slate-300">{source.id} · {source.provider ?? 'ไม่ทราบผู้ให้บริการ'}</span>
+              <span className="flex gap-4 font-mono">
+                <span className="w-40 text-right text-slate-300">{formatBangkokDateTimeCE(source.asOf)}</span>
+                <span className="w-40 text-right text-slate-500">
+                  {source.fetchedAt ? formatBangkokDateTimeCE(source.fetchedAt) : '—'}
+                </span>
               </span>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       </section>
 
       <section>

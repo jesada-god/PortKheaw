@@ -164,6 +164,7 @@ const result: OptionsSignalResult = {
       asOf: '2026-07-28T00:00:00.000Z',
       newestAsOf: '2026-07-28T00:00:00.000Z',
       spreadHours: null,
+      spreadSessions: 0,
       staleMix: false,
       sources: [],
     },

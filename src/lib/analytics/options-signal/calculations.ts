@@ -1,3 +1,4 @@
+import { lastUsSessionClose, usTradingSessionsBetween } from '@/src/lib/market-data/us-market-calendar';
 import {
   OPTIONS_SIGNAL_CONFIG,
   OPTIONS_SIGNAL_CONFIG_VERSION,
@@ -993,6 +994,7 @@ export function summariseProvenance(
       id: entry.id,
       provider: entry.slot.provider,
       asOf: entry.slot.asOf,
+      fetchedAt: entry.slot.fetchedAt ?? null,
       usable: entry.slot.status === 'available' && Number.isFinite(Date.parse(entry.slot.asOf ?? '')),
     }));
 
@@ -1001,18 +1003,54 @@ export function summariseProvenance(
     .map((source) => ({ asOf: source.asOf as string, ms: Date.parse(source.asOf as string) }))
     .sort((left, right) => left.ms - right.ms);
 
-  const published = sources.map(({ id, provider, asOf }) => ({ id, provider, asOf }));
+  const published = sources.map(({ id, provider, asOf, fetchedAt }) => ({ id, provider, asOf, fetchedAt }));
   if (!stamps.length) {
-    return { asOf: null, newestAsOf: null, spreadHours: null, staleMix: false, sources: published };
+    return {
+      asOf: null, newestAsOf: null, spreadHours: null, spreadSessions: null,
+      staleMix: false, sources: published,
+    };
   }
   const oldest = stamps[0];
   const newest = stamps[stamps.length - 1];
   const spreadHours = stamps.length > 1 ? round((newest.ms - oldest.ms) / HOUR_MS, 2) : null;
+
+  /*
+   * The gap, measured in the only unit that answers the question.
+   *
+   * Hours cannot: 26.7 of them is two sessions apart on a Tuesday and ZERO
+   * across a weekend, and the six-hour window was reading Saturday as though the
+   * exchange were open on it. Every signal computed on a Saturday or Sunday
+   * raised STALE-MIX for sources that were, in fact, two views of the same
+   * Friday. The flag was up so often it had stopped meaning anything.
+   *
+   * Both ends are mapped to the session they belong to first, so the comparison
+   * is session-to-session and never instant-to-instant. `spreadHours` survives
+   * as disclosure beside it — it is still the honest wall-clock answer, it is
+   * simply not the one the flag is allowed to be decided on.
+   */
+  const oldestSession = lastUsSessionClose(oldest.asOf);
+  const newestSession = lastUsSessionClose(newest.asOf);
+  const spreadSessions = oldestSession && newestSession && stamps.length > 1
+    ? usTradingSessionsBetween(oldestSession.date, newestSession.date)
+    : stamps.length > 1 ? null : 0;
+
   return {
     asOf: oldest.asOf,
     newestAsOf: newest.asOf,
     spreadHours,
-    staleMix: spreadHours !== null && spreadHours > config.staleMixHours,
+    spreadSessions,
+    /*
+     * One session apart is genuinely stale evidence: a signal mixing Thursday's
+     * chart with Friday's chain is comparing two different days of a market. The
+     * same instant on both sides of a weekend is not.
+     *
+     * When the sessions cannot be resolved at all the wall clock is the only
+     * thing left, and the old window is what it falls back to — a source with an
+     * unreadable timestamp should not silently stop being checked.
+     */
+    staleMix: spreadSessions === null
+      ? spreadHours !== null && spreadHours > config.staleMixHours
+      : spreadSessions >= config.staleMixSessions,
     sources: published,
   };
 }
@@ -1646,6 +1684,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       staleMix: provenance.staleMix,
       spreadHours: provenance.spreadHours,
+      spreadSessions: provenance.spreadSessions,
     }),
     suggestedOptionsSetup: buildSetup(
       signalType,
@@ -1676,6 +1715,7 @@ function buildReasoning(context: {
   expectedMoveHorizonWarning: string | null;
   staleMix: boolean;
   spreadHours: number | null;
+  spreadSessions: number | null;
 }): OptionsSignalReason[] {
   const reasons: OptionsSignalReason[] = [];
   const supportive = context.underlyingBias === 'bullish' ? 1 : context.underlyingBias === 'bearish' ? -1 : 0;
@@ -1774,7 +1814,13 @@ function buildReasoning(context: {
     reasons.push({
       id: 'stale-mix',
       polarity: 'caution',
-      text: `แหล่งข้อมูลของสัญญาณนี้ต่างเวลากันถึง ${context.spreadHours ?? 0} ชั่วโมง จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`,
+      /*
+       * Sessions, not hours. Hours is what put this sentence on every weekend
+       * card for a set of sources that were all looking at the same Friday.
+       */
+      text: context.spreadSessions === null
+        ? `แหล่งข้อมูลของสัญญาณนี้ต่างเวลากันถึง ${context.spreadHours ?? 0} ชั่วโมง จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`
+        : `แหล่งข้อมูลของสัญญาณนี้มาจากคนละเซสชันเทรดกัน ห่างกัน ${context.spreadSessions} เซสชัน จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`,
     });
   }
 

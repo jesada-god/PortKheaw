@@ -11,7 +11,27 @@ export type OptionsSignalFactorId = 'macro' | 'trend' | 'momentum' | 'sentiment'
 
 export interface OptionsSignalProvenance {
   provider: string | null;
+  /**
+   * AS-OF OF THE DATA ITSELF — which session it is a picture of.
+   *
+   * A daily candle's `asOf` is the bar's close. An options chain's is the close
+   * of the session the snapshot belongs to, DERIVED when the provider only
+   * timestamps its own fetch. This is the only field the freshness comparison
+   * may read.
+   */
   asOf: string | null;
+  /**
+   * When the system went and got it. Disclosure, never a judgement input.
+   *
+   * The two were one field, and the field meant different things per provider:
+   * the candle pipeline stamps a bar close, Alpaca stamps the moment of the
+   * request. Subtracting one from the other produced 26.7 hours for a Friday bar
+   * and a Saturday-night pull of that same Friday chain — two views of ONE
+   * session, reported as a day and a half of drift. Every signal run on a
+   * weekend raised STALE-MIX, and a flag that is always up is a flag nobody
+   * reads on the day it is real.
+   */
+  fetchedAt?: string | null;
 }
 
 export type OptionsSignalInputSlot<T> = OptionsSignalProvenance & (
@@ -352,8 +372,23 @@ export interface OptionsSignalProvenanceSummary {
   newestAsOf: string | null;
   /** Hours between the two, or null when fewer than two timestamps exist. */
   spreadHours: number | null;
+  /**
+   * The same distance in TRADING SESSIONS, and the one STALE-MIX is decided on.
+   *
+   * Wall-clock hours cannot answer this question. 26.7 hours is two sessions
+   * apart in midweek and the same session across a weekend, and the flag was
+   * reading the calendar as though Saturday were a trading day.
+   */
+  spreadSessions: number | null;
   staleMix: boolean;
-  sources: Array<{ id: string; provider: string | null; asOf: string | null }>;
+  sources: Array<{
+    id: string;
+    provider: string | null;
+    /** The session the data is from. What the comparison above uses. */
+    asOf: string | null;
+    /** When it was fetched. Shown beside `asOf`, never compared against it. */
+    fetchedAt: string | null;
+  }>;
 }
 
 export interface OptionsSignalLiquidityDiagnostics {

@@ -369,10 +369,28 @@ export const OPTIONS_SIGNAL_CONFIG = {
   /**
    * Timestamp hygiene. Every factor carries its own `asOf`; the signal publishes
    * ONE `asOf` — the oldest of them, because a signal is only as current as its
-   * stalest input — and flags the spread when the sources disagree by more than
-   * `staleMixHours`.
+   * stalest input — and flags the spread when the sources are far enough apart.
    */
   provenance: {
+    /**
+     * How many TRADING SESSIONS the sources may span before STALE-MIX fires.
+     *
+     * 1, which is the narrowest useful setting: it fires the moment two sources
+     * describe two different days of the market, and never inside one day
+     * however many hours the clock says. That last part is the whole change.
+     * A Friday closing bar beside a chain pulled at 23:11 on SATURDAY is 26.7
+     * clock hours apart and ZERO sessions apart, because nothing traded in
+     * between — the chain Alpaca returned on Saturday night IS Friday's chain.
+     * On the old wall-clock rule every signal computed at a weekend raised this
+     * flag, which is the fastest way to teach a reader to stop looking at it.
+     */
+    staleMixSessions: 1,
+    /**
+     * Wall-clock fallback, used only when a timestamp cannot be mapped to a
+     * session at all. Unchanged from when it was the primary rule, so a source
+     * the calendar cannot place is checked exactly as it used to be rather than
+     * quietly stopping being checked.
+     */
     staleMixHours: 6,
   },
 

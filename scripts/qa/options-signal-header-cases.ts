@@ -193,10 +193,11 @@ function signalOf(options: {
           asOf: AS_OF,
           newestAsOf: '2026-08-19T22:00:00.000Z',
           spreadHours: 2,
+          spreadSessions: 0,
           staleMix: false,
           sources: [
-            { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF },
-            { id: 'pricing', provider: 'fixture-options', asOf: '2026-08-19T22:00:00.000Z' },
+            { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF, fetchedAt: null },
+            { id: 'pricing', provider: 'fixture-options', asOf: '2026-08-19T22:00:00.000Z', fetchedAt: '2026-08-19T22:05:00.000Z' },
           ],
         },
         gates: { ivWarning: false, ivWarningReasons: [], downgrades: [] },
