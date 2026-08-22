@@ -14,7 +14,7 @@ import {
   confidenceFormulaText,
   confidenceFromTerms,
 } from './calculations';
-import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_WEIGHTS } from './config';
+import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
 import type {
   EventRiskInput,
   IvPricingInput,
@@ -115,6 +115,69 @@ describe('confidence — the printed formula is the formula that ran', () => {
     const text = confidenceFormulaText({ coverage: 1, agreement: 0, strength: 0 });
     expect(text).toContain(`${OPTIONS_SIGNAL_CONFIG.confidence.termFloor.toFixed(2)}^`);
     expect(text).not.toContain('0.00^');
+  });
+});
+
+describe('the divisor counts measurements, and only measurements', () => {
+  it('strikes a fallback factor from the divisor by exactly its own weight', () => {
+    const measured = calculateOptionsSignal(baseInput({
+      sentiment: available<SentimentInput>({ ...sentiment, percentileObservations: 60, ownPercentile: 0.5 }),
+    }));
+    const fallback = calculateOptionsSignal(baseInput());
+    if (measured.status !== 'available' || fallback.status !== 'available') throw new Error('expected signals');
+
+    expect(measured.diagnostics.factors.sentiment.measurement).toBe('measured');
+    expect(fallback.diagnostics.factors.sentiment.measurement).toBe('fallback-neutral');
+    expect(fallback.diagnostics.availableWeight)
+      .toBe(measured.diagnostics.availableWeight - OPTIONS_SIGNAL_WEIGHTS.sentiment);
+  });
+
+  it('keeps a MEASURED zero in the divisor, because a measured zero is a finding', () => {
+    /*
+     * The two cases below score the same 0 for entirely different reasons, and
+     * the whole split exists to keep them apart:
+     *
+     *   percentile 0.5   — this symbol's own Put/Call sits mid-range. Measured.
+     *   no percentile    — nothing to rank a 0.9 against at all. Not measured.
+     */
+    const measuredZero = calculateOptionsSignal(baseInput({
+      sentiment: available<SentimentInput>({ ...sentiment, percentileObservations: 60, ownPercentile: 0.5 }),
+    }));
+    if (measuredZero.status !== 'available') throw new Error('expected a signal');
+
+    expect(measuredZero.diagnostics.factors.sentiment.points).toBe(0);
+    expect(measuredZero.diagnostics.factors.sentiment.measurement).toBe('measured');
+    // The divisor did NOT shrink: the full model was available and was judged.
+    expect(measuredZero.diagnostics.availableWeight).toBe(OPTIONS_SIGNAL_TOTAL_WEIGHT);
+  });
+
+  it('never publishes a score for a factor it did not count', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    for (const factor of Object.values(result.diagnostics.factors)) {
+      if (factor.measurement === 'measured') continue;
+      // "0 / 10" is the shape of a measurement. A factor that was not weighed
+      // must not be able to print one.
+      expect(factor.points, factor.id).toBeNull();
+      expect(factor.normalized, factor.id).toBeNull();
+    }
+  });
+
+  it('says WHY a fallback factor was not counted, in the reason list', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const sentimentFactor = result.diagnostics.factors.sentiment;
+    expect(sentimentFactor.fallbackReason).toContain('baseline');
+    expect(sentimentFactor.fallbackReason).toContain(`/${OPTIONS_SIGNAL_CONFIG.sentiment.minimumPercentileObservations}`);
+    expect(result.reasoning.some((reason) => reason.id === 'sentiment-not-counted')).toBe(true);
+  });
+
+  it('leaves the sum of the counted points as the numerator, nothing more', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { factors, availableWeight } = result.diagnostics;
+    const counted = Object.values(factors).filter((factor) => factor.measurement === 'measured');
+    expect(counted.reduce((sum, factor) => sum + factor.maxPoints, 0)).toBe(availableWeight);
   });
 });
 

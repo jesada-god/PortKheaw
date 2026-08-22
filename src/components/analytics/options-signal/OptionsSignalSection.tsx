@@ -427,15 +427,32 @@ function Header({ timeframe }: { timeframe: string }) {
 
 function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
   const copy = FACTOR_COPY[factor.id];
+  /*
+   * A factor that was struck from the divisor never prints a score.
+   *
+   * "0 / 10" is the shape of a measurement, and it read as one: Options
+   * Sentiment showed it while the sentence underneath said the percentile could
+   * not be computed at all. Whatever replaces it must not be able to be mistaken
+   * for a number that was weighed.
+   */
+  const notCounted = factor.measurement === 'fallback-neutral';
   return (
     <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
       <dt className="flex items-center gap-1.5 text-slate-300">
         {copy.label}
-        {factor.partial && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
+        {factor.partial && !notCounted && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
       </dt>
       <dd className="flex items-center gap-2">
-        <span className="font-mono text-white">{signedPoints(factor.points)}</span>
-        <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
+        {notCounted ? (
+          <span className="text-[11px] text-amber-300" data-testid={`options-signal-factor-not-counted-${factor.id}`}>
+            ไม่นับรวม · {factor.fallbackReason}
+          </span>
+        ) : (
+          <>
+            <span className="font-mono text-white">{signedPoints(factor.points)}</span>
+            <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
+          </>
+        )}
         {!factor.available && <DataStatusBadge status="unavailable" />}
       </dd>
     </div>
@@ -510,7 +527,9 @@ function DetailBody({ breakdown, summary }: {
       <section>
         <h3 className="font-semibold text-white">1. คะแนนทิศทางมาจากอะไร</h3>
         <p className="mt-2 leading-6">
-          แต่ละปัจจัยให้คะแนนในช่วง −น้ำหนัก ถึง +น้ำหนัก แล้วนำมารวมกัน ปัจจัยที่ไม่มีข้อมูลจะถูกตัดออกจากทั้งตัวตั้งและตัวหาร ไม่ถูกแทนด้วยศูนย์
+          แต่ละปัจจัยให้คะแนนในช่วง −น้ำหนัก ถึง +น้ำหนัก แล้วนำมารวมกัน ปัจจัยที่ไม่มีข้อมูล
+          <b className="text-slate-300">หรือมีข้อมูลแต่ยังไม่มีฐานให้เทียบ</b>จะถูกตัดออกจากทั้งตัวตั้งและตัวหาร ไม่ถูกแทนด้วยศูนย์
+          ส่วนปัจจัยที่วัดได้แล้วได้ 0 จริงๆ ยังนับน้ำหนักเต็มอยู่ เพราะ 0 ที่วัดได้คือข้อค้นพบ ไม่ใช่ช่องว่าง
         </p>
         <div className="mt-3 space-y-2">
           {FACTOR_ORDER.map((id) => {
@@ -522,9 +541,15 @@ function DetailBody({ breakdown, summary }: {
                     <p className="font-semibold text-white">{FACTOR_COPY[id].label}</p>
                     <p className="mt-1 text-xs leading-5 text-slate-500">{FACTOR_COPY[id].helper}</p>
                   </div>
-                  <p className="shrink-0 font-mono text-white">
-                    {signedPoints(factor.points)} / {factor.maxPoints}
-                  </p>
+                  {factor.measurement === 'fallback-neutral' ? (
+                    <p className="shrink-0 text-xs text-amber-300" data-testid={`options-signal-detail-not-counted-${id}`}>
+                      ไม่นับรวม ({factor.fallbackReason})
+                    </p>
+                  ) : (
+                    <p className="shrink-0 font-mono text-white">
+                      {signedPoints(factor.points)} / {factor.maxPoints}
+                    </p>
+                  )}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-slate-300">{factor.detail}</p>
                 {/*

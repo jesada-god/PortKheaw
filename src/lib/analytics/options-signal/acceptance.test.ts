@@ -78,6 +78,22 @@ const neutralSentiment: SentimentInput = {
   putCallRatio: 0.9, basis: 'open-interest', putTotal: 9_000, callTotal: 10_000, expiration: '2026-09-18',
 };
 
+/**
+ * The same reading WITH the symbol's own percentile basis.
+ *
+ * `neutralSentiment` alone has no basis to be ranked against, which now makes it
+ * `fallback-neutral` — struck from the numerator AND the divisor. Every test
+ * below that is about something other than that rule needs a sentiment that is
+ * genuinely MEASURED, or it would be asserting against a 90 that quietly became
+ * an 80 for a reason it never meant to exercise.
+ *
+ * 0.5 sits inside the neutral percentile band, so this scores exactly what the
+ * absolute bands scored for a 0.9 ratio: zero, and measured.
+ */
+const ratedSentiment = (ownPercentile: number): SentimentInput => ({
+  ...neutralSentiment, ownPercentile, percentileObservations: 60,
+});
+
 function input(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput {
   return {
     symbol: 'TEST',
@@ -89,7 +105,7 @@ function input(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput 
     trend: available(bullishTrend),
     momentum: available<MomentumInput>({ squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }),
     pricing: available<IvPricingInput>(cheapIv),
-    sentiment: available(neutralSentiment),
+    sentiment: available(ratedSentiment(0.5)),
     riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }),
     event: available(farEarnings),
     ...overrides,
@@ -183,7 +199,7 @@ describe('B · Risk/Reward is scored for the side the evidence points at', () =>
       }),
       trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
       momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
-      sentiment: available(neutralSentiment),
+      sentiment: available(ratedSentiment(0.5)),
       riskReward: available(lopsided),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
@@ -246,7 +262,7 @@ describe('the published score is built from post-damping points over live weight
     }),
     trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
     momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
-    sentiment: available(neutralSentiment),
+    sentiment: available(ratedSentiment(0.5)),
     riskReward: available(lopsided),
     ...overrides,
   });
@@ -404,7 +420,7 @@ describe('the published score is built from post-damping points over live weight
     // A signal with real weight behind it: dropping a factor that scored zero
     // raises the score, because the surviving evidence is now a larger share of
     // what could have been scored.
-    const bullish = input({ sentiment: available(neutralSentiment) });
+    const bullish = input({ sentiment: available(ratedSentiment(0.5)) });
     const withoutSentiment = input({ sentiment: missing<SentimentInput>('ไม่มี Open Interest') });
 
     const before = calculateOptionsSignal(bullish).diagnostics;
@@ -462,7 +478,7 @@ describe('C · confidence is a product, so a collapsed term cannot be bought bac
       macro: available(bearishMacro),
       trend: available(bullishTrend),
       momentum: available<MomentumInput>({ squeeze: 'FIRED_BEARISH', squeezeMomentum: -2.4, atr: 2, relativeVolume: 1.8 }),
-      sentiment: available(neutralSentiment),
+      sentiment: available(ratedSentiment(0.5)),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
     expect(result.diagnostics.agreement).toBeLessThanOrEqual(0.25);
@@ -471,7 +487,7 @@ describe('C · confidence is a product, so a collapsed term cannot be bought bac
 
   it('still rewards evidence that genuinely agrees', () => {
     const result = calculateOptionsSignal(input({
-      sentiment: available<SentimentInput>({ ...neutralSentiment, putCallRatio: 0.45 }),
+      sentiment: available<SentimentInput>(ratedSentiment(0.05)),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
     expect(result.diagnostics.agreement).toBe(1);
@@ -592,7 +608,7 @@ describe('G · one published timestamp, and an honest badge when sources diverge
         { squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }, 'DELAYED', at(0),
       ),
       pricing: available<IvPricingInput>(cheapIv, 'DELAYED', at(5)),
-      sentiment: available(neutralSentiment, 'DELAYED', at(5)),
+      sentiment: available(ratedSentiment(0.5), 'DELAYED', at(5)),
       riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }, 'DELAYED', at(0)),
       event: available(farEarnings, 'DELAYED', at(0)),
     }));
@@ -609,7 +625,7 @@ describe('G · one published timestamp, and an honest badge when sources diverge
         { squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }, 'DELAYED', at(0),
       ),
       pricing: available<IvPricingInput>(cheapIv, 'DELAYED', at(7)),
-      sentiment: available(neutralSentiment, 'DELAYED', at(7)),
+      sentiment: available(ratedSentiment(0.5), 'DELAYED', at(7)),
       riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }, 'DELAYED', at(0)),
       event: available(farEarnings, 'DELAYED', at(0)),
     }));

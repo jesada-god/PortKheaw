@@ -38,6 +38,8 @@ function factor(
     normalized: points / maxPoints,
     state: 'DELAYED',
     available: true,
+    measurement: 'measured',
+    fallbackReason: null,
     partial: false,
     detail,
     reason: null,

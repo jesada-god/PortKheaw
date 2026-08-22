@@ -261,6 +261,30 @@ export type UnderlyingBias = 'bullish' | 'bearish' | 'neutral';
 
 export type IvLevel = 'low' | 'normal' | 'high' | 'extreme';
 
+/**
+ * What a factor's number actually IS, which "available" could never say.
+ *
+ * `available` collapsed two states the reader has to be able to tell apart, and
+ * the card printed both of them as a score out of the factor's weight:
+ *
+ *  - `measured` — the factor was judged and produced a value. A judged ZERO
+ *    belongs here: Macro at 0/15 because SPY and QQQ genuinely disagree is a
+ *    measurement, and it must keep its 15 in the divisor or a real "the market
+ *    has no view" would be silently dropped from the model.
+ *  - `fallback-neutral` — the raw data arrived, but the context needed to judge
+ *    it did not. Options Sentiment with no percentile basis of its own is this:
+ *    a Put/Call of 1.51 means different things on two tickers, so without the
+ *    symbol's own history there is nothing to rank it against. It scored 0
+ *    because the absolute band it fell back to is centred, NOT because anything
+ *    was measured as neutral.
+ *  - `unavailable` — no raw data at all.
+ *
+ * Only `measured` counts toward the divisor. The other two are struck from the
+ * numerator AND the denominator, which is the rule the modal's first paragraph
+ * has always claimed the engine follows.
+ */
+export type OptionsSignalFactorMeasurement = 'measured' | 'fallback-neutral' | 'unavailable';
+
 export interface OptionsSignalFactorScore {
   id: OptionsSignalFactorId;
   points: number | null;
@@ -269,6 +293,13 @@ export interface OptionsSignalFactorScore {
   normalized: number | null;
   state: OptionsSignalDataState;
   available: boolean;
+  /** See {@link OptionsSignalFactorMeasurement}. Only `measured` enters the divisor. */
+  measurement: OptionsSignalFactorMeasurement;
+  /**
+   * Why this factor could not be judged, when `measurement` is
+   * `fallback-neutral`. Null otherwise. The card prints it instead of a score.
+   */
+  fallbackReason: string | null;
   /** True when the factor scored but one of its own inputs was missing. */
   partial: boolean;
   detail: string;

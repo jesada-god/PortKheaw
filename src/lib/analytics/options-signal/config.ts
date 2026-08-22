@@ -21,8 +21,16 @@
  * alone would then describe two different models. `2026.08.19b` is the momentum
  * saturation widening from 1.0 to 3.5 ATR; `2026.08.19` is everything before it;
  * `2026.08.19c` moved the implied volatility onto the horizon chain.
+ *
+ * `2026.08.23` is the internal-contradiction pass. No weight and no threshold
+ * below moved; what changed is WHICH factors reach the fraction at all. A factor
+ * holding raw data it has no basis to judge (`fallback-neutral`) is now struck
+ * from the numerator and the divisor, where it used to vote out of an absolute
+ * band and keep its full weight. Options Sentiment without its own percentile
+ * history is the case that reaches this on most symbols, so most divisors move
+ * from 90 to 80 and every quality term downstream of the divisor moves with them.
  */
-export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19c';
+export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.23';
 
 export const OPTIONS_SIGNAL_WEIGHTS = {
   macro: 15,

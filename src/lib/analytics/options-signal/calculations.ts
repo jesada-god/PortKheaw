@@ -91,6 +91,16 @@ export interface FactorOutcome {
   normalized: number | null;
   detail: string;
   partial: boolean;
+  /**
+   * Set when the factor had raw data but no context to judge it against, so the
+   * value it produced is a fallback rather than a measurement. See
+   * {@link OptionsSignalFactorMeasurement}. The text is the reason, printed on
+   * the card in place of a score.
+   *
+   * Absent or null means the factor was measured — including when it measured
+   * zero, which is a finding and keeps its weight.
+   */
+  fallbackReason?: string | null;
 }
 
 export function scoreMacro(input: MacroInput): FactorOutcome & {
@@ -391,6 +401,21 @@ export function scoreSentiment(
     // A reading without the symbol's own history is a reading on a weaker basis,
     // and the card says so rather than presenting it as a complete measurement.
     partial: percentile === null,
+    /*
+     * No percentile basis means no baseline, and no baseline means this factor
+     * cannot be judged at all — the absolute bands are a shape to fall back to,
+     * not a measurement of this symbol.
+     *
+     * It used to score anyway and keep its 10 points in the divisor, so a
+     * centred Put/Call published "0 / 10" and pulled the whole card toward 50
+     * with nothing behind it. `fallbackReason` is what takes those 10 points out
+     * of both sides of the fraction.
+     */
+    fallbackReason: percentile !== null
+      ? null
+      : options.historyUnavailable === true
+        ? 'อ่านประวัติของหุ้นตัวนี้ไม่สำเร็จ จึงไม่มีฐานเทียบเปอร์เซ็นไทล์'
+        : `ยังไม่มี baseline: ประวัติ ${observations}/${config.minimumPercentileObservations} วัน`,
   };
 }
 
@@ -1013,6 +1038,8 @@ function unavailableFactor(
     normalized: null,
     state: 'UNAVAILABLE',
     available: false,
+    measurement: 'unavailable',
+    fallbackReason: null,
     partial: false,
     detail: reason,
     reason,
@@ -1029,19 +1056,42 @@ function scoredFactor(
   const normalized = finite(outcome.normalized);
   if (normalized === null) return unavailableFactor(id, slot, outcome.detail);
   const maxPoints = OPTIONS_SIGNAL_WEIGHTS[id];
+  const fallbackReason = outcome.fallbackReason ?? null;
   return {
     id,
-    points: round(normalized * maxPoints, 0),
+    /*
+     * A fallback carries NO points, deliberately.
+     *
+     * Publishing the fallback's own number would put it back in every sum that
+     * reads `points ?? 0`, and printing it beside a weight ("0 / 10") is what
+     * made a missing baseline read as a measured neutral in the first place. The
+     * reading itself is not lost — it is still in `detail`, described as the
+     * fallback it is.
+     */
+    points: fallbackReason === null ? round(normalized * maxPoints, 0) : null,
     maxPoints,
-    normalized: round(normalized, 4),
+    normalized: fallbackReason === null ? round(normalized, 4) : null,
     state: slot.state,
     available: true,
+    measurement: fallbackReason === null ? 'measured' : 'fallback-neutral',
+    fallbackReason,
     partial: outcome.partial,
     detail: outcome.detail,
     reason: null,
     provider: slot.provider,
     asOf: slot.asOf,
   };
+}
+
+/**
+ * The divisor rule, in one place.
+ *
+ * `available` is not it and never was: a factor can have its data and still be
+ * unjudgeable, and counting its weight then pulls the published score toward 50
+ * on the strength of nothing.
+ */
+function countsTowardWeight(factor: OptionsSignalFactorScore): boolean {
+  return factor.measurement === 'measured';
 }
 
 function setupWarnings(daysToEarnings: number | null, liquidity: LiquidityOutcome | null): string[] {
@@ -1297,7 +1347,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     sentiment: scoredFactor('sentiment', input.sentiment, sentimentOutcome),
   };
   const leadEntries = Object.values(leadFactors);
-  const leadWeight = leadEntries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
+  const leadWeight = leadEntries.reduce((sum, factor) => sum + (countsTowardWeight(factor) ? factor.maxPoints : 0), 0);
   const leadScore = leadEntries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const leadDirection = leadWeight > 0
     ? biasFromDirectionBalance(directionBalance(leadScore, leadWeight))
@@ -1326,7 +1376,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     return insufficient(`ขาดปัจจัยหลักที่ต้องมี: ${missingRequired.map((id) => FACTOR_LABELS[id]).join(', ')}`);
   }
 
-  const availableWeight = entries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
+  const availableWeight = entries.reduce((sum, factor) => sum + (countsTowardWeight(factor) ? factor.maxPoints : 0), 0);
   const summedPoints = entries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const absoluteScore = entries.reduce((sum, factor) => sum + Math.abs(factor.points ?? 0), 0);
 
@@ -1631,6 +1681,20 @@ function buildReasoning(context: {
   const supportive = context.underlyingBias === 'bullish' ? 1 : context.underlyingBias === 'bearish' ? -1 : 0;
 
   for (const factor of Object.values(context.factors)) {
+    /*
+     * A factor struck from the divisor says so here too. "ไม่มีข้อมูล" would be
+     * the wrong sentence for Options Sentiment holding a real Put/Call it simply
+     * cannot rank, and the reason list is where a reader looks to find out why a
+     * factor they can see on the card contributed nothing.
+     */
+    if (factor.measurement === 'fallback-neutral') {
+      reasons.push({
+        id: `${factor.id}-not-counted`,
+        polarity: 'information',
+        text: `${FACTOR_LABELS[factor.id]}: ไม่นับรวมในคะแนน (${factor.fallbackReason}) · ${factor.detail}`,
+      });
+      continue;
+    }
     if (!factor.available || factor.points === null) {
       reasons.push({ id: `${factor.id}-unavailable`, polarity: 'information', text: `${FACTOR_LABELS[factor.id]}: ${factor.detail}` });
       continue;

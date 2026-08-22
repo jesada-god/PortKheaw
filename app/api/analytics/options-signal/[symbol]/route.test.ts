@@ -35,6 +35,8 @@ function factor(id: OptionsSignalFactorId): OptionsSignalFactorScore {
     normalized: 0,
     state: 'DELAYED',
     available: true,
+    measurement: 'measured',
+    fallbackReason: null,
     partial: false,
     detail: 'test',
     reason: null,
