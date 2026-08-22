@@ -7,7 +7,7 @@ import { EntitlementProvider } from '@/src/components/subscription/EntitlementPr
 import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
-import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
+import { MARKET_SIGNAL_HISTORY, MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
 import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle, zoneScaleFor } from './MarketSignalSection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -2465,14 +2465,28 @@ describe('the history strip discloses without ranking', () => {
     flags: [] as string[],
   });
 
+  /*
+   * EIGHT RECORDED DAYS, because seven is the line the strip is drawn at.
+   *
+   * `MARKET_SIGNAL_HISTORY.minStripDays` decides whether there is a picture at
+   * all, so a fixture built at the old three would have been testing the
+   * collecting notice while claiming to test the strip. Eight is one clear of
+   * the line in the direction these tests are about; the notice has its own
+   * fixtures below.
+   *
+   * The days are consecutive here only because it keeps the arithmetic
+   * readable. Nothing in the strip depends on it — the cells are placed by
+   * RECORDING ORDER, and `spans a real calendar range` is the test that holds
+   * a gappy run.
+   */
+  const days = (count: number, state: MarketSignalState = 'SIDEWAYS') =>
+    Array.from({ length: count }, (_, index) =>
+      day(`2026-08-${String(index + 5).padStart(2, '0')}`, state));
+
   const withHistory = (over: Partial<MarketSignalResult['history']> = {}): MarketSignalResult => ({
     ...result,
     history: {
-      entries: [
-        day('2026-08-10', 'SIDEWAYS'),
-        day('2026-08-11', 'SIDEWAYS'),
-        day('2026-08-12', 'SIDEWAYS'),
-      ],
+      entries: days(8),
       windowDays: 30,
       currentLabelDays: 2,
       currentRawLabelDays: 2,
@@ -2496,14 +2510,122 @@ describe('the history strip discloses without ranking', () => {
 
   it('draws one cell per recorded day and not one per calendar day', async () => {
     await render(withHistory());
-    expect((await historyStrip()).children).toHaveLength(3);
+    expect((await historyStrip()).children).toHaveLength(8);
+  });
+
+  /*
+   * THE BUG THAT STARTED THIS, AND THE SHAPE OF ITS FIX.
+   *
+   * Every cell used to be `flex-1` in a flex row, so however few days had been
+   * recorded they shared the whole width between them: two days drew two
+   * half-width blocks and read as a FULL bar with a seam, sitting directly
+   * above a sentence saying two of thirty days had been recorded. The reader
+   * was given a picture and a number that contradicted each other.
+   *
+   * The track is now a fixed grid `windowDays` columns wide, so twenty-two
+   * empty columns are drawn as twenty-two empty columns. This is the assertion
+   * that keeps them: the number of slots is the number in the sentence, and it
+   * does not move with the number of rows.
+   */
+  const emptyTrack = async () => (await historyStrip()).parentElement!
+    .querySelector('[aria-hidden="true"]')!;
+
+  it('reserves one slot for every day in the window, however few were recorded', async () => {
+    await render(withHistory());
+    expect((await emptyTrack()).children).toHaveLength(30);
+    expect(((await historyStrip()) as HTMLElement).style.gridTemplateColumns)
+      .toBe('repeat(30, minmax(0, 1fr))');
+  });
+
+  /*
+   * (ก) — cells are ordered by RECORDING and packed against the newest end, so
+   * the strip's left-hand columns are the ones with no row rather than the ones
+   * with an old row. A card that packed left would put its newest day in the
+   * middle of the track and read as a series that had stopped.
+   */
+  it('packs the recorded days against the newest end of the track', async () => {
+    await render(withHistory());
+    const cells = [...(await historyStrip()).children] as HTMLElement[];
+    expect(cells.map((cell) => cell.style.gridColumnStart))
+      .toEqual(['23', '24', '25', '26', '27', '28', '29', '30']);
   });
 
   it('says how many of the days in its window it actually has', async () => {
     await render(withHistory());
     const block = (await historyBlock())!;
-    // The absence is disclosed as a number rather than drawn as invented cells.
-    expect(block.textContent).toContain('บันทึกได้ 3 วัน จาก 30 วันที่ผ่านมา');
+    // The absence is drawn as empty slots AND disclosed as a number; neither
+    // one is allowed to be the only telling.
+    expect(block.textContent).toContain('บันทึกได้ 8 วัน จาก 30 วันที่ผ่านมา');
+  });
+
+  /*
+   * THE CAPTION, WHICH IS THE HALF THE PICTURE CANNOT DRAW.
+   *
+   * A row of coloured blocks does not say that a block is a day, that the day
+   * is a day SOMEBODY OPENED THIS CARD rather than a day the market traded, or
+   * that a blank is a missing row rather than a holiday. The last of those is
+   * the one that matters most: "the market was shut" and "nobody looked" are
+   * opposite readings of the same white space, and only one is true here.
+   */
+  it('says above the strip what one cell is and what a blank one is', async () => {
+    await render(withHistory());
+    const legend = (await historyBlock())!
+      .querySelector('[data-testid="signal-history-legend"]')!.textContent ?? '';
+    expect(legend).toContain('แต่ละช่องคือหนึ่งวันที่มีคนเปิดการ์ดนี้');
+    expect(legend).toContain('สีคือป้ายของวันนั้น');
+    expect(legend).toContain('จึงไม่มีแถว ไม่ใช่วันที่ตลาดปิด');
+  });
+
+  /*
+   * THE CAPTION IS TWO CLAUSES AND MUST STAY TWO.
+   *
+   * It grew a third — that cells are ordered by recording, so two side by side
+   * need not be two consecutive days — and four wrapped lines at 390px is a
+   * caption a reader skips, which loses the two clauses that have no other
+   * telling on the card. The adjacency fact is carried by the span line and by
+   * each cell's own date instead. This fails if the sentence comes back.
+   */
+  it('keeps the caption to the two facts nothing else on the card states', async () => {
+    await render(withHistory());
+    const legend = (await historyBlock())!
+      .querySelector('[data-testid="signal-history-legend"]')!.textContent ?? '';
+    expect(legend).not.toContain('ช่องติดกัน');
+    expect(legend).not.toContain('ลำดับที่บันทึก');
+    // Two clauses, so exactly one separator between them.
+    expect(legend.split('·')).toHaveLength(2);
+  });
+
+  /*
+   * WITHOUT THIS LINE THE CELLS ARE NOT TIME AT ALL. Eight cells spread over a
+   * month and eight cells spread over a week draw the identical picture, and
+   * the fixture here is the gappy one on purpose: five weeks of calendar, eight
+   * recorded days, one strip.
+   */
+  it('spans a real calendar range under the strip', async () => {
+    await render(withHistory({
+      entries: [
+        day('2026-07-21', 'SIDEWAYS'), day('2026-07-23', 'SIDEWAYS'),
+        day('2026-07-30', 'SIDEWAYS'), day('2026-08-03', 'SIDEWAYS'),
+        day('2026-08-11', 'SIDEWAYS'), day('2026-08-17', 'SIDEWAYS'),
+        day('2026-08-20', 'SIDEWAYS'), day('2026-08-22', 'SIDEWAYS'),
+      ],
+    }));
+    expect((await historyBlock())!
+      .querySelector('[data-testid="signal-history-span"]')!.textContent)
+      .toBe('21 ก.ค. ─ 22 ส.ค.');
+  });
+
+  /*
+   * A date per cell, reachable by thumb and by screen reader, and printed
+   * nowhere on the picture: thirty labelled cells on a 390px screen is thirty
+   * unreadable labels, which is a different way of showing nothing.
+   */
+  it('puts the date and the label on each cell without drawing either', async () => {
+    await render(withHistory());
+    const cells = [...(await historyStrip()).children] as HTMLElement[];
+    expect(cells[7].getAttribute('title')).toBe('12 ส.ค. 2569 · SIDEWAYS');
+    expect(cells[7].getAttribute('aria-label')).toBe('12 ส.ค. 2569 · SIDEWAYS');
+    for (const cell of cells) expect(cell.textContent).toBe('');
   });
 
   it('states the label age as a duration', async () => {
@@ -2528,6 +2650,16 @@ describe('the history strip discloses without ranking', () => {
     expect(block.textContent).not.toContain('ยืนมา 9 วัน');
   });
 
+  /*
+   * The same rule read from the other end: `currentLabelDays` is a number the
+   * hold rule can inflate, so it may not reach the card by ANY route — not as
+   * the age, and not as a fallback when the raw count is missing.
+   */
+  it('never prints the held run anywhere on the block', async () => {
+    await render(withHistory({ currentLabelDays: 26, currentRawLabelDays: 4 }));
+    expect((await historyBlock())!.textContent).not.toContain('26');
+  });
+
   it('shows no age at all when the raw run cannot be counted honestly', async () => {
     await render(withHistory({ currentLabelDays: 9, currentRawLabelDays: null }));
     const block = (await historyBlock())!;
@@ -2535,27 +2667,27 @@ describe('the history strip discloses without ranking', () => {
     expect(block.textContent).not.toContain('9 วัน');
   });
 
-  it('will not call one recorded day a run', async () => {
-    await render(withHistory({
-      entries: [day('2026-08-12', 'SIDEWAYS')],
-      currentLabelDays: null,
-      currentRawLabelDays: null,
-    }));
-    const block = (await historyBlock())!;
-    expect(block.textContent).toContain('ยังไม่มีวันที่บันทึกพอ');
-    expect(block.textContent).not.toContain('ยืนมา 0 วัน');
-  });
-
   /*
-   * The load-bearing one. A colour, weight or opacity that grew with age would
+   * THE LOAD-BEARING ONE. A colour, weight or opacity that grew with age would
    * be an argument the harness does not support, made in a language nobody
    * reads critically — so cells of the same label must be pixel-identical
    * whatever their position in the run.
+   *
+   * The empty slots are a sibling layer rather than children of the strip
+   * precisely so that this keeps comparing labels against labels: a blank is
+   * not a label and must not be counted as a second styling of one.
    */
   it('gives every cell of the same label identical styling, whatever its age', async () => {
     await render(withHistory());
     const cells = [...(await historyStrip()).children].map((cell) => cell.getAttribute('class'));
     expect(new Set(cells).size).toBe(1);
+  });
+
+  it('draws every empty slot the same as every other empty slot', async () => {
+    await render(withHistory());
+    const slots = [...(await emptyTrack()).children].map((slot) => slot.getAttribute('class'));
+    expect(new Set(slots).size).toBe(1);
+    expect(slots[0]).not.toContain('bg-sky');
   });
 
   it('says in words that a long-standing label is not a more accurate one', async () => {
@@ -2566,6 +2698,61 @@ describe('the history strip discloses without ranking', () => {
   it('warns when the label is unsettled, which is the safe direction', async () => {
     await render(withHistory({ recentFlip: true }));
     expect((await historyBlock())!.textContent).toContain('ยังไม่นิ่ง');
+  });
+
+  /*
+   * BELOW `minStripDays` THERE IS NO PICTURE, ONLY THE COUNT.
+   *
+   * A handful of marks in a thirty-column track is not a small amount of
+   * evidence, it is an invitation to read a shape out of two or three
+   * observations — a run, a gap, a drift in the colours. The number says the
+   * same thing and offers no shape, so under the line the number is all there
+   * is. Seven is a product choice and lives in `src/config/signal.ts` saying
+   * so; these tests read it from there rather than typing it, so that moving it
+   * moves them.
+   */
+  describe('under the minimum it collects rather than draws', () => {
+    const short = MARKET_SIGNAL_HISTORY.minStripDays - 1;
+
+    it('draws no strip at all', async () => {
+      await render(withHistory({ entries: days(short) }));
+      expect((await openAdvanced()).querySelector('[aria-label="ประวัติป้าย 30 วัน"]')).toBeNull();
+    });
+
+    it('replaces the whole block with one line saying how far along it is', async () => {
+      await render(withHistory({ entries: days(2) }));
+      const block = (await historyBlock())!;
+      expect(block.querySelector('[data-testid="signal-history-collecting"]')!.textContent)
+        .toBe(`กำลังเก็บข้อมูล ยังไม่พอวาดแถบป้ายย้อนหลัง (บันทึกได้ 2 จาก ${MARKET_SIGNAL_HISTORY.minStripDays} วันที่ต้องมีก่อน)`);
+    });
+
+    /*
+     * The two-day card in the bug report, and what it must no longer do: an age
+     * that survived the strip's removal would be the same over-reading in
+     * words. Under the line the card has one thing to say and says only it.
+     */
+    it('says nothing about the label age, in either direction', async () => {
+      await render(withHistory({ entries: days(2), currentLabelDays: 9, currentRawLabelDays: 2 }));
+      const text = (await historyBlock())!.textContent ?? '';
+      expect(text).not.toContain('ยืนมา');
+      expect(text).not.toContain('ป้ายที่ยืนนาน');
+    });
+
+    it('will not call one recorded day a run', async () => {
+      await render(withHistory({
+        entries: days(1),
+        currentLabelDays: null,
+        currentRawLabelDays: null,
+      }));
+      const text = (await historyBlock())!.textContent ?? '';
+      expect(text).toContain('บันทึกได้ 1 จาก');
+      expect(text).not.toContain('ยืนมา 0 วัน');
+    });
+
+    it('starts drawing the moment the minimum is reached', async () => {
+      await render(withHistory({ entries: days(MARKET_SIGNAL_HISTORY.minStripDays) }));
+      expect((await historyStrip()).children).toHaveLength(MARKET_SIGNAL_HISTORY.minStripDays);
+    });
   });
 
   it('draws nothing at all while the flag is off', async () => {
@@ -2630,16 +2817,22 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   const framed = (over: Partial<AvailableSignal> = {}) => sideways({ zones: frame, ...over });
 
   /*
-   * THE HEADLINE IS ON THE CARD; THE SENTENCE UNDER IT IS NOT, ANY MORE.
+   * THE COLUMN, AFTER BOTH TRIMS.
    *
-   * The card used to carry the state name, this headline, the description AND
-   * the frame's own caption on the bar — three tellings of one fact stacked in
-   * one column. The headline survived because it is the shortest and the bar
-   * because it also shows WHERE, so the description and the base rate moved
-   * into the advanced layer. Everything they are held to here is unchanged;
-   * only where the test has to look for them is.
+   * The card used to carry the state name, a headline, the description AND the
+   * frame's own caption on the bar — three tellings of one fact stacked in one
+   * column. The description went into the advanced layer first. The headline
+   * followed, on framed cards only, because the bar says the same sentence and
+   * prints both edge prices under it while the headline printed no number at
+   * all. A card with no frame keeps its headline: there is no bar for it to
+   * collide with, and the state would otherwise have no reading beside it.
+   *
+   * `?.` and not `!` for exactly that reason — "not drawn" is now a legitimate
+   * answer on one card shape, and the sweeps below join this into a string.
    */
-  const headline = () => container.querySelector('[data-testid="signal-state-headline"]')!.textContent ?? '';
+  const headline = () => container.querySelector('[data-testid="signal-state-headline"]')?.textContent ?? '';
+  const zoneBarHeadline = () => container
+    .querySelector('[data-testid="signal-zone-bar"] [data-zone-row="headline"]')?.textContent ?? '';
   const description = async () => (await openAdvanced())
     .querySelector('[data-testid="signal-state-description"]')!.textContent ?? '';
   const baseRate = async () => (await openAdvanced())
@@ -2652,30 +2845,63 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    * every replacement — on both card shapes — has to.
    */
   it('never states the label without saying it is about now', async () => {
-    for (const payload of [sideways(), sideways({ bias: 'bullish' }), framed(), framed({ bias: 'bearish' })]) {
+    /* The framed cards are absent from this loop because they no longer draw a
+       headline at all; the sentence that replaced it is asserted on the bar in
+       the two tests below. `description()` is still checked on all four. */
+    for (const payload of [sideways(), sideways({ bias: 'bullish' })]) {
       await render(payload);
       const spelled = await description();
       expect(headline(), `"${headline()}" could be about any day`).toContain('ตอนนี้');
       expect(spelled, `"${spelled}" could be about any day`).toContain('ตอนนี้');
       expect(`${headline()} ${spelled}`).not.toContain('ยังไม่ไปทางไหนชัด');
     }
+    for (const payload of [framed(), framed({ bias: 'bearish' })]) {
+      await render(payload);
+      const spelled = await description();
+      expect(spelled, `"${spelled}" could be about any day`).toContain('ตอนนี้');
+      expect(spelled).not.toContain('ยังไม่ไปทางไหนชัด');
+    }
   });
 
-  it('names the frame on a card that draws one, and the direction on a card that does not', async () => {
+  /*
+   * THE DUPLICATE, AND WHICH OF THE PAIR SURVIVED.
+   *
+   * A framed SIDEWAYS card drew "ตอนนี้ราคายังอยู่ในกรอบ" as its headline and
+   * "ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไปหรือลงไปพ้นกรอบ" as the first line of the
+   * bar a few pixels below it. Two sentences, one fact, no difference for the
+   * reader to find. The bar is what stays: it says the same thing and prints
+   * both trigger prices under the track, so nothing the headline carried was
+   * lost and two numbers were gained.
+   */
+  it('says the frame once, on the block that also draws the edges', async () => {
     await render(framed());
-    expect(headline()).toBe('ตอนนี้ราคายังอยู่ในกรอบ');
+    expect(
+      container.querySelector('[data-testid="signal-state-headline"]'),
+      'the headline is back above a bar that says the same thing',
+    ).toBeNull();
+    expect(zoneBarHeadline()).toContain('ราคายังอยู่ในกรอบเดิม');
+    // …and the edge prices the headline never had, which is why the bar is the
+    // half of the pair that was kept.
+    const bar = container.querySelector('[data-testid="signal-zone-bar"]')!;
+    expect(bar.textContent).toContain('38.26');
+    expect(bar.textContent).toContain('47.24');
+    // Spelled out in full one tap away, unchanged.
     expect(await description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
+  });
 
-    /*
-     * The other half, and the reason there are two wordings at all. With
-     * `SIGNAL_ZONES` off there is no frame in the payload and no rectangle on
-     * the card — CL-F ships in exactly this state — so the frame's word would
-     * be naming an object the reader cannot see. That is the collision
-     * `market-signal/no-unsourced-frame-word` exists to stop.
-     */
+  /*
+   * The other half, and the reason there are two wordings at all. With
+   * `SIGNAL_ZONES` off there is no frame in the payload and no rectangle on
+   * the card — CL-F ships in exactly this state — so the frame's word would
+   * be naming an object the reader cannot see. That is the collision
+   * `market-signal/no-unsourced-frame-word` exists to stop. There is also no
+   * bar to duplicate, so this card keeps its headline.
+   */
+  it('names the direction on a card that draws no frame, and keeps its headline', async () => {
     await render(sideways());
     expect(headline()).toBe('ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง');
     expect(`${headline()} ${await description()}`).not.toContain('กรอบ');
+    expect(container.querySelector('[data-testid="signal-zone-bar"]')).toBeNull();
   });
 
   it('says the lean without denying the label above it', async () => {
@@ -2924,6 +3150,187 @@ describe('the beginner layer and the advanced one', () => {
     const ids = [...container.querySelectorAll('[data-testid="signal-beginner-reasons"] [data-reason-id]')]
       .map((node) => node.getAttribute('data-reason-id'));
     expect(ids).toEqual(['ema-structure', 'squeeze-on', 'rsi14', 'obv-trend']);
+  });
+
+  /*
+   * WHICH FOUR, WHEN "THE HEAVIEST FOUR" IS THE WRONG FOUR.
+   *
+   * Impact ranks EVIDENCE and it is the only ranking the payload carries. This
+   * list has to account for a LABEL, and on a neutral card the two answers come
+   * apart: the four heaviest rows can all point one way under a line saying
+   * neither way won, with the row that actually stopped the engine committing
+   * pushed under the counted tail. The tests below are the three rules in
+   * `selectBeginnerReasons`, and the mark that makes them visible.
+   */
+  const beginnerRows = () => [...container.querySelectorAll('[data-testid="signal-beginner-reasons"] [data-reason-id]')];
+  const beginnerIds = () => beginnerRows().map((node) => node.getAttribute('data-reason-id'));
+  const beginnerSides = () => beginnerRows().map((node) => node.getAttribute('data-reason-side'));
+
+  /*
+   * Rule 1. A SIDEWAYS label is a card declining to name a direction, and the
+   * first bullet under it has to be the row that says why. All three ids the
+   * engine has for that mechanism are checked, because a list that happened to
+   * work only for `component-conflict` would look right on most cards.
+   */
+  it.each([
+    ['a conflict between components', 'component-conflict'],
+    ['a frame too narrow to judge', 'narrow-range-band'],
+    ['a close through an edge the label has not followed', 'pending-zone-break'],
+  ])('leads a SIDEWAYS card with %s, above the heavier rows', async (_name, id) => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      reasons: [
+        reason('ema-structure', 'positive', 9),
+        reason('rsi14', 'positive', 8),
+        reason('macd-signal', 'positive', 7),
+        reason('obv-trend', 'positive', 6),
+        reason(id, 'caution', 2),
+      ],
+    });
+    expect(beginnerIds()).toEqual([id, 'ema-structure', 'rsi14', 'macd-signal']);
+  });
+
+  /*
+   * And it is a rule about the label, not about every card. A BULLISH card has
+   * named a direction, so there is no unanswered question for a conflict row to
+   * answer first, and the list goes back to the engine's own order.
+   */
+  it('does not force that lead on a card that did name a direction', async () => {
+    await render({
+      ...result,
+      state: 'BULLISH',
+      bias: 'bullish',
+      reasons: [
+        reason('ema-structure', 'positive', 9),
+        reason('rsi14', 'positive', 8),
+        reason('macd-signal', 'positive', 7),
+        reason('obv-trend', 'positive', 6),
+        reason('component-conflict', 'caution', 2),
+      ],
+    });
+    expect(beginnerIds()).toEqual(['ema-structure', 'rsi14', 'macd-signal', 'obv-trend']);
+  });
+
+  /*
+   * Rule 2, on the card that produced the defect.
+   *
+   * CL-F, SIDEWAYS, flags on: three rows on the bullish side at the top of the
+   * payload, a close through the confirmed low at 5, and the conflict that
+   * stopped the engine committing at 7. The old list drew the four heaviest,
+   * which were the three bullish rows and the conflict — so the breakdown, the
+   * one row on the bearish side, was the row that fell off. Both sides are now
+   * reserved a slot before the list is filled by weight.
+   */
+  it('draws both sides when the payload holds both, even from under the cut', async () => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      reasons: [
+        reason('ema20-slope', 'positive', 7.5),
+        reason('obv-trend', 'positive', 7.5),
+        reason('component-conflict', 'caution', 7),
+        reason('ema200-slope', 'positive', 6.73),
+        reason('structure-breakdown', 'negative', 5),
+      ],
+    });
+    expect(beginnerIds()).toEqual(['component-conflict', 'ema20-slope', 'obv-trend', 'structure-breakdown']);
+    expect(beginnerSides()).toEqual(['none', 'up', 'up', 'down']);
+    // The row that fell off is counted, not lost, and is drawn in full below.
+    expect(container.querySelector('[data-testid="signal-beginner-reasons"]')!.textContent)
+      .toContain('และอีก 1 ข้อ');
+    expect((await openAdvanced()).querySelector('[data-reason-id="ema200-slope"]')).not.toBeNull();
+  });
+
+  /*
+   * RULE 3, WHICH IS THE ONE THIS BLOCK EXISTS FOR.
+   *
+   * Four bullets all pointing the same way, under a label saying neither way
+   * won, is the card contradicting itself in the space of five lines — and it
+   * is what a reader actually met on CL-F. Rule 2 covers it whenever the other
+   * side is in the payload; this is the remainder, where it is not. The list
+   * reaches for the best row that is not directional at all rather than
+   * repeating one side four times.
+   *
+   * Asserted on the SIDES rather than on the ids, because the rule is about
+   * what the four bullets add up to and not about which rows satisfy it.
+   */
+  it('never draws four bullets on one side under a label that named no side', async () => {
+    const onlyBullish = [
+      reason('ema-structure', 'positive', 9),
+      reason('rsi14', 'positive', 8),
+      reason('macd-signal', 'positive', 7),
+      reason('obv-trend', 'positive', 6),
+      reason('squeeze-on', 'caution', 1),
+    ];
+    const onlyBearish = onlyBullish.map((row) => (row.polarity === 'positive'
+      ? { ...row, polarity: 'negative' as const }
+      : row));
+
+    for (const [side, reasons] of [['bullish', onlyBullish], ['bearish', onlyBearish]] as const) {
+      for (const [state, bias] of [['SIDEWAYS', 'neutral'], ['SQUEEZE', 'neutral']] as const) {
+        await render({ ...result, state, bias, reasons });
+        const sides = beginnerSides();
+        expect(sides, `${side} · ${state} drew nothing`).toHaveLength(4);
+        expect(
+          new Set(sides).size,
+          `${side} · ${state}: every bullet points one way under a neutral label — ${sides.join(', ')}`,
+        ).toBeGreaterThan(1);
+      }
+    }
+  });
+
+  /*
+   * The mark, which is what makes the mix above visible at all.
+   *
+   * The dialog files every row under a heading that names a side; this list has
+   * no headings, so a breakdown drawn behind the same bullet glyph as three
+   * bullish rows reads as a fourth bullish row. The glyph is `aria-hidden` and
+   * it is a colour, so it is deliberately the THIRD telling: the wording of
+   * every directional label states its own direction, and `reason-copy.test.ts`
+   * holds it to that.
+   */
+  it('marks which side each bullet is on, using the same answer the dialog files by', async () => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      reasons: [
+        reason('ema-structure', 'positive', 9),
+        reason('structure-breakdown', 'negative', 8),
+        reason('squeeze-on', 'caution', 7),
+      ],
+    });
+    expect(beginnerSides()).toEqual(['up', 'down', 'none']);
+    const glyphs = [...container.querySelectorAll('[data-testid="signal-beginner-reasons"] li > span[aria-hidden]')]
+      .map((node) => node.textContent);
+    expect(glyphs).toEqual(['▲', '▼', '•']);
+    // The direction is in the words too, which is the telling that survives a
+    // screen reader and a reader who does not separate red from green.
+    expect(container.querySelector('[data-reason-id="structure-breakdown"]')!.textContent)
+      .toContain('หลักฐานฝั่งลง');
+  });
+
+  /*
+   * A divergence is re-filed by `effectivePolarity`, and the mark has to follow
+   * it — the engine calls a bullish divergence `caution`, correctly from where
+   * it sits, and this list would otherwise draw a bullish row behind a neutral
+   * dot while the dialog files the same row under ปัจจัยสนับสนุน.
+   */
+  it('marks a re-filed divergence by the side the card actually files it under', async () => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      metrics: { ...result.metrics, divergence: 'bullish' },
+      reasons: [
+        reason('bullish-divergence', 'caution', 9),
+        reason('structure-breakdown', 'negative', 8),
+      ],
+    });
+    expect(beginnerSides()).toEqual(['up', 'down']);
   });
 
   /*

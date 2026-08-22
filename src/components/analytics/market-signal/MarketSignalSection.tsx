@@ -4,12 +4,12 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
 import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalMetrics, MarketSignalReason, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
-import { formatBangkokDateTime, formatThaiDateOnly } from '@/src/lib/presentation/datetime';
+import { BANGKOK_TIME_ZONE, formatBangkokDateTime, formatThaiDateOnly, THAI_LOCALE } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
-import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
+import { MARKET_SIGNAL_HISTORY, MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
 import { reasonContextFor, reasonHeadline, reasonText, type ReasonBaseContext } from './reason-copy';
 
 const DISCLAIMER = 'Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย';
@@ -112,6 +112,63 @@ const AGREEMENT_NOT_A_CHANCE = 'ไม่ใช่ % โอกาสที่ร
  * tap away — see `beginnerReasons`.
  */
 const MAX_BEGINNER_REASONS = 4;
+
+/**
+ * THE ROWS THAT ANSWER "WHY WAS NO DIRECTION NAMED?", which is the question a
+ * SIDEWAYS card is standing there asking.
+ *
+ * Three ids, one per mechanism the engine actually has for declining to commit:
+ *
+ *   `component-conflict`   two component groups point opposite ways, so the
+ *                          gate refuses to read the sum of them as a direction.
+ *                          calculations.ts raises it from `gate.conflicts`.
+ *   `narrow-range-band`    the frame's edges are closer together than one ATR,
+ *                          so there is no distance for a break to be measured
+ *                          over and an ATR band stands in for the frame.
+ *   `pending-zone-break`   a close IS through an edge and the zone has not
+ *                          followed, because confirmation has not been met.
+ *
+ * Nothing else on the list is that fact. A strong EMA slope explains why the
+ * score leans; only these explain why the leaning stopped short of a label.
+ *
+ * WHY THIS IS NOT THE ENGINE'S JOB. It already published all three, each as a
+ * row with an impact. What it does not publish is which of its rows a READER
+ * needs first, because that depends on the question the layer is answering —
+ * the dialog is answering "what is the evidence", this list is answering "why
+ * does the top of the card say SIDEWAYS". Choosing between rows the engine
+ * already ranked is presentation; changing their ranks would not be.
+ */
+const WHY_NO_DIRECTION_WAS_NAMED: readonly string[] = [
+  'component-conflict',
+  'narrow-range-band',
+  'pending-zone-break',
+];
+
+/**
+ * The mark drawn beside a bullet, and why the list needed one at all.
+ *
+ * The dialog files every row under ปัจจัยสนับสนุน or ปัจจัยที่ต้องระวัง, so a
+ * reader down there always knows which side a row is on. The beginner list has
+ * no headings — it is four lines under a state name — and it had been drawing
+ * every one of them behind the same "•". A CL-F card shipped four bullets that
+ * all scanned as good news directly under a label saying no direction had been
+ * named, and one of the four was a close through the low.
+ *
+ * `effectivePolarity` is what decides it, which is the same function the two
+ * dialog headings are chosen with: one answer to "which side is this row on",
+ * used in both places, so the card cannot file a row two ways.
+ *
+ * THE GLYPH IS NEVER THE ONLY TELLING. It is `aria-hidden` and it is a colour,
+ * which makes it unavailable to a screen reader and unreliable for a reader who
+ * does not separate red from green. Every directional label states its own
+ * direction in words — see the structure rows in `reason-copy.ts` — and this is
+ * the redundant third telling, not the fact.
+ */
+const REASON_SIDE_MARK = {
+  up: { glyph: '▲', tone: 'text-emerald-300' },
+  down: { glyph: '▼', tone: 'text-rose-300' },
+  none: { glyph: '•', tone: 'text-slate-500' },
+} as const;
 
 /**
  * The card's footer, in one component so that no render path can ship without it.
@@ -493,19 +550,17 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
    * draws, in `REASON_HEADLINE`'s label register rather than in sentences, and
    * nothing is chosen here that the dialog does not also show in full.
    *
-   * ORDERED BY THE ENGINE'S OWN `impact`, which is the only ranking in the
-   * payload — a card that picked by id, or by which section a row lands in,
-   * would be this layer inventing an importance the engine never assigned.
-   * `Math.abs` because impact carries a side and this list does not: a strong
-   * caution and a strong support are equally worth the top of it.
+   * WHICH FOUR, and why it is no longer just the four heaviest. The engine's
+   * `impact` is the only ranking in the payload and it ranks EVIDENCE; this
+   * list has to account for a LABEL, and on a neutral card the two answers come
+   * apart — the heaviest four rows can all point one way under a line saying
+   * neither way won. `selectBeginnerReasons` is where the three rules that fix
+   * that are written down, in full.
    *
    * The tail is not dropped, it is counted, in the same shape the chip row
-   * already uses. `sort` runs on a copy: `result.reasons` is payload and the
-   * dialog below reads it in the engine's order.
+   * already uses.
    */
-  const beginnerReasons = [...result.reasons]
-    .sort((left, right) => Math.abs(right.impact) - Math.abs(left.impact))
-    .slice(0, MAX_BEGINNER_REASONS);
+  const beginnerReasons = selectBeginnerReasons(result.reasons, result.state, result.bias, result.metrics);
   const hiddenReasons = result.reasons.length - beginnerReasons.length;
 
   /*
@@ -551,9 +606,8 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           <p className="mt-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
             {result.state}
           </p>
-          <p className="mt-1 text-sm font-semibold" data-testid="signal-state-headline">{beginnerHeadline}</p>
           {/*
-            AND NOT THE SENTENCE THAT USED TO SIT HERE.
+            NEITHER OF THE TWO SENTENCES THAT USED TO SIT HERE, ON A FRAMED CARD.
 
             `beginnerDescription` said "ตอนนี้ราคายังอยู่ในกรอบ ยังไม่มีราคาปิดพ้น
             ขอบบนหรือขอบล่าง…" directly under a headline reading "ตอนนี้ราคายังอยู่
@@ -561,11 +615,16 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             thing a third time. Three tellings of one fact in one column is not
             emphasis, it is a reader checking whether they missed a difference.
 
-            The headline is kept because it is the shortest, and the bar is kept
-            because it is the only one of the three that also shows WHERE. The
-            sentence between them moved to §1 of the dialog, which is where a
-            reader who wants it spelled out is already going.
+            The description went first, into §1 of the dialog. The headline goes
+            now, for the same reason and by the same test — the bar below is the
+            only one of the three that also shows WHERE, with both edge prices
+            under the track, so it is the one the pair collapses onto. See
+            `headlineFor`, which returns `null` on exactly those cards; every
+            other state still draws its own label here.
           */}
+          {beginnerHeadline === null ? null : (
+            <p className="mt-1 text-sm font-semibold" data-testid="signal-state-headline">{beginnerHeadline}</p>
+          )}
         </div>
         <button
           type="button"
@@ -591,12 +650,22 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
       */}
       {beginnerReasons.length ? (
         <ul className="mt-3 max-w-2xl space-y-1.5 text-sm leading-6 text-slate-300" data-testid="signal-beginner-reasons">
-          {beginnerReasons.map((reason) => (
-            <li key={reason.id} className="flex gap-2">
-              <span aria-hidden="true">•</span>
-              <span data-reason-id={reason.id}>{reasonHeadline(reason, reasonContext)}</span>
-            </li>
-          ))}
+          {beginnerReasons.map((reason) => {
+            /* The same answer the two dialog headings are chosen with, drawn as
+               a mark because this list has no headings. See `REASON_SIDE_MARK`
+               for why it is never the only telling of the direction. */
+            const side = reasonSide(reason, result.metrics);
+            return (
+              <li key={reason.id} className="flex gap-2">
+                <span aria-hidden="true" className={`leading-6 ${REASON_SIDE_MARK[side].tone}`}>
+                  {REASON_SIDE_MARK[side].glyph}
+                </span>
+                {/* `data-reason-side` so the harness can assert the mix of
+                    sides without reading a glyph out of the text. */}
+                <span data-reason-id={reason.id} data-reason-side={side}>{reasonHeadline(reason, reasonContext)}</span>
+              </li>
+            );
+          })}
           {hiddenReasons > 0 ? (
             <li className="text-xs leading-5 text-slate-400">
               และอีก {hiddenReasons} ข้อ ใน “{ADVANCED_TOGGLE}”
@@ -1010,6 +1079,113 @@ function readsAsCaution(reason: MarketSignalReason, metrics: MarketSignalMetrics
 }
 
 /**
+ * Which way a row points, in the three values the beginner list can draw.
+ *
+ * `readsAsCaution` above answers a different question — which HEADING a row
+ * goes under, which folds in the bias the card is carrying. This list has no
+ * headings and no bias to fold in, so it asks the narrower question: does this
+ * row point up, down, or neither. Both read `effectivePolarity`, so the two
+ * cannot disagree about which side a row is on.
+ */
+function reasonSide(reason: MarketSignalReason, metrics: MarketSignalMetrics): keyof typeof REASON_SIDE_MARK {
+  const polarity = effectivePolarity(reason, metrics);
+  if (polarity === 'positive') return 'up';
+  if (polarity === 'negative') return 'down';
+  return 'none';
+}
+
+/**
+ * THE FOUR BULLETS, CHOSEN TO EXPLAIN THE LABEL RATHER THAN TO RANK THE EVIDENCE.
+ *
+ * They used to be `[...reasons].sort(by |impact|).slice(0, 4)`, which is the
+ * honest answer to "which rows did the engine weight most" and the wrong answer
+ * to the only question this list is on the card to settle: why does the line
+ * above it say what it says. On a real CL-F card the two came apart completely
+ * — the four heaviest rows were all on the bullish side, drawn under a SIDEWAYS
+ * label, with the row that had ACTUALLY stopped the engine committing sitting
+ * below the cut in "และอีก N ข้อ".
+ *
+ * Three rules, in the order they are applied:
+ *
+ *   1. A SIDEWAYS card leads with the row that says why no direction was named
+ *      — see `WHY_NO_DIRECTION_WAS_NAMED` — and leads with it literally, at the
+ *      top of the list. A reader who stops after one bullet should have got the
+ *      answer to the question the label posed.
+ *   2. If the payload holds rows on BOTH sides, both sides are drawn. The best
+ *      row of each side is reserved a slot before the list is filled by weight,
+ *      so a fifth-ranked bearish row is on the card when the four above it are
+ *      all bullish. This is the rule that stops the list from being a summary
+ *      of one side of the evidence.
+ *   3. A neutral label may not carry four bullets that all point one way. Rule
+ *      2 covers this whenever the other side exists; this is the remainder,
+ *      where it does not — the list reaches instead for the best row that is
+ *      not directional at all (a caution, a note) rather than repeating one
+ *      side four times under a label saying neither side won.
+ *
+ * WHAT IS NOT REORDERED. Everything after the lead is drawn in the engine's own
+ * `impact` order, and nothing here changes an impact, a polarity or a row's
+ * text. The rows are the engine's; which four fit on a ten-second layer is not.
+ *
+ * `Math.abs` throughout because impact carries a side and a rank does not: a
+ * heavy caution and a heavy support are equally worth the top of this list.
+ */
+function selectBeginnerReasons(
+  reasons: readonly MarketSignalReason[],
+  state: MarketSignalState,
+  bias: MarketSignalBias,
+  metrics: MarketSignalMetrics,
+): MarketSignalReason[] {
+  const byWeight = (left: MarketSignalReason, right: MarketSignalReason) =>
+    Math.abs(right.impact) - Math.abs(left.impact);
+  /* A copy: `result.reasons` is payload and the dialog reads it in the engine's
+     own order. */
+  const ranked = [...reasons].sort(byWeight);
+
+  // Rule 1 — the lead, and only on the label that poses the question.
+  const lead = state === 'SIDEWAYS'
+    ? ranked.find((reason) => WHY_NO_DIRECTION_WAS_NAMED.includes(reason.id)) ?? null
+    : null;
+
+  // Rule 2 — a reserved slot per side, but only when there are two sides to hold.
+  const sidesInPayload = new Set(ranked.map((reason) => reasonSide(reason, metrics)));
+  const reserved = sidesInPayload.has('up') && sidesInPayload.has('down')
+    ? (['up', 'down'] as const)
+      .map((side) => ranked.find((reason) => reasonSide(reason, metrics) === side))
+      .filter((reason): reason is MarketSignalReason => reason !== undefined)
+    : [];
+
+  const picked: MarketSignalReason[] = [];
+  const take = (reason: MarketSignalReason | null) => {
+    if (reason !== null && !picked.includes(reason) && picked.length < MAX_BEGINNER_REASONS) picked.push(reason);
+  };
+  take(lead);
+  reserved.forEach(take);
+  ranked.forEach(take);
+
+  /*
+   * Rule 3 — the remainder rule, applied to the drawn list rather than to the
+   * payload, because it is a fact about what the reader ends up looking at.
+   *
+   * It fires only when every drawn row shares ONE directional side, which after
+   * rule 2 means the other side is not in the payload at all. The swap takes
+   * the lowest-weighted drawn row, never the lead: dropping the answer to the
+   * label's own question to relieve the monotony would trade one defect for the
+   * other one.
+   */
+  const drawnSides = new Set(picked.map((reason) => reasonSide(reason, metrics)));
+  const oneSided = drawnSides.size === 1 && !drawnSides.has('none');
+  if ((state === 'SIDEWAYS' || bias === 'neutral') && oneSided && picked.length > (lead === null ? 0 : 1)) {
+    const drawn = [...drawnSides][0];
+    const relief = ranked.find((reason) => !picked.includes(reason) && reasonSide(reason, metrics) !== drawn);
+    if (relief) picked[picked.length - 1] = relief;
+  }
+
+  // The lead first because rule 1 says so; the rest by the engine's own weight.
+  const rest = picked.filter((reason) => reason !== lead).sort(byWeight);
+  return lead === null ? rest : [lead, ...rest];
+}
+
+/**
  * The footnote a re-filed row cannot be shown without.
  *
  * Moving a divergence into ปัจจัยสนับสนุน answers one question and opens
@@ -1045,16 +1221,32 @@ const frameNamedTheLabel = (state: MarketSignalState, zones: MarketSignalZones |
   state === 'SIDEWAYS' && zones !== null && zones.zone === 'sideways';
 
 /**
- * The bold line under the state name, on the one state that needed a moment.
+ * The bold line under the state name — on every card except the one that has
+ * the same sentence drawn twelve pixels lower with numbers attached.
  *
- * Every other state keeps `MARKET_SIGNAL_PRESENTATION[state].thai` untouched;
- * this exists so the SIDEWAYS headline can name the frame when there is one to
- * name. It is a LABEL and not a sentence — five to eleven words, the same
- * register as the other six — so the 15-35 word rule the prose is held to does
- * not apply to it.
+ * WHAT THIS USED TO RETURN, AND WHY IT IS GONE. On a framed SIDEWAYS card it
+ * returned "ตอนนี้ราคายังอยู่ในกรอบ", and the zone bar directly below it heads
+ * its own block with `ZONE_COPY.sideways` — "ราคายังอยู่ในกรอบเดิม ไม่ได้ขึ้นไป
+ * หรือลงไปพ้นกรอบ". One fact, two sentences, a thumb apart. That column has now
+ * been trimmed twice for the same reason: `beginnerDescription` moved into the
+ * dialog when it was the third telling, and this is the second one going.
+ *
+ * THE BAR IS WHAT SURVIVES, and it is the right half of the pair to keep: it
+ * says the same thing AND draws where the edges are, with both trigger prices
+ * printed under the track. The headline said it with no numbers at all, so
+ * everything it carried the bar carries and the bar carries more. Deleting the
+ * bar instead would have cost the reader the two prices.
+ *
+ * `null` and not an empty string, so the paragraph is not rendered at all
+ * rather than rendered blank — an empty `<p>` still takes its margin, and the
+ * gap would read as something that failed to load.
+ *
+ * Every other state keeps `MARKET_SIGNAL_PRESENTATION[state].thai` untouched.
+ * It is a LABEL and not a sentence — five to eleven words, the same register as
+ * the other six — so the 15-35 word rule the prose is held to does not apply.
  */
-function headlineFor(state: MarketSignalState, zones: MarketSignalZones | null, fallback: string): string {
-  return frameNamedTheLabel(state, zones) ? 'ตอนนี้ราคายังอยู่ในกรอบ' : fallback;
+function headlineFor(state: MarketSignalState, zones: MarketSignalZones | null, fallback: string): string | null {
+  return frameNamedTheLabel(state, zones) ? null : fallback;
 }
 
 function descriptionFor(
@@ -1158,14 +1350,56 @@ const HISTORY_CELL_TONE: Record<MarketSignalState, string> = {
 };
 
 /**
+ * One recorded day, written the short way, for the two ends of the strip.
+ *
+ * Day and month and no year: the window is thirty days, so a year would read
+ * the same at both ends of every strip that is not sitting on New Year, and it
+ * is the SPAN a reader is taking from this line rather than the date. The full
+ * date, year and all, is on each cell — see `HistoryStrip` — where there is
+ * room for it because only one is ever shown at a time.
+ */
+const HISTORY_SPAN_FORMAT = new Intl.DateTimeFormat(THAI_LOCALE, {
+  day: 'numeric',
+  month: 'short',
+  timeZone: BANGKOK_TIME_ZONE,
+});
+
+/** Noon UTC, so the Bangkok formatter cannot walk a date-only value back a day. */
+function formatHistorySpanDay(asOf: string): string {
+  const date = new Date(`${asOf}T12:00:00.000Z`);
+  return Number.isNaN(date.valueOf()) ? asOf : HISTORY_SPAN_FORMAT.format(date);
+}
+
+/**
  * P6 — what this card said, for as long as anyone has been looking.
  *
- * ONE CELL PER RECORDED DAY, not per calendar day. A row exists for a day only
- * if somebody opened the card that day, so a fixed grid of thirty would be
- * mostly weekends and absences, and filling those cells with the neighbouring
- * label would put a label on a day the card never published. The density is
- * therefore stated as a number — "N of the last 30 days" — which is the same
- * disclosure without the invented cells.
+ * ONE CELL PER RECORDED DAY, NOT PER CALENDAR DAY, and the strip now has to say
+ * so out loud. A row exists for a day only if somebody opened the card that day,
+ * so the cells are the recorded days in the order they were recorded, packed
+ * against the right-hand (newest) end of the track. Two cells side by side are
+ * therefore two consecutive RECORDINGS and not necessarily two consecutive
+ * days, and that is carried by the DATES rather than by a sentence: the span
+ * line under the strip gives the real first and last day, and each cell names
+ * its own on hover and to a screen reader. The caption tried saying it in words
+ * as well and cost a fourth wrapped line for a fact already told twice.
+ *
+ * WHAT WENT WRONG BEFORE. Every cell was `flex-1` inside a flex row, so N cells
+ * shared the full width however small N was: two recorded days drew two half-
+ * width blocks, and the reader saw a FULL bar with a seam in it directly above a
+ * sentence saying two days of thirty had been recorded. The picture and the
+ * sentence were making opposite claims and the picture was winning. The track is
+ * now `windowDays` columns wide whatever it holds, so the count and the shape of
+ * the thing are one fact — twenty-eight of the thirty columns stand empty on a
+ * card with two days in it.
+ *
+ * THE EMPTY COLUMNS ARE DRAWN, AND THEY ARE DRAWN EMPTY. §6.8 of
+ * `docs/signal-handover.md` allows a gap and forbids closing it: interpolating,
+ * or stretching a neighbouring cell across it, puts a label on a day the card
+ * never published. They are a SIBLING layer rather than children of the strip,
+ * for a reason worth keeping — the strip's children stay exactly the recorded
+ * days, so "one cell per recorded day" is still checkable by counting them, and
+ * the test that every cell of one label is styled identically keeps comparing
+ * labels against labels rather than against blanks.
  *
  * The age line sits with the three the zone bar already carries (zone, frame,
  * last touch) because it is the fourth member of the same family: a duration,
@@ -1190,22 +1424,115 @@ function HistoryStrip({ history }: { history: MarketSignalHistory }) {
    * The card says it cannot tell rather than falling back to the held number.
    */
   const { entries, windowDays, currentRawLabelDays, recentFlip } = history;
+
+  /*
+   * TOO FEW RECORDED DAYS TO DRAW, so nothing is drawn — the number is
+   * `minStripDays` in `src/config/signal.ts`, written down there as the product
+   * choice it is rather than passed off as a measurement.
+   *
+   * Three marks in a thirty-column track is not a small amount of evidence, it
+   * is an invitation to read a shape out of three observations: a run, a gap, a
+   * drift in the colours. The count states the same fact without offering the
+   * shape, so below the line the count is the whole telling.
+   */
+  if (entries.length < MARKET_SIGNAL_HISTORY.minStripDays) {
+    return (
+      <div className="mt-3" data-testid="signal-history">
+        <p className="text-[11px] leading-5 text-slate-400" data-testid="signal-history-collecting">
+          กำลังเก็บข้อมูล ยังไม่พอวาดแถบป้ายย้อนหลัง (บันทึกได้ {entries.length} จาก {MARKET_SIGNAL_HISTORY.minStripDays} วันที่ต้องมีก่อน)
+        </p>
+      </div>
+    );
+  }
+
   const latest = entries[entries.length - 1];
+  /*
+   * The track is as wide as the window the sentence names rather than as wide
+   * as the config constant, so the picture and "N จาก M วันที่ผ่านมา" cannot
+   * drift apart — they read one field. `Math.max` is the degenerate guard: a
+   * window narrower than the number of rows inside it would clip days off the
+   * left edge, which is the one direction this strip must never lose data in.
+   */
+  const slots = Math.max(entries.length, windowDays);
+  const firstColumn = slots - entries.length + 1;
+  const columns = { gridTemplateColumns: `repeat(${slots}, minmax(0, 1fr))` };
 
   return (
     <div className="mt-3" data-testid="signal-history">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-slate-400">ป้ายย้อนหลัง</span>
-        <div className="flex flex-1 items-end gap-[2px]" aria-label="ประวัติป้าย 30 วัน" role="img">
-          {entries.map((entry) => (
+      <span className="text-[11px] text-slate-400">ป้ายย้อนหลัง</span>
+      {/*
+        WHAT THE PICTURE IS, ABOVE THE PICTURE.
+
+        The strip shipped with no caption at all, which left a reader to work
+        out from a row of coloured blocks that they were looking at days, that
+        the days were days SOMEBODY OPENED THIS CARD rather than days the market
+        traded, and that a blank meant no row rather than a holiday. Three
+        inferences, none of them available from the drawing, all three
+        load-bearing — the third most of all, because "the market was shut" and
+        "nobody looked" are opposite readings of the same white space and only
+        one of them is true here.
+
+        WHAT IT DELIBERATELY NO LONGER SAYS. It carried a fourth clause — that
+        cells are ordered by recording, so two side by side need not be two
+        consecutive days — and at 390px the four clauses wrapped to four lines.
+        A caption that long is one a reader skips, which costs all four rather
+        than the one. It comes out because it is the clause with two other
+        tellings: the span line under the strip gives the real first and last
+        date, and every cell carries its own date on hover and to a screen
+        reader. The two that stay have no second telling anywhere on the card.
+      */}
+      <p className="mt-1 text-[11px] leading-5 text-slate-400" data-testid="signal-history-legend">
+        แต่ละช่องคือหนึ่งวันที่มีคนเปิดการ์ดนี้ สีคือป้ายของวันนั้น ·
+        ช่องว่างคือวันที่ไม่มีใครเปิด จึงไม่มีแถว ไม่ใช่วันที่ตลาดปิด
+      </p>
+      <div className="relative mt-2 h-4">
+        {/*
+          The empty slots. One flat tone, no ramp and no fade: a blank is the
+          absence of a row, and every absence is the same absence.
+
+          `bg-slate-700/60` because it is a tone the compat layer already
+          re-points for the light surface — `src/themes/compat-tokens.test.ts`
+          fails the build on a hardcoded palette class with no mapping, and an
+          unmapped one would draw a dark trough on a light card.
+        */}
+        <div aria-hidden="true" className="absolute inset-0 grid gap-[2px]" style={columns}>
+          {Array.from({ length: slots }, (_, slot) => (
+            <span key={slot} className="rounded-[1px] bg-slate-700/60" />
+          ))}
+        </div>
+        <div
+          className="relative grid h-4 gap-[2px]"
+          style={columns}
+          aria-label="ประวัติป้าย 30 วัน"
+          role="list"
+        >
+          {/*
+            The date and the label, on the cell, for a thumb and for a screen
+            reader — and nowhere else. Thirty labelled cells on a 390px screen
+            is thirty unreadable labels, so the date is spelled out for the one
+            cell being asked about and for no others.
+          */}
+          {entries.map((entry, index) => (
             <span
               key={entry.asOf}
-              title={`${entry.asOf} · ${entry.state}`}
-              className={`h-4 min-w-[3px] flex-1 rounded-[1px] ${HISTORY_CELL_TONE[entry.state]}`}
+              role="listitem"
+              style={{ gridColumnStart: firstColumn + index }}
+              title={`${formatThaiDateOnly(entry.asOf)} · ${entry.state}`}
+              aria-label={`${formatThaiDateOnly(entry.asOf)} · ${entry.state}`}
+              className={`h-4 rounded-[1px] ${HISTORY_CELL_TONE[entry.state]}`}
             />
           ))}
         </div>
       </div>
+      {/*
+        The two ends of the strip, which is what makes the cells readable as
+        time at all. Twenty cells spread over a month and twenty cells spread
+        over three weeks draw the identical picture; only this line separates
+        them.
+      */}
+      <p className="mt-1 text-[10px] leading-4 text-slate-500" data-testid="signal-history-span">
+        {formatHistorySpanDay(entries[0].asOf)} ─ {formatHistorySpanDay(latest.asOf)}
+      </p>
 
       <p className="mt-2 text-[11px] leading-5 text-slate-400">
         {/*

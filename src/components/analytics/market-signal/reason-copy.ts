@@ -104,13 +104,39 @@ const n = (value: number, digits = 1): string =>
 const bars = (count: number, timeframe: string): string =>
   timeframe === '1D' ? `${count} แท่ง (วันทำการ)` : `${count} แท่ง`;
 
+/**
+ * WHICH WAY A SLOPE ROW POINTS, decided by the number the row itself prints.
+ *
+ * Both slope tables print `Math.abs(pct)`, because "ชี้ลง -1.75%" says the
+ * direction twice and a reader who takes the minus as part of the word reads it
+ * as a fall of minus one point seven five. The cost of dropping the sign is
+ * that the WORD becomes the only carrier of direction, and until now the word
+ * was read off `reason.polarity` — a second field, arriving from the engine
+ * beside the number rather than out of it.
+ *
+ * The two cannot actually disagree today: `polarity` is `Math.sign` of
+ * `normalizedSlopeScore(slope)`, which is `clamp(slope / strongSlopeRatio)`,
+ * which is the same `slope` that became `ema200SlopePct`. One number, two
+ * routes onto the card. But nothing PINNED them together — a card that ever
+ * rendered a reason against a payload whose metrics came from elsewhere would
+ * print "ชี้ขึ้น 1.75%" over a falling average and look entirely well.
+ *
+ * So the word is derived from the sign of the printed value instead, and the
+ * pairing becomes true by construction rather than by coincidence. `polarity`
+ * is not consulted at all here, which is why the two helpers below no longer
+ * take it. `reason-copy.test.ts` holds the pairing in both tables.
+ */
+const slopeDirection = (pct: number): 'up' | 'down' | 'flat' =>
+  (pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat');
+
 /** The three EMA slope rows, which differ only in which average they are about. */
-const slopeCopy = (span: 20 | 50 | 200, pct: number | null, polarity: ReasonContext['polarity']): string | null => {
+const slopeCopy = (span: 20 | 50 | 200, pct: number | null): string | null => {
   if (pct === null || !Number.isFinite(pct)) return null;
   const size = `เส้นค่าเฉลี่ยราคา ${span} วัน (EMA${span})`;
   const value = `${n(Math.abs(pct), 2)}%`;
-  if (polarity === 'positive') return `${size} กำลังชี้ขึ้น ${value} — แปลว่าราคาช่วงหลังยืนสูงกว่าช่วงก่อนหน้า จึงนับเป็นหลักฐานฝั่งขึ้น`;
-  if (polarity === 'negative') return `${size} กำลังชี้ลง ${value} — แปลว่าราคาช่วงหลังยืนต่ำกว่าช่วงก่อนหน้า จึงนับเป็นหลักฐานฝั่งลง`;
+  const direction = slopeDirection(pct);
+  if (direction === 'up') return `${size} กำลังชี้ขึ้น ${value} — แปลว่าราคาช่วงหลังยืนสูงกว่าช่วงก่อนหน้า จึงนับเป็นหลักฐานฝั่งขึ้น`;
+  if (direction === 'down') return `${size} กำลังชี้ลง ${value} — แปลว่าราคาช่วงหลังยืนต่ำกว่าช่วงก่อนหน้า จึงนับเป็นหลักฐานฝั่งลง`;
   return `${size} เกือบทรงตัว เอียงอยู่ ${value} — ยังไม่เอียงไปทางขึ้นหรือทางลงพอจะนับเป็นหลักฐาน`;
 };
 
@@ -121,9 +147,9 @@ export const REASON_COPY: Record<string, (context: ReasonContext) => string | nu
     return 'ราคากับเส้นค่าเฉลี่ยราคา (EMA) ยังเรียงสลับกันอยู่ ไม่ได้ชี้ไปทางเดียวกันทั้งหมด — จึงยังใช้ตัดสินทิศทางไม่ได้';
   },
 
-  'ema20-slope': ({ metrics, polarity }) => slopeCopy(20, metrics.ema20SlopePct, polarity),
-  'ema50-slope': ({ metrics, polarity }) => slopeCopy(50, metrics.ema50SlopePct, polarity),
-  'ema200-slope': ({ metrics, polarity }) => slopeCopy(200, metrics.ema200SlopePct, polarity),
+  'ema20-slope': ({ metrics }) => slopeCopy(20, metrics.ema20SlopePct),
+  'ema50-slope': ({ metrics }) => slopeCopy(50, metrics.ema50SlopePct),
+  'ema200-slope': ({ metrics }) => slopeCopy(200, metrics.ema200SlopePct),
 
   rsi14: ({ metrics }) => {
     if (metrics.rsi14 === null) return null;
@@ -430,9 +456,9 @@ export const REASON_HEADLINE: Record<string, (context: ReasonContext) => string 
     return 'ราคากับเส้นค่าเฉลี่ยยังเรียงสลับกัน';
   },
 
-  'ema20-slope': ({ metrics, polarity }) => slopeHeadline(20, metrics.ema20SlopePct, polarity),
-  'ema50-slope': ({ metrics, polarity }) => slopeHeadline(50, metrics.ema50SlopePct, polarity),
-  'ema200-slope': ({ metrics, polarity }) => slopeHeadline(200, metrics.ema200SlopePct, polarity),
+  'ema20-slope': ({ metrics }) => slopeHeadline(20, metrics.ema20SlopePct),
+  'ema50-slope': ({ metrics }) => slopeHeadline(50, metrics.ema50SlopePct),
+  'ema200-slope': ({ metrics }) => slopeHeadline(200, metrics.ema200SlopePct),
 
   rsi14: ({ metrics }) => (metrics.rsi14 === null
     ? null
@@ -477,8 +503,30 @@ export const REASON_HEADLINE: Record<string, (context: ReasonContext) => string 
     return 'จุดสูงและจุดต่ำยังไม่ไปทางเดียวกัน';
   },
 
-  'structure-breakout': () => 'ราคาปิดผ่านจุดสูงเดิมแล้ว',
-  'structure-breakdown': () => 'ราคาปิดผ่านจุดต่ำเดิมแล้ว',
+  /*
+   * THE TWO ROWS THAT LOST THEIR DIRECTION IN THE SHORT FORM.
+   *
+   * `REASON_COPY` says "ราคาปิดลงใต้แนวที่เคยรับราคาไว้หลายครั้ง … จึงนับเป็น
+   * หลักฐานฝั่งลง" and the label under it said "ราคาปิดผ่านจุดต่ำเดิมแล้ว".
+   * "ผ่าน" is not a direction — it is what a candidate does to an exam — and
+   * the sentence it stands for spends two of its clauses saying which way. On
+   * the beginner list, where the rows are not filed under a heading that names
+   * a side, that left a breakdown reading as an achievement: four bullets, all
+   * of them scanning as good news, under a label saying no direction was named.
+   *
+   * The direction is stated twice on purpose: once as the geometry ("ปิดต่ำกว่า"
+   * — where the close is against the level) and once as the verdict
+   * ("หลักฐานฝั่งลง" — what that counts as), which is the same pair the long
+   * sentence carries and what rule 5 asks of every entry. The mark drawn beside
+   * the bullet is a third telling and none of the three may be the only one:
+   * a screen reader gets the words and no glyph at all.
+   *
+   * "จุดสูงเดิม" / "จุดต่ำเดิม" stay as the nouns for the confirmed pivot, for
+   * the three-word reason spelled out over `structure-volume-unconfirmed` —
+   * "กรอบ" belongs to the rectangle, "สวิง" is banned, "จุดกลับตัว" is taken.
+   */
+  'structure-breakout': () => 'ราคาปิดสูงกว่าจุดสูงเดิม — หลักฐานฝั่งขึ้น',
+  'structure-breakdown': () => 'ราคาปิดต่ำกว่าจุดต่ำเดิม — หลักฐานฝั่งลง',
 
   'squeeze-on': () => 'ช่วงแกว่งของราคากำลังบีบแคบลง',
   overextended: () => 'ราคาอยู่ไกลจากค่าเฉลี่ยผิดปกติ',
@@ -505,20 +553,33 @@ export const REASON_HEADLINE: Record<string, (context: ReasonContext) => string 
   'narrow-range-band': () => 'แนวบนกับแนวล่างใกล้กันเกินจะใช้ตัดสิน',
   'invalidation-from-band': () => 'ระบบไม่ระบุจุดที่ถือว่ารอบนี้จบ',
   'no-defensible-target': () => 'ระบบไม่มีเป้าที่อ้างอิงได้',
-  'structure-volume-unconfirmed': () => 'ผ่านจุดเดิมแล้ว แต่ปริมาณซื้อขายไม่ตาม',
+  /*
+   * The same fix, on the row that already had the direction available to it.
+   *
+   * `REASON_COPY`'s entry reads the side off `reasonIds` — the engine's own
+   * `breakoutDirection()` answer, published on whichever sibling row it raised
+   * — and this label was the one place that fact was thrown away. Same source,
+   * same three branches, same refusal to guess when the sibling is absent.
+   */
+  'structure-volume-unconfirmed': ({ reasonIds }) => {
+    const passed = reasonIds.includes('structure-breakout') ? 'ราคาปิดสูงกว่าจุดสูงเดิม'
+      : reasonIds.includes('structure-breakdown') ? 'ราคาปิดต่ำกว่าจุดต่ำเดิม'
+      : 'ราคาปิดผ่านจุดเดิม';
+    return `${passed} แต่ปริมาณซื้อขายไม่ตาม`;
+  },
 };
 
-/** The slope rows again, as labels. Same three fields, same three branches. */
-const slopeHeadline = (
-  span: 20 | 50 | 200,
-  pct: number | null,
-  polarity: ReasonContext['polarity'],
-): string | null => {
+/**
+ * The slope rows again, as labels. Same three fields, same three branches, and
+ * the same rule about where the direction word comes from — see `slopeDirection`.
+ */
+const slopeHeadline = (span: 20 | 50 | 200, pct: number | null): string | null => {
   if (pct === null || !Number.isFinite(pct)) return null;
   const size = `เส้นค่าเฉลี่ยราคา ${span} วัน`;
   const value = `${n(Math.abs(pct), 2)}%`;
-  if (polarity === 'positive') return `${size} ชี้ขึ้น ${value}`;
-  if (polarity === 'negative') return `${size} ชี้ลง ${value}`;
+  const direction = slopeDirection(pct);
+  if (direction === 'up') return `${size} ชี้ขึ้น ${value}`;
+  if (direction === 'down') return `${size} ชี้ลง ${value}`;
   return `${size} เกือบทรงตัว ${value}`;
 };
 

@@ -610,6 +610,23 @@ export const MARKET_SIGNAL_HISTORY = {
   /** Cells in the strip. Thirty is a month of trading and fits a phone. */
   stripDays: 30,
   /*
+   * How many recorded days the strip needs before it is drawn at all.
+   *
+   * A PRODUCT CHOICE, NOT A MEASURED ONE. Nothing in
+   * `docs/market-signal/p6-history-findings.md` nominates seven, and no probe
+   * was run to find it — it is the smallest count at which the picture is worth
+   * more than the sentence, chosen and written down here so that the next
+   * reader does not mistake it for an output.
+   *
+   * What it is protecting against is specific. The track is `stripDays` slots
+   * wide whatever it holds, so two recorded days draw two marks in thirty
+   * columns, and a reader takes a SHAPE out of that — a run, a gap, a trend in
+   * the colours — that two observations cannot carry. Below this line the count
+   * on its own ("N of the last 30 days") is the whole honest telling and the
+   * card gives only that.
+   */
+  minStripDays: 7,
+  /*
    * How recently the label must have changed to raise `recent_flip`.
    *
    * Three days as specified. Worth knowing when reading the evidence: the P6

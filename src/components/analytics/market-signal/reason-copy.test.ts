@@ -86,6 +86,20 @@ function everyString(): Array<{ id: string; label: string; text: string }> {
     ['structure-up', { ...baseContext, reasonIds: ['structure-breakout'] }],
     ['structure-down', { ...baseContext, reasonIds: ['structure-breakdown'] }],
     /*
+     * The slope branches, which the polarity loop no longer reaches.
+     *
+     * Both slope tables used to choose their direction word off `polarity`, so
+     * looping the four polarities over one set of metrics built all three
+     * branches. The word is read off the sign of the printed number now — see
+     * `slopeDirection` — which is the whole point of the change and also means
+     * the sweep sees only the branch `metrics` happens to select. `metrics` has
+     * ema20 and ema200 rising and ema50 falling; these two add the falling
+     * branch on all three spans and the flat one, so every sentence the pair of
+     * tables can print is still measured and still checked against the ban list.
+     */
+    ['slopes-falling', { ...baseContext, metrics: { ...metrics, ema20SlopePct: -1.24, ema50SlopePct: -2.43, ema200SlopePct: -0.31 } }],
+    ['slopes-flat', { ...baseContext, metrics: { ...metrics, ema20SlopePct: 0, ema50SlopePct: 0, ema200SlopePct: 0 } }],
+    /*
      * `macd-histogram` is the one row built from TWO fields at once, so a
      * single variant sweeps a sixth of it. Its sentence is chosen by
      * `macdHistogram`'s side crossed with `histogramExpanding`, and both of the
@@ -402,6 +416,101 @@ describe('reason copy', () => {
       }
     }
   });
+
+  /*
+   * THE DEFECT THIS TEST WAS WRITTEN FOR: "เส้นค่าเฉลี่ยราคา 200 วัน ชี้ขึ้น
+   * 1.63%" on a card whose EMA200 was falling.
+   *
+   * Both slope tables print `Math.abs(pct)`, so the sign is not on the card and
+   * the DIRECTION WORD is the only thing carrying it. That word used to come
+   * from `reason.polarity` — a second field, arriving beside the number rather
+   * than out of it. The two agree in every payload the engine builds, because
+   * both are the same slope; what was missing was anything holding them
+   * together if they ever stopped agreeing.
+   *
+   * This is that thing. The word is asserted against the SIGN OF THE NUMBER the
+   * same call printed, under a polarity deliberately set to the opposite pole —
+   * so a table that goes back to reading `polarity` fails here rather than in a
+   * screenshot. It is checked on all three spans and in both tables, because
+   * the six entries are six separate places the wiring can be got wrong.
+   */
+  it('takes the direction word from the sign of the number it prints, not from polarity', () => {
+    const spans = [
+      ['ema20-slope', 'ema20SlopePct', 20],
+      ['ema50-slope', 'ema50SlopePct', 50],
+      ['ema200-slope', 'ema200SlopePct', 200],
+    ] as const;
+
+    for (const [id, field, span] of spans) {
+      for (const [pct, word, wrongPolarity] of [
+        [1.63, 'ชี้ขึ้น', 'negative'],
+        [-1.75, 'ชี้ลง', 'positive'],
+      ] as const) {
+        const context = { ...baseContext, metrics: { ...metrics, [field]: pct }, polarity: wrongPolarity };
+
+        const label = REASON_HEADLINE[id](context)!;
+        expect(label, `${id} label at ${pct}%`).toContain(`${span} วัน ${word}`);
+        // The magnitude, and no sign smuggled in beside it.
+        expect(label, `${id} label at ${pct}%`).toContain(`${Math.abs(pct)}%`);
+        expect(label, `${id} label prints a minus`).not.toContain('-');
+
+        const sentence = REASON_COPY[id](context)!;
+        expect(sentence, `${id} sentence at ${pct}%`).toContain(`กำลัง${word}`);
+        expect(sentence, `${id} sentence at ${pct}%`).toContain(`${Math.abs(pct)}%`);
+      }
+    }
+  });
+
+  /*
+   * THE OTHER HALF OF THE SAME DEFECT, one row over.
+   *
+   * `structure-breakdown` is a close through the confirmed low — the engine
+   * scores it -1 and files it `negative`, correctly — and its LABEL read
+   * "ราคาปิดผ่านจุดต่ำเดิมแล้ว". "ผ่าน" is not a direction, so on the beginner
+   * list, which files nothing under a heading, a breakdown sat among three
+   * bullish bullets and scanned as a fourth one.
+   *
+   * The sentence in `REASON_COPY` never had this problem — it says "ปิดลงใต้"
+   * and then "หลักฐานฝั่งลง" — so the rule is simply that the short form has to
+   * carry the direction too. Both halves are asserted: the geometry word and
+   * the verdict, and that neither row uses the other's.
+   */
+  it('names a direction on both structure breaks, in the label as well as the sentence', () => {
+    const cases = [
+      ['structure-breakout', 'สูงกว่า', 'ฝั่งขึ้น', 'ฝั่งลง'],
+      ['structure-breakdown', 'ต่ำกว่า', 'ฝั่งลง', 'ฝั่งขึ้น'],
+    ] as const;
+
+    for (const [id, geometry, verdict, opposite] of cases) {
+      const label = REASON_HEADLINE[id]({ ...baseContext, polarity: 'negative' })!;
+      expect(label, `${id} label says where the close is`).toContain(geometry);
+      expect(label, `${id} label says which way it counts`).toContain(verdict);
+      expect(label, `${id} label carries the other side's word`).not.toContain(opposite);
+      // "ผ่าน" alone is what this row used to say and is what it may not say again.
+      expect(label, `${id} label is back to a direction-free "ผ่าน"`).not.toMatch(/^ราคาปิดผ่าน/);
+
+      const sentence = REASON_COPY[id]({ ...baseContext, polarity: 'negative' })!;
+      expect(sentence, `${id} sentence lost its verdict`).toContain(verdict);
+    }
+  });
+
+  /*
+   * And the row that had the direction in hand and dropped it. `reasonIds` is
+   * the engine's own `breakoutDirection()` answer transported from the sibling
+   * row; the label reads it now, the same way the sentence always has, and
+   * still refuses to guess when no sibling is present.
+   */
+  it('names the side of an unconfirmed break from the sibling row, or not at all', () => {
+    const label = (reasonIds: string[]) =>
+      REASON_HEADLINE['structure-volume-unconfirmed']({ ...baseContext, reasonIds, polarity: 'caution' })!;
+
+    expect(label(['structure-breakout'])).toContain('สูงกว่าจุดสูงเดิม');
+    expect(label(['structure-breakdown'])).toContain('ต่ำกว่าจุดต่ำเดิม');
+    // No sibling: the plainest true statement, with no side guessed onto it.
+    expect(label([])).toContain('ราคาปิดผ่านจุดเดิม');
+    expect(label([])).not.toContain('สูงกว่า');
+    expect(label([])).not.toContain('ต่ำกว่า');
+  });
 });
 
 /*
@@ -441,6 +550,18 @@ describe('reason headlines', () => {
       ['histogram-uncompared', { ...baseContext, metrics: { ...metrics, histogramExpanding: null } }],
       ['histogram-below-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: -0.3 } }],
       ['histogram-at-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: 0 } }],
+      // The same two slope branches the sentence sweep above needs, for the
+      // same reason: the word is bound to the number's sign, not to polarity.
+      ['slopes-falling', { ...baseContext, metrics: { ...metrics, ema20SlopePct: -1.24, ema50SlopePct: -2.43, ema200SlopePct: -0.31 } }],
+      ['slopes-flat', { ...baseContext, metrics: { ...metrics, ema20SlopePct: 0, ema50SlopePct: 0, ema200SlopePct: 0 } }],
+      /*
+       * And the sibling rows that carry `breakoutDirection()`'s answer. The
+       * label for `structure-volume-unconfirmed` reads the side off `reasonIds`
+       * now, exactly as its sentence always has, so both named branches have to
+       * be swept for length and banned words alongside the unnamed one.
+       */
+      ['structure-up', { ...baseContext, reasonIds: ['structure-breakout'] }],
+      ['structure-down', { ...baseContext, reasonIds: ['structure-breakdown'] }],
     ];
     for (const [id, build] of Object.entries(REASON_HEADLINE)) {
       for (const [variant, context] of variants) {

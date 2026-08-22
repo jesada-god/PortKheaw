@@ -40,8 +40,8 @@ import { join } from 'node:path';
 
 import { calendarDaysUntil } from '@/src/lib/analytics/earnings/normalize';
 import { calculateMarketSignal } from '@/src/lib/analytics/market-signal/calculations';
-import type { MarketSignalCandle } from '@/src/lib/analytics/market-signal/types';
-import { SIGNAL_FLAG_KEYS, signalFlagState } from '@/src/config/signal-flags';
+import type { MarketSignalCandle, MarketSignalFeatures } from '@/src/lib/analytics/market-signal/types';
+import { SIGNAL_FLAG_KEYS, signalFlagState, type SignalFlagKey } from '@/src/config/signal-flags';
 import type { DataFreshness } from '@/src/lib/market-data/types';
 
 /** The instrument mix the brief pins: equity, index ETFs, a thin ETF, three futures, crypto. */
@@ -63,6 +63,40 @@ const SIGNAL_DIR = join(GOLDEN_DIR, 'signal');
 const PREVIEW_DIR = join(GOLDEN_DIR, 'preview');
 
 /**
+ * WHICH FLAGS REACH THE ENGINE, in one place, because two things read it.
+ *
+ * `calculateMarketSignal` takes a `MarketSignalFeatures`, and this maps each of
+ * its three members onto the environment variable that turns it on. The call
+ * below builds its `features` from this table and the directory name is built
+ * from the same table, so the two cannot disagree: wiring a fourth phase into
+ * the engine means adding one line here, and the snapshot directory starts
+ * naming it in the same commit.
+ *
+ * WHAT IS DELIBERATELY ABSENT. `SIGNAL_HISTORY` and `SIGNAL_CONTEXT` are real
+ * rollout switches and neither one is a member of `MarketSignalFeatures` — no
+ * value of either changes a single byte this harness writes. P6 in particular
+ * cannot: `history` is not engine output at all, it is attached afterwards in
+ * `src/lib/analytics/market-signal/service.ts` from a Supabase read, and this
+ * harness reaches no network by design. A directory named for those flags was
+ * therefore a byte-identical copy of the one next to it, wearing a name that
+ * announced coverage it did not have. See `__golden__/README.md`.
+ */
+const ENGINE_FEATURE_OF = {
+  SIGNAL_GATE: 'gate',
+  SIGNAL_ZONES: 'zones',
+  SIGNAL_ACTIONABLE: 'actionable',
+} as const satisfies Record<string, keyof MarketSignalFeatures>;
+
+type EngineFlagKey = keyof typeof ENGINE_FEATURE_OF;
+const ENGINE_FLAG_KEYS = Object.keys(ENGINE_FEATURE_OF) as readonly EngineFlagKey[];
+
+function engineFeatures(flags: Record<SignalFlagKey, boolean>): MarketSignalFeatures {
+  return Object.fromEntries(
+    ENGINE_FLAG_KEYS.map((key) => [ENGINE_FEATURE_OF[key], flags[key]]),
+  ) as unknown as MarketSignalFeatures;
+}
+
+/**
  * One directory per flag COMBINATION, not one directory for "some flag is on".
  *
  * The rollout turns these on one at a time, so production passes through states
@@ -75,9 +109,19 @@ const PREVIEW_DIR = join(GOLDEN_DIR, 'preview');
  * `gate-only` rather than `gate` because the name has to say what is OFF as well
  * as what is on; a directory called `gate` read six months from now is a question
  * rather than an answer.
+ *
+ * It is fed the ENGINE flags only, so the name lists exactly the switches that
+ * moved the bytes inside. `engine-flags-off` is the degenerate case — every
+ * engine flag off while some other switch is on. WRITING that run resolves here,
+ * to a directory of its own rather than to the baseline's, because a write that
+ * resolved to `signal/` would let one stray variable redefine the pre-deploy
+ * baseline, which is the exact accident `preview/` exists to prevent. CHECKING
+ * it does not need this name at all: see `main`, which compares it against
+ * `signal/` — the bytes it reproduces — rather than against a copy of them.
  */
 function previewSlug(flagsOn: readonly string[]): string {
   const parts = flagsOn.map((key) => key.replace(/^SIGNAL_/, '').toLowerCase());
+  if (parts.length === 0) return 'engine-flags-off';
   return parts.length === 1 ? `${parts[0]}-only` : parts.join('-');
 }
 
@@ -201,8 +245,18 @@ async function main(): Promise<void> {
 
   const flags = signalFlagState();
   const flagsOn = SIGNAL_FLAG_KEYS.filter((key) => flags[key]);
+  const engineFlagsOn = ENGINE_FLAG_KEYS.filter((key) => flags[key]);
+  const slug = previewSlug(engineFlagsOn);
   console.log(`mode: ${MODE}`);
   console.log(`signal flags: ${flagsOn.length ? flagsOn.join(', ') : 'all OFF'}`);
+  /*
+   * Said out loud, because a reader who set a variable and saw no directory
+   * named after it deserves the reason rather than a search through this file.
+   */
+  const inertFlags = flagsOn.filter((key) => !(ENGINE_FLAG_KEYS as readonly string[]).includes(key));
+  if (inertFlags.length) {
+    console.log(`${inertFlags.join(', ')}: never reaches the engine, changes no byte here — left out of the snapshot name`);
+  }
   /*
    * A flag-ON run writes somewhere else entirely. Being able to look at what a
    * phase does is necessary; being able to overwrite the flags-OFF baseline with
@@ -215,11 +269,32 @@ async function main(): Promise<void> {
    * what it did last time?" - which is the only question worth asking at each
    * step of a rollout that moves one flag at a time.
    */
+  /*
+   * ANY flag decides whether this is a preview; only the ENGINE flags decide
+   * what the directory is called. The two were being answered by one expression:
+   * a run with `SIGNAL_HISTORY` alone must still be kept away from `signal/` —
+   * it is not a flags-OFF run and must not be able to rewrite the baseline —
+   * while the bytes it produces ARE the baseline's, so naming its directory
+   * after P6 claimed a difference that is not in there.
+   *
+   * WHICH LEAVES ONE CASE WITH NOWHERE TO LOOK: an inert flag on, every engine
+   * flag off. Writing must still be diverted, but a CHECK has a perfectly good
+   * reference already — `signal/`, which is what this run reproduces byte for
+   * byte. Comparing against it is the honest answer and it is a stronger check
+   * than a third copy of the same ten files would be: it asserts that the inert
+   * flag really is inert. Only the label has to stay careful, because passing
+   * here is not the pre-deploy gate passing.
+   */
   const previewing = flagsOn.length > 0;
-  const outputDir = previewing ? join(PREVIEW_DIR, previewSlug(flagsOn)) : SIGNAL_DIR;
-  if (previewing) {
+  const engineOff = engineFlagsOn.length === 0;
+  const checkingAgainstBaseline = previewing && engineOff && MODE === 'check';
+  const outputDir = previewing && !checkingAgainstBaseline ? join(PREVIEW_DIR, slug) : SIGNAL_DIR;
+  if (checkingAgainstBaseline) {
+    console.log('no engine flag is on, so this run reproduces the baseline — comparing against __golden__/signal/');
+    console.log('NOT the pre-deploy gate; the gate is the run with every SIGNAL_* flag unset');
+  } else if (previewing) {
     mkdirSync(outputDir, { recursive: true });
-    console.log(`${MODE === 'check' ? 'comparing against' : 'writing to'} __golden__/preview/${previewSlug(flagsOn)}/`);
+    console.log(`${MODE === 'check' ? 'comparing against' : 'writing to'} __golden__/preview/${slug}/`);
     if (MODE === 'check') console.log('PREVIEW check, not the pre-deploy gate; the gate is the flags-OFF run');
   }
 
@@ -259,7 +334,7 @@ async function main(): Promise<void> {
       source: frozen.source,
       freshness: frozen.freshness,
       calculatedAt: PINNED_CALCULATED_AT,
-      features: { gate: flags.SIGNAL_GATE, zones: flags.SIGNAL_ZONES, actionable: flags.SIGNAL_ACTIONABLE },
+      features: engineFeatures(flags),
       earnings: { daysToNextReport: daysToReport(frozen) },
     });
     const serialized = stableStringify(result);
@@ -290,7 +365,7 @@ async function main(): Promise<void> {
   if (stale.length && !option('symbols')) console.log(`\nsnapshots not covered by this run: ${stale.join(', ')}`);
 
   if (MODE === 'check') {
-    const label = previewing ? `PREVIEW ${previewSlug(flagsOn)}` : 'GATE';
+    const label = previewing ? `PREVIEW ${slug}` : 'GATE';
     console.log(`\n${failures ? `${label} FAILED · ${failures} symbol(s) differ` : `${label} PASSED · ${SYMBOLS.length} symbol(s) byte-identical`}`);
     process.exitCode = failures ? 1 : 0;
     return;
