@@ -15,6 +15,11 @@ import {
   confidenceFromTerms,
 } from './calculations';
 import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
+import {
+  directedDistanceText,
+  distanceAtrText,
+  distancePercentText,
+} from '@/src/lib/presentation/distance';
 import type {
   EventRiskInput,
   IvPricingInput,
@@ -178,6 +183,38 @@ describe('the divisor counts measurements, and only measurements', () => {
     const { factors, availableWeight } = result.diagnostics;
     const counted = Object.values(factors).filter((factor) => factor.measurement === 'measured');
     expect(counted.reduce((sum, factor) => sum + factor.maxPoints, 0)).toBe(availableWeight);
+  });
+});
+
+describe('a distance to a level is written one way everywhere', () => {
+  it('never signs either distance, in the factor sentence or in the diagnostics', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { detail } = result.diagnostics.factors.riskReward;
+
+    /*
+     * The pair that contradicted itself on one screen: the row printed
+     * `+10.83% / +6.23%` while this sentence printed `ลงถึงแนวรับ -6.23%`. Both
+     * distances are magnitudes now, and the direction is in the words.
+     */
+    expect(detail).toContain('ขึ้นถึงแนวต้าน 10.83%');
+    expect(detail).toContain('ลงถึงแนวรับ 6.23%');
+    expect(detail).not.toContain('-6.23%');
+    expect(detail).not.toContain('+6.23%');
+    expect(detail).not.toContain('+10.83%');
+
+    // And the numbers the UI formats are magnitudes too, so no call site can
+    // reintroduce a sign by negating one on the way out.
+    expect(result.diagnostics.riskReward.upsidePercent).toBeGreaterThan(0);
+    expect(result.diagnostics.riskReward.downsidePercent).toBeGreaterThan(0);
+  });
+
+  it('formats a distance the same way whoever asks', () => {
+    expect(distancePercentText(6.23)).toBe('6.23%');
+    expect(distancePercentText(-6.23)).toBe('6.23%');
+    expect(distancePercentText(null)).toBe('—');
+    expect(distanceAtrText(-1.2)).toBe('1.20 ATR');
+    expect(directedDistanceText('down', 'แนวรับ', -6.23)).toBe('ลงถึงแนวรับ 6.23%');
   });
 });
 

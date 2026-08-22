@@ -1,5 +1,10 @@
 import { lastUsSessionClose, usTradingSessionsBetween } from '@/src/lib/market-data/us-market-calendar';
 import {
+  directedDistanceText,
+  distanceAtrText,
+  distanceExpectedMovesText,
+} from '@/src/lib/presentation/distance';
+import {
   OPTIONS_SIGNAL_CONFIG,
   OPTIONS_SIGNAL_CONFIG_VERSION,
   OPTIONS_SIGNAL_TOTAL_WEIGHT,
@@ -55,8 +60,6 @@ const roundOrNull = (value: number | null | undefined, digits = 2): number | nul
   const safe = finite(value);
   return safe === null ? null : Number(safe.toFixed(digits));
 };
-
-const percent = (value: number) => `${value > 0 ? '+' : ''}${round(value, 2)}%`;
 
 const HOUR_MS = 3_600_000;
 
@@ -577,9 +580,18 @@ export function scoreRiskReward(
     partial: upside === null || downside === null,
   };
 
+  /*
+   * Both distances written the same way, by the one formatter.
+   *
+   * This line used to negate the downside — `percent(-downside)` — so the modal
+   * printed `ลงถึงแนวรับ -6.23%` two lines above a row that printed the same
+   * distance as `+6.23%`, and a third call site below printed it as `+6.23%`
+   * again. A distance to a level does not have a sign; the label carries the
+   * direction and the number carries the magnitude.
+   */
   const distanceText = [
-    upside === null ? null : `ขึ้นถึงแนวต้าน ${percent(upside)}${geometry.upsideAtr === null ? '' : ` (${round(geometry.upsideAtr, 2)} ATR)`}`,
-    downside === null ? null : `ลงถึงแนวรับ ${percent(-downside)}${geometry.downsideAtr === null ? '' : ` (${round(geometry.downsideAtr, 2)} ATR)`}`,
+    upside === null ? null : `${directedDistanceText('up', 'แนวต้าน', upside)}${geometry.upsideAtr === null ? '' : ` (${distanceAtrText(geometry.upsideAtr)})`}`,
+    downside === null ? null : `${directedDistanceText('down', 'แนวรับ', downside)}${geometry.downsideAtr === null ? '' : ` (${distanceAtrText(geometry.downsideAtr)})`}`,
   ].filter((part): part is string => part !== null).join(' · ');
 
   // A missing level on one side is unbounded on THAT side: no confirmed
@@ -614,7 +626,7 @@ export function scoreRiskReward(
     return {
       ...geometry,
       normalized: reachabilityOf(upsideExpectedMoves),
-      detail: `ราคาอยู่ที่แนวรับ ระยะถึงแนวต้าน ${percent(upside)}`,
+      detail: `ราคาอยู่ที่แนวรับ ${directedDistanceText('up', 'แนวต้าน', upside)}`,
       scoredSide: 'call',
       setupQuality: 1,
       reachability: reachabilityOf(upsideExpectedMoves),
@@ -624,7 +636,7 @@ export function scoreRiskReward(
     return {
       ...geometry,
       normalized: -reachabilityOf(downsideExpectedMoves),
-      detail: `ราคาอยู่ที่แนวต้าน ระยะถึงแนวรับ ${percent(downside)}`,
+      detail: `ราคาอยู่ที่แนวต้าน ${directedDistanceText('down', 'แนวรับ', downside)}`,
       scoredSide: 'put',
       setupQuality: 1,
       reachability: reachabilityOf(downsideExpectedMoves),
@@ -638,8 +650,8 @@ export function scoreRiskReward(
   const ratioText = `R:R Call ${round(callRewardRisk as number, 2)} · R:R Put ${round(putRewardRisk as number, 2)}`;
   const expectedMoveText = geometry.upsideExpectedMoves === null || geometry.downsideExpectedMoves === null
     ? ''
-    : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× `
-      + `ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
+    : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${distanceExpectedMovesText(geometry.upsideExpectedMoves)} `
+      + `ลง ${distanceExpectedMovesText(geometry.downsideExpectedMoves)}`;
 
   /*
    * The signed tilt of the geometry, on the call frame of reference.
@@ -654,7 +666,7 @@ export function scoreRiskReward(
   const reachText = (reachability: number, distance: number | null) => (
     reachability >= 1 || distance === null
       ? ''
-      : ` · เป้าหมายอยู่ไกล ${round(distance, 2)} เท่าของ Expected Move `
+      : ` · เป้าหมายอยู่ไกล ${distanceExpectedMovesText(distance)} เท่าของ Expected Move `
         + `จึงคิดคะแนน R:R เพียง ${Math.round(reachability * 100)}%`
   );
 

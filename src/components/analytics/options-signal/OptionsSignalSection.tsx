@@ -18,6 +18,11 @@ import type {
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTimeCE } from '@/src/lib/presentation/datetime';
+import {
+  distanceAtrText,
+  distanceExpectedMovesText,
+  distancePercentText,
+} from '@/src/lib/presentation/distance';
 import { requestOptionsSignal, type OptionsSignalOutcome } from './signal-client';
 import {
   DATA_STATE_LABEL,
@@ -636,20 +641,32 @@ function DetailBody({ breakdown, summary }: {
           <Detail label="ราคาที่ใช้คำนวณ" value={numberText(riskReward.price)} />
           <Detail label="แนวรับใกล้สุด" value={numberText(riskReward.support)} />
           <Detail label="แนวต้านใกล้สุด" value={numberText(riskReward.resistance)} />
-          <Detail label="ระยะขึ้น / ระยะลง" value={`${percentText(riskReward.upsidePercent)} / ${percentText(riskReward.downsidePercent)}`} />
           {/*
-            * The same two distances in ATR. A +2.96% / -12.53% pair looks wildly
+            * UNSIGNED, and the direction is in the label.
+            *
+            * This row printed `+10.83% / +6.23%` from one formatter while the
+            * factor sentence above it printed the same downside as `-6.23%` from
+            * another. A distance to a level is not signed — it has a direction,
+            * which the label already carries — and `+6.23%` left a reader to work
+            * out whether it meant "up 6.23%" or "6.23% of room below".
+            */}
+          <Detail
+            label="ระยะขึ้น / ระยะลง"
+            value={`${distancePercentText(riskReward.upsidePercent)} / ${distancePercentText(riskReward.downsidePercent)}`}
+          />
+          {/*
+            * The same two distances in ATR. A 2.96% / 12.53% pair looks wildly
             * lopsided until you know one daily range is 3% of price, at which
             * point it is 1 ATR up and 4 ATR down — which is the sentence a reader
             * can actually use.
             */}
           <Detail
             label="ระยะขึ้น / ระยะลง (หน่วย ATR)"
-            value={`${atrText(riskReward.upsideAtr)} / ${atrText(riskReward.downsideAtr)}`}
+            value={`${distanceAtrText(riskReward.upsideAtr)} / ${distanceAtrText(riskReward.downsideAtr)}`}
           />
           <Detail
             label="ระยะขึ้น / ระยะลง (เทียบ Expected Move)"
-            value={`${atrText(riskReward.upsideExpectedMoves)} / ${atrText(riskReward.downsideExpectedMoves)}`}
+            value={`${distanceExpectedMovesText(riskReward.upsideExpectedMoves)} / ${distanceExpectedMovesText(riskReward.downsideExpectedMoves)}`}
           />
           {/*
             * The expected move NEVER appears without its horizon. Six dollars
@@ -959,10 +976,3 @@ function numberText(value: number | null): string {
 }
 
 /** A multiple, printed as `1.24×`. Used for both ATR and Expected Move units. */
-function atrText(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(2)}×`;
-}
-
-function percentText(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
-}

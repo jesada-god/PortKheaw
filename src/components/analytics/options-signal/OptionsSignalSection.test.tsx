@@ -612,8 +612,28 @@ describe('OptionsSignalSection gated DTO rendering', () => {
       .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
-    expect(document.body.textContent).toContain('1.20× / 0.50×');
+    // ATR rows say ATR. They used to print "×", which is the expected-move unit.
+    expect(document.body.textContent).toContain('1.20 ATR / 0.50 ATR');
     expect(document.body.textContent).toContain('Expected Move');
+  });
+
+  it('prints both distances unsigned, with the direction carried by the label', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * The row and the factor sentence above it are the pair that contradicted
+     * each other: `+10.91% / +4.55%` beside `ลงถึงแนวรับ -4.55%`. Neither sign
+     * was right, because a distance to a level does not have one.
+     */
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('10.91% / 4.55%');
+    expect(text).not.toContain('+10.91%');
+    expect(text).not.toContain('-4.55%');
+    expect(text).not.toContain('+4.55%');
   });
 
   it('renders nothing broken when every diagnostic number is absent', async () => {
