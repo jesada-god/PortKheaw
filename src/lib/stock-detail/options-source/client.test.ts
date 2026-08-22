@@ -1,9 +1,36 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchOptionsChainOutcome, fetchOptionsExpirations, fetchOptionsSr, fetchOptionsWalls } from './client';
 
 const EXPIRATION = '2026-08-21';
 
-afterEach(() => vi.unstubAllGlobals());
+/**
+ * The day this file is standing on, pinned.
+ *
+ * `fetchOptionsExpirations` filters `value >= new Date()`, so every expiration
+ * in this file has a shelf life: EXPIRATION expired on 2026-08-22 and the
+ * sorted-and-filtered assertion below started failing on that date, for a
+ * reason that has nothing to do with the client this file is about. A test that
+ * goes red on its own is worse than no test — the next red run cannot be read.
+ *
+ * Pinned, not computed from `now`: the case under test is that ONE date is
+ * dropped and two are kept, and a fixture derived from today can never exercise
+ * the filter. Every envelope here carries `asOf: 2026-07-26`, so that is the
+ * day these responses describe.
+ *
+ * `toFake: ['Date']` only. This file awaits real promises; faking timers too
+ * would stall them.
+ */
+const PINNED_NOW = new Date('2026-07-26T12:00:00.000Z');
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(PINNED_NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function rawContract(type: 'call' | 'put', strike: number, openInterest: number) {
   return {

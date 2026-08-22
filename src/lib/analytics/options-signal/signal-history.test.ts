@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ivPercentilePendingOf } from './assemble';
 import { calculateOptionsSignal } from './calculations';
 import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_CONFIG_VERSION } from './config';
@@ -272,6 +272,36 @@ describe('history falls back to the buffer on an outage, never on an empty answe
  */
 describe('a store that silently returns nothing is caught, not believed', () => {
   const today = () => new Date('2026-08-19T09:00:00.000Z');
+
+  /*
+   * THE OTHER CLOCK IN THIS TEST, which `now:` does not reach.
+   *
+   * `checkHistoryAccess` takes its clock as an option and every case below
+   * passes it, so the probe row is captured on 2026-08-19. The store it probes
+   * has a clock of its own: `createSignalHistoryLog().read()` computes its
+   * lookback cutoff from `Date.now()`, which is the REAL day. Once the real day
+   * moved more than `lookbackDays` past 2026-08-19, the probe's own row fell
+   * outside the window it was read back through — so the row was written, could
+   * not be seen, and the canary reported `history-read-denied-silently` on a
+   * store that was working perfectly. A false outage, arriving on a date rather
+   * than on a change.
+   *
+   * Pinning `Date` here puts the store's clock on the same day as the injected
+   * one. The fix is in the test and not in the store on purpose: the store's
+   * `Date.now()` is correct for the process it runs in, and giving it an
+   * injectable clock is a source change this round is not allowed to make. It
+   * is written up in `docs/market-signal/open-work.md`.
+   *
+   * Scoped to this describe. The blocks above deliberately read the real today
+   * (`new Date().toISOString()`) to check same-day upsert behaviour, and those
+   * are true on any day.
+   */
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(today());
+  });
+
+  afterEach(() => vi.useRealTimers());
 
   /** RLS denial as PostgREST actually presents it: writes rejected, reads empty. */
   function rlsDeniedStore(): OptionsSignalHistoryStore {

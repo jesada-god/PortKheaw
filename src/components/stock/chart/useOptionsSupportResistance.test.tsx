@@ -14,6 +14,26 @@ import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types
 const EXP_1 = '2026-08-21';
 const EXP_2 = '2026-09-18';
 
+/**
+ * The day this file is standing on, pinned.
+ *
+ * `fetchOptionsExpirations` drops anything before `new Date()` — correctly, an
+ * expired contract is not a choice the overlay may offer — so a fixture with
+ * hard-coded expirations has a shelf life. These two were written in July 2026
+ * and EXP_1 quietly expired on 2026-08-22, at which point the assertion below
+ * started failing for a reason that has nothing to do with the request policy
+ * this file is about.
+ *
+ * Pinned rather than made relative to today, because the point of the fixture
+ * is that ONE date is expired and two are not: a fixture computed from `now`
+ * can never test the filter it is here to test. `asOf` on every envelope in
+ * this file is 2026-07-26, so this is the day those envelopes describe.
+ *
+ * Only `Date` is faked. Timers stay real — this suite awaits `act` and
+ * `vi.waitFor`, both of which need a clock that actually advances.
+ */
+const PINNED_NOW = new Date('2026-07-26T12:00:00.000Z');
+
 function contract(type: 'call' | 'put', strike: number, expiration: string) {
   return {
     contractSymbol: `${type}-${expiration}-${strike}`, underlyingSymbol: 'AAPL', type, expiration, strike,
@@ -67,6 +87,8 @@ function Harness({ enabled, tier = 'elite' }: { enabled: boolean; tier?: Subscri
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(PINNED_NOW);
   latest = null;
   clearOptionsChainCoordinatorForTests();
   clearOptionsExpirationsCoordinatorForTests();
@@ -75,6 +97,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
