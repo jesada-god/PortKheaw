@@ -559,7 +559,21 @@ export interface OptionsSignalDiagnostics {
     state: OptionsSignalDataState;
   };
   iv: {
+    /**
+     * The ถูก/แพง verdict, or NULL when it was withheld.
+     *
+     * Withheld across an earnings report inside the contract's own life: the
+     * ratio behind it compares a backward-looking realized volatility with a
+     * forward-looking implied one, and across a report most of the implied side
+     * is the price OF the report. Calling that "ต่ำ" points a reader at exactly
+     * the thing the same page warns them about.
+     *
+     * Only the VERDICT is withheld. The confidence penalties and the IV_WARNING
+     * gate read the unsuppressed level and are unchanged.
+     */
     level: IvLevel | null;
+    /** Why the verdict was withheld. Null when it was published. */
+    levelSuppressedReason: string | null;
     basis: IvPricingInput['basis'] | null;
     ivRank: number | null;
     ivPercentile: number | null;

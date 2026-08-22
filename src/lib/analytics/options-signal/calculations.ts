@@ -1166,8 +1166,20 @@ function buildSetup(
   ivReason: string | null,
   daysToEarnings: number | null,
   liquidity: LiquidityOutcome | null,
+  /**
+   * Set when the ถูก/แพง verdict was withheld across an earnings report inside
+   * the contract.
+   *
+   * The SHAPE below still comes from the real `ivLevel` — this change is not
+   * allowed to move any behaviour, and withholding the shape would remove a
+   * recommendation rather than correct a sentence. What it replaces is the
+   * RATIONALE, which said "ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้"
+   * on a contract whose premium is mostly the report it straddles.
+   */
+  ivLevelSuppressedReason: string | null = null,
 ): SuggestedOptionsSetup {
   const warnings = setupWarnings(daysToEarnings, liquidity);
+  if (ivLevelSuppressedReason) warnings.push(ivLevelSuppressedReason);
   if (signalType === 'IV_WARNING') {
     return { status: 'not-recommended', reason: 'อยู่ในสถานะเตือนความเสี่ยง (IV สูงมาก หรือใกล้ประกาศงบ) จึงยังไม่เสนอรูปแบบสัญญา', warnings };
   }
@@ -1188,9 +1200,11 @@ function buildSetup(
     dteMax: shape.dteMax,
     deltaMin: shape.deltaMin,
     deltaMax: shape.deltaMax,
-    rationale: ivLevel === 'low'
-      ? 'ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้ และเลือก Delta ที่เกาะราคาหุ้นได้ดี'
-      : 'ค่าพรีเมียมอยู่ระดับปกติ จึงเผื่ออายุสัญญาให้ยาวขึ้นเพื่อลดผลของ Time Decay',
+    rationale: ivLevelSuppressedReason
+      ? 'รูปแบบด้านล่างเลือกจากอายุสัญญาและ Delta เท่านั้น ยังไม่ได้ตัดสินว่าค่าพรีเมียมคุ้มหรือไม่'
+      : ivLevel === 'low'
+        ? 'ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้ และเลือก Delta ที่เกาะราคาหุ้นได้ดี'
+        : 'ค่าพรีเมียมอยู่ระดับปกติ จึงเผื่ออายุสัญญาให้ยาวขึ้นเพื่อลดผลของ Time Decay',
     warnings,
   };
 }
@@ -1283,7 +1297,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       state: input.riskReward.state,
     },
     iv: {
-      level: null, basis: null, ivRank: null, ivPercentile: null,
+      level: null, levelSuppressedReason: null, basis: null, ivRank: null, ivPercentile: null,
       percentilePending: input.historyDegraded === true ? null : input.ivPercentilePending ?? null,
       percentileStoreUnavailable: input.historyDegraded === true,
       impliedVolatility: null, realizedVolatility: null, realizedWindowDays: null, dte: null,
@@ -1506,6 +1520,39 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   const pricing = input.pricing.status === 'available' ? input.pricing.value : null;
   const ivLevel = pricing ? classifyIvLevel(pricing) : null;
   const daysToEarnings = input.event.status === 'available' ? finite(input.event.value.daysToEarnings) : null;
+  /*
+   * IS THE PREMIUM EXPENSIVE? — a question that cannot be asked across an
+   * earnings report inside the contract.
+   *
+   * The reported card said "IV ÷ ความผันผวนจริง = 0.768 → ระดับความแพง: ต่ำ" two
+   * sections above "งบประกาศ 27 ส.ค. อีก 5 วัน", a −15 confidence penalty for
+   * exactly that, and an IV Crush warning. All four about one contract.
+   *
+   * The ratio is comparing two different periods: realized volatility is
+   * BACKWARD-looking and describes shocks that have already happened, while the
+   * implied volatility holds a risk that has not arrived yet. IV at this level
+   * before a report is not cheap premium — it is the price OF the event, and
+   * most of it disappears the morning after. Calling it "ต่ำ" invites a reader
+   * to buy the one thing the same page is warning them about.
+   *
+   * The verdict is therefore WITHHELD, not recomputed: the engine has no
+   * separation of event vol from base vol and inventing one here would be a
+   * model change hidden inside a copy fix. What is published instead is that the
+   * question cannot be answered, and why.
+   *
+   * `ivLevel` itself is untouched. The confidence penalties and the IV_WARNING
+   * gate keep reading it, because those are scoring behaviour and this change is
+   * not allowed to move any of it — a premium that is genuinely extreme still
+   * gates, whether or not the card is willing to call it expensive.
+   */
+  const earningsInsideContract = daysToEarnings !== null
+    && pricing?.dte != null
+    && daysToEarnings >= 0
+    && daysToEarnings <= pricing.dte;
+  const ivLevelSuppression = earningsInsideContract
+    ? `งบประกาศในอีก ${daysToEarnings} วัน ซึ่งอยู่ในอายุสัญญา ${pricing?.dte} วัน `
+      + 'ค่า IV ส่วนหนึ่งจึงเป็นราคาของ event ที่จะหายไปหลังประกาศ ยังตัดสินความถูก/แพงไม่ได้'
+    : null;
 
   const penalties: OptionsSignalPenalty[] = [];
   const penaltyConfig = config.confidence.penalties;
@@ -1640,7 +1687,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       state: input.riskReward.state,
     },
     iv: {
-      level: ivLevel,
+      // Withheld across an earnings report inside the contract. See above: the
+      // gate still reads the unsuppressed level, only the VERDICT is withheld.
+      level: ivLevelSuppression === null ? ivLevel : null,
+      levelSuppressedReason: ivLevelSuppression,
       basis: pricing?.basis ?? null,
       ivRank: pricing?.basis === 'iv-rank' ? roundOrNull(pricing.ivRank, 1) : null,
       ivPercentile: pricing?.basis === 'iv-percentile' ? roundOrNull(pricing.ivPercentile, 1) : null,
@@ -1701,7 +1751,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       factors,
       signalType,
       underlyingBias,
-      ivLevel,
+      // The reason list is user-facing prose, so it gets the WITHHELD verdict —
+      // "ค่าพรีเมียมของ option ยังไม่แพง" is the same claim as the badge.
+      ivLevel: ivLevelSuppression === null ? ivLevel : null,
+      ivLevelSuppressedReason: ivLevelSuppression,
       ivWarningReasons,
       downgrades,
       penalties,
@@ -1723,6 +1776,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       daysToEarnings,
       liquidityOutcome,
+      ivLevelSuppression,
     ),
     diagnostics,
   };
@@ -1733,6 +1787,8 @@ function buildReasoning(context: {
   signalType: OptionsSignalType;
   underlyingBias: UnderlyingBias;
   ivLevel: IvLevel | null;
+  /** Set when the verdict was withheld; printed in place of a ถูก/แพง sentence. */
+  ivLevelSuppressedReason: string | null;
   ivWarningReasons: string[];
   downgrades: string[];
   penalties: OptionsSignalPenalty[];
@@ -1789,6 +1845,12 @@ function buildReasoning(context: {
       id: 'iv-level',
       polarity: context.ivLevel === 'low' || context.ivLevel === 'normal' ? 'information' : 'caution',
       text,
+    });
+  } else if (context.ivLevelSuppressedReason) {
+    reasons.push({
+      id: 'iv-level-pre-earnings',
+      polarity: 'caution',
+      text: `ยังตัดสินความถูก/แพงของค่าพรีเมียมไม่ได้ · ${context.ivLevelSuppressedReason}`,
     });
   } else if (context.pricingReason) {
     reasons.push({ id: 'iv-unavailable', polarity: 'information', text: `Implied Volatility: ${context.pricingReason}` });

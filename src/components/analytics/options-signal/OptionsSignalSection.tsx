@@ -745,12 +745,33 @@ function DetailBody({ breakdown, summary }: {
           />
           <Detail label="อายุสัญญาที่ใช้เทียบ (DTE)" value={iv.dte === null ? '—' : `${iv.dte} วัน`} />
           <Detail label="IV ÷ ความผันผวนจริง" value={numberText(iv.ratio)} />
-          <Detail label="ระดับความแพง" value={iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]} />
+          <Detail
+            label="ระดับความแพง"
+            value={iv.levelSuppressedReason !== null
+              ? 'ก่อนประกาศงบ — ตัดสินความแพงไม่ได้'
+              : iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]}
+          />
           <Detail label="สถานะข้อมูล IV" value={DATA_STATE_LABEL[iv.state]} />
           <Detail label="แหล่งข้อมูล IV" value={iv.source ?? 'ไม่พร้อมใช้งาน'} />
           <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTimeCE(iv.fetchedAt) : '—'} />
           <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
+        {/*
+          * ATTACHED TO THE RATIO, not filed under a different heading.
+          *
+          * The card had the ratio and the verdict in section 4, the earnings
+          * date in section 6, the −15 penalty for it in section 7 and an IV
+          * Crush warning in the setup box. Four true statements about one
+          * contract, none of them next to the one they contradict.
+          */}
+        {iv.levelSuppressedReason !== null && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-iv-pre-earnings">
+            {iv.levelSuppressedReason} · ตัวเลข IV ÷ ความผันผวนจริงด้านบนยังแสดงตามจริง แต่เป็นการเทียบคนละช่วงเวลา
+            ความผันผวนจริงเป็นค่าย้อนหลัง ส่วน IV สะท้อนความเสี่ยงที่ยังมาไม่ถึง
+            {iv.ivRank === null && iv.ivPercentile === null
+              && ' · และยังไม่มีทั้ง IV Rank และ IV Percentile ของหุ้นตัวนี้ จึงไม่มีฐานเทียบตัวเองเลย'}
+          </p>
+        )}
         {iv.percentileStoreUnavailable && (
           <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-percentile-outage">
             {HISTORY_DEGRADED_NOTICE.helper}

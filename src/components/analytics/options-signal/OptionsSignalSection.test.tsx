@@ -143,6 +143,7 @@ const eliteSignal: OptionsSignalDto = {
       },
       iv: {
         level: 'normal',
+      levelSuppressedReason: null,
         basis: 'iv-vs-realized',
         ivRank: null,
         ivPercentile: null,

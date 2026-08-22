@@ -281,6 +281,80 @@ describe('completeness is measured under the factors, not at them', () => {
   });
 });
 
+describe('the premium is not judged across an earnings report inside the contract', () => {
+  const cheapLookingIv: IvPricingInput = {
+    basis: 'iv-vs-realized', impliedVolatility: 0.986, realizedVolatility: 1.284, ratio: 0.768,
+    observations: 30, realizedWindowDays: 30, dte: 41,
+  };
+
+  /*
+   * THE PASS CRITERION FROM THE REPORT: with earnings inside the contract, the
+   * words ถูก and แพง may not appear anywhere in the payload. The card was
+   * printing "ระดับความแพง: ต่ำ" five days before a report, on a contract with 41
+   * days to run, while deducting 15 confidence points for that same report.
+   */
+  it('lets no ถูก/แพง verdict reach the payload', () => {
+    const result = calculateOptionsSignal(baseInput({
+      pricing: available<IvPricingInput>(cheapLookingIv),
+      event: available<EventRiskInput>({ reportDate: '2026-08-27', daysToEarnings: 5, timeOfDay: 'post-market' }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+
+    expect(result.diagnostics.iv.level).toBeNull();
+    expect(result.diagnostics.iv.levelSuppressedReason).toContain('อยู่ในอายุสัญญา');
+
+    const payload = JSON.stringify(result);
+    expect(payload).not.toContain('ระดับความแพง: ต่ำ');
+    expect(payload).not.toContain('ยังไม่แพง');
+    expect(payload).not.toContain('แพงกว่าปกติ');
+    expect(payload).not.toContain('แพงผิดปกติ');
+  });
+
+  it('still publishes the raw ratio, with the disclaimer attached to it', () => {
+    const result = calculateOptionsSignal(baseInput({
+      pricing: available<IvPricingInput>(cheapLookingIv),
+      event: available<EventRiskInput>({ reportDate: '2026-08-27', daysToEarnings: 5, timeOfDay: 'post-market' }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    // Withholding a verdict is not hiding a measurement.
+    expect(result.diagnostics.iv.ratio).toBeCloseTo(0.768, 3);
+    expect(result.diagnostics.iv.impliedVolatility).toBeCloseTo(0.986, 3);
+    expect(result.reasoning.some((reason) => reason.id === 'iv-level-pre-earnings')).toBe(true);
+  });
+
+  it('publishes the verdict again once the report falls outside the contract', () => {
+    const result = calculateOptionsSignal(baseInput({
+      pricing: available<IvPricingInput>({ ...cheapLookingIv, dte: 3 }),
+      event: available<EventRiskInput>({ reportDate: '2026-09-30', daysToEarnings: 39, timeOfDay: 'post-market' }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    // The report is 39 days out and the contract expires in 3: this option never
+    // meets the event, so its premium is judgeable on the ordinary basis.
+    expect(result.diagnostics.iv.levelSuppressedReason).toBeNull();
+    expect(result.diagnostics.iv.level).not.toBeNull();
+  });
+
+  it('leaves the confidence penalty and the risk gate exactly where they were', () => {
+    /*
+     * Withholding the VERDICT must not withhold the GATE. An extreme premium
+     * still raises IV_WARNING and still costs confidence, whether or not the
+     * card is willing to put a word to it.
+     */
+    const extreme: IvPricingInput = {
+      basis: 'iv-vs-realized', impliedVolatility: 2.4, realizedVolatility: 1.2, ratio: 2,
+      observations: 30, realizedWindowDays: 30, dte: 41,
+    };
+    const result = calculateOptionsSignal(baseInput({
+      pricing: available<IvPricingInput>(extreme),
+      event: available<EventRiskInput>({ reportDate: '2026-08-27', daysToEarnings: 5, timeOfDay: 'post-market' }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    expect(result.diagnostics.iv.level).toBeNull();
+    expect(result.diagnostics.penalties.map((penalty) => penalty.id)).toContain('iv-extreme');
+    expect(result.signalType).toBe('IV_WARNING');
+  });
+});
+
 describe('a distance to a level is written one way everywhere', () => {
   it('never signs either distance, in the factor sentence or in the diagnostics', () => {
     const result = calculateOptionsSignal(baseInput());
