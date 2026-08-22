@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } from 'lucide-react';
-import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
+import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalMetrics, MarketSignalReason, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { formatBangkokDateTime, formatThaiDateOnly } from '@/src/lib/presentation/datetime';
 import { InfoHint } from '@/src/components/ui/InfoHint';
@@ -10,7 +10,7 @@ import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
 import { MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
-import { reasonContextFor, reasonText, type ReasonBaseContext } from './reason-copy';
+import { reasonContextFor, reasonHeadline, reasonText, type ReasonBaseContext } from './reason-copy';
 
 const DISCLAIMER = 'Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย';
 
@@ -39,6 +39,79 @@ const NOT_A_FORECAST = 'การ์ดนี้อธิบายสิ่ง�
 const MEASURED_PROVENANCE = `วัดจาก ${MARKET_SIGNAL_MEASURED.corpusInstruments} สินทรัพย์ · ${MARKET_SIGNAL_MEASURED.period.thai}`;
 /** §6.6's four figures, so the SIDEWAYS disclosure reads them and never types them. */
 const SIDEWAYS_MEASURED = MARKET_SIGNAL_MEASURED.sidewaysPersistence;
+
+/**
+ * The button, named for what is behind it rather than for a question.
+ *
+ * "ทำไม?" asked something the card had already started answering above it, and
+ * gave no clue that the thing behind it was the arithmetic — every metric, both
+ * sets of edges, the calibration run and the source. A reader who wanted the
+ * working had to guess that a two-word question led to it.
+ *
+ * It is a const because three places say it: the button, the chip row's
+ * overflow count, and the reason list's. A second spelling of a button's name
+ * is a reader looking for a control that is not there.
+ */
+const ADVANCED_TOGGLE = 'ดูรายละเอียดการคำนวณ';
+
+/**
+ * The footer's finding, in one line, for the layer that has room for one.
+ *
+ * NOT a shortening of the disclaimer — the disclaimer is a legal sentence and
+ * this is the useful one: what the card is describing (what price has already
+ * done) against what a reader assumes it is describing (what price will do).
+ * `NOT_A_FORECAST` says the same thing with its evidence attached, and it is
+ * still printed in full, with its provenance and the disclaimer, at the bottom
+ * of the advanced layer and on all three of the card's other render paths.
+ */
+const SHORT_NOTE = 'สถานะนี้อธิบายแนวโน้มจากข้อมูลที่ผ่านมา ไม่ใช่การคาดการณ์ว่าราคาจะไปทางไหน';
+
+/**
+ * The score's name, and the reading that made it need one.
+ *
+ * "Score +7 / 100" was being read as "a 7% chance of going up", and it handed a
+ * reader three separate invitations to read it that way: an English word that
+ * names a grade, a denominator that reads as "out of", and no sign anywhere in
+ * the label. The number is neither. It is the sum of the five evidence rows in
+ * §3, on an axis running from -100 to +100, and its SIGN is the direction.
+ *
+ * NOT "ความชัดเจนของสัญญาณ", and each half of that is separately disqualifying.
+ * The sign is a direction, so a card holding -45 would be calling a downtrend
+ * unclear. And "ความชัด" is already spent twice in the dialog this label now
+ * sits in — `ความชัดของภาวะตลาด` is regimeClarity — while the other number on
+ * the same block is `ความสอดคล้องของหลักฐาน`. A third quantity under a name two
+ * others already wear is the collision this const exists to avoid.
+ *
+ * The wording is not a coinage. It is the sentence the card ALREADY says about
+ * this exact field, promoted to the label: `คะแนนรวมเอนไปทาง${leaning}` in
+ * `descriptionFor`, `(คะแนนรวม …)` in the gate block, `รวม` at the foot of §3.
+ * `เอน` and not `เอียง` because `reason-copy` spends `เอียง` on the MACD tilt,
+ * which is a different and much more local lean.
+ */
+const SCORE_LABEL = 'คะแนนรวมเอนไปทางไหน';
+
+/**
+ * The axis, printed under the number, because the number cannot carry it.
+ *
+ * This is what replaces `/ 100` on this reading. A denominator says "out of",
+ * which IS the percentage reading; a range says where zero sits and that there
+ * is a negative half at all — which is the half that makes -45 legible. §3's
+ * total row keeps its `/ 100`, because down there 100 is the sum of the
+ * maxPoints column standing above it, which is the one place it is true.
+ */
+const SCORE_SCALE = 'ช่วง -100 ถึง +100 · เครื่องหมายคือทิศทางที่หลักฐานเอนไป ตัวเลขคือน้ำหนัก ไม่ใช่เปอร์เซ็นต์';
+
+/** Said once, under the figure it qualifies, rather than in two blocks of the same dialog. */
+const AGREEMENT_NOT_A_CHANCE = 'ไม่ใช่ % โอกาสที่ราคาจะไปทางนั้น';
+
+/**
+ * How many reasons the beginner layer draws before it starts counting.
+ *
+ * Four, because four short lines is still a glance and five is a list. The rest
+ * are counted rather than dropped, and every one of them is drawn in full one
+ * tap away — see `beginnerReasons`.
+ */
+const MAX_BEGINNER_REASONS = 4;
 
 /**
  * The card's footer, in one component so that no render path can ship without it.
@@ -361,12 +434,8 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
   const presentation = MARKET_SIGNAL_PRESENTATION[result.state];
   const Icon = presentation.icon;
-  const supporting = result.reasons.filter((reason) => result.bias === 'bullish'
-    ? reason.polarity === 'positive'
-    : result.bias === 'bearish' ? reason.polarity === 'negative' : reason.polarity === 'information');
-  const cautions = result.reasons.filter((reason) => reason.polarity === 'caution'
-    || (result.bias === 'bullish' && reason.polarity === 'negative')
-    || (result.bias === 'bearish' && reason.polarity === 'positive'));
+  const cautions = result.reasons.filter((reason) => readsAsCaution(reason, result.metrics, result.bias));
+  const supporting = result.reasons.filter((reason) => !readsAsCaution(reason, result.metrics, result.bias));
   const unconfirmed = result.warnings;
   const biasLabel = result.bias === 'bullish' ? 'Bullish Bias' : result.bias === 'bearish' ? 'Bearish Bias' : 'Neutral Bias';
   const beginnerDescription = descriptionFor(result.state, result.bias, result.zones ?? null, presentation.description);
@@ -415,6 +484,47 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
   /* Gathered once: every reason row reads the same payload, and rebuilding it
      per row would be the same object seven times. */
   const reasonContext = reasonContextFor(result);
+  /*
+   * THE THREE OR FOUR LINES SOMEBODY READS BEFORE DECIDING TO OPEN ANYTHING.
+   *
+   * The reasons were dialog-only, which meant the beginner layer named a state
+   * and then gave no account of it: a reader who wanted to know WHY had exactly
+   * one move available, and it was a modal. These are the same rows the dialog
+   * draws, in `REASON_HEADLINE`'s label register rather than in sentences, and
+   * nothing is chosen here that the dialog does not also show in full.
+   *
+   * ORDERED BY THE ENGINE'S OWN `impact`, which is the only ranking in the
+   * payload — a card that picked by id, or by which section a row lands in,
+   * would be this layer inventing an importance the engine never assigned.
+   * `Math.abs` because impact carries a side and this list does not: a strong
+   * caution and a strong support are equally worth the top of it.
+   *
+   * The tail is not dropped, it is counted, in the same shape the chip row
+   * already uses. `sort` runs on a copy: `result.reasons` is payload and the
+   * dialog below reads it in the engine's order.
+   */
+  const beginnerReasons = [...result.reasons]
+    .sort((left, right) => Math.abs(right.impact) - Math.abs(left.impact))
+    .slice(0, MAX_BEGINNER_REASONS);
+  const hiddenReasons = result.reasons.length - beginnerReasons.length;
+
+  /*
+   * The two facts §5 already carries, so this block can stop carrying them too.
+   *
+   * Both are derived from what is actually RENDERED down there — the reason
+   * ids in this payload — rather than from the conditions that would raise
+   * them, so the two blocks cannot drift apart when the engine changes its
+   * mind about when to emit a row.
+   */
+  const conflictNamedInReasons = result.reasons.some((reason) => reason.id === 'component-conflict')
+    ? (result.gate?.conflicts.includes('ema_vs_momentum') ? 'ema_vs_momentum' : 'structure_vs_momentum')
+    : null;
+  const unsaidConflicts = (result.gate?.conflicts ?? []).filter((conflict) => conflict !== conflictNamedInReasons);
+  /* §5's earnings row states the day count and needs one; without it the row
+     falls back to the engine's sentence and this line is the only place the
+     gate's own framing is said. */
+  const earningsSaidHere = (result.gate?.earningsProximity === 'imminent' || result.gate?.earningsProximity === 'soon')
+    && !(result.reasons.some((reason) => reason.id === 'earnings-proximity') && result.gate?.daysToEarnings !== null);
 
   return (
     <section aria-label="Technical Outlook" data-state={result.state} className={`rounded-2xl border p-5 ${presentation.tone}`}>
@@ -425,55 +535,96 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             <Icon aria-hidden="true" size={22} />
             <h2 className="font-bold text-white">Technical Outlook · Market Signal</h2>
           </div>
+          {/*
+            THE STATE, WITHOUT THE WORD "BIAS" BESIDE IT.
+
+            The line used to read `SIDEWAYS • Neutral Bias`. "Bias" is which way
+            something LEANS, i.e. a sentence about where price is going, printed
+            two rows above a footer saying this card does not say where price is
+            going. On SIDEWAYS it was also the same fact twice: the state IS the
+            neutral one, so the second half of the line restated the first.
+
+            The bias is not gone — it names the dialog this button opens, where
+            it sits beside the score it is derived from and can be read as the
+            arithmetic it is rather than as a forecast.
+          */}
           <p className="mt-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
-            {result.state} <span className="text-slate-500" aria-hidden="true">•</span> {biasLabel}
+            {result.state}
           </p>
           <p className="mt-1 text-sm font-semibold" data-testid="signal-state-headline">{beginnerHeadline}</p>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300" data-testid="signal-state-description">{beginnerDescription}</p>
-          {/* Directly under the label it is about, not folded into "ทำไม?".
-              A disclosure a reader has to open a dialog to meet is a disclosure
-              made to the readers who least needed it.
+          {/*
+            AND NOT THE SENTENCE THAT USED TO SIT HERE.
 
-              One sentence per line: the first is the measurement and the second
-              is how to read it, and running them together as one block is how a
-              disclosure becomes a paragraph nobody finishes. */}
-          {sidewaysBaseRate ? (
-            <div className="mt-2 max-w-2xl space-y-1 text-xs leading-5 text-slate-400" data-testid="signal-sideways-base-rate">
-              {sidewaysBaseRate.map((sentence) => <p key={sentence}>{sentence}</p>)}
-            </div>
-          ) : null}
+            `beginnerDescription` said "ตอนนี้ราคายังอยู่ในกรอบ ยังไม่มีราคาปิดพ้น
+            ขอบบนหรือขอบล่าง…" directly under a headline reading "ตอนนี้ราคายังอยู่
+            ในกรอบ" and directly above a picture whose own caption says the same
+            thing a third time. Three tellings of one fact in one column is not
+            emphasis, it is a reader checking whether they missed a difference.
+
+            The headline is kept because it is the shortest, and the bar is kept
+            because it is the only one of the three that also shows WHERE. The
+            sentence between them moved to §1 of the dialog, which is where a
+            reader who wants it spelled out is already going.
+          */}
         </div>
         <button
           type="button"
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen(true)}
+          data-testid="signal-advanced-toggle"
           className="flex min-h-11 items-center gap-2 rounded-xl border border-current/30 px-3 text-sm font-semibold hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#D4FF00]"
         >
           <Info aria-hidden="true" size={17} />
-          ทำไม?
+          {ADVANCED_TOGGLE}
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-300">
-        <span className="inline-flex min-h-11 items-center gap-2">
-          Score <strong className="font-mono text-white">{signed(result.score)} / 100</strong>
-          <InfoHint term="directionalScore" align="start" />
-        </span>
-        {/*
-          NOT a percentage, and not on the headline line any more.
-          P4a measured what this number is worth as a forecast: the 90-99 band
-          hits 53-55% of the time, which is what the 20-29 band hits. A reader
-          shown "93%" beside a direction reads a probability, and there is no
-          honest way to print that figure large. So the headline carries the
-          WORD — how well the evidence agrees — and the number itself moved into
-          the breakdown, where it sits beside the terms that produced it.
-        */}
-        <span className="inline-flex min-h-11 items-center gap-2">
-          ความสอดคล้องของหลักฐาน
-          <strong className="font-mono text-white">{AGREEMENT_COPY[result.evidenceAgreementLabel]}</strong>
-          <InfoHint term="signalConfidence" align="end" />
-        </span>
+      {/*
+        The account of the state, on the layer that names it.
+
+        Short enough that four of them are still a glance, and every one of them
+        is a row the dialog draws in full — this is the same list, said in the
+        register of the state names above it. `reasonHeadline` falls back to the
+        full sentence for an id it has no label for, so a reason the engine adds
+        tomorrow is long here rather than missing.
+      */}
+      {beginnerReasons.length ? (
+        <ul className="mt-3 max-w-2xl space-y-1.5 text-sm leading-6 text-slate-300" data-testid="signal-beginner-reasons">
+          {beginnerReasons.map((reason) => (
+            <li key={reason.id} className="flex gap-2">
+              <span aria-hidden="true">•</span>
+              <span data-reason-id={reason.id}>{reasonHeadline(reason, reasonContext)}</span>
+            </li>
+          ))}
+          {hiddenReasons > 0 ? (
+            <li className="text-xs leading-5 text-slate-400">
+              และอีก {hiddenReasons} ข้อ ใน “{ADVANCED_TOGGLE}”
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {/*
+        THE ONLY THING THIS LAYER KEEPS OF THE TWO NUMBERS: one of their words.
+
+        P4.5 had already taken the FIGURE off the agreement and left the word,
+        for a reason it did not then apply to the score beside it: the 90-99
+        band hits what the 20-29 band hits, so a figure printed next to a
+        direction is read as a likelihood it does not carry. The score was the
+        same reader making the same mistake with a different number — "+7 / 100"
+        read as a 7% chance — and it needed a caveat beside it saying so.
+
+        A number that has to ship with a warning against the obvious reading of
+        it does not belong on the ten-second layer. Both moved to the top of the
+        dialog, where the label has room to name its axis and the terms that
+        produced it are three headings below. Nothing is hidden: the word here
+        is the same `AGREEMENT_COPY` entry as ever, and it is the sentence a
+        glance actually needs — whether the evidence agrees with itself.
+      */}
+      <div className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-slate-200" data-testid="signal-agreement-word">
+        {AGREEMENT_COPY[result.evidenceAgreementLabel]}
+        <InfoHint term="signalConfidence" align="start" />
       </div>
       <div className="mt-2 flex flex-wrap gap-2" aria-label="Signal flags" data-testid="signal-flags">
         {(chipsOrdered ? orderedFlags(result.flags).slice(0, MAX_FLAG_CHIPS) : result.flags).map((flag) => (
@@ -483,7 +634,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
         ))}
         {chipsOrdered && result.flags.length > MAX_FLAG_CHIPS ? (
           <span className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold text-slate-400">
-            +{result.flags.length - MAX_FLAG_CHIPS} ใน “ทำไม?”
+            +{result.flags.length - MAX_FLAG_CHIPS} ใน “{ADVANCED_TOGGLE}”
           </span>
         ) : null}
       </div>
@@ -494,8 +645,37 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           actionable={result.actionable ?? null}
         />
       ) : null}
-      {result.history ? <HistoryStrip history={result.history} /> : null}
-      <SignalFooter tone="text-slate-400" />
+      {/*
+        The one line of the footer that belongs on a ten-second read.
+
+        The full footer is three lines — the not-a-forecast finding, what it was
+        measured over, and the legal disclaimer — and all three are still shown,
+        at the bottom of the advanced layer, unchanged. This is the sentence
+        they have in common, said once, in the register of the layer it is on.
+      */}
+      <p className="mt-3 text-xs leading-5 text-slate-400" data-testid="signal-short-note">{SHORT_NOTE}</p>
+      {/*
+        AND THE LEGAL LINE, BACK ON THE CARD IT WAS TAKEN OFF.
+
+        `git log -S` puts "no render path can ship without it" in 02c3070, whose
+        message decides one thing about placement: the not-a-forecast FINDING
+        goes "above the disclaimer, on every one of the four render paths
+        including the locked preview". That is a decision about the finding,
+        forced by the P4a run. It is not a decision about this sentence.
+
+        This sentence predates it — 51f4f5f, a general production patch — and
+        the same "ไม่ใช่คำแนะนำซื้อขาย" clause is written inline on six other
+        surfaces (the options card, three places in the simulator, the decision
+        panel, the planner). The instrument that actually carries the claim is
+        `INVESTMENT_DISCLAIMER` in `src/lib/legal/documents.ts`, which is
+        versioned and effective-dated; what sits on a card is the house habit of
+        repeating it where the numbers are. So: convention, not compliance, and
+        the convention is that the surface a reader acts from says it.
+
+        Only this line comes back. The finding and its provenance stay at the
+        bottom of the advanced layer, where the evidence they quote is.
+      */}
+      <p className="mt-1 text-xs leading-5 text-slate-400" data-testid="signal-card-disclaimer">{DISCLAIMER}</p>
 
       <ResponsiveDialog
         isOpen={open}
@@ -503,29 +683,94 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
         title={`ทำไมเป็น ${result.state} • ${biasLabel}?`}
       >
         <div className="space-y-6 text-sm text-slate-300">
+          {/*
+            THE TWO NUMBERS, ON THE LAYER THAT CAN AFFORD THEM.
+
+            Both were on the beginner card and both were being read as odds.
+            Here each one gets what the card had no room for: the score gets an
+            axis printed under it, so -100 is visible and `+7` cannot be a
+            percentage of anything; the agreement gets its figure back beside
+            the word, with the same caveat it used to carry in the raw block at
+            the bottom of this dialog — said here, once, instead of there.
+
+            First in the dialog rather than last because this is what the reader
+            tapped through for. §2 says what the agreement figure is made of and
+            §3 sums the score row by row, both a scroll below.
+          */}
+          <section data-testid="signal-numbers">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+              <h3 className="font-semibold text-white">{SCORE_LABEL}</h3>
+              <span className="inline-flex min-h-11 items-center gap-2">
+                <strong className="font-mono text-lg text-white">{signed(result.score)}</strong>
+                <InfoHint term="directionalScore" align="end" />
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-400">{SCORE_SCALE}</p>
+            <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+              <h3 className="font-semibold text-white">ความสอดคล้องของหลักฐาน</h3>
+              <span className="inline-flex min-h-11 items-center gap-2">
+                <strong className="font-mono text-white">{AGREEMENT_COPY[result.evidenceAgreementLabel]} · {result.evidenceAgreement}/100</strong>
+                <InfoHint term="signalConfidence" align="end" />
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-400">{AGREEMENT_NOT_A_CHANCE}</p>
+          </section>
+
           <section>
             <h3 className="font-semibold text-white">1. สถานะนี้แปลว่าอะไร</h3>
-            <p className="mt-2 leading-6">{beginnerDescription}</p>
-            {/* The same two sentences the card carries, kept here so the
-                reader who opens "ทำไม?" to check the working meets the base
-                rate beside the reasons rather than instead of them. */}
+            <p className="mt-2 leading-6" data-testid="signal-state-description">{beginnerDescription}</p>
+            {/* The base rate, which used to be drawn twice — once under the
+                state line and once here. It reads a measurement the beginner
+                layer has no room to qualify, so it is kept where the rest of
+                the working is, next to the reasons rather than instead of
+                them. */}
             {sidewaysBaseRate ? (
               <div className="mt-2 space-y-1 leading-6 text-slate-400" data-testid="signal-sideways-base-rate-dialog">
                 {sidewaysBaseRate.map((sentence) => <p key={sentence}>{sentence}</p>)}
               </div>
             ) : null}
+            {/* The label's own history, moved off the card with everything else
+                that is a measurement about the engine rather than about price.
+                Unchanged: same strip, same three disclosures. */}
+            {result.history ? <HistoryStrip history={result.history} /> : null}
           </section>
 
           {result.gate ? (
             <section data-testid="signal-gate-explainer">
               <h3 className="font-semibold text-white">ทำไมถึงไม่สรุปแรงกว่านี้</h3>
               <p className="mt-2 leading-6">{BAND_COPY[result.gate.band]} (คะแนนรวม {signed(result.score)})</p>
-              {result.gate.conflicts.length ? (
+              {/*
+                WHAT THIS BLOCK NO LONGER SAYS, BECAUSE §5 ALREADY SAID IT.
+
+                It used to list `gate.conflicts` and print an earnings sentence,
+                and §5 two headings below carried the SAME two facts as reason
+                rows — `component-conflict` and `earnings-proximity`, raised by
+                the engine from the same two gate fields. Word for word in the
+                earnings case. A reader who reached the bottom of the dialog had
+                met each of them twice and had no way to tell whether the second
+                telling was a second finding.
+
+                Deduplicated toward §5, which is the fuller telling: its rows
+                say what the conflict MEANS and what a report does to a chart,
+                where these two only named them.
+
+                NOTHING IS DROPPED, and that is what the filters are for rather
+                than a plain deletion. `component-conflict` is one row however
+                many conflicts the gate holds — it names the EMA pair when there
+                is one and the structure pair otherwise — so a card with both
+                would lose the second if this list simply went away. So the list
+                stays and shows exactly the conflicts §5 does not reach; on the
+                ordinary one-conflict card that is none, and it draws nothing.
+                The earnings line is held to the same test: it is drawn only
+                when §5 has no row for it, which is when the gate published a
+                proximity but no day count for the reason to state.
+              */}
+              {unsaidConflicts.length ? (
                 <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {result.gate.conflicts.map((conflict) => <li key={conflict}>{CONFLICT_COPY[conflict]}</li>)}
+                  {unsaidConflicts.map((conflict) => <li key={conflict}>{CONFLICT_COPY[conflict]}</li>)}
                 </ul>
               ) : null}
-              {result.gate.earningsProximity === 'imminent' || result.gate.earningsProximity === 'soon' ? (
+              {earningsSaidHere ? (
                 <p className="mt-2 leading-6">อีก {result.gate.daysToEarnings} วันจะประกาศงบ ซึ่งเป็นเหตุการณ์ที่กราฟยังมองไม่เห็น จึงลดความมั่นใจลง</p>
               ) : null}
               {result.flags.length > MAX_FLAG_CHIPS ? (
@@ -609,7 +854,7 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
               sentence says what the headline number is made of.
             */}
             <p className="mt-2 leading-6 text-slate-400">
-              ตัวเลข {result.evidenceAgreement}/100 บนการ์ด คือผลของทุกค่าด้านล่างนี้รวมกัน ไม่ใช่แถวใดแถวหนึ่งเพียงแถวเดียว
+              ตัวเลข {result.evidenceAgreement}/100 ที่หัวหน้าต่างนี้ คือผลของทุกค่าด้านล่างนี้รวมกัน ไม่ใช่แถวใดแถวหนึ่งเพียงแถวเดียว
               ตัวเลขทั้งสองชุดจึงไม่เท่ากัน และไม่ได้ขัดกัน
               · จากการวัดย้อนหลังพบว่าตัวเลขนี้ไม่ได้บอกโอกาสที่ราคาจะไปทางที่ระบุ
               ค่าสูงกับค่าต่ำให้ผลใกล้เคียงกัน จึงห้ามอ่านเป็นเปอร์เซ็นต์ความน่าจะเป็น
@@ -649,8 +894,8 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             </div>
           </section>
 
-          <ReasonList title="4. ปัจจัยสนับสนุน" reasons={supporting} empty="ยังไม่มีปัจจัยสนับสนุนเด่นที่ผ่านกฎ" context={reasonContext} />
-          <ReasonList title="5. ปัจจัยที่ต้องระวัง" reasons={cautions} empty="ยังไม่มีปัจจัยขัดแย้งเด่นที่ผ่านกฎ" context={reasonContext} />
+          <ReasonList title="4. ปัจจัยสนับสนุน" reasons={supporting} empty="ยังไม่มีปัจจัยสนับสนุนเด่นที่ผ่านกฎ" context={reasonContext} metrics={result.metrics} />
+          <ReasonList title="5. ปัจจัยที่ต้องระวัง" reasons={cautions} empty="ยังไม่มีปัจจัยขัดแย้งเด่นที่ผ่านกฎ" context={reasonContext} metrics={result.metrics} />
           <TextList title="6. สิ่งที่ยังไม่ยืนยัน" items={unconfirmed} empty="ตัวชี้วัดหลักพร้อมและยังไม่มีคำเตือนเพิ่มเติม" />
 
           {result.zones ? (
@@ -693,8 +938,11 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
           </section>
 
           <div className="rounded-xl border border-slate-800 p-3 text-xs leading-5 text-slate-400">
-            <p>Score: {signed(result.score)} / 100</p>
-            <p>ความสอดคล้องของหลักฐาน: {AGREEMENT_COPY[result.evidenceAgreementLabel]} ({result.evidenceAgreement}/100 — ไม่ใช่ % โอกาสที่ราคาจะไปทางนั้น)</p>
+            {/* The two headline figures used to be repeated here, in a second
+                vocabulary ("Score:") and with the caveat attached only to one
+                of them. They are the first thing in this dialog now, with the
+                axis and the caveat both — so this block is back to what it is
+                for: which candles, when, from where, and which run. */}
             <p>Timeframe: {result.timeframe} · Finalized candles: {result.dataPoints.finalized}</p>
             <p>Updated: {formatBangkokDateTime(result.calculatedAt)}</p>
             <p>Source: {result.source ?? 'ไม่พร้อมใช้งาน'}</p>
@@ -707,6 +955,76 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
       </ResponsiveDialog>
     </section>
   );
+}
+
+/**
+ * WHICH SIDE OF THE DIALOG A REASON IS FILED UNDER, and the one the engine
+ * cannot answer for us.
+ *
+ * `reason.polarity` is the ENGINE's field and it means something narrower than
+ * the two headings suggest: for a supplemental observation it records how the
+ * observation cuts against the prevailing move, not whether the observation
+ * itself is good news. `bullish-divergence` is the case that made that
+ * difference visible. The engine files it as `caution` — correctly, from where
+ * it sits, because it is a caution to anybody reading the downtrend it
+ * interrupts — and the card then printed "ราคาทำจุดต่ำใหม่ แต่แรงขายไม่ได้แรงขึ้น
+ * ตาม" under a heading reading ปัจจัยที่ต้องระวัง, which is the opposite of what
+ * the sentence says. §4 sat empty beside it.
+ *
+ * THE FIX IS HERE AND NOT IN THE ENGINE. `polarity` is payload, snapshotted by
+ * `__golden__/signal/*.json`; changing it would move a gate that has nothing to
+ * do with which heading a row is drawn under. So the engine keeps its field and
+ * this layer answers the presentation question, from `metrics.divergence` — the
+ * SAME field the engine raised the reason from, never from `reason.text`.
+ *
+ * THE PARTITION IS TOTAL, which it was not before. The old pair of filters
+ * asked for `polarity === 'positive'` under a bullish bias and
+ * `polarity === 'information'` under a neutral one, so an information row on a
+ * directional card, and every positive or negative row on a neutral card,
+ * matched neither list and was drawn nowhere at all. Every reason now lands in
+ * exactly one of the two sections: a row is a caution when it IS one, or when
+ * it points against the bias the card is carrying, and is support otherwise.
+ */
+function effectivePolarity(reason: MarketSignalReason, metrics: MarketSignalMetrics): MarketSignalReason['polarity'] {
+  if (reason.id === 'bullish-divergence' && metrics.divergence === 'bullish') return 'positive';
+  if (reason.id === 'bearish-divergence' && metrics.divergence === 'bearish') return 'negative';
+  return reason.polarity;
+}
+
+/*
+ * NEUTRAL IS NOT "NEITHER SIDE", it is "no side named yet".
+ *
+ * With a bias in hand the question is easy: a row is a caution when it points
+ * the other way. With `bias === 'neutral'` there is no other way to point, and
+ * the old filters answered that by drawing directional rows nowhere at all. The
+ * heading is what decides it instead — §5 is ปัจจัยที่ต้องระวัง, and a row of
+ * evidence pointing down is something to watch whether or not the card has
+ * committed to a direction, while a row pointing up is not.
+ */
+function readsAsCaution(reason: MarketSignalReason, metrics: MarketSignalMetrics, bias: MarketSignalBias): boolean {
+  const polarity = effectivePolarity(reason, metrics);
+  if (polarity === 'caution') return true;
+  if (polarity === 'negative') return bias !== 'bearish';
+  if (polarity === 'positive') return bias === 'bearish';
+  return false;
+}
+
+/**
+ * The footnote a re-filed row cannot be shown without.
+ *
+ * Moving a divergence into ปัจจัยสนับสนุน answers one question and opens
+ * another: a reader who now meets it under a supportive heading has no way to
+ * tell that it did not move the reading. It did not. The five components in
+ * `scoreBreakdown` are what the score and therefore the bias are built from,
+ * and a divergence is not one of them — it is a supplemental observation the
+ * engine records beside them. So the note says exactly that, and it says it
+ * only on the rows this layer re-filed, never on a row the engine itself
+ * classified.
+ */
+function reasonNote(reason: MarketSignalReason, metrics: MarketSignalMetrics): string | null {
+  return effectivePolarity(reason, metrics) === reason.polarity
+    ? null
+    : 'น้ำหนักน้อย — เป็นข้อสังเกตประกอบ ไม่ได้ทำให้ทิศทางที่การ์ดสรุปเปลี่ยนไป';
 }
 
 /**
@@ -2115,8 +2433,8 @@ function ZoneBar({ zones, livePrice, actionable }: {
         whose headline three lines above it reads "BULLISH · Bullish Bias". Two
         sentences a thumb-length apart said opposite things, and the one a fast
         reader believes is the big one at the top. Direction is the headline's
-        job and the chips' job; the score itself is still on the card, above,
-        as "Score +16 / 100". What is left here is where price is STANDING,
+        job and the chips' job; the score itself is one tap away, at the head of
+        the dialog, under `SCORE_LABEL`. What is left here is where price is STANDING,
         which is the one thing the bar underneath is drawing.
 
         Scoped to what P4a actually measured. The band predicts how long the
@@ -2532,23 +2850,34 @@ function ActionableRows({ zones, actionable, size }: {
  * falls through to `reason.text`, so a reason the engine adds tomorrow shows up
  * in full rather than disappearing — see `reason-copy.ts`.
  */
-function ReasonList({ title, reasons, empty, context }: {
+function ReasonList({ title, reasons, empty, context, metrics }: {
   title: string;
   reasons: MarketSignalResult['reasons'];
   empty: string;
   context: ReasonBaseContext;
+  /** For `reasonNote`, which is the only thing here that is not the sentence. */
+  metrics: MarketSignalMetrics;
 }) {
   return (
     <section>
       <h3 className="font-semibold text-white">{title}</h3>
       {reasons.length ? (
         <ul className="mt-2 space-y-2">
-          {reasons.map((reason) => (
-            <li key={reason.id} className="flex gap-2">
-              <span aria-hidden="true">•</span>
-              <span data-reason-id={reason.id}>{reasonText(reason, context)}</span>
-            </li>
-          ))}
+          {reasons.map((reason) => {
+            const note = reasonNote(reason, metrics);
+            return (
+              <li key={reason.id} className="flex gap-2">
+                <span aria-hidden="true">•</span>
+                <span data-reason-id={reason.id}>
+                  {reasonText(reason, context)}
+                  {/* Under the row, not beside it: the note qualifies the whole
+                      sentence and a reader who stops at the dash has already
+                      taken the fact. */}
+                  {note ? <span className="mt-1 block text-xs leading-5 text-slate-500" data-testid="signal-reason-note">{note}</span> : null}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       ) : <p className="mt-2 text-slate-500">{empty}</p>}
     </section>

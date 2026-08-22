@@ -397,3 +397,140 @@ export const ENGINE_REASON_IDS = [
  * has to be written down here, with its reason, rather than quietly omitted.
  */
 export const REASON_IDS_WITHOUT_COPY: Record<string, string> = {};
+
+/**
+ * The same reasons, as labels rather than as sentences.
+ *
+ * WHY A SECOND TABLE AND NOT A TRUNCATION OF THE FIRST. `REASON_COPY` is held
+ * to 15-35 words because a list of explanations reads badly when one item is
+ * six words and the next is fifty. The beginner layer is not that list: it is
+ * three or four lines somebody scans before deciding whether to open anything,
+ * and an explanation there is a wall. Cutting the long sentence at its dash
+ * would be parsing this file's own output — the same failure mode the header
+ * block forbids for `reason.text` — and would leave the short form drifting
+ * every time the long one is reworded.
+ *
+ * So each id is written twice, deliberately, and both are built from the SAME
+ * payload fields. Nothing here states a fact the sentence above does not, and
+ * nothing here is a number the payload did not publish.
+ *
+ * THE 15-35 WORD RULE DOES NOT APPLY, for the reason `headlineFor` gives about
+ * the state line: these are labels in the register of the seven state names,
+ * not prose. Everything else does — the ban list especially, checked by
+ * `reason-copy.test.ts` over this table as well as over `REASON_COPY`.
+ *
+ * An id with no entry falls back to the full sentence, which is long in a place
+ * that wants short and is still the right answer: a bullet that says nothing is
+ * worse than a bullet that says too much.
+ */
+export const REASON_HEADLINE: Record<string, (context: ReasonContext) => string | null> = {
+  'ema-structure': ({ polarity }) => {
+    if (polarity === 'positive') return 'ราคายืนเหนือเส้นค่าเฉลี่ยราคา';
+    if (polarity === 'negative') return 'ราคาอยู่ใต้เส้นค่าเฉลี่ยราคา';
+    return 'ราคากับเส้นค่าเฉลี่ยยังเรียงสลับกัน';
+  },
+
+  'ema20-slope': ({ metrics, polarity }) => slopeHeadline(20, metrics.ema20SlopePct, polarity),
+  'ema50-slope': ({ metrics, polarity }) => slopeHeadline(50, metrics.ema50SlopePct, polarity),
+  'ema200-slope': ({ metrics, polarity }) => slopeHeadline(200, metrics.ema200SlopePct, polarity),
+
+  rsi14: ({ metrics }) => (metrics.rsi14 === null
+    ? null
+    : `แรงซื้อเทียบแรงขายอยู่ที่ ${n(metrics.rsi14)} จาก 100`),
+
+  'rsi-extreme': ({ metrics }) => (metrics.rsi14 === null
+    ? null
+    : `แรงซื้อเทียบแรงขาย ${n(metrics.rsi14)} — ไกลผิดปกติ`),
+
+  'macd-signal': ({ polarity }) => {
+    if (polarity === 'positive') return 'แรงส่งของราคาเหนือค่าเฉลี่ยของตัวเอง';
+    if (polarity === 'negative') return 'แรงส่งของราคาใต้ค่าเฉลี่ยของตัวเอง';
+    return 'แรงส่งของราคาเสมอค่าเฉลี่ยของตัวเอง';
+  },
+
+  'macd-histogram': ({ metrics }) => {
+    if (metrics.macdHistogram === null) return null;
+    if (metrics.macdHistogram === 0) return 'แรงฝั่งขึ้นกับฝั่งลงเท่ากันพอดี';
+    const up = metrics.macdHistogram > 0;
+    const side = up ? 'แรงส่งอยู่ฝั่งขึ้น' : 'แรงส่งอยู่ฝั่งลง';
+    if (metrics.histogramExpanding === null) return side;
+    return `${side} และ${up === metrics.histogramExpanding ? 'เพิ่มขึ้น' : 'แผ่วลง'}`;
+  },
+
+  'adx-dmi': ({ metrics }) => (metrics.adx14 === null
+    ? null
+    : `ความแรงของแนวโน้มอยู่ที่ ${n(metrics.adx14)} เกณฑ์คือ ${T.trendStrength.adxTrendMinimum}`),
+
+  'relative-volume': ({ metrics }) => (metrics.relativeVolume20 === null
+    ? null
+    : `ปริมาณซื้อขาย ${n(metrics.relativeVolume20, 2)} เท่าของค่าเฉลี่ย`),
+
+  'obv-trend': ({ polarity }) => {
+    if (polarity === 'positive') return 'ปริมาณซื้อขายสะสมกำลังเพิ่มขึ้น';
+    if (polarity === 'negative') return 'ปริมาณซื้อขายสะสมกำลังลดลง';
+    return 'ปริมาณซื้อขายสะสมทรงตัว';
+  },
+
+  'swing-structure': ({ polarity }) => {
+    if (polarity === 'positive') return 'จุดสูงและจุดต่ำขยับสูงขึ้น';
+    if (polarity === 'negative') return 'จุดสูงและจุดต่ำขยับต่ำลง';
+    return 'จุดสูงและจุดต่ำยังไม่ไปทางเดียวกัน';
+  },
+
+  'structure-breakout': () => 'ราคาปิดผ่านจุดสูงเดิมแล้ว',
+  'structure-breakdown': () => 'ราคาปิดผ่านจุดต่ำเดิมแล้ว',
+
+  'squeeze-on': () => 'ช่วงแกว่งของราคากำลังบีบแคบลง',
+  overextended: () => 'ราคาอยู่ไกลจากค่าเฉลี่ยผิดปกติ',
+
+  'bullish-divergence': ({ metrics }) => (metrics.divergence === 'bullish'
+    ? 'ราคาทำจุดต่ำใหม่ แต่แรงขายไม่แรงตาม'
+    : null),
+  'bearish-divergence': ({ metrics }) => (metrics.divergence === 'bearish'
+    ? 'ราคาทำจุดสูงใหม่ แต่แรงซื้อไม่แรงตาม'
+    : null),
+
+  'component-conflict': ({ gate }) => (gate?.conflicts.includes('ema_vs_momentum') ?? true
+    ? 'เส้นค่าเฉลี่ยกับแรงส่งชี้คนละทาง'
+    : 'จุดสูง-จุดต่ำกับแรงส่งชี้คนละทาง'),
+
+  'earnings-proximity': ({ gate }) => (gate?.daysToEarnings === null || gate?.daysToEarnings === undefined
+    ? null
+    : `อีก ${gate.daysToEarnings} วันจะประกาศผลประกอบการ`),
+
+  'pending-zone-break': ({ zones }) => (zones === null
+    ? null
+    : `ราคาปิด${zones.pendingBreakout ? 'เหนือ' : 'ใต้'}แนวแล้ว แต่ยังไม่ผ่านเกณฑ์`),
+
+  'narrow-range-band': () => 'แนวบนกับแนวล่างใกล้กันเกินจะใช้ตัดสิน',
+  'invalidation-from-band': () => 'ระบบไม่ระบุจุดที่ถือว่ารอบนี้จบ',
+  'no-defensible-target': () => 'ระบบไม่มีเป้าที่อ้างอิงได้',
+  'structure-volume-unconfirmed': () => 'ผ่านจุดเดิมแล้ว แต่ปริมาณซื้อขายไม่ตาม',
+};
+
+/** The slope rows again, as labels. Same three fields, same three branches. */
+const slopeHeadline = (
+  span: 20 | 50 | 200,
+  pct: number | null,
+  polarity: ReasonContext['polarity'],
+): string | null => {
+  if (pct === null || !Number.isFinite(pct)) return null;
+  const size = `เส้นค่าเฉลี่ยราคา ${span} วัน`;
+  const value = `${n(Math.abs(pct), 2)}%`;
+  if (polarity === 'positive') return `${size} ชี้ขึ้น ${value}`;
+  if (polarity === 'negative') return `${size} ชี้ลง ${value}`;
+  return `${size} เกือบทรงตัว ${value}`;
+};
+
+/**
+ * One reason as a label, with the same fallback contract `reasonText` has.
+ *
+ * A missing entry, or an entry this payload cannot answer, renders the FULL
+ * sentence rather than nothing. That is deliberately the loud failure: a long
+ * bullet in a short list is visible and gets fixed, a silently dropped reason
+ * is not.
+ */
+export function reasonHeadline(reason: MarketSignalReason, base: ReasonBaseContext): string {
+  const written = REASON_HEADLINE[reason.id]?.({ ...base, polarity: reason.polarity }) ?? null;
+  return written !== null && written.trim() !== '' ? written : reasonText(reason, base);
+}

@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import {
   ENGINE_REASON_IDS,
   REASON_COPY,
+  REASON_HEADLINE,
   REASON_IDS_WITHOUT_COPY,
   reasonContextFor,
+  reasonHeadline,
   reasonText,
   type ReasonBaseContext,
 } from './reason-copy';
@@ -399,6 +401,123 @@ describe('reason copy', () => {
         expect(text, `${id} · ${polarity} describes a picture and stops`).toMatch(/—|จึง|แปลว่า/);
       }
     }
+  });
+});
+
+/*
+ * THE SAME REASONS AS LABELS, held to everything the sentences are held to
+ * except the one rule that would stop them being labels.
+ *
+ * `REASON_HEADLINE` is what the beginner layer draws. It exists because three
+ * or four fifty-word explanations is not a summary, and it is a SECOND table
+ * rather than a truncation of the first for the reason the header block gives:
+ * cutting the long sentence at its dash would be this file parsing its own
+ * output, and the short form would drift every time the long one was reworded.
+ *
+ * Being a second table is also the risk. A ban list enforced on one of two
+ * tables is a ban list with a hole in it, and the hole would be on the layer
+ * everybody reads.
+ */
+describe('reason headlines', () => {
+  const MUST_NOT_SAY_IN_HEADLINES = [
+    'โซน', 'ไซด์เวย์', 'เบรก', 'breakout', 'breakdown', 'sideways',
+    'หลุด', 'พลิกกลับ', 'ตกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง',
+    'swing', 'divergence', 'pivot', 'confirmed', 'Histogram', 'ATR',
+    'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์',
+  ];
+
+  /** Every label the table can produce, across every branch a context selects. */
+  function everyHeadline(): Array<{ id: string; label: string; text: string }> {
+    const out: Array<{ id: string; label: string; text: string }> = [];
+    const variants: Array<[string, ReasonBaseContext]> = [
+      ['base', baseContext],
+      ['bullish-divergence', { ...baseContext, metrics: { ...metrics, divergence: 'bullish' as const } }],
+      ['no-divergence', { ...baseContext, metrics: { ...metrics, divergence: null } }],
+      ['below-average', { ...baseContext, metrics: { ...metrics, ema20DeviationPct: -5.1, ema50SlopePct: 2.4 } }],
+      ['structure-conflict', { ...baseContext, gate: { ...baseContext.gate, conflicts: ['structure_vs_momentum'] } as never }],
+      ['breakdown-pending', { ...baseContext, zones: { pendingBreakout: false, pendingBreakdown: true } as never }],
+      ['no-gate', { ...baseContext, gate: null }],
+      ['histogram-fading', { ...baseContext, metrics: { ...metrics, histogramExpanding: false } }],
+      ['histogram-uncompared', { ...baseContext, metrics: { ...metrics, histogramExpanding: null } }],
+      ['histogram-below-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: -0.3 } }],
+      ['histogram-at-zero', { ...baseContext, metrics: { ...metrics, macdHistogram: 0 } }],
+    ];
+    for (const [id, build] of Object.entries(REASON_HEADLINE)) {
+      for (const [variant, context] of variants) {
+        for (const polarity of POLARITIES) {
+          const text = build({ ...context, polarity });
+          if (text === null) continue;
+          if (out.some((row) => row.text === text)) continue;
+          out.push({ id, label: `${id} · ${variant} · ${polarity}`, text });
+        }
+      }
+    }
+    return out;
+  }
+
+  it('has a label for every id the engine can emit', () => {
+    for (const id of ENGINE_REASON_IDS) {
+      expect(id in REASON_HEADLINE, `${id} has no label for the beginner layer`).toBe(true);
+    }
+  });
+
+  it('keeps every label clear of the terms the card bans', () => {
+    const rows = everyHeadline();
+    expect(rows.length, 'no labels were produced at all').toBeGreaterThan(20);
+    for (const { label, text } of rows) {
+      const outsideBrackets = text.replaceAll(/\([^)]*\)/g, '');
+      for (const banned of MUST_NOT_SAY_IN_HEADLINES) {
+        expect(outsideBrackets, `"${banned}" is in ${label}: "${text}"`).not.toContain(banned);
+      }
+    }
+  });
+
+  /*
+   * A LABEL, and the ruler that says so.
+   *
+   * The 15-35 word band is deliberately NOT applied — these are in the register
+   * of the seven state names, and a fifteen-word floor would make them
+   * sentences again. What IS applied is the ceiling that makes the split worth
+   * having: every label has to be materially shorter than the sentence it
+   * stands for, or the beginner layer is the dialog with fewer rows.
+   */
+  it('keeps every label shorter than the sentence it stands for', () => {
+    for (const { id, label, text } of everyHeadline()) {
+      expect(wordCount(text), `${label} is not a label: "${text}"`).toBeLessThanOrEqual(14);
+      const full = REASON_COPY[id]?.({ ...baseContext, polarity: 'positive' });
+      if (full === null || full === undefined) continue;
+      expect(wordCount(text), `${label} is no shorter than its sentence`).toBeLessThan(wordCount(full));
+    }
+  });
+
+  /*
+   * The fallback, which is the same contract `reasonText` has and for the same
+   * reason: an id this table has never heard of has to reach the reader. Long
+   * in a place that wants short is visible and gets fixed; missing is not.
+   */
+  it('falls back to the full sentence for an id it has no label for', () => {
+    const invented = reasonHeadline(
+      { id: 'a-reason-invented-next-quarter', polarity: 'caution', text: 'ข้อความจาก engine', impact: 4 },
+      baseContext,
+    );
+    expect(invented).toBe('ข้อความจาก engine');
+
+    // And when the id is known but this payload cannot answer it.
+    const blind = { ...baseContext, metrics: { ...metrics, rsi14: null } };
+    expect(reasonHeadline({ id: 'rsi14', polarity: 'positive', text: 'RSI14 อยู่ที่ 62', impact: 5 }, blind))
+      .toBe('RSI14 อยู่ที่ 62');
+  });
+
+  /*
+   * The two rows that are only drawn when the payload says the divergence is
+   * theirs. `metrics.divergence` is the field the ENGINE raised the reason
+   * from, which is what makes this a restatement rather than a second opinion.
+   */
+  it('names a divergence only on the side the payload measured', () => {
+    const bullish = { ...baseContext, metrics: { ...metrics, divergence: 'bullish' as const } };
+    expect(REASON_HEADLINE['bullish-divergence']({ ...bullish, polarity: 'caution' }))
+      .toContain('แรงขายไม่แรงตาม');
+    expect(REASON_HEADLINE['bearish-divergence']({ ...bullish, polarity: 'caution' })).toBeNull();
   });
 });
 

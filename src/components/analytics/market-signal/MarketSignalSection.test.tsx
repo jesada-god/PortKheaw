@@ -151,6 +151,28 @@ function buttonContaining(text: string): HTMLButtonElement {
   return [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(text))!;
 }
 
+/**
+ * The label on the control that opens the advanced layer.
+ *
+ * Typed once here rather than fifteen times inline: the button was renamed from
+ * "ทำไม?" when the card was split into a beginner layer and this one, and a
+ * test file that spelled it out at every call site is a test file that gets
+ * renamed by search-and-replace and half-misses.
+ */
+const ADVANCED_TOGGLE = 'ดูรายละเอียดการคำนวณ';
+
+/**
+ * Open the advanced layer and hand back the dialog it renders into.
+ *
+ * `ResponsiveDialog` portals to `document.body`, so everything that moved off
+ * the card — the state description, the base rate, the history strip, the
+ * footer — is outside `container` and has to be queried from the portal.
+ */
+async function openAdvanced(): Promise<HTMLElement> {
+  await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
+  return document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+}
+
 describe('MarketSignalSection', () => {
   it.each(['basic', 'pro'] as const)('shows only a locked preview for %s', async (tier) => {
     await render(result, tier);
@@ -158,7 +180,7 @@ describe('MarketSignalSection', () => {
     expect(container.querySelector('[data-testid="technical-outlook-locked"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="locked-technical.outlook"]')).not.toBeNull();
     expect(container.textContent).not.toContain('SQUEEZE');
-    expect(container.textContent).not.toContain('Score +31');
+    expect(container.textContent).not.toContain('+31');
     expect(container.textContent).not.toContain('หลักฐานไปทางเดียวกันบ้าง');
     expect(container.textContent).not.toContain('ราคาและ EMA เรียงตัวเอนขึ้น');
     expect(container.textContent).not.toContain('206.84');
@@ -189,14 +211,47 @@ describe('MarketSignalSection', () => {
     expect(locked.textContent).toContain('ไม่ได้พยากรณ์สิ่งที่ราคาจะทำ');
   });
 
-  it('shows state, independent bias, beginner copy, score, flags, and the exact disclaimer', async () => {
+  /*
+   * THE BEGINNER LAYER, AND THE LINE THAT IS NO LONGER ON IT.
+   *
+   * The state line used to read `SQUEEZE • Bullish Bias`. "Bias" is a word
+   * about where price is going, printed above a footer saying the card does not
+   * say where price is going, and on SIDEWAYS it restated the state name. It
+   * moved to the dialog's own title, where it sits beside the score it comes
+   * from — so this asserts both halves: gone from the card, kept one tap away.
+   */
+  it('shows the state, the one-line reading, its reasons, the agreement word and the chips', async () => {
     await render();
-    expect(container.textContent).toContain('SQUEEZE • Bullish Bias');
+    expect(container.textContent).toContain('SQUEEZE');
+    expect(container.textContent).not.toContain('Bullish Bias');
     expect(container.textContent).toContain('ราคาแกว่งแคบลงกว่าปกติ');
-    expect(container.textContent).toContain('ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า');
-    expect(container.textContent).toContain('Score +31 / 100');
+    // The reasons are on the card now, as labels rather than as sentences.
+    const reasons = container.querySelector('[data-testid="signal-beginner-reasons"]')!;
+    expect(reasons.textContent).toContain('ราคายืนเหนือเส้นค่าเฉลี่ยราคา');
+    expect(reasons.textContent).toContain('ช่วงแกว่งของราคากำลังบีบแคบลง');
+    expect(container.querySelector('[data-testid="signal-agreement-word"]')!.textContent)
+      .toContain('หลักฐานไปทางเดียวกันบ้าง');
     expect(container.textContent).toContain('squeeze');
-    expect(container.textContent).toContain('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
+  });
+
+  /*
+   * The long disclosure is three lines and the beginner layer carries one of
+   * them; the other two, and this one in full, are at the bottom of the
+   * advanced layer. Both ends are asserted here so neither can be dropped by
+   * itself — see the `signal-footer` block further down for every render path.
+   */
+  it('carries the short note and the legal line on the card, the evidence one tap away', async () => {
+    await render();
+    expect(container.querySelector('[data-testid="signal-short-note"]')!.textContent)
+      .toBe('สถานะนี้อธิบายแนวโน้มจากข้อมูลที่ผ่านมา ไม่ใช่การคาดการณ์ว่าราคาจะไปทางไหน');
+    expect(container.querySelector('[data-testid="signal-card-disclaimer"]')!.textContent)
+      .toBe('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
+    expect(container.querySelector('[data-testid="signal-footer"]')).toBeNull();
+
+    const dialog = await openAdvanced();
+    expect(dialog.textContent).toContain('Market Signal เป็นการสรุปข้อมูลทางเทคนิค ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
+    expect(dialog.textContent).toContain('ยังบอกไม่ได้ว่าราคาจะออกทางไหน แต่ตอนนี้หลักฐานเอนไปทางขึ้นมากกว่า');
+    expect(dialog.textContent).toContain('SQUEEZE • Bullish Bias');
   });
 
   /*
@@ -206,21 +261,64 @@ describe('MarketSignalSection', () => {
    * the figure moved into the breakdown where its inputs are.
    */
   describe('no number on the card can be read as a probability of price', () => {
-    it('names the evidence agreement in words, without a percentage', async () => {
+    /*
+     * The rule the score joined, having been the standing exception to it.
+     *
+     * The agreement lost its figure in P4.5 and kept its word. The score kept
+     * both, in the shape a reader is likeliest to misread — "Score +31 / 100"
+     * next to a direction, which was reported back as "a 31% chance of going
+     * up". The two are now held to one rule: the beginner layer carries the
+     * WORD and no figure at all.
+     */
+    it('names the evidence agreement in words, and prints neither figure', async () => {
       await render();
       const headline = container.querySelector('[data-state]')!;
-      expect(headline.textContent).toContain('ความสอดคล้องของหลักฐาน');
       expect(headline.textContent).toContain('หลักฐานไปทางเดียวกันบ้าง');
       expect(headline.textContent).not.toContain('Confidence');
-      expect(headline.textContent).not.toContain('67%');
+      expect(headline.textContent).not.toContain('67');
+      expect(headline.textContent).not.toContain('Score');
+      expect(headline.textContent).not.toContain('+31');
     });
 
-    it('keeps the figure, in the breakdown, said as a score out of 100', async () => {
+    it('keeps both figures one tap away, each said as a score out of 100', async () => {
       await render();
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+      const numbers = dialog.querySelector('[data-testid="signal-numbers"]')!;
+      expect(numbers.textContent).toContain('คะแนนรวมเอนไปทางไหน');
+      expect(numbers.textContent).toContain('+31');
       expect(dialog.textContent).toContain('67/100');
       expect(dialog.textContent).toContain('ไม่ใช่ % โอกาสที่ราคาจะไปทางนั้น');
+    });
+
+    /*
+     * The label carries the axis, because the number cannot. "/ 100" was the
+     * third of the three things inviting the percentage reading — after an
+     * English word for a grade and a label with no sign in it — and a range
+     * with a negative end is the only form that makes -45 a direction rather
+     * than a bad mark out of a hundred.
+     */
+    it('prints the axis under the score instead of a denominator', async () => {
+      await render();
+      const numbers = (await openAdvanced()).querySelector('[data-testid="signal-numbers"]')!;
+      expect(numbers.textContent).toContain('ช่วง -100 ถึง +100');
+      expect(numbers.textContent).toContain('ไม่ใช่เปอร์เซ็นต์');
+      expect(numbers.textContent).not.toContain('+31 / 100');
+    });
+
+    /*
+     * Both readings the label has to survive, checked as the reader meets them:
+     * the sign is the direction, so the same words have to work with the number
+     * on either side of zero.
+     */
+    it.each([[7, '+7'], [-45, '-45']])('reads the same label at %s', async (score, printed) => {
+      await render({ ...result, score });
+      const numbers = (await openAdvanced()).querySelector('[data-testid="signal-numbers"]')!;
+      expect(numbers.textContent).toContain('คะแนนรวมเอนไปทางไหน');
+      expect(numbers.textContent).toContain(printed);
+      // Never a word that would call a -45 card "unclear", and never the name
+      // the number beside it already wears.
+      expect(numbers.textContent).not.toContain('ความชัดเจนของสัญญาณ');
     });
 
     /*
@@ -241,10 +339,16 @@ describe('MarketSignalSection', () => {
 
   it('uses accessible score and confidence hints with the required non-probability copy', async () => {
     await render();
-    const scoreHint = container.querySelector<HTMLButtonElement>('[aria-label="คำอธิบาย: Directional Score"]')!;
+    const dialog = await openAdvanced();
+    const scoreHint = dialog.querySelector<HTMLButtonElement>('[aria-label="คำอธิบาย: คะแนนรวมเอนไปทางไหน"]')!;
     expect(scoreHint.className).toContain("after:-inset-[13px]");
     await act(async () => scoreHint.click());
-    expect(container.textContent).toContain('Score วัดว่าหลักฐานทางเทคนิคเอนเอียงขึ้นหรือลงแค่ไหน อยู่ระหว่าง -100 ถึง +100 และไม่ใช่เปอร์เซ็นต์ความแม่นยำ');
+    // What it is: a sum, with a sign, on a stated axis.
+    expect(dialog.textContent).toContain('ผลรวมของคะแนนหลักฐานทั้งห้าหมวด อยู่ระหว่าง -100 ถึง +100');
+    // And what it is not, in the same breath, because that is the misreading.
+    expect(dialog.textContent).toContain('ไม่ใช่เปอร์เซ็นต์ความแม่นยำ และไม่ใช่โอกาสที่ราคาจะไปทางนั้น');
+    expect(dialog.textContent).toContain('+7 คือเอนขึ้นเพียงเล็กน้อย ไม่ใช่ 7%');
+    expect(dialog.textContent).toContain('-45 คือเอนลงค่อนข้างมาก ไม่ใช่ 45%');
     await act(async () => scoreHint.click());
 
     const agreementHint = container.querySelector<HTMLButtonElement>('[aria-label="คำอธิบาย: ความสอดคล้องของหลักฐาน"]')!;
@@ -254,7 +358,7 @@ describe('MarketSignalSection', () => {
 
   it('opens the responsive why dialog with six sections, exact breakdown, real metrics, and missing values as dash', async () => {
     await render();
-    const why = buttonContaining('ทำไม?');
+    const why = buttonContaining(ADVANCED_TOGGLE);
     expect(why.className).toContain('min-h-11');
     await act(async () => why.click());
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
@@ -289,11 +393,11 @@ describe('MarketSignalSection', () => {
 
   it('resets open dialog state when the symbol changes', async () => {
     await render();
-    await act(async () => buttonContaining('ทำไม?').click());
+    await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
     expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
     await render({ ...result, symbol: 'MSFT' });
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.textContent).toContain('SQUEEZE • Bullish Bias');
+    expect(container.textContent).toContain('SQUEEZE');
   });
 
   it('does not invent a state, bias, score, or confidence for insufficient data', async () => {
@@ -313,7 +417,7 @@ describe('MarketSignalSection', () => {
     expect(container.textContent).toContain('ยังมีข้อมูลราคาไม่พอจะสรุปอะไรได้');
     expect(container.textContent).toContain('ต้องมี finalized candles เพิ่ม');
     expect(container.textContent).not.toContain('SQUEEZE • Bullish Bias');
-    expect(container.textContent).not.toContain('Score +31');
+    expect(container.textContent).not.toContain('+31');
   });
 
   /*
@@ -336,7 +440,7 @@ describe('MarketSignalSection', () => {
       macdHistogram: 1.2741204119171146,
     };
     await render({ ...result, metrics: { ...result.metrics, ...captured } });
-    await act(async () => buttonContaining('ทำไม?').click());
+    await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
 
     const row = [...document.querySelectorAll('dt')]
       .find((term) => term.textContent === 'MACD / Signal / Histogram')!.nextElementSibling!;
@@ -1276,7 +1380,8 @@ describe('MarketSignalSection', () => {
      * ทางไหน". Two sentences a thumb-length apart saying opposite things, and
      * the one a fast reader believes is the big one at the top. Direction is
      * the headline's job and the chips' job; the box below is about WHERE
-     * price is. The score itself is untouched and still on the card above.
+     * price is. The score itself is untouched — same value, one tap away at
+     * the head of the dialog now, under a label that names its axis.
      */
     it('says nothing about direction inside the zone box', async () => {
       await render(zoned);
@@ -1285,8 +1390,9 @@ describe('MarketSignalSection', () => {
       for (const banned of ['ยังไม่เอียงไปทางไหน', 'เอียงขึ้น', 'เอียงลง', '(+16)']) {
         expect(text, `"${banned}" is back in the zone box`).not.toContain(banned);
       }
-      // Still on the card, above the box, where direction belongs.
-      expect(container.textContent).toContain('+16 / 100');
+      // Unchanged, and still reachable: the same figure, one tap away.
+      expect((await openAdvanced()).querySelector('[data-testid="signal-numbers"]')!.textContent)
+        .toContain('+16');
     });
 
     it('keeps the position line, which is what that line is now for', async () => {
@@ -1472,7 +1578,7 @@ describe('MarketSignalSection', () => {
       // It is in the dialog rather than on the card, because the card holds a
       // four-line budget under the picture that the test above enforces.
       expect(zoneBar().querySelector('[data-testid="signal-hysteresis-note"]')).toBeNull();
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       const note = document.body.querySelector('[data-testid="signal-hysteresis-note"]')!;
       expect(note.textContent).toContain('เป็นคนละราคาโดยตั้งใจ');
       expect(note.textContent).toContain('ขอบที่วาดบนแถบคือเส้นเข้า');
@@ -1483,7 +1589,11 @@ describe('MarketSignalSection', () => {
       ['bearish', 'ลง'],
     ] as const)('does not deny a %s lean the headline is already showing', async (bias, direction) => {
       await render({ ...zoned, bias, score: bias === 'bullish' ? 22 : -22 });
-      expect(container.textContent).toContain(`แต่คะแนนรวมเอนไปทาง${direction}`);
+      // The sentence moved into §1 with the rest of the spelled-out reading;
+      // what it may not do — deny the two words above it — is unchanged.
+      const dialog = await openAdvanced();
+      expect(dialog.textContent).toContain(`แต่คะแนนรวมเอนไปทาง${direction}`);
+      expect(dialog.textContent).not.toContain('ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน');
       expect(container.textContent).not.toContain('ราคายังไม่มีทิศทางขึ้นหรือลงที่ชัดเจน');
     });
 
@@ -1513,7 +1623,7 @@ describe('MarketSignalSection', () => {
      */
     it('keeps every figure it removed from the card inside the why dialog', async () => {
       await render({ ...zoned, zones: { ...zoned.zones!, zoneAgeBars: 45, frameAgeBars: 3 } });
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       const details = document.querySelector('[data-testid="signal-zone-details"]')!;
       expect(details.textContent).toContain('68.8%');
       expect(details.textContent).toContain('จุดที่ราคาเคยกลับตัวจริง');
@@ -1526,7 +1636,7 @@ describe('MarketSignalSection', () => {
 
     it('draws no zone detail block when there is no zone', async () => {
       await render(result);
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       expect(document.querySelector('[data-testid="signal-zone-details"]')).toBeNull();
     });
 
@@ -1603,7 +1713,7 @@ describe('MarketSignalSection', () => {
         expect(rows.textContent).not.toContain('ระยะไปถึงเป้า ยาวกว่าระยะที่จะรู้ว่ารอบนี้จบ');
         expect(zoneBar().textContent).not.toContain('ระยะที่จะรู้ว่าโซนนี้จบ ยาวกว่า');
 
-        await act(async () => buttonContaining('ทำไม?').click());
+        await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
         const details = document.querySelector('[data-testid="signal-zone-details"]')!;
         expect(details.textContent).toContain('7.94');
         expect(details.textContent).toContain('0.45 ATR');
@@ -1615,7 +1725,7 @@ describe('MarketSignalSection', () => {
 
       it('reads a ratio under one the other way round, in the dialog', async () => {
         await render({ ...actionable, actionable: { ...actionable.actionable!, riskReward: 0.6 } });
-        await act(async () => buttonContaining('ทำไม?').click());
+        await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
         const details = document.querySelector('[data-testid="signal-zone-details"]')!;
         expect(details.textContent).toContain('ระยะที่จะรู้ว่ารอบนี้จบ ยาวกว่าระยะไปถึงเป้า');
       });
@@ -1632,14 +1742,14 @@ describe('MarketSignalSection', () => {
         });
         expect(container.querySelector('[data-testid="signal-actionable"]')!.textContent)
           .not.toContain('ไม่ได้แปลว่าโอกาสดีกว่า');
-        await act(async () => buttonContaining('ทำไม?').click());
+        await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
         const details = document.querySelector('[data-testid="signal-zone-details"]')!;
         expect(details.textContent).toContain('ไม่ได้แปลว่าโอกาสดีกว่า');
       });
 
       it('drops the note with the number when there is no ratio', async () => {
         await render({ ...actionable, actionable: { ...actionable.actionable!, riskReward: null } });
-        await act(async () => buttonContaining('ทำไม?').click());
+        await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
         expect(document.querySelector('[data-testid="signal-risk-reward-note"]')).toBeNull();
       });
 
@@ -1695,9 +1805,10 @@ describe('MarketSignalSection', () => {
         expect(container.querySelector('[data-testid="signal-actionable"]')).toBeNull();
       });
 
-      it('keeps the disclaimer exactly where it was', async () => {
+      it('keeps the disclaimer intact, at the foot of the advanced layer', async () => {
         await render(actionable);
-        expect(container.textContent).toContain('ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
+        expect((await openAdvanced()).textContent)
+          .toContain('ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
       });
     });
 
@@ -2112,12 +2223,12 @@ describe('MarketSignalSection', () => {
       expect(chips).toHaveLength(4);
       expect(chips.slice(0, 3)).toEqual(['หลักฐานขัดแย้งกัน', 'ปริมาณซื้อขายน้อย', 'ยังยืนยันไม่ชัด']);
       expect(chips.at(-1)).toContain('+3');
-      expect(chips.at(-1)).toContain('ทำไม?');
+      expect(chips.at(-1)).toContain(ADVANCED_TOGGLE);
     });
 
     it('explains in the dialog why it would not commit to a direction', async () => {
       await render(gated);
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       const explainer = document.querySelector('[data-testid="signal-gate-explainer"]')!;
       expect(explainer.textContent).toContain('คะแนนรวมยังต่ำกว่าเกณฑ์');
       expect(explainer.textContent).toContain('EMA/Trend กับ Momentum ชี้คนละทาง');
@@ -2130,7 +2241,7 @@ describe('MarketSignalSection', () => {
 
     it('shows confidence as the multipliers it actually is', async () => {
       await render(gated);
-      await act(async () => buttonContaining('ทำไม?').click());
+      await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
       const explainer = document.querySelector('[data-testid="signal-gate-explainer"]')!;
       expect(explainer.textContent).toContain('× ความชัดของภาวะตลาด');
       expect(explainer.textContent).toContain('60%');
@@ -2189,21 +2300,90 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
     ['basic looking at the locked contract preview', 'basic', 'technical.outlook.commodity', result],
   ] as const satisfies readonly (readonly [string, SubscriptionTier, SubscriptionCapability, MarketSignalResult | null])[];
 
+  const SHORT_NOTE = 'สถานะนี้อธิบายแนวโน้มจากข้อมูลที่ผ่านมา ไม่ใช่การคาดการณ์ว่าราคาจะไปทางไหน';
+  const MEASURED_PROVENANCE_TEXT = `วัดจาก ${MARKET_SIGNAL_MEASURED.corpusInstruments} สินทรัพย์ · ${MARKET_SIGNAL_MEASURED.period.thai}`;
+
+  /*
+   * WHERE THE THREE LINES ARE NOW, AND WHY THE RULE DID NOT CHANGE.
+   *
+   * The rule was: no render path ships without the disclosure. It still holds,
+   * and it is still checked on every one of the eight surfaces below — what
+   * changed is that the full card has two layers, and the full footer sits at
+   * the bottom of the second one. The beginner layer carries `SHORT_NOTE`,
+   * which says the same thing the finding says without the evidence attached.
+   *
+   * The three surfaces with no advanced layer to open — locked, failed, too few
+   * candles — keep the footer exactly where it was, on the only layer they
+   * have. `finder` is what tells the two shapes apart, and it is deliberately
+   * the ONLY difference between them: everything asserted about the footer is
+   * asserted about all eight.
+   */
+  const footerFor = async (payload: MarketSignalResult | null, tier: SubscriptionTier): Promise<HTMLElement> => {
+    const onCard = container.querySelector<HTMLElement>('[data-testid="signal-footer"]');
+    if (onCard) return onCard;
+    // The full card: the short note is up here and the footer is one tap away.
+    expect(container.querySelector('[data-testid="signal-short-note"]')!.textContent, `${tier}`).toBe(SHORT_NOTE);
+    expect(payload).not.toBeNull();
+    return (await openAdvanced()).querySelector<HTMLElement>('[data-testid="signal-footer"]')!;
+  };
+
   it.each(surfaces)('%s reads it', async (_name, tier, capability, payload) => {
     await render(payload, tier, null, capability);
-    const footer = container.querySelector('[data-testid="signal-footer"]');
+    const footer = await footerFor(payload, tier);
     expect(footer).not.toBeNull();
-    expect(footer!.textContent).toContain(NOT_A_FORECAST);
+    expect(footer.textContent).toContain(NOT_A_FORECAST);
     // The disclaimer it sits above is still there, unchanged.
-    expect(footer!.textContent).toContain('ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
+    expect(footer.textContent).toContain('ไม่รับประกันทิศทางราคา และไม่ใช่คำแนะนำซื้อขาย');
   });
 
   it('puts the finding above the legal line, not below it', async () => {
     await render();
-    const lines = [...container.querySelector('[data-testid="signal-footer"]')!.children]
-      .map((line) => line.textContent ?? '');
+    const lines = [...(await footerFor(result, 'elite')).children].map((line) => line.textContent ?? '');
     expect(lines[0]).toBe(NOT_A_FORECAST);
     expect(lines.at(-1)).toContain('ไม่ใช่คำแนะนำซื้อขาย');
+  });
+
+  /*
+   * The one sentence the beginner layer has room for, and the thing that makes
+   * it a summary rather than a replacement: it says what the card is describing
+   * against what a reader assumes it is describing, which is the useful half of
+   * the disclosure. The evidence and the legal line are one tap away, asserted
+   * above on this very surface.
+   */
+  /*
+   * THE LEGAL LINE, AND WHY IT IS ON THE CARD RATHER THAN ONLY BEHIND A TAP.
+   *
+   * `git log -S "no render path can ship without it"` lands on 02c3070, and
+   * that commit decides the placement of the FINDING — "above the disclaimer,
+   * on every one of the four render paths" — because P4a had just measured it.
+   * The disclaimer itself is older (51f4f5f) and the same clause is written
+   * inline on six other surfaces; the versioned instrument is
+   * `INVESTMENT_DISCLAIMER` in `src/lib/legal/documents.ts`. So this line is
+   * convention, not compliance — and the convention is that it sits on the
+   * surface a reader acts from. Only this line came back; the finding and its
+   * provenance stay with the evidence they quote.
+   */
+  it('says on the card that this is not trading advice, on every full-card tier', async () => {
+    for (const [tier, capability] of [
+      ['elite', 'technical.outlook'],
+      ['elite', 'technical.outlook.commodity'],
+      ['pro', 'technical.outlook.commodity'],
+    ] as const) {
+      await render(result, tier, null, capability);
+      const line = container.querySelector('[data-testid="signal-card-disclaimer"]')!;
+      expect(line.textContent, `${tier}/${capability}`).toContain('ไม่ใช่คำแนะนำซื้อขาย');
+      expect(line.getAttribute('class')).not.toMatch(/truncate|line-clamp-|hidden|overflow-hidden/);
+      // The other two lines stay where the evidence is.
+      expect(container.textContent, `${tier}/${capability}`).not.toContain(NOT_A_FORECAST);
+      expect(container.textContent, `${tier}/${capability}`).not.toContain(MEASURED_PROVENANCE_TEXT);
+    }
+  });
+
+  it('says on the beginner layer that the card is not a forecast', async () => {
+    await render();
+    const note = container.querySelector('[data-testid="signal-short-note"]')!;
+    expect(note.textContent).toBe(SHORT_NOTE);
+    expect(note.getAttribute('class')).not.toMatch(/truncate|line-clamp-|hidden|overflow-hidden/);
   });
 
   /*
@@ -2214,14 +2394,14 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
    */
   it('quotes the corpus and the period from the measurement, not from the copy', async () => {
     await render();
-    const footer = container.querySelector('[data-testid="signal-footer"]')!;
+    const footer = await footerFor(result, 'elite');
     expect(footer.textContent).toContain(`วัดจาก ${MARKET_SIGNAL_MEASURED.corpusInstruments} สินทรัพย์`);
     expect(footer.textContent).toContain(MARKET_SIGNAL_MEASURED.period.thai);
   });
 
   it('names the run in the breakdown, so a figure on the card can be traced to one', async () => {
     await render();
-    await act(async () => buttonContaining('ทำไม?').click());
+    await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(dialog.textContent).toContain(MARKET_SIGNAL_MEASURED.runId);
   });
@@ -2239,7 +2419,7 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
    */
   it('carries nothing that would truncate, clamp or hide it on a phone', async () => {
     await render();
-    const footer = container.querySelector('[data-testid="signal-footer"]')!;
+    const footer = await footerFor(result, 'elite');
     const classNames = [footer, ...footer.querySelectorAll('*')]
       .map((node) => node.getAttribute('class') ?? '');
 
@@ -2255,7 +2435,7 @@ describe('the card says it is not a forecast, everywhere it renders', () => {
 
   it('renders the sentence as one uninterrupted string, not as fragments a clamp could split', async () => {
     await render();
-    const first = container.querySelector('[data-testid="signal-footer"]')!.firstElementChild!;
+    const first = (await footerFor(result, 'elite')).firstElementChild!;
     expect(first.childElementCount).toBe(0);
     expect(first.textContent).toHaveLength(NOT_A_FORECAST.length);
   });
@@ -2301,23 +2481,34 @@ describe('the history strip discloses without ranking', () => {
     },
   });
 
+  /*
+   * THE STRIP MOVED, AND NOTHING IT SAYS DID.
+   *
+   * It is a measurement about the ENGINE — how long this label has stood, how
+   * many days were recorded, and the flat statement that neither number makes
+   * the label more accurate — which is the advanced layer's subject rather than
+   * the beginner layer's. Every assertion below is the one it had; only the
+   * node it reads is now inside the dialog.
+   */
+  const historyBlock = async () => (await openAdvanced()).querySelector('[data-testid="signal-history"]');
+  const historyStrip = async () => (await openAdvanced())
+    .querySelector('[aria-label="ประวัติป้าย 30 วัน"]')!;
+
   it('draws one cell per recorded day and not one per calendar day', async () => {
     await render(withHistory());
-    const strip = container.querySelector('[aria-label="ประวัติป้าย 30 วัน"]')!;
-    expect(strip.children).toHaveLength(3);
+    expect((await historyStrip()).children).toHaveLength(3);
   });
 
   it('says how many of the days in its window it actually has', async () => {
     await render(withHistory());
-    const block = container.querySelector('[data-testid="signal-history"]')!;
+    const block = (await historyBlock())!;
     // The absence is disclosed as a number rather than drawn as invented cells.
     expect(block.textContent).toContain('บันทึกได้ 3 วัน จาก 30 วันที่ผ่านมา');
   });
 
   it('states the label age as a duration', async () => {
     await render(withHistory());
-    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
-      .toContain('ยืนมา 2 วัน');
+    expect((await historyBlock())!.textContent).toContain('ยืนมา 2 วัน');
   });
 
   /*
@@ -2332,14 +2523,14 @@ describe('the history strip discloses without ranking', () => {
    */
   it('shows the raw run and never the held one', async () => {
     await render(withHistory({ currentLabelDays: 9, currentRawLabelDays: 2 }));
-    const block = container.querySelector('[data-testid="signal-history"]')!;
+    const block = (await historyBlock())!;
     expect(block.textContent).toContain('ยืนมา 2 วัน');
     expect(block.textContent).not.toContain('ยืนมา 9 วัน');
   });
 
   it('shows no age at all when the raw run cannot be counted honestly', async () => {
     await render(withHistory({ currentLabelDays: 9, currentRawLabelDays: null }));
-    const block = container.querySelector('[data-testid="signal-history"]')!;
+    const block = (await historyBlock())!;
     expect(block.textContent).toContain('ยังไม่มีวันที่บันทึกพอ');
     expect(block.textContent).not.toContain('9 วัน');
   });
@@ -2350,7 +2541,7 @@ describe('the history strip discloses without ranking', () => {
       currentLabelDays: null,
       currentRawLabelDays: null,
     }));
-    const block = container.querySelector('[data-testid="signal-history"]')!;
+    const block = (await historyBlock())!;
     expect(block.textContent).toContain('ยังไม่มีวันที่บันทึกพอ');
     expect(block.textContent).not.toContain('ยืนมา 0 วัน');
   });
@@ -2363,26 +2554,23 @@ describe('the history strip discloses without ranking', () => {
    */
   it('gives every cell of the same label identical styling, whatever its age', async () => {
     await render(withHistory());
-    const cells = [...container.querySelector('[aria-label="ประวัติป้าย 30 วัน"]')!.children]
-      .map((cell) => cell.getAttribute('class'));
+    const cells = [...(await historyStrip()).children].map((cell) => cell.getAttribute('class'));
     expect(new Set(cells).size).toBe(1);
   });
 
   it('says in words that a long-standing label is not a more accurate one', async () => {
     await render(withHistory());
-    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
-      .toContain('ป้ายที่ยืนนานไม่ได้แปลว่าแม่นกว่า');
+    expect((await historyBlock())!.textContent).toContain('ป้ายที่ยืนนานไม่ได้แปลว่าแม่นกว่า');
   });
 
   it('warns when the label is unsettled, which is the safe direction', async () => {
     await render(withHistory({ recentFlip: true }));
-    expect(container.querySelector('[data-testid="signal-history"]')!.textContent)
-      .toContain('ยังไม่นิ่ง');
+    expect((await historyBlock())!.textContent).toContain('ยังไม่นิ่ง');
   });
 
   it('draws nothing at all while the flag is off', async () => {
     await render(result);
-    expect(container.querySelector('[data-testid="signal-history"]')).toBeNull();
+    expect(await historyBlock()).toBeNull();
   });
 });
 
@@ -2441,10 +2629,23 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   });
   const framed = (over: Partial<AvailableSignal> = {}) => sideways({ zones: frame, ...over });
 
+  /*
+   * THE HEADLINE IS ON THE CARD; THE SENTENCE UNDER IT IS NOT, ANY MORE.
+   *
+   * The card used to carry the state name, this headline, the description AND
+   * the frame's own caption on the bar — three tellings of one fact stacked in
+   * one column. The headline survived because it is the shortest and the bar
+   * because it also shows WHERE, so the description and the base rate moved
+   * into the advanced layer. Everything they are held to here is unchanged;
+   * only where the test has to look for them is.
+   */
   const headline = () => container.querySelector('[data-testid="signal-state-headline"]')!.textContent ?? '';
-  const description = () => container.querySelector('[data-testid="signal-state-description"]')!.textContent ?? '';
-  const baseRate = () => container.querySelector('[data-testid="signal-sideways-base-rate"]');
-  const baseRateSentences = () => [...(baseRate()?.querySelectorAll('p') ?? [])].map((node) => node.textContent ?? '');
+  const description = async () => (await openAdvanced())
+    .querySelector('[data-testid="signal-state-description"]')!.textContent ?? '';
+  const baseRate = async () => (await openAdvanced())
+    .querySelector('[data-testid="signal-sideways-base-rate-dialog"]');
+  const baseRateSentences = async () => [...((await baseRate())?.querySelectorAll('p') ?? [])]
+    .map((node) => node.textContent ?? '');
 
   /*
    * THE DEFECT, RESTATED AS AN ASSERTION. The old wording named no moment, and
@@ -2453,16 +2654,17 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   it('never states the label without saying it is about now', async () => {
     for (const payload of [sideways(), sideways({ bias: 'bullish' }), framed(), framed({ bias: 'bearish' })]) {
       await render(payload);
+      const spelled = await description();
       expect(headline(), `"${headline()}" could be about any day`).toContain('ตอนนี้');
-      expect(description(), `"${description()}" could be about any day`).toContain('ตอนนี้');
-      expect(`${headline()} ${description()}`).not.toContain('ยังไม่ไปทางไหนชัด');
+      expect(spelled, `"${spelled}" could be about any day`).toContain('ตอนนี้');
+      expect(`${headline()} ${spelled}`).not.toContain('ยังไม่ไปทางไหนชัด');
     }
   });
 
   it('names the frame on a card that draws one, and the direction on a card that does not', async () => {
     await render(framed());
     expect(headline()).toBe('ตอนนี้ราคายังอยู่ในกรอบ');
-    expect(description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
+    expect(await description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
 
     /*
      * The other half, and the reason there are two wordings at all. With
@@ -2473,16 +2675,16 @@ describe('the SIDEWAYS label says when it is talking about', () => {
      */
     await render(sideways());
     expect(headline()).toBe('ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง');
-    expect(`${headline()} ${description()}`).not.toContain('กรอบ');
+    expect(`${headline()} ${await description()}`).not.toContain('กรอบ');
   });
 
   it('says the lean without denying the label above it', async () => {
     await render(framed({ bias: 'bullish' }));
-    expect(description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
-    expect(description()).toContain('แต่คะแนนรวมเอนไปทางขึ้น');
+    expect(await description()).toContain('ตอนนี้ราคายังอยู่ในกรอบ');
+    expect(await description()).toContain('แต่คะแนนรวมเอนไปทางขึ้น');
 
     await render(sideways({ bias: 'bearish' }));
-    expect(description()).toContain('แต่คะแนนรวมเอนไปทางลง');
+    expect(await description()).toContain('แต่คะแนนรวมเอนไปทางลง');
   });
 
   /*
@@ -2492,10 +2694,10 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    * end of that wire — it fails when the config stops matching the newest run's
    * own `report.md`.
    */
-  it('puts the measured base rate under the label, from the config and not from memory', async () => {
+  it('keeps the measured base rate reading from the config and not from memory', async () => {
     await render(framed());
     const measured = MARKET_SIGNAL_MEASURED.sidewaysPersistence;
-    const text = baseRate()!.textContent ?? '';
+    const text = (await baseRate())!.textContent ?? '';
     expect(text).toContain(measured.sampleSize.toLocaleString('en-US'));
     expect(text).toContain(`${measured.horizonBars} แท่ง`);
     expect(text).toContain(`${measured.labelStillSidewaysPct}%`);
@@ -2505,9 +2707,9 @@ describe('the SIDEWAYS label says when it is talking about', () => {
     expect(text).toContain('ราคามักออกจากกรอบไปก่อน');
   });
 
-  it('repeats it in "ทำไม?" beside the reasons', async () => {
+  it('repeats it in the advanced layer beside the reasons', async () => {
     await render(framed());
-    await act(async () => buttonContaining('ทำไม?').click());
+    await act(async () => buttonContaining(ADVANCED_TOGGLE).click());
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
     const inDialog = dialog.querySelector('[data-testid="signal-sideways-base-rate-dialog"]')!;
     expect(inDialog.textContent).toContain(`${MARKET_SIGNAL_MEASURED.sidewaysPersistence.labelStillSidewaysPct}%`);
@@ -2522,10 +2724,10 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    */
   it('withholds the base rate where the measurement does not reach', async () => {
     await render(sideways());
-    expect(baseRate(), 'quoted at a label with no frame behind it').toBeNull();
+    expect(await baseRate(), 'quoted at a label with no frame behind it').toBeNull();
 
     await render(framed({ state: 'BULLISH', bias: 'bullish', zones: { ...frame, zone: 'uptrend' } }));
-    expect(baseRate(), 'quoted at a zone it was not measured on').toBeNull();
+    expect(await baseRate(), 'quoted at a zone it was not measured on').toBeNull();
   });
 
   /*
@@ -2538,7 +2740,7 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    */
   it('reports a base rate rather than making a forecast out of it', async () => {
     await render(framed());
-    const text = [headline(), description(), ...baseRateSentences()].join(' ');
+    const text = [headline(), await description(), ...(await baseRateSentences())].join(' ');
     for (const forecast of ['จะขึ้น', 'จะลง', 'คาดว่า', 'พยากรณ์', 'มีโอกาส', 'โอกาสที่']) {
       expect(text, `"${forecast}" turns the base rate into a forecast`).not.toContain(forecast);
     }
@@ -2547,7 +2749,7 @@ describe('the SIDEWAYS label says when it is talking about', () => {
     }
     // Past tense, stated as such: the sentence has to name where the figures
     // came from rather than presenting them as a property of this instrument.
-    expect(baseRateSentences()[0]).toContain('จากการวัดย้อนหลัง');
+    expect((await baseRateSentences())[0]).toContain('จากการวัดย้อนหลัง');
   });
 
   /*
@@ -2563,9 +2765,9 @@ describe('the SIDEWAYS label says when it is talking about', () => {
     const sentences: string[] = [];
     for (const bias of ['neutral', 'bullish', 'bearish'] as const) {
       await render(framed({ bias }));
-      sentences.push(description(), ...baseRateSentences());
+      sentences.push(await description(), ...(await baseRateSentences()));
       await render(sideways({ bias }));
-      sentences.push(description());
+      sentences.push(await description());
     }
     expect(sentences.length).toBeGreaterThan(5);
     for (const sentence of sentences) {
@@ -2601,7 +2803,7 @@ describe('the SIDEWAYS label says when it is talking about', () => {
       ['BEARISH', 'bearish', 'ลง'],
     ] as const) {
       await render(inRange({ state, bias, score: state === 'BULLISH' ? 72 : -72 }));
-      const text = description();
+      const text = await description();
       // the direction, from the evidence
       expect(text, state).toContain(`เอนไปทาง${leaning}`);
       // and the frame, unmoved — neither erases the other
@@ -2612,16 +2814,17 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   it('keeps that sentence inside the same 15-35 word band as the rest', async () => {
     for (const state of ['BULLISH', 'BEARISH'] as const) {
       await render(inRange({ state, bias: state === 'BULLISH' ? 'bullish' : 'bearish' }));
-      const words = wordCount(description());
-      expect(words, `${words} words: "${description()}"`).toBeGreaterThanOrEqual(15);
-      expect(words, `${words} words: "${description()}"`).toBeLessThanOrEqual(35);
+      const spelled = await description();
+      const words = wordCount(spelled);
+      expect(words, `${words} words: "${spelled}"`).toBeGreaterThanOrEqual(15);
+      expect(words, `${words} words: "${spelled}"`).toBeLessThanOrEqual(35);
     }
   });
 
   it('keeps that sentence clear of the terms the card bans', async () => {
     for (const state of ['BULLISH', 'BEARISH'] as const) {
       await render(inRange({ state, bias: state === 'BULLISH' ? 'bullish' : 'bearish' }));
-      const text = [headline(), description()].join(' ');
+      const text = [headline(), await description()].join(' ');
       for (const banned of ['โซน', 'ไซด์เวย์', 'เบรก', 'sideways', 'หลุด', 'พลิกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง', 'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์', 'ของกรอบ']) {
         expect(text, `"${banned}" is in the in-range direction copy`).not.toContain(banned);
       }
@@ -2631,11 +2834,256 @@ describe('the SIDEWAYS label says when it is talking about', () => {
   it('keeps the new sentences clear of the terms the card bans', async () => {
     for (const payload of [framed(), sideways({ bias: 'bullish' })]) {
       await render(payload);
-      const text = [headline(), description(), ...baseRateSentences()].join(' ');
+      const text = [headline(), await description(), ...(await baseRateSentences())].join(' ');
       for (const banned of ['โซน', 'ไซด์เวย์', 'เบรก', 'sideways', 'หลุด', 'พลิกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง', 'สวิง', 'ไดเวอร์เจนซ์', 'เทรนด์', 'ของกรอบ']) {
         expect(text, `"${banned}" is in the SIDEWAYS copy`).not.toContain(banned);
       }
     }
   });
 });
+});
+
+/*
+ * THE SPLIT ITSELF: what a reader meets before they open anything, and the
+ * promise that opening it is the only way to see more.
+ *
+ * The beginner layer is not a shorter card — it is a card with a different
+ * subject. It names the state, gives the account of it, tags it, draws it, and
+ * says once that this is not a forecast. Everything that is a measurement about
+ * the ENGINE — both sets of edges, the calibration figures, the label's own
+ * age, the metric table — is one tap away. These tests hold both halves of
+ * that: what is on the first layer, and that nothing left the card entirely.
+ */
+describe('the beginner layer and the advanced one', () => {
+  const reason = (id: string, polarity: MarketSignalResult['reasons'][number]['polarity'], impact: number) => ({
+    id, polarity, impact, text: `engine text for ${id}`,
+  });
+
+  it('draws the reasons as labels, not as the sentences the dialog draws', async () => {
+    await render({
+      ...result,
+      reasons: [
+        reason('ema-structure', 'positive', 8),
+        reason('squeeze-on', 'caution', 6),
+      ],
+    });
+    const bullets = [...container.querySelectorAll('[data-testid="signal-beginner-reasons"] [data-reason-id]')]
+      .map((node) => node.textContent ?? '');
+    expect(bullets).toEqual(['ราคายืนเหนือเส้นค่าเฉลี่ยราคา', 'ช่วงแกว่งของราคากำลังบีบแคบลง']);
+
+    // …and the same two rows, spelled out, one tap away.
+    const dialog = await openAdvanced();
+    expect(dialog.textContent).toContain('เป็นการเรียงตัวแบบที่เห็นตอนราคาไต่ขึ้นต่อเนื่อง');
+  });
+
+  /*
+   * Four, and the tail counted rather than dropped. The count is what makes
+   * the cut safe to make at all: a reader can see there is more and knows
+   * exactly where it is, which is the shape the chip row already uses.
+   */
+  it('draws four reasons at most and says how many it did not draw', async () => {
+    await render({
+      ...result,
+      reasons: [
+        reason('ema-structure', 'positive', 8),
+        reason('squeeze-on', 'caution', 6),
+        reason('rsi14', 'positive', 5),
+        reason('macd-signal', 'positive', 4),
+        reason('obv-trend', 'positive', 3),
+        reason('swing-structure', 'positive', 2),
+      ],
+    });
+    const list = container.querySelector('[data-testid="signal-beginner-reasons"]')!;
+    expect(list.querySelectorAll('[data-reason-id]')).toHaveLength(4);
+    expect(list.textContent).toContain('และอีก 2 ข้อ');
+    expect(list.textContent).toContain('ดูรายละเอียดการคำนวณ');
+
+    // Every one of the six is still drawn in full in the advanced layer.
+    const dialog = await openAdvanced();
+    for (const id of ['ema-structure', 'squeeze-on', 'rsi14', 'macd-signal', 'obv-trend', 'swing-structure']) {
+      expect(dialog.querySelector(`[data-reason-id="${id}"]`), `${id} left the card entirely`).not.toBeNull();
+    }
+  });
+
+  /*
+   * ORDERED BY THE ENGINE'S OWN `impact`, which is the only ranking the payload
+   * carries. A card that picked by id, or by which section a row lands in,
+   * would be the presentation layer inventing an importance nobody measured.
+   * `Math.abs` because impact carries a side and this list does not.
+   */
+  it('picks the four by the impact the engine assigned, not by payload order', async () => {
+    await render({
+      ...result,
+      reasons: [
+        reason('obv-trend', 'positive', 1),
+        reason('ema-structure', 'positive', 9),
+        reason('rsi14', 'positive', 2),
+        reason('squeeze-on', 'caution', 7),
+      ],
+    });
+    const ids = [...container.querySelectorAll('[data-testid="signal-beginner-reasons"] [data-reason-id]')]
+      .map((node) => node.getAttribute('data-reason-id'));
+    expect(ids).toEqual(['ema-structure', 'squeeze-on', 'rsi14', 'obv-trend']);
+  });
+
+  /*
+   * THE ROW THAT WAS FILED UNDER THE WRONG HEADING.
+   *
+   * `bullish-divergence` says "ราคาทำจุดต่ำใหม่ แต่แรงขายไม่ได้แรงขึ้นตาม" and the
+   * engine files it as `caution` — correctly from where the engine sits, because
+   * it is a caution to anybody reading the downtrend it interrupts. Under a
+   * heading reading ปัจจัยที่ต้องระวัง it read as the opposite of what it says,
+   * with §4 sitting empty beside it.
+   *
+   * The engine's field is untouched. `metrics.divergence` — the field the
+   * engine raised the row FROM — is what decides the heading here.
+   */
+  it('files a bullish divergence as support, and says what it is worth', async () => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      metrics: { ...result.metrics, divergence: 'bullish' },
+      reasons: [reason('bullish-divergence', 'caution', 4)],
+    });
+    const dialog = await openAdvanced();
+    const sections = [...dialog.querySelectorAll('section')];
+    const supporting = sections.find((node) => node.textContent?.startsWith('4. ปัจจัยสนับสนุน'))!;
+    const cautions = sections.find((node) => node.textContent?.startsWith('5. ปัจจัยที่ต้องระวัง'))!;
+
+    expect(supporting.querySelector('[data-reason-id="bullish-divergence"]')).not.toBeNull();
+    expect(cautions.querySelector('[data-reason-id="bullish-divergence"]')).toBeNull();
+    expect(cautions.textContent).toContain('ยังไม่มีปัจจัยขัดแย้งเด่น');
+
+    // And the reader is told it did not move the reading.
+    expect(supporting.querySelector('[data-testid="signal-reason-note"]')!.textContent)
+      .toContain('น้ำหนักน้อย');
+  });
+
+  it('leaves a bearish divergence on the other side of the same line', async () => {
+    await render({
+      ...result,
+      state: 'SIDEWAYS',
+      bias: 'neutral',
+      metrics: { ...result.metrics, divergence: 'bearish' },
+      reasons: [reason('bearish-divergence', 'caution', 4)],
+    });
+    const dialog = await openAdvanced();
+    const sections = [...dialog.querySelectorAll('section')];
+    const cautions = sections.find((node) => node.textContent?.startsWith('5. ปัจจัยที่ต้องระวัง'))!;
+    expect(cautions.querySelector('[data-reason-id="bearish-divergence"]')).not.toBeNull();
+  });
+
+  /*
+   * The note is only for the rows this layer RE-FILED. A row the engine itself
+   * classified carries no note, because there is nothing to explain about it.
+   */
+  it('notes only the rows it re-filed, never the ones the engine classified', async () => {
+    await render({
+      ...result,
+      reasons: [reason('ema-structure', 'positive', 8), reason('squeeze-on', 'caution', 6)],
+    });
+    const dialog = await openAdvanced();
+    expect(dialog.querySelector('[data-testid="signal-reason-note"]')).toBeNull();
+  });
+
+  /*
+   * THE PARTITION IS TOTAL, which it was not before.
+   *
+   * The old filters asked for `polarity === 'information'` under a neutral bias
+   * and `polarity === 'positive'` under a bullish one, so an information row on
+   * a directional card — and every positive or negative row on a neutral one —
+   * matched neither list and was drawn nowhere at all.
+   */
+  it('draws every reason under exactly one of the two headings', async () => {
+    const reasons = [
+      reason('ema-structure', 'positive', 8),
+      reason('macd-signal', 'negative', 6),
+      reason('rsi14', 'information', 5),
+      reason('squeeze-on', 'caution', 4),
+    ];
+    for (const bias of ['bullish', 'bearish', 'neutral'] as const) {
+      await render({ ...result, symbol: `T-${bias}`, bias, reasons });
+      const dialog = await openAdvanced();
+      for (const { id } of reasons) {
+        expect(dialog.querySelectorAll(`[data-reason-id="${id}"]`), `${id} on a ${bias} card`).toHaveLength(1);
+      }
+    }
+  }, 15_000);
+
+  /*
+   * C3 — "ทำไมถึงไม่สรุปแรงกว่านี้" and §5 were saying the same two things.
+   *
+   * The gate block listed `gate.conflicts` and printed an earnings sentence;
+   * §5 two headings below carried the SAME two facts as reason rows, raised by
+   * the engine from the same two gate fields, word for word in the earnings
+   * case. Deduplicated toward §5, which says what each one MEANS.
+   */
+  /* `Partial<MarketSignalResult>` would widen `status` back to the union and
+     leave the fixture assignable to neither half of it. */
+  type Available = Extract<MarketSignalResult, { status: 'available' }>;
+
+  const gatedWithReasons = (over: Partial<Available> = {}): MarketSignalResult => ({
+    ...(result as Available),
+    state: 'SIDEWAYS',
+    bias: 'neutral',
+    gate: {
+      band: 'neutral',
+      conflicts: ['ema_vs_momentum'],
+      forcedNeutral: false,
+      earningsProximity: 'soon',
+      daysToEarnings: 10,
+      confidenceFactors: { base: 72.66, completeness: 1, agreement: 0.7, regimeClarity: 0.6, conflict: 0.9, earnings: 0.8 },
+    },
+    reasons: [reason('component-conflict', 'caution', 7), reason('earnings-proximity', 'caution', 5)],
+    ...over,
+  });
+
+  it('says the conflict and the report date once, in the section that explains them', async () => {
+    await render(gatedWithReasons());
+    const dialog = await openAdvanced();
+    const explainer = dialog.querySelector('[data-testid="signal-gate-explainer"]')!;
+
+    // The band is this block's own and stays.
+    expect(explainer.textContent).toContain('คะแนนรวมยังต่ำกว่าเกณฑ์');
+    // The two it was repeating are gone from here…
+    expect(explainer.textContent).not.toContain('EMA/Trend กับ Momentum ชี้คนละทาง');
+    expect(explainer.textContent).not.toContain('อีก 10 วันจะประกาศงบ');
+    // …and still said, once, where they are explained.
+    expect(dialog.querySelector('[data-reason-id="component-conflict"]')!.textContent)
+      .toContain('กำลังชี้คนละทาง');
+    expect(dialog.querySelector('[data-reason-id="earnings-proximity"]')!.textContent)
+      .toContain('อีก 10 วันบริษัทจะประกาศผลประกอบการ');
+  });
+
+  /*
+   * NOTHING IS DROPPED, which is why this is a filter and not a deletion.
+   * `component-conflict` is ONE row however many conflicts the gate holds — it
+   * names the EMA pair when there is one and the structure pair otherwise — so
+   * a card carrying both would lose the second if the list simply went away.
+   */
+  it('still lists a second conflict the reason row has no room to name', async () => {
+    await render(gatedWithReasons({
+      gate: {
+        ...gatedWithReasons().gate!,
+        conflicts: ['ema_vs_momentum', 'structure_vs_momentum'],
+      },
+    }));
+    const dialog = await openAdvanced();
+    const explainer = dialog.querySelector('[data-testid="signal-gate-explainer"]')!;
+    expect(explainer.textContent).toContain('Price Structure กับ Momentum ชี้คนละทาง');
+    expect(explainer.textContent).not.toContain('EMA/Trend กับ Momentum ชี้คนละทาง');
+  });
+
+  /*
+   * And the other direction: with no §5 row for it, the gate block is the only
+   * place the earnings proximity is said, so it says it. `gated` in the
+   * consistency-layer block above is exactly that card.
+   */
+  it('keeps the earnings line when no reason row carries it', async () => {
+    await render(gatedWithReasons({ reasons: [reason('component-conflict', 'caution', 7)] }));
+    const dialog = await openAdvanced();
+    expect(dialog.querySelector('[data-testid="signal-gate-explainer"]')!.textContent)
+      .toContain('อีก 10 วันจะประกาศงบ');
+  });
 });
