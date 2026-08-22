@@ -671,6 +671,26 @@ export function scoreRiskReward(
         + `จึงคิดคะแนน R:R เพียง ${Math.round(reachability * 100)}%`
   );
 
+  /*
+   * THE SUBSTITUTION, in the same shape Momentum already prints.
+   *
+   * The card showed "คุณภาพ setup 80%" beside a score of +1 out of 15, and
+   * nothing on the page connected the two: `80% × 15` is 12, and the two damping
+   * multipliers that turn it into 1 were applied silently. A reader who tries the
+   * arithmetic and cannot reproduce it stops trusting every other number beside
+   * it.
+   *
+   * `setupQuality` is deliberately NOT a term here, because it is not one — it
+   * answers "is either side of this chart a workable trade", which is a different
+   * question from "how far does the geometry lean". Printing it inside the
+   * multiplication would only replace an unexplained gap with a wrong
+   * explanation; it is labelled separately instead.
+   */
+  const mathText = (terms: Array<[string, number]>, result: number) => {
+    const written = terms.map(([label, value]) => `${label} ${round(value, 2)}`).join(' × ');
+    return `คิดเป็น ${written} = ${round(result, 2)} ของน้ำหนักเต็ม`;
+  };
+
   if (direction === 'bullish') {
     const reachability = reachabilityOf(upsideExpectedMoves);
     return {
@@ -680,7 +700,8 @@ export function scoreRiskReward(
       setupQuality: callQuality,
       reachability,
       detail: `หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · ${distanceText} · ${ratioText}${expectedMoveText}`
-        + reachText(reachability, upsideExpectedMoves),
+        + reachText(reachability, upsideExpectedMoves)
+        + ` · ${mathText([['เอียงฝั่ง Call', tilt], ['ตัวคูณระยะเอื้อม', reachability]], tilt * reachability)}`,
     };
   }
   if (direction === 'bearish') {
@@ -695,7 +716,8 @@ export function scoreRiskReward(
       setupQuality: putQuality,
       reachability,
       detail: `หลักฐานอื่นชี้ขาลง จึงวัดจากฝั่ง Put · ${distanceText} · ${ratioText}${expectedMoveText}`
-        + reachText(reachability, downsideExpectedMoves),
+        + reachText(reachability, downsideExpectedMoves)
+        + ` · ${mathText([['เอียงฝั่ง Put', -putTilt], ['ตัวคูณระยะเอื้อม', reachability]], -putTilt * reachability)}`,
     };
   }
 
@@ -724,7 +746,12 @@ export function scoreRiskReward(
     setupQuality: bestQuality,
     reachability,
     detail: `${distanceText} · ${ratioText} · ${qualityText}${expectedMoveText}`
-      + reachText(reachability, residualDistance),
+      + reachText(reachability, residualDistance)
+      + ` · คุณภาพ setup ${Math.round(bestQuality * 100)}% (บอกว่ามีฝั่งที่ใช้ได้ไหม ไม่ใช่ตัวคูณของคะแนน)`
+      + ` · ${mathText(
+        [['เอียง', tilt], ['ตัวคูณไร้ทิศทาง', config.sidewaysDamping], ['ตัวคูณระยะเอื้อม', reachability]],
+        tilt * config.sidewaysDamping * reachability,
+      )}`,
   };
 }
 

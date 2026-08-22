@@ -940,6 +940,38 @@ function DetailBody({ breakdown, summary }: {
             ))}
           </ul>
         ) : <p className="mt-2 text-xs text-slate-500">ไม่มีการหักคะแนนจากความเสี่ยง</p>}
+
+        {/*
+          * THE TREND VETO, whether or not it fired.
+          *
+          * Section 3 talked about "ก่อนหักด้วย trend veto" while section 1 summed
+          * to +2/90 and section 7 listed one deduction for earnings — so the
+          * mechanism was named on the page and shown nowhere on it, which reads
+          * as something being kept back. A line that says "0, ไม่เข้าเงื่อนไข" is
+          * the difference between "the trend agreed" and "nobody checked".
+          */}
+        <h4 className="mt-4 font-semibold text-white">การหักคะแนนทิศทาง</h4>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          คนละก้อนกับด้านบน — ด้านบนหัก Confidence ส่วนก้อนนี้หักคะแนนทิศทางบนการ์ดโดยตรง
+        </p>
+        <ul className="mt-2 space-y-1.5 text-xs">
+          <li
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 p-2"
+            data-testid="options-signal-trend-veto"
+          >
+            <span className="text-slate-300">
+              trend veto
+              {diagnostics.trendVeto.applied
+                ? ` — แนวโน้มสวนทางกับทิศที่คะแนนรวมชี้ ${Math.round(diagnostics.trendVeto.opposition * 100)}%`
+                : ' — ไม่เข้าเงื่อนไข (ต้องมีแนวโน้มที่วัดได้ และสวนทางกับทิศที่คะแนนรวมชี้)'}
+            </span>
+            <span className="font-mono text-amber-300">
+              {diagnostics.trendVeto.applied
+                ? `${signedPoints(diagnostics.trendVeto.pointsBeforeVeto)} × ${diagnostics.trendVeto.multiplier} = ${signedPoints(diagnostics.rawDirectionPoints)}`
+                : '0'}
+            </span>
+          </li>
+        </ul>
       </section>
 
       <section>

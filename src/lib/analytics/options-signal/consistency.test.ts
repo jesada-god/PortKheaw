@@ -420,6 +420,96 @@ describe('a liquidity gate that did not pass awards no marks', () => {
   });
 });
 
+describe('every multiplier that moved a number is printed beside it', () => {
+  it('shows the Risk/Reward substitution the way Momentum already does', () => {
+    // A tape that has not chosen: the one shape the sideways damping is for, and
+    // the shape the reported card was in.
+    const result = calculateOptionsSignal(baseInput({
+      macro: available<MacroInput>({
+        benchmarks: [
+          { symbol: 'SPY', close: 500, ema20: 480 },
+          { symbol: 'QQQ', close: 380, ema20: 390 },
+        ],
+      }),
+      trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
+      momentum: available<MomentumInput>({
+        squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1.06,
+      }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    expect(result.diagnostics.riskReward.scoredSide).toBeNull();
+    const { detail } = result.diagnostics.factors.riskReward;
+    const { sidewaysDamping } = OPTIONS_SIGNAL_CONFIG.riskReward;
+
+    /*
+     * "คุณภาพ setup 80%" sat beside "+1 / 15" with nothing connecting them:
+     * 80% × 15 is 12, and the two damping multipliers that turn it into 1 were
+     * applied in silence.
+     */
+    expect(detail).toContain('ของน้ำหนักเต็ม');
+    expect(detail).toContain(`ตัวคูณไร้ทิศทาง ${sidewaysDamping}`);
+    expect(detail).toContain('ตัวคูณระยะเอื้อม');
+    // The multiplier comes from the config, never from a number typed into copy.
+    expect(detail).not.toContain('ตัวคูณไร้ทิศทาง 0.08');
+    // And setup quality is labelled as what it is, rather than smuggled into the
+    // multiplication it is not a term in.
+    expect(detail).toContain('ไม่ใช่ตัวคูณของคะแนน');
+  });
+
+  it('prints a substitution a reader can multiply out, on a directional path too', () => {
+    const result = calculateOptionsSignal(baseInput({
+      macro: available<MacroInput>({
+        benchmarks: [
+          { symbol: 'SPY', close: 460, ema20: 480 },
+          { symbol: 'QQQ', close: 380, ema20: 390 },
+        ],
+      }),
+      momentum: available<MomentumInput>({
+        squeeze: 'FIRED_BEARISH', squeezeMomentum: -2.4, atr: 2, relativeVolume: 1.8,
+      }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { detail, normalized } = result.diagnostics.factors.riskReward;
+
+    const match = /คิดเป็น (.+?) = (-?[\d.]+) ของน้ำหนักเต็ม/.exec(detail);
+    expect(match).not.toBeNull();
+    const factors = [...(match?.[1] ?? '').matchAll(/(-?\d+\.?\d*)/g)].map((hit) => Number(hit[1]));
+    expect(factors.length).toBeGreaterThanOrEqual(2);
+    const product = factors.reduce((total, value) => total * value, 1);
+    // The printed terms multiply out to the printed result, and the printed
+    // result is the number the weight was applied to.
+    expect(product).toBeCloseTo(Number(match?.[2]), 2);
+    expect(Number(match?.[2])).toBeCloseTo(normalized as number, 2);
+  });
+
+  it('publishes the trend veto whether or not it fired', () => {
+    const quiet = calculateOptionsSignal(baseInput());
+    if (quiet.status !== 'available') throw new Error('expected a signal');
+    // A block that only appears when it bit is a block a reader cannot use to
+    // tell "the trend agreed" from "nobody checked".
+    expect(quiet.diagnostics.trendVeto).toMatchObject({ applied: false, opposition: 0, multiplier: 1 });
+    expect(quiet.diagnostics.trendVeto.pointsBeforeVeto).toBe(quiet.diagnostics.rawDirectionPoints);
+  });
+
+  it('leaves no deduction without a line of its own', () => {
+    const result = calculateOptionsSignal(baseInput());
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const { factors, trendVeto } = result.diagnostics;
+
+    // Every factor whose normalized value was damped says so in its own sentence.
+    for (const factor of Object.values(factors)) {
+      if (factor.measurement !== 'measured' || factor.normalized === null) continue;
+      if (factor.id === 'momentum' || factor.id === 'riskReward') {
+        expect(factor.detail, factor.id).toContain('ของน้ำหนักเต็ม');
+      }
+    }
+    // …and the one deduction that lives outside the factors is in the payload
+    // as its own object rather than folded into a total.
+    expect(trendVeto).toHaveProperty('multiplier');
+    expect(trendVeto).toHaveProperty('pointsBeforeVeto');
+  });
+});
+
 describe('weights are not what this work is allowed to change', () => {
   it('keeps 15/25/25/10/15', () => {
     expect(OPTIONS_SIGNAL_WEIGHTS).toEqual({
