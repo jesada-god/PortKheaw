@@ -832,11 +832,63 @@ function DetailBody({ breakdown, summary }: {
           {diagnostics.confidenceFormula}
         </p>
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.coverage * 100)}%`} />
+          <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.completeness.value * 100)}%`} />
           <Metric label="ความสอดคล้อง" value={`${Math.round(diagnostics.agreement * 100)}%`} />
           <Metric label="ความหนักแน่น" value={`${Math.round(diagnostics.evidenceStrength * 100)}%`} />
           <Metric label="คะแนนก่อนหักลบ" value={`${Math.round(diagnostics.confidenceBase * 100)}%`} />
         </dl>
+        {/*
+          * The receipts for that first number.
+          *
+          * It read 100% on a card that was simultaneously showing a yellow
+          * "ข้อมูลบางส่วน" badge and an IV Rank marked unavailable, because it
+          * was counting factors rather than the inputs under them. A figure a
+          * reader cannot open is a figure they have to take on trust, and this
+          * one had not earned that.
+          */}
+        {diagnostics.completeness.inputs.some((entry) => !entry.counted) && (
+          <details className="mt-2 rounded-xl border border-slate-800 p-3 text-xs leading-5">
+            <summary className="cursor-pointer text-amber-300" data-testid="options-signal-completeness-missing">
+              ยังไม่ครบ {diagnostics.completeness.inputs.filter((entry) => !entry.counted).length} อย่าง — กดดูว่าอะไรบ้าง
+            </summary>
+            {diagnostics.completeness.missing.length > 0 && (
+              <>
+                <p className="mt-2 text-[11px] text-slate-500">ยังไม่มีข้อมูล</p>
+                <ul className="mt-1 space-y-1 text-slate-400">
+                  {diagnostics.completeness.inputs.filter((entry) => !entry.available).map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-slate-300">{entry.label}</span>
+                      <span className="font-mono text-[11px] text-slate-500">{entry.note ?? 'ไม่มีข้อมูล'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {/*
+              * Kept apart from the list above on purpose. The Put/Call really is
+              * there; what is missing is anything to judge it against. Filing it
+              * under "ยังไม่มีข้อมูล" would be a second wrong statement told to
+              * fix a first one.
+              */}
+            {diagnostics.completeness.notCounted.length > 0 && (
+              <>
+                <p className="mt-3 text-[11px] text-slate-500">มีข้อมูล แต่ยังตัดสินไม่ได้ จึงไม่นับ</p>
+                <ul className="mt-1 space-y-1 text-slate-400">
+                  {diagnostics.completeness.inputs.filter((entry) => entry.available && !entry.counted).map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-slate-300">{entry.label}</span>
+                      <span className="font-mono text-[11px] text-slate-500">{entry.note ?? 'ยังตัดสินไม่ได้'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </details>
+        )}
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          ความครบวัดที่<b className="text-slate-300">อินพุตย่อย</b> ไม่ใช่ที่จำนวนปัจจัย ปัจจัยหนึ่งอาจให้คะแนนออกมาได้ทั้งที่อินพุตของมันยังไม่ครบ
+          และปัจจัยที่ยังตัดสินไม่ได้เลยนับเป็น 0 ของน้ำหนักตัวเอง แม้ข้อมูลดิบจะมาถึงบางส่วนแล้วก็ตาม
+        </p>
         {diagnostics.penalties.length ? (
           <ul className="mt-3 space-y-1.5 text-xs">
             {diagnostics.penalties.map((penalty) => (

@@ -328,6 +328,41 @@ export interface OptionsSignalFactorScore {
   asOf: string | null;
 }
 
+/** One named input the card depends on, and whether it arrived. */
+export interface OptionsSignalCompletenessInput {
+  id: string;
+  /** Which weighted group it belongs to. */
+  group: string;
+  /** Thai label, shown in the "ขาด: …" list. */
+  label: string;
+  /** Did the raw input arrive. Stays true even when its factor could not use it. */
+  available: boolean;
+  /** Did it earn weight. False for an input whose factor could not be judged. */
+  counted: boolean;
+  /** Why not — a countdown where one applies, or the factor's own reason. */
+  note: string | null;
+}
+
+/**
+ * "ความครบของข้อมูล", and the receipts for it.
+ *
+ * `value` is what feeds the confidence coverage term; `missing` is what the card
+ * expands to show, so the figure can be argued with rather than believed.
+ */
+export interface OptionsSignalCompleteness {
+  /** 0-1, weighted over every registered input. */
+  value: number;
+  inputs: OptionsSignalCompletenessInput[];
+  /** Labels of the inputs that did not arrive at all, in registry order. */
+  missing: string[];
+  /**
+   * Labels of inputs that DID arrive but earned no weight, because the factor
+   * they feed could not be judged. Kept apart from `missing`: the data is there,
+   * and saying otherwise would be a second wrong statement told to fix a first.
+   */
+  notCounted: string[];
+}
+
 export interface OptionsSignalPenalty {
   id: string;
   amount: number;
@@ -449,7 +484,24 @@ export interface OptionsSignalDiagnostics {
   directionScore0to100: number;
   /** That conversion written out, so the card and the modal cannot drift apart. */
   scoreFormula: string;
+  /**
+   * Share of the model's WEIGHT that produced a score. Internal ruler.
+   *
+   * This is what `primeMinimumCoverage` is written on and it keeps that job:
+   * "was enough of the direction model actually scored" is a different question
+   * from "how complete is what we know", and the PRIME floor was calibrated on
+   * the first one.
+   */
   coverage: number;
+  /**
+   * THE published "ความครบของข้อมูล", measured one level below the factors.
+   *
+   * The card was showing 100% while carrying a yellow "ข้อมูลบางส่วน" badge, an
+   * unavailable IV Rank and two percentiles still counting down, because
+   * completeness was asking whether each FACTOR had produced a number rather
+   * than whether the inputs under it had arrived.
+   */
+  completeness: OptionsSignalCompleteness;
   agreement: number;
   evidenceStrength: number;
   confidenceBase: number;

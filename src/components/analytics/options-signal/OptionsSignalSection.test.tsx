@@ -100,6 +100,15 @@ const eliteSignal: OptionsSignalDto = {
       directionScore0to100: 82,
       scoreFormula: '(+64 + 100) ÷ (2 × 100) × 100 = 82',
       coverage: 1,
+      completeness: {
+        value: 0.74,
+        inputs: [
+          { id: 'trend.ema50', group: 'trend', label: 'EMA50 ของหุ้น', available: true, counted: true, note: null },
+          { id: 'pricing.own-baseline', group: 'pricing', label: 'ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)', available: false, counted: false, note: 'ขาดอีก 59 วัน' },
+        ],
+        missing: ['ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)'],
+        notCounted: [],
+      },
       agreement: 0.86,
       evidenceStrength: 0.8,
       confidenceBase: 0.74,

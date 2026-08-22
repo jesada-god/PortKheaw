@@ -82,6 +82,15 @@ const result: OptionsSignalResult = {
     directionScore0to100: 50,
     scoreFormula: '(0 + 100) ÷ (2 × 100) × 100 = 50',
     coverage: 1,
+    completeness: {
+      value: 0.74,
+      inputs: [
+        { id: 'trend.ema50', group: 'trend', label: 'EMA50 ของหุ้น', available: true, counted: true, note: null },
+        { id: 'pricing.own-baseline', group: 'pricing', label: 'ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)', available: false, counted: false, note: 'ขาดอีก 59 วัน' },
+      ],
+      missing: ['ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)'],
+      notCounted: [],
+    },
     agreement: 1,
     evidenceStrength: 1,
     confidenceBase: 74,

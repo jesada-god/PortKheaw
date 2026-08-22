@@ -160,7 +160,7 @@ describe('screenshot-baseline', () => {
      *   directionScore       52   -> 58
      *   agreement            5.9% -> 31.7%
      *   coverage             100% -> 88.9%
-     *   confidence           18   -> 44
+     *   confidence           18   -> 43
      *   label                SIDEWAYS -> SIDEWAYS   (unchanged, as required)
      *
      * The score moving 52 -> 58 is the point, not a side effect: six points of
@@ -189,13 +189,25 @@ describe('screenshot-baseline', () => {
      */
     expect(diagnostics.agreement).toBeCloseTo(0.3171, 4);
     expect(diagnostics.coverage).toBeCloseTo(0.8889, 4);
+    /*
+     * COMPLETENESS, measured at the inputs rather than at the factors: 100% ->
+     * 81%. This fixture carries no Put/Call volume, no Put/Call percentile, no
+     * expected move and no IV baseline of its own, and the old figure — which
+     * only asked whether each factor had produced a number — reported every one
+     * of those gaps as full marks.
+     */
+    expect(diagnostics.completeness.value).toBeCloseTo(0.8125, 4);
+    expect(diagnostics.completeness.missing).toContain('Expected Move จาก ATM straddle');
+    expect(diagnostics.completeness.missing).toContain('ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)');
+    // The Put/Call itself IS here; what is absent is anything to rank it against.
+    expect(diagnostics.completeness.notCounted).toContain('Put/Call จาก Open Interest');
     expect(diagnostics.evidenceStrength).toBeCloseTo(0.5125, 4);
-    expect(result.confidenceScore).toBe(44);
+    expect(result.confidenceScore).toBe(43);
     expect(result.confidenceScore).toBeLessThan(45);
 
     // And the sentence describing that confidence is reproducible by hand.
     expect(diagnostics.confidenceFormula)
-      .toBe('ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.89^0.2 × 0.32^0.55 × 0.51^0.25 = 0.44 → 44%');
+      .toBe('ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.81^0.2 × 0.32^0.55 × 0.51^0.25 = 0.43 → 43%');
 
     // And both surfaces still read the one field.
     const projected = projectOptionsSignal(result, { includeBreakdown: true });
@@ -258,7 +270,7 @@ describe('screenshot-baseline', () => {
         + 0.35 * result.diagnostics.evidenceStrength) * 100,
     );
     expect(legacyConfidence).toBe(56);
-    expect(result.confidenceScore).toBe(44);
+    expect(result.confidenceScore).toBe(43);
     expect(result.confidenceScore).toBeLessThan(legacyConfidence);
   });
 });

@@ -10,6 +10,7 @@ import {
   OPTIONS_SIGNAL_TOTAL_WEIGHT,
   OPTIONS_SIGNAL_WEIGHTS,
 } from './config';
+import { measureCompleteness } from './input-registry';
 import type {
   IvLevel,
   IvPricingInput,
@@ -1264,6 +1265,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     directionScore0to100: 50,
     scoreFormula: 'ไม่มีปัจจัยที่มีข้อมูลพอจะแปลงเป็นคะแนน',
     coverage: 0,
+    completeness: measureCompleteness(input, {}),
     agreement: 0,
     evidenceStrength: 0,
     confidenceBase: 0,
@@ -1475,6 +1477,21 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   // --- Stage 2: signal quality -------------------------------------------
   const coverage = availableWeight / OPTIONS_SIGNAL_TOTAL_WEIGHT;
   /*
+   * "ความครบของข้อมูล", measured one level below the factors.
+   *
+   * `coverage` above answers "how much of the model's WEIGHT produced a score",
+   * which is the right question for the PRIME floor and the wrong one for the
+   * reader: every factor can produce a score while each one stands on less than
+   * it needs, and the card then printed 100% beside a yellow "ข้อมูลบางส่วน"
+   * badge, an unavailable IV Rank and two percentiles still counting down.
+   *
+   * This is the figure the reader is shown and the one the confidence coverage
+   * term is computed from. The PRIME floor keeps reading `coverage`, because
+   * that threshold was calibrated on that ruler and moving it would be a retune
+   * smuggled in beside a bug fix.
+   */
+  const completeness = measureCompleteness(input, factors);
+  /*
    * Agreement is measured on the SUMMED points, before the veto.
    *
    * The veto is a statement about the headline, not a new piece of evidence, and
@@ -1521,7 +1538,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
   const penaltyTotal = round(penalties.reduce((sum, penalty) => sum + penalty.amount, 0), 4);
 
-  const confidenceBase = confidenceFromTerms({ coverage, agreement, strength: evidenceStrength });
+  const confidenceBase = confidenceFromTerms({ coverage: completeness.value, agreement, strength: evidenceStrength });
   const confidenceScore = Math.round(clamp(confidenceBase - penaltyTotal, 0, 1) * 100);
 
   const primeBlockers: string[] = [];
@@ -1589,10 +1606,11 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     directionScore0to100,
     scoreFormula,
     coverage: round(coverage, 4),
+    completeness: { ...completeness, value: round(completeness.value, 4) },
     agreement: round(agreement, 4),
     evidenceStrength: round(evidenceStrength, 4),
     confidenceBase: round(confidenceBase, 4),
-    confidenceFormula: confidenceFormulaText({ coverage, agreement, strength: evidenceStrength }),
+    confidenceFormula: confidenceFormulaText({ coverage: completeness.value, agreement, strength: evidenceStrength }),
     penalties,
     penaltyTotal,
     dataSufficiency: {

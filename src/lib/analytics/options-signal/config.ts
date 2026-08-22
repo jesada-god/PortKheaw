@@ -43,6 +43,38 @@ export const OPTIONS_SIGNAL_WEIGHTS = {
 export const OPTIONS_SIGNAL_TOTAL_WEIGHT = Object.values(OPTIONS_SIGNAL_WEIGHTS)
   .reduce((sum, weight) => sum + weight, 0);
 
+/**
+ * Weights for "ความครบของข้อมูล" ONLY. Not a scoring weight, and no directional
+ * point is ever multiplied by one of these.
+ *
+ * The five directional entries are the model's own weights, restated by
+ * reference so they cannot drift: a factor's say in how complete the picture is,
+ * is its say in the picture.
+ *
+ * `pricing` is the one addition, and the one NEW number in this table. The risk
+ * gate is not part of the direction and correctly has no scoring weight, but it
+ * is very much part of what the card claims to know: the reported case showed
+ * "ความครบของข้อมูล 100%" beside an IV Rank reading "ไม่พร้อมใช้งาน" and an IV
+ * percentile 59 days short, which is a completeness figure that had been told
+ * about the gap and did not pass it on.
+ *
+ * 10 — the lightest directional weight — rather than a number chosen to land the
+ * result somewhere. The gate is one input group of roughly the standing of the
+ * lightest factor, and borrowing an existing magnitude is a claim that can be
+ * argued with; inventing 12 or 18 would only look more precise.
+ */
+export const OPTIONS_SIGNAL_COMPLETENESS_WEIGHTS = {
+  macro: OPTIONS_SIGNAL_WEIGHTS.macro,
+  trend: OPTIONS_SIGNAL_WEIGHTS.trend,
+  momentum: OPTIONS_SIGNAL_WEIGHTS.momentum,
+  sentiment: OPTIONS_SIGNAL_WEIGHTS.sentiment,
+  riskReward: OPTIONS_SIGNAL_WEIGHTS.riskReward,
+  pricing: 10,
+} as const;
+
+export const OPTIONS_SIGNAL_COMPLETENESS_TOTAL_WEIGHT =
+  Object.values(OPTIONS_SIGNAL_COMPLETENESS_WEIGHTS).reduce((sum, weight) => sum + weight, 0);
+
 export const OPTIONS_SIGNAL_CONFIG = {
   timeframe: '1D',
   /** EMA50 + a 20-period squeeze + a 20-day RVOL baseline need this much history. */

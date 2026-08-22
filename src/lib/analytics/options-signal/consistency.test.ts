@@ -14,7 +14,12 @@ import {
   confidenceFormulaText,
   confidenceFromTerms,
 } from './calculations';
-import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
+import {
+  OPTIONS_SIGNAL_COMPLETENESS_TOTAL_WEIGHT,
+  OPTIONS_SIGNAL_CONFIG,
+  OPTIONS_SIGNAL_TOTAL_WEIGHT,
+  OPTIONS_SIGNAL_WEIGHTS,
+} from './config';
 import {
   directedDistanceText,
   distanceAtrText,
@@ -108,8 +113,10 @@ describe('confidence — the printed formula is the formula that ran', () => {
     const result = calculateOptionsSignal(baseInput());
     expect(result.status).toBe('available');
     const { diagnostics } = result;
+    // The COMPLETENESS is the coverage term, not the weight share: the two are
+    // different numbers now, and the sentence has to name the one that ran.
     expect(diagnostics.confidenceFormula).toBe(confidenceFormulaText({
-      coverage: diagnostics.coverage,
+      coverage: diagnostics.completeness.value,
       agreement: diagnostics.agreement,
       strength: diagnostics.evidenceStrength,
     }));
@@ -183,6 +190,94 @@ describe('the divisor counts measurements, and only measurements', () => {
     const { factors, availableWeight } = result.diagnostics;
     const counted = Object.values(factors).filter((factor) => factor.measurement === 'measured');
     expect(counted.reduce((sum, factor) => sum + factor.maxPoints, 0)).toBe(availableWeight);
+  });
+});
+
+describe('completeness is measured under the factors, not at them', () => {
+  /** Everything present: every input in the registry arrives. */
+  const complete = (): Partial<OptionsSignalInput> => ({
+    sentiment: available<SentimentInput>({
+      ...sentiment, volumeRatio: 0.8, percentileObservations: 60, ownPercentile: 0.5,
+    }),
+    riskReward: available<RiskRewardInput>({
+      ...riskReward, atr: 3, expectedMove: 6, expectedMoveDte: 45,
+    }),
+    pricing: available<IvPricingInput>({
+      basis: 'iv-percentile', ivPercentile: 44, impliedVolatility: 0.986, observations: 60, dte: 41,
+    }),
+    momentum: available<MomentumInput>({ ...momentum, relativeVolume: 1.06 }),
+  });
+
+  it('reaches 100% only when every registered input actually arrived', () => {
+    const result = calculateOptionsSignal(baseInput(complete()));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    expect(result.diagnostics.completeness.value).toBe(1);
+    expect(result.diagnostics.completeness.missing).toEqual([]);
+    expect(result.diagnostics.completeness.notCounted).toEqual([]);
+  });
+
+  /*
+   * THE INVARIANT FROM THE REPORT.
+   *
+   * The card was showing a yellow "ข้อมูลบางส่วน" badge — which is a factor's own
+   * `partial` flag — beside "ความครบของข้อมูล 100%". Whatever else changes, those
+   * two statements may never appear together again.
+   */
+  it('is below 100% whenever ANY factor is flagged as partial', () => {
+    const partialCases: Array<[string, Partial<OptionsSignalInput>]> = [
+      ['no RVOL to confirm momentum', {
+        ...complete(),
+        momentum: available<MomentumInput>({ ...momentum, relativeVolume: null }),
+      }],
+      ['no EMA50 under the trend', {
+        ...complete(),
+        trend: available<TrendInput>({ ...trend, ema50: null }),
+      }],
+      ['no Put/Call baseline', { ...complete(), sentiment: available(sentiment) }],
+    ];
+
+    for (const [name, overrides] of partialCases) {
+      const result = calculateOptionsSignal(baseInput(overrides));
+      if (result.status !== 'available') throw new Error(`expected a signal for ${name}`);
+      const flaggedPartial = Object.values(result.diagnostics.factors)
+        .some((factor) => factor.partial || factor.measurement !== 'measured');
+      expect(flaggedPartial, name).toBe(true);
+      expect(result.diagnostics.completeness.value, name).toBeLessThan(1);
+    }
+  });
+
+  it('names what is missing, and counts down where a countdown applies', () => {
+    const result = calculateOptionsSignal(baseInput({ ...complete(), sentiment: available(sentiment) }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const entry = result.diagnostics.completeness.inputs
+      .find((input) => input.id === 'sentiment.own-percentile');
+    expect(entry?.available).toBe(false);
+    expect(entry?.note).toContain('ขาดอีก');
+  });
+
+  it('zeroes a whole factor that could not be judged, however much of it arrived', () => {
+    // Sentiment holds a real Put/Call and a real volume ratio, and still has no
+    // baseline. Two of three inputs present must not read as two-thirds complete
+    // when the factor they feed produced nothing the model could use.
+    const result = calculateOptionsSignal(baseInput({
+      ...complete(),
+      sentiment: available<SentimentInput>({ ...sentiment, volumeRatio: 0.8 }),
+    }));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    const withoutSentiment = 1 - OPTIONS_SIGNAL_WEIGHTS.sentiment / OPTIONS_SIGNAL_COMPLETENESS_TOTAL_WEIGHT;
+    expect(result.diagnostics.completeness.value).toBeCloseTo(withoutSentiment, 6);
+    // …and the inputs that DID arrive are reported as present, not as missing.
+    expect(result.diagnostics.completeness.missing).not.toContain('Put/Call จาก Open Interest');
+    expect(result.diagnostics.completeness.notCounted).toContain('Put/Call จาก Open Interest');
+  });
+
+  it('keeps the PRIME floor on the weight share it was calibrated against', () => {
+    const result = calculateOptionsSignal(baseInput(complete()));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    // Two different rulers, deliberately: one for what the reader is told, one
+    // for the threshold. Nothing here re-tunes the second.
+    expect(result.diagnostics.coverage).toBe(1);
+    expect(result.diagnostics.completeness.value).toBe(1);
   });
 });
 
