@@ -48,8 +48,16 @@ let cachedIdentity: string | undefined;
  * anything across Vercel's serverless instances.
  */
 export function getNewsCacheClient(): NewsCacheClient | null {
-  const url = serverEnv.UPSTASH_REDIS_REST_URL;
-  const token = serverEnv.UPSTASH_REDIS_REST_TOKEN;
+  /*
+   * Vercel's Upstash integration provisions `KV_REST_API_*`; Upstash's own
+   * console hands out `UPSTASH_REDIS_REST_*`. Read the Vercel pair first and
+   * fall back, so the same code serves a linked Vercel project, a hand-pasted
+   * local `.env.local`, and any future rename on either side. URL and token are
+   * resolved independently on purpose — a half-set pair is still a missing
+   * cache, and the `null` below is what makes it one.
+   */
+  const url = serverEnv.KV_REST_API_URL ?? serverEnv.UPSTASH_REDIS_REST_URL;
+  const token = serverEnv.KV_REST_API_TOKEN ?? serverEnv.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
   const identity = `${url}:${token}`;
   if (!cached || cachedIdentity !== identity) {
