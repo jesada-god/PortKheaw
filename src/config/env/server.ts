@@ -52,6 +52,12 @@ export function parseServerEnv(input: Record<string, unknown>) {
       APP_URL: read('APP_URL', optionalUrl, undefined),
       GEMINI_API_KEY: read('GEMINI_API_KEY', optionalSecret, undefined),
       GEMINI_MODEL: read('GEMINI_MODEL', geminiModel, DEFAULT_GEMINI_MODEL),
+      /*
+       * Optional per-feature override for the News summary only. Unset — the
+       * normal state — leaves that feature on `GEMINI_MODEL` above, so the two
+       * Gemini callers move together unless someone deliberately splits them.
+       */
+      GEMINI_NEWS_MODEL: read('GEMINI_NEWS_MODEL', optionalSecret, undefined),
       ALPHA_VANTAGE_API_KEY: read('ALPHA_VANTAGE_API_KEY', optionalSecret, undefined),
       FMP_API_KEY: read('FMP_API_KEY', optionalSecret, undefined),
       FINNHUB_API_KEY: read('FINNHUB_API_KEY', optionalSecret, undefined),
@@ -69,6 +75,28 @@ export function parseServerEnv(input: Record<string, unknown>) {
       ALPACA_OPTIONS_FEED: read('ALPACA_OPTIONS_FEED', optionalSecret, undefined),
       MARKET_DATA_PROVIDER: read('MARKET_DATA_PROVIDER', optionalSecret, undefined),
       NEWS_API_KEY: read('NEWS_API_KEY', optionalSecret, undefined),
+      /*
+       * The shared News-summary cache.
+       *
+       * Optional like every other integration, and its absence closes exactly
+       * one thing: the AI summary card. The News tab still serves articles.
+       * There is no in-process fallback on purpose — the summary is one set of
+       * bytes shared by every reader of a symbol, and a per-instance Map would
+       * neither share them across Vercel's serverless instances nor make the
+       * regeneration lock mean anything between two of them.
+       *
+       * Two spellings of the same pair, both optional. `KV_REST_API_*` is what
+       * Vercel's Upstash integration actually writes into a linked project;
+       * `UPSTASH_REDIS_REST_*` is Upstash's own naming, which is what a console
+       * copy-paste or a non-Vercel host gives you. `cache-client.ts` prefers the
+       * Vercel pair and falls back to the Upstash one, so a project keeps
+       * working whichever way its credentials arrived — and would keep working
+       * if Vercel renamed the variables again.
+       */
+      KV_REST_API_URL: read('KV_REST_API_URL', optionalUrl, undefined),
+      KV_REST_API_TOKEN: read('KV_REST_API_TOKEN', optionalSecret, undefined),
+      UPSTASH_REDIS_REST_URL: read('UPSTASH_REDIS_REST_URL', optionalUrl, undefined),
+      UPSTASH_REDIS_REST_TOKEN: read('UPSTASH_REDIS_REST_TOKEN', optionalSecret, undefined),
       SUPABASE_SERVICE_ROLE_KEY: read('SUPABASE_SERVICE_ROLE_KEY', optionalSecret, undefined),
       CRON_SECRET: read('CRON_SECRET', optionalSecret, undefined),
       /*
