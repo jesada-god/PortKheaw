@@ -818,12 +818,29 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(document.body.querySelector('[data-testid="options-signal-percentile-outage"]')).toBeNull();
   });
 
-  it('keeps all six signal labels paired with beginner-facing Thai copy', () => {
+  it('keeps all seven signal labels paired with beginner-facing Thai copy', () => {
     const types = Object.keys(OPTIONS_SIGNAL_PRESENTATION) as OptionsSignalType[];
-    expect(types).toHaveLength(6);
+    expect(types).toHaveLength(7);
     for (const type of types) {
       expect(OPTIONS_SIGNAL_PRESENTATION[type].headline.length).toBeGreaterThan(10);
-      expect(OPTIONS_SIGNAL_PRESENTATION[type].title).toBe(type.replaceAll('_', ' '));
+      // CONFLICTED carries a Thai gloss in its title, because the English word
+      // alone does not tell a beginner what to do differently about it.
+      expect(OPTIONS_SIGNAL_PRESENTATION[type].title).toContain(type.replaceAll('_', ' '));
     }
+  });
+
+  it('does not let SIDEWAYS and CONFLICTED read as the same badge', () => {
+    const sideways = OPTIONS_SIGNAL_PRESENTATION.SIDEWAYS;
+    const conflicted = OPTIONS_SIGNAL_PRESENTATION.CONFLICTED;
+    /*
+     * They sit at the same score and call for opposite reactions, so a reader
+     * must be able to tell them apart at a glance rather than by reading. Grey
+     * reads as "nothing happening", which is the wrong impression for a chart
+     * whose factors are pulling against each other.
+     */
+    expect(conflicted.badgeTone).not.toBe(sideways.badgeTone);
+    expect(conflicted.dot).not.toBe(sideways.dot);
+    expect(conflicted.headline).toContain('ตีกัน');
+    expect(sideways.headline).toContain('เงียบ');
   });
 });

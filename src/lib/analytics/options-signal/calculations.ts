@@ -1281,6 +1281,19 @@ function buildSetup(
   if (signalType === 'IV_WARNING') {
     return { status: 'not-recommended', reason: 'อยู่ในสถานะเตือนความเสี่ยง (IV สูงมาก หรือใกล้ประกาศงบ) จึงยังไม่เสนอรูปแบบสัญญา', warnings };
   }
+  /*
+   * Both refuse a setup, and they refuse it for different reasons. A reader who
+   * is told "the tape is quiet" waits; a reader who is told "the evidence is
+   * fighting" knows a move may be coming and that nobody can say which way.
+   */
+  if (signalType === 'CONFLICTED') {
+    return {
+      status: 'not-recommended',
+      reason: 'หลักฐานขัดกันเอง ปัจจัยหนึ่งชี้ขึ้นอีกปัจจัยชี้ลงจนหักกลบไปเกือบหมด '
+        + 'คะแนนที่ออกมากลางๆ จึงไม่ได้แปลว่าตลาดเงียบ แต่แปลว่ายังไม่รู้ว่าจะไปทางไหน',
+      warnings,
+    };
+  }
   if (signalType === 'SIDEWAYS' || bias === 'neutral') {
     return { status: 'not-recommended', reason: 'ทิศทางยังไม่ชัดเจน การซื้อ Call หรือ Put ตอนนี้คือการจ่ายค่าพรีเมียมให้กับความไม่แน่นอน', warnings };
   }
@@ -1705,9 +1718,35 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
   const primeEligible = primeBlockers.length === 0 && underlyingBias !== 'neutral';
 
+  /*
+   * QUIET, or FIGHTING? — two states that were sharing one badge.
+   *
+   * A total near 50 arrives two ways. Every factor near zero is a flat tape and
+   * the honest instruction is "there is nothing here". Trend -8 against Momentum
+   * +9 cancelling to 51 is not that: something IS happening and the evidence
+   * disagrees about what, which is strictly more dangerous than quiet — and the
+   * card printed the identical grey SIDEWAYS badge for both.
+   *
+   * Measured on `agreement`, which is |summed| ÷ Σ|points| and already exists for
+   * confidence. Reusing it means there is no second ruler that could disagree
+   * with the first, and it is a dispersion measure by construction: it falls as
+   * the factors cancel, whatever the total happens to be.
+   *
+   * The threshold alone is NOT enough. `agreement` is 0 by convention when there
+   * are no points at all — the quiet case exactly — so a structural clause does
+   * the rest: two measured factors have to be genuinely pointing opposite ways.
+   * That clause is a fact about the evidence, not a second number to tune.
+   */
+  const opposedFactors = entries.filter((factor) => (
+    countsTowardWeight(factor) && factor.points !== null && factor.points !== 0
+  ));
+  const evidenceIsFighting = opposedFactors.some((factor) => Math.sign(factor.points as number) > 0)
+    && opposedFactors.some((factor) => Math.sign(factor.points as number) < 0)
+    && agreement < config.quality.conflictedAgreement;
+
   let signalType: OptionsSignalType;
   if (underlyingBias === 'neutral' || Math.abs(balance) < config.quality.watchScore) {
-    signalType = 'SIDEWAYS';
+    signalType = evidenceIsFighting ? 'CONFLICTED' : 'SIDEWAYS';
   } else if (primeEligible) {
     signalType = underlyingBias === 'bullish' ? 'PRIME_CALL' : 'PRIME_PUT';
   } else {

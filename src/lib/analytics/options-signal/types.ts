@@ -273,6 +273,15 @@ export type OptionsSignalType =
   | 'PRIME_CALL'
   | 'CALL_WATCH'
   | 'SIDEWAYS'
+  /**
+   * Middling score, evidence pulling against itself.
+   *
+   * Split out of SIDEWAYS because the two need opposite reactions and were
+   * getting one badge: a flat tape is "nothing to do", while Trend -8 against
+   * Momentum +9 cancelling to 51 is "the evidence disagrees", which is more
+   * dangerous than quiet, not less.
+   */
+  | 'CONFLICTED'
   | 'PUT_WATCH'
   | 'PRIME_PUT'
   | 'IV_WARNING';

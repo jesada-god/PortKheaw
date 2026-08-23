@@ -126,6 +126,30 @@ export const OPTIONS_SIGNAL_CONFIG = {
     primeConfidence: 65,
     primeAgreement: 0.7,
     watchScore: 20,
+    /**
+     * Agreement below which a middling score is CONFLICTED rather than SIDEWAYS.
+     *
+     * One label was carrying two states that call for opposite behaviour:
+     *
+     *   quiet       every factor near zero. Nothing is happening, and the honest
+     *               instruction is "there is nothing to do here".
+     *   conflicted  Trend -8 against Momentum +9, cancelling to 51. Something IS
+     *               happening and the evidence disagrees about what, which is
+     *               strictly more dangerous than a flat tape — and the card was
+     *               printing the identical badge for both.
+     *
+     * 0.5 on `agreement`, which is |summed points| ÷ Σ|points| and already
+     * computed for confidence — no new quantity, no second ruler that could
+     * disagree with the first. Below a half, more of the evidence is cancelling
+     * out than is pointing anywhere; above it, a majority points one way and the
+     * tape is merely gentle.
+     *
+     * The threshold is NOT sufficient on its own. `agreement` is 0 by convention
+     * when there are no points at all, which is the quiet case exactly — so the
+     * label additionally requires two measured factors actually pointing opposite
+     * ways. That clause is structural rather than a second number to tune.
+     */
+    conflictedAgreement: 0.5,
   },
 
   momentum: {

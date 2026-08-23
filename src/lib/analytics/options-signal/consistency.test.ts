@@ -538,6 +538,112 @@ describe('the RVOL curve names itself, and its substitution reconciles', () => {
   });
 });
 
+describe('CONFLICTED is a different state from SIDEWAYS, not a different word', () => {
+  /** A flat tape: every factor genuinely near zero. */
+  const quiet = (): Partial<OptionsSignalInput> => ({
+    macro: available<MacroInput>({
+      benchmarks: [
+        { symbol: 'SPY', close: 500, ema20: 480 },
+        { symbol: 'QQQ', close: 380, ema20: 390 },
+      ],
+    }),
+    trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
+    momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
+    riskReward: available<RiskRewardInput>({ price: 100, support: 90, resistance: 110 }),
+  });
+
+  /**
+   * The reported shape: a trend pulling down against momentum pulling up, the
+   * two cancelling to a middling total.
+   */
+  const fighting = (): Partial<OptionsSignalInput> => ({
+    macro: available<MacroInput>({
+      benchmarks: [
+        { symbol: 'SPY', close: 500, ema20: 480 },
+        { symbol: 'QQQ', close: 380, ema20: 390 },
+      ],
+    }),
+    trend: available<TrendInput>({ close: 90, ema20: 95, ema50: 100 }),
+    momentum: available<MomentumInput>({
+      squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8,
+    }),
+    riskReward: available<RiskRewardInput>({ price: 100, support: 90, resistance: 110 }),
+  });
+
+  it('calls a flat tape SIDEWAYS, because nothing is happening', () => {
+    const result = calculateOptionsSignal(baseInput(quiet()));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    expect(result.signalType).toBe('SIDEWAYS');
+    expect(result.underlyingBias).toBe('neutral');
+  });
+
+  it('calls cancelling evidence CONFLICTED, because something IS happening', () => {
+    const result = calculateOptionsSignal(baseInput(fighting()));
+    if (result.status !== 'available') throw new Error('expected a signal');
+    expect(result.signalType).toBe('CONFLICTED');
+    expect(result.diagnostics.agreement).toBeLessThan(OPTIONS_SIGNAL_CONFIG.quality.conflictedAgreement);
+
+    // The thing that distinguishes it: factors with real weight, pointing
+    // opposite ways. A total near 50 is what the two states SHARE, so the total
+    // cannot be what separates them.
+    const points = Object.values(result.diagnostics.factors)
+      .map((factor) => factor.points).filter((value): value is number => value !== null && value !== 0);
+    expect(points.some((value) => value > 0)).toBe(true);
+    expect(points.some((value) => value < 0)).toBe(true);
+  });
+
+  it('never reads dispersion off the total, which both states share', () => {
+    const flat = calculateOptionsSignal(baseInput(quiet()));
+    const torn = calculateOptionsSignal(baseInput(fighting()));
+    if (flat.status !== 'available' || torn.status !== 'available') throw new Error('expected signals');
+    // Both land in the middle band; only the label differs.
+    expect(Math.abs(flat.diagnostics.directionScore0to100 - 50)).toBeLessThan(20);
+    expect(Math.abs(torn.diagnostics.directionScore0to100 - 50)).toBeLessThan(20);
+    expect(flat.signalType).not.toBe(torn.signalType);
+  });
+
+  it('says something different underneath the badge', () => {
+    const flat = calculateOptionsSignal(baseInput(quiet()));
+    const torn = calculateOptionsSignal(baseInput(fighting()));
+    if (flat.status !== 'available' || torn.status !== 'available') throw new Error('expected signals');
+
+    expect(flat.suggestedOptionsSetup.status).toBe('not-recommended');
+    expect(torn.suggestedOptionsSetup.status).toBe('not-recommended');
+    if (flat.suggestedOptionsSetup.status !== 'not-recommended') return;
+    if (torn.suggestedOptionsSetup.status !== 'not-recommended') return;
+    // Refused for different reasons: one waits, the other watches out.
+    expect(torn.suggestedOptionsSetup.reason).toContain('ขัดกันเอง');
+    expect(torn.suggestedOptionsSetup.reason).not.toBe(flat.suggestedOptionsSetup.reason);
+  });
+
+  it('leaves PRIME and WATCH exactly where they were', () => {
+    /*
+     * CONFLICTED can only ever replace a label that would have been SIDEWAYS —
+     * it is chosen inside that branch and nowhere else. A signal with a real
+     * direction cannot reach it however badly its factors disagree, because the
+     * disagreement is already priced by the trend veto and the PRIME agreement
+     * floor.
+     */
+    const directional = calculateOptionsSignal(baseInput({
+      macro: available<MacroInput>({
+        benchmarks: [
+          { symbol: 'SPY', close: 500, ema20: 480 },
+          { symbol: 'QQQ', close: 400, ema20: 390 },
+        ],
+      }),
+      trend: available<TrendInput>({ close: 110, ema20: 105, ema50: 100 }),
+      momentum: available<MomentumInput>({
+        squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8,
+      }),
+      riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130 }),
+      event: available<EventRiskInput>({ reportDate: '2026-10-30', daysToEarnings: 68, timeOfDay: 'post-market' }),
+    }));
+    if (directional.status !== 'available') throw new Error('expected a signal');
+    expect(directional.underlyingBias).toBe('bullish');
+    expect(['PRIME_CALL', 'CALL_WATCH']).toContain(directional.signalType);
+  });
+});
+
 describe('weights are not what this work is allowed to change', () => {
   it('keeps 15/25/25/10/15', () => {
     expect(OPTIONS_SIGNAL_WEIGHTS).toEqual({

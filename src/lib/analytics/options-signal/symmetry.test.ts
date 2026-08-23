@@ -138,7 +138,7 @@ describe('screenshot-baseline', () => {
      *   rawDirectionPoints      13      -> 14
      *   directionScore0to100    57      -> 58
      *   confidence              38      -> 40
-     *   label                   SIDEWAYS -> SIDEWAYS   (unchanged, as required)
+     *   label                   SIDEWAYS -> CONFLICTED (renamed later; see below)
      *
      * The conclusion was already right; what changed is the resolution behind
      * it. 0.24 and 0.49 used to score identically and now differ by 7 points.
@@ -161,23 +161,37 @@ describe('screenshot-baseline', () => {
      *   agreement            5.9% -> 31.7%
      *   coverage             100% -> 88.9%
      *   confidence           18   -> 43
-     *   label                SIDEWAYS -> SIDEWAYS   (unchanged, as required)
+     *   label                SIDEWAYS -> CONFLICTED (ข้อสรุปเดิม พร้อมเหตุผล)
      *
      * The score moving 52 -> 58 is the point, not a side effect: six points of
      * the old answer were a saturated vote cast with no basis to cast it from.
-     * The label is what must not move, and it did not.
+     * The BIAS is what must not move, and it did not — the label was renamed on
+     * purpose, from a word that covered two states to the one that fits this.
      */
     expect(diagnostics.rawDirectionPoints).toBe(13);
     expect(diagnostics.availableWeight).toBe(80);
     expect(diagnostics.directionScore0to100).toBe(58);
     expect(diagnostics.scoreFormula).toBe('(+13 + 80) ÷ (2 × 80) × 100 = 58');
 
-    // THE INVARIANT: the answer this case gives must not move. The evidence is
-    // genuinely mixed and SIDEWAYS is the honest label for it. Two retunes have
-    // now passed through this fixture and neither changed the answer, which is
-    // the property the invariant was written to protect.
-    expect(result.signalType).toBe('SIDEWAYS');
+    /*
+     * THE INVARIANT, and the one deliberate exception to it.
+     *
+     * The answer this case gives must not move, and through three retunes it did
+     * not: the direction stayed neutral and the card stayed off the CALL/PUT
+     * ladder every time. What DID move, on purpose, is the name of that answer.
+     *
+     * SIDEWAYS was carrying two states. This case is the second one: macro +15,
+     * trend +8 and momentum +4 against a geometry of -14, agreement at 32%. The
+     * evidence is not absent, it is arguing — and a grey "ตลาดเงียบ" badge read as
+     * a flat tape, which is the one thing this chart is not. CONFLICTED is the
+     * same conclusion with the reason attached.
+     *
+     * The BIAS is what the invariant is really about, and it is untouched.
+     */
+    expect(result.signalType).toBe('CONFLICTED');
     expect(result.underlyingBias).toBe('neutral');
+    expect(result.diagnostics.agreement)
+      .toBeLessThan(OPTIONS_SIGNAL_CONFIG.quality.conflictedAgreement);
 
     /*
      * Agreement fell from 23% to 6% under the momentum retune, then recovered to

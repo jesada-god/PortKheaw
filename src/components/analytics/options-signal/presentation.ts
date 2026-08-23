@@ -41,9 +41,27 @@ export const OPTIONS_SIGNAL_PRESENTATION = {
   SIDEWAYS: {
     dot: '⚪',
     title: 'SIDEWAYS',
-    headline: 'ยังไม่เลือกทาง การซื้อ Call หรือ Put ฝั่งเดียวเสียเปรียบ',
+    headline: 'ตลาดเงียบ ทุกปัจจัยอยู่ใกล้ศูนย์ ยังไม่มีอะไรให้ทำ',
     tone: 'border-slate-600/40 bg-slate-500/10',
     badgeTone: 'border-slate-500/40 bg-slate-500/15 text-slate-200',
+  },
+  /*
+   * A DIFFERENT badge, not a differently-worded one.
+   *
+   * SIDEWAYS and CONFLICTED both sit near 50 and call for opposite reactions, so
+   * they must not be able to be confused at a glance. Grey reads as "nothing
+   * happening", which is exactly the wrong impression for a chart whose Trend
+   * and Momentum are pulling against each other — amber says "look closer".
+   */
+  CONFLICTED: {
+    dot: '🟣',
+    title: 'ขัดแย้ง (CONFLICTED)',
+    headline: 'หลักฐานตีกันเอง ไม่ใช่ตลาดเงียบ — ปัจจัยหนึ่งชี้ขึ้น อีกปัจจัยชี้ลง จนหักกลบกันไป',
+    // Violet rather than fuchsia: the palette compatibility map already carries a
+    // light-mode value for `text-violet-200`, and a badge that glows on the dark
+    // surface but drops to 2:1 on the light one is not a badge.
+    tone: 'border-violet-400/40 bg-violet-500/10',
+    badgeTone: 'border-violet-400/40 bg-violet-500/15 text-violet-200',
   },
   PUT_WATCH: {
     dot: '🟠',
