@@ -6,9 +6,9 @@ import type { NewsArticle } from './types';
 import { newsSummarySchema, type NewsSummary } from './summary-types';
 
 /**
- * A ceiling on how long an unvisited symbol's summary occupies Redis — NOT a
+ * A ceiling on how long an unvisited feed's summary occupies Redis — NOT a
  * freshness rule. Nothing in this module compares a stored summary's age to
- * anything: a symbol whose top three headlines have not moved in nine days
+ * anything: a feed whose top three headlines have not moved in nine days
  * serves the summary it already has and calls no model. Staleness here has one
  * definition, the fingerprint, and time is not part of it.
  */
@@ -17,8 +17,8 @@ export const NEWS_SUMMARY_TTL_SECONDS = 7 * 24 * 60 * 60;
  * The lock's lifetime, and with it the regeneration cooldown.
  *
  * It is never deleted on success (see `resolveNewsSummary`), so after one
- * generation the symbol cannot start another for this long no matter how many
- * readers arrive — which is what stops a symbol whose model output keeps failing
+ * generation the feed cannot start another for this long no matter how many
+ * readers arrive — which is what stops a feed whose model output keeps failing
  * validation from calling Gemini once per request.
  */
 export const NEWS_SUMMARY_LOCK_TTL_SECONDS = 90;
@@ -39,6 +39,39 @@ export function newsSummaryKey(symbol: string): string {
 export function newsSummaryLockKey(symbol: string): string {
   return `news:lock:${symbol.toUpperCase()}`;
 }
+
+/**
+ * The pair of Redis keys one shared summary lives under.
+ *
+ * A scope is what this module actually keys on — the symbol is only the most
+ * common way to name one. The dashboard's market feed has no symbol at all and
+ * still wants the identical "generate once, serve everyone, lock as cooldown"
+ * behaviour, so the store takes the keys and stays out of the question of where
+ * they came from.
+ */
+export interface NewsSummaryScope {
+  /** Holds the `{ fingerprint, summary }` record. */
+  key: string;
+  /** Holds the regeneration lock, and with it the cooldown. */
+  lockKey: string;
+}
+
+export function symbolNewsSummaryScope(symbol: string): NewsSummaryScope {
+  return { key: newsSummaryKey(symbol), lockKey: newsSummaryLockKey(symbol) };
+}
+
+/**
+ * One entry for the whole deployment.
+ *
+ * There is no symbol in either key because there is no symbol in the feed: the
+ * dashboard's market-wide block is the same articles for every reader, so every
+ * reader of every account shares this single summary and the first one after the
+ * headlines move pays for it.
+ */
+export const MARKET_NEWS_SUMMARY_SCOPE: NewsSummaryScope = {
+  key: 'news:summary:market',
+  lockKey: 'news:lock:market',
+};
 
 /**
  * Identity of "the news right now", from the top three articles' link and
@@ -64,12 +97,26 @@ export interface NewsSummaryResolution {
   stale: boolean;
 }
 
-export interface ResolveNewsSummaryOptions {
-  symbol: string;
+interface NewsSummaryGeneration {
   articles: readonly NewsArticle[];
   cache: NewsCacheClient;
   /** Returns `null` when the model's answer could not be trusted; throws on provider failure. */
   generate: (articles: readonly NewsArticle[]) => Promise<NewsSummary | null>;
+}
+
+/**
+ * Name the summary either by its symbol or by its keys, never by both — a caller
+ * that supplied a `symbol` beside a `scope` would be saying two different things
+ * about which entry to read.
+ */
+export type ResolveNewsSummaryOptions = NewsSummaryGeneration & (
+  | { symbol: string; scope?: undefined }
+  | { scope: NewsSummaryScope; symbol?: undefined }
+);
+
+function scopeOf(options: ResolveNewsSummaryOptions): NewsSummaryScope {
+  if (options.scope) return options.scope;
+  return symbolNewsSummaryScope(options.symbol);
 }
 
 async function readRecord(
@@ -85,7 +132,7 @@ async function readRecord(
 }
 
 /**
- * The symbol's summary, shared by every reader of that symbol.
+ * The scope's summary, shared by every reader of that scope.
  *
  * The key holds no user id and the value is the same bytes for everyone, so the
  * first reader after the news moves pays for the model call and every later
@@ -97,16 +144,13 @@ async function readRecord(
  * A reader who arrives with no previous summary at all gets `null`, because the
  * honest answer while the first summary is still being written is "not yet".
  */
-export async function resolveNewsSummary({
-  symbol,
-  articles,
-  cache,
-  generate,
-}: ResolveNewsSummaryOptions): Promise<NewsSummaryResolution | null> {
+export async function resolveNewsSummary(
+  options: ResolveNewsSummaryOptions,
+): Promise<NewsSummaryResolution | null> {
+  const { articles, cache, generate } = options;
   if (articles.length < NEWS_SUMMARY_FINGERPRINT_ARTICLES) return null;
 
-  const key = newsSummaryKey(symbol);
-  const lockKey = newsSummaryLockKey(symbol);
+  const { key, lockKey } = scopeOf(options);
   const fingerprint = newsSummaryFingerprint(articles);
   const stored = await readRecord(cache, key);
   if (stored?.fingerprint === fingerprint) {

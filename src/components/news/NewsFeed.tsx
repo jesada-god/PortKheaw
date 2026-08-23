@@ -9,8 +9,10 @@ import {
   visibleNewsCount,
 } from '@/src/lib/news/feed';
 import { MARKET_WIDE_NEWS_LIMIT } from '@/src/lib/news/market-wide';
+import type { NewsSummaryPayload } from '@/src/lib/news/summary-types';
 import type { NewsArticle, NewsPage } from '@/src/lib/news/types';
 import { newsErrorMessage, newsViewState } from './news-policy';
+import { NewsSummaryCard } from './NewsSummaryCard';
 import { NewsThumbnail } from './NewsThumbnail';
 import { useStore } from '@/src/store/useStore';
 import { useAppVisible } from '@/src/hooks/useAppVisible';
@@ -43,6 +45,31 @@ function useDataSaver() {
     return () => { active = false; };
   }, []);
   return requested || networkPreference;
+}
+
+/**
+ * The market block's AI card, fetched apart from the feed under it.
+ *
+ * Two requests rather than one on purpose: the feed is what this component is
+ * for and must not wait on — or fail with — a summary that is an addition to it.
+ * `/api/news/market-summary` answers `summary: null` for every ordinary reason a
+ * card cannot be shown (no Redis, no model key, the first one still generating),
+ * and a rejected promise is the same answer, so both simply leave the card out.
+ */
+function useMarketNewsSummary(enabled: boolean) {
+  const [summary, setSummary] = useState<NewsSummaryPayload | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    queueMicrotask(() => {
+      void fetch('/api/news/market-summary')
+        .then(async (response) => (await response.json()) as { summary: NewsSummaryPayload | null })
+        .then((body) => { if (active && body.summary) setSummary(body.summary); })
+        .catch(() => {});
+    });
+    return () => { active = false; };
+  }, [enabled]);
+  return summary;
 }
 
 function NewsCardSkeleton() {
@@ -158,6 +185,7 @@ export function NewsFeed({
   const cooldown = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const state = newsViewState(items.length, loading || !ready, error?.code);
   const visibleItems = items.slice(0, visibleNewsCount(items.length, expanded));
+  const marketSummary = useMarketNewsSummary(marketWide && ready && visible && isOnline);
 
   let content: React.ReactNode;
   if (state === 'loading') {
@@ -216,5 +244,16 @@ export function NewsFeed({
       </div>
     );
   }
-  return <div ref={root}>{content}</div>;
+  /*
+   * Above the articles, and only beside them: the card summarises this feed, so
+   * showing it over a skeleton, an error or an empty block would leave a reader
+   * with three Thai bullets and nothing to check them against. The articles
+   * themselves are untouched — no cited/others split like the Stock Detail tab,
+   * because five stories is already a short enough list to read straight down.
+   */
+  const card = state === 'ready' && marketSummary
+    ? <NewsSummaryCard summary={marketSummary.summary} stale={marketSummary.stale} title="สรุปภาพรวมข่าว" />
+    : null;
+
+  return <div ref={root} className={card ? 'space-y-4' : undefined}>{card}{content}</div>;
 }
