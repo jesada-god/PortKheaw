@@ -77,8 +77,8 @@ const ChartPanel = dynamic(
     loading: () => <div className="h-[340px] animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
   },
 );
-const NewsFeed = dynamic(
-  () => import('@/src/components/news/NewsFeed').then((module) => module.NewsFeed),
+const NewsTab = dynamic(
+  () => import('@/src/components/news/NewsTab').then((module) => module.NewsTab),
   {
     ssr: false,
     loading: () => <div className="h-72 animate-pulse rounded-[var(--radius-panel)] bg-[var(--surface-elevated)]" />,
@@ -718,7 +718,7 @@ export function StockDetailClient({
               supportResistanceEnabled={supportResistanceEnabled}
             />
           )}
-          {tab === 'News' && <NewsFeed symbol={symbol} />}
+          {tab === 'News' && <NewsTab symbol={symbol} />}
           {tab === 'Financials' && (
             /*
               Three independent panels, each behind the flag that decides whether
