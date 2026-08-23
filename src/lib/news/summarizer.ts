@@ -43,16 +43,47 @@ const NEWS_SUMMARY_RETRY_BASE_MS = 500;
  */
 const TITLE_OVERLAP_DUPLICATE = 0.6;
 
-const SYSTEM_INSTRUCTION = [
+/**
+ * The house rules, with the only two lines that can differ left as holes.
+ *
+ * Everything that makes this summary safe to publish — nothing outside the
+ * articles, no buy/sell call, no price forecast, Thai prose with company and
+ * technical names left in English, one single-line bullet per article — is
+ * identical for every surface and is written once here. A new surface chooses
+ * only its angle: who it is speaking to, and what the overview is about. It does
+ * not get to relax rule 1, 5, 6 or 7 by rewriting the list.
+ */
+function newsSummarySystemInstruction(role: string, overviewRule: string): string {
+  return [
+    role,
+    '1. สรุปเฉพาะจากข่าวที่ให้มาเท่านั้น ห้ามเพิ่มข้อมูล ตัวเลข หรือเหตุการณ์จากความรู้ของตัวเอง',
+    '2. ถ้าข่าวไหนเนื้อหาไม่พอ ให้เขียนเท่าที่หัวข้อข่าวบอกจริง อย่าเดา',
+    `3. ${overviewRule}`,
+    '4. points 3-4 ข้อ ข้อละไม่เกิน 1 บรรทัด 1 ข้อ = 1 ข่าว ห้ามสองข้อชี้ source_index เดียวกัน',
+    '5. ห้ามคัดลอกประโยคจากต้นฉบับ เรียบเรียงใหม่เป็นภาษาไทย ชื่อบริษัท/ผลิตภัณฑ์/คำเฉพาะทางคงภาษาอังกฤษ',
+    '6. ห้ามแนะนำซื้อ/ขาย/ถือ ห้ามคาดการณ์ราคา ถ้าต้นฉบับทำ ให้รายงานว่า "นักวิเคราะห์รายนี้มองว่า..."',
+    '7. น้ำเสียงเป็นกลาง ไม่ hype',
+  ].join('\n');
+}
+
+/** Stock Detail: the news of one company, for a holder of that company. */
+export const SYMBOL_NEWS_SYSTEM_INSTRUCTION = newsSummarySystemInstruction(
   'คุณคือผู้ช่วยสรุปข่าวหุ้นสำหรับแอป PortKheaw ผู้อ่านเป็นนักลงทุนรายย่อยชาวไทย',
-  '1. สรุปเฉพาะจากข่าวที่ให้มาเท่านั้น ห้ามเพิ่มข้อมูล ตัวเลข หรือเหตุการณ์จากความรู้ของตัวเอง',
-  '2. ถ้าข่าวไหนเนื้อหาไม่พอ ให้เขียนเท่าที่หัวข้อข่าวบอกจริง อย่าเดา',
-  '3. overview ไม่เกิน 2 บรรทัด บอกว่าตลาดกำลังโฟกัสอะไร',
-  '4. points 3-4 ข้อ ข้อละไม่เกิน 1 บรรทัด 1 ข้อ = 1 ข่าว ห้ามสองข้อชี้ source_index เดียวกัน',
-  '5. ห้ามคัดลอกประโยคจากต้นฉบับ เรียบเรียงใหม่เป็นภาษาไทย ชื่อบริษัท/ผลิตภัณฑ์/คำเฉพาะทางคงภาษาอังกฤษ',
-  '6. ห้ามแนะนำซื้อ/ขาย/ถือ ห้ามคาดการณ์ราคา ถ้าต้นฉบับทำ ให้รายงานว่า "นักวิเคราะห์รายนี้มองว่า..."',
-  '7. น้ำเสียงเป็นกลาง ไม่ hype',
-].join('\n');
+  'overview ไม่เกิน 2 บรรทัด บอกว่าตลาดกำลังโฟกัสอะไร',
+);
+
+/**
+ * Dashboard: the same rules pointed at the market rather than at a company.
+ *
+ * The feed behind this one is already filtered to market-wide stories, so the
+ * failure mode worth naming in the prompt is the model narrating whichever
+ * single company happens to appear in a headline instead of the macro story the
+ * headline is an instance of.
+ */
+export const MARKET_NEWS_SYSTEM_INSTRUCTION = newsSummarySystemInstruction(
+  'คุณคือผู้ช่วยสรุปภาพรวมข่าวตลาดหุ้นสำหรับแอป PortKheaw ผู้อ่านเป็นนักลงทุนรายย่อยชาวไทย',
+  'overview ไม่เกิน 2 บรรทัด บอกว่าภาพรวมตลาดกำลังโฟกัสอะไร ไม่ใช่ข่าวของบริษัทใดบริษัทหนึ่ง',
+);
 
 /** Structured output, enforced by the API rather than asked for in the prompt. */
 export const NEWS_SUMMARY_RESPONSE_SCHEMA: Schema = {
@@ -249,10 +280,16 @@ export async function summarizeNews({
   return parseNewsSummaryResponse(raw, selected, now().toISOString());
 }
 
+export interface GeminiNewsSummaryCallOptions {
+  /** Which set of house rules to speak under — see the instructions above. */
+  systemInstruction: string;
+  model?: string;
+}
+
 /** Binds the pinned generation config to a real Gemini client. */
 export function createGeminiNewsSummaryCall(
   apiKey: string,
-  model: string = newsSummaryModel(),
+  { systemInstruction, model = newsSummaryModel() }: GeminiNewsSummaryCallOptions,
 ): NewsSummaryModelCall {
   const client = new GoogleGenAI({ apiKey });
   return async (prompt) => {
@@ -260,7 +297,7 @@ export function createGeminiNewsSummaryCall(
       model,
       contents: prompt,
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction,
         temperature: NEWS_SUMMARY_TEMPERATURE,
         maxOutputTokens: NEWS_SUMMARY_MAX_OUTPUT_TOKENS,
         responseMimeType: 'application/json',

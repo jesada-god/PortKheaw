@@ -1,35 +1,21 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { serverEnv } from '@/src/config/env/server';
 import { symbolSchema } from '@/src/lib/market-data/validation';
 import { getNewsCacheClient, type NewsCacheClient } from './cache-client';
 import { NEWS_MAX_COUNT, selectLatestNews } from './feed';
 import { getNewsProvider, NewsProviderError } from './provider';
-import { createGeminiNewsSummaryCall, summarizeNews } from './summarizer';
-import { resolveNewsSummary } from './summary-store';
-import { newsArticleSchema, type NewsArticle, type NewsProvider } from './types';
+import {
+  loadNewsFeedForSummary,
+  newsRawKey,
+  resolveNewsSummaryPayload,
+  type CachedNewsFeed,
+} from './summary-feed';
+import { SYMBOL_NEWS_SYSTEM_INSTRUCTION } from './summarizer';
+import { symbolNewsSummaryScope } from './summary-store';
+import type { NewsArticle, NewsProvider } from './types';
 
-/**
- * The raw feed's own cache, separate from the summary's.
- *
- * Without it the summary would save Gemini tokens by spending NewsAPI quota
- * instead: every reader of a symbol whose fingerprint already matches still has
- * to fetch the articles to compute that fingerprint. Ten minutes is under the
- * lock's practical regeneration cadence and well inside NewsAPI's free-tier
- * refresh, so a busy symbol costs one provider call per ten minutes rather than
- * one per reader.
- */
-export const NEWS_RAW_TTL_SECONDS = 600;
-
-export function newsRawKey(symbol: string): string {
-  return `news:raw:${symbol.toUpperCase()}`;
-}
-
-const rawRecordSchema = z.object({
-  articles: z.array(newsArticleSchema),
-  asOf: z.iso.datetime(),
-});
+export { NEWS_RAW_TTL_SECONDS, newsRawKey } from './summary-feed';
 
 export interface NewsSummaryRouteDependencies {
   getProvider: () => NewsProvider;
@@ -50,19 +36,18 @@ async function loadArticles(
   provider: NewsProvider,
   cache: NewsCacheClient | null,
   now: () => Date,
-): Promise<{ articles: NewsArticle[]; asOf: string }> {
-  const key = newsRawKey(symbol);
-  if (cache) {
-    const parsed = rawRecordSchema.safeParse(await cache.get<unknown>(key));
-    if (parsed.success) return parsed.data;
-  }
-  const loaded = await provider.getSymbolNews(symbol);
-  const record = {
-    articles: selectLatestNews(loaded.data.articles, NEWS_MAX_COUNT),
-    asOf: loaded.asOf ?? now().toISOString(),
-  };
-  if (cache) await cache.set(key, record, NEWS_RAW_TTL_SECONDS);
-  return record;
+): Promise<CachedNewsFeed> {
+  return loadNewsFeedForSummary({
+    key: newsRawKey(symbol),
+    cache,
+    load: async () => {
+      const loaded = await provider.getSymbolNews(symbol);
+      return {
+        articles: selectLatestNews(loaded.data.articles, NEWS_MAX_COUNT),
+        asOf: loaded.asOf ?? now().toISOString(),
+      };
+    },
+  });
 }
 
 /**
@@ -118,28 +103,18 @@ export async function handleNewsSummaryRequest(
     return response;
   }
 
-  const cache = deps.getCache();
-  const apiKey = deps.geminiApiKey;
-  let summary: Awaited<ReturnType<typeof resolveNewsSummary>> = null;
-  if (cache && apiKey) {
-    const callModel = createGeminiNewsSummaryCall(apiKey);
-    try {
-      summary = await resolveNewsSummary({
-        symbol,
-        articles,
-        cache,
-        generate: (input) => summarizeNews({ articles: input, callModel, now: deps.now }),
-      });
-    } catch {
-      // Redis itself is down. The articles are already in hand and the card is
-      // an addition to them, so the reader gets the tab rather than an error.
-      summary = null;
-    }
-  }
+  const summary = await resolveNewsSummaryPayload({
+    scope: symbolNewsSummaryScope(symbol),
+    articles,
+    cache: deps.getCache(),
+    geminiApiKey: deps.geminiApiKey,
+    systemInstruction: SYMBOL_NEWS_SYSTEM_INSTRUCTION,
+    now: deps.now,
+  });
 
   return NextResponse.json({
     symbol,
-    summary: summary ? { summary: summary.summary, stale: summary.stale } : null,
+    summary,
     news: articles,
     error: null,
     asOf,
