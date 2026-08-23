@@ -1,14 +1,25 @@
 /**
- * THE CASE THE CONTRADICTION REPORT WAS WRITTEN ABOUT, as engine input.
+ * THE PUT/CALL FALLBACK CASE — a constructed input, not a card anyone published.
  *
- * Kept out of any `*.test.ts` file on purpose: two suites need it, and importing
- * one test file from another makes the importing suite re-run the imported one's
- * assertions under its own name. A fixture is not a test.
+ * It exists to exercise one change: an Options Sentiment reading that is real
+ * but has no history of its own to rank it against, sitting beside factors that
+ * pull hard in opposite directions. Put/Call 0.90 lands in the neutral band of
+ * the old absolute thresholds, so this case isolates the DIVISOR half of P0-2 —
+ * the factor was already scoring zero, and what changes is only whether its 10
+ * points stay in the denominator.
  *
- * Every value is from the reported card:
+ * IT IS NOT THE CARD THE CONTRADICTION REPORT WAS WRITTEN FROM. That card is
+ * `report-card.fixture.ts`, and it publishes 51 / confidence 5 over a completely
+ * different factor table. This file used to claim the report in its own header,
+ * and so did `screenshotCase` in `symmetry.test.ts`; both claims were wrong and
+ * the two together are why the release notes carried one number from each.
+ * `docs/options-signal/changelog.md` now tabulates all three.
  *
- *   Macro         SPY above its EMA20, QQQ below   → the two cancel to zero
- *   Trend         close < EMA20 < EMA50            → fully down
+ * The values below are chosen for the mechanism, not copied from a screen:
+ *
+ *   Macro         SPY above its EMA20, QQQ below   → the two cancel to a
+ *                                                    MEASURED zero
+ *   Trend         close < EMA20 < EMA50            → fully down, −25
  *   Momentum      histogram 1.6 on ATR 2, RVOL 1.06, Squeeze OFF
  *   Sentiment     Put/Call 0.90 with 1 of the 20 days needed to rank it
  *   Risk/Reward   price 100, support 93.77, resistance 110.83

@@ -502,6 +502,26 @@ export interface OptionsSignalDiagnostics {
   /** That conversion written out, so the card and the modal cannot drift apart. */
   scoreFormula: string;
   /**
+   * THE SAME SCORE ON THE BIPOLAR RULER: `rawDirectionPoints / availableWeight
+   * × 100`, in −100..+100, where 0 is neutral.
+   *
+   * Published because it was being USED and never shown. Three thresholds read
+   * this quantity and not `directionScore0to100` — `direction.bullish` at +20,
+   * `direction.bearish` at −20, and `quality.primeScore` at 55 via
+   * `|balance| ≥ 55` — so section 8 could say "score-below-prime" beside a card
+   * reading 41 and a reader comparing 41 against 55 would get the right verdict
+   * from the wrong arithmetic, and a card reading 58 against the same 55 would
+   * get the wrong verdict entirely. An intermediate that decides a published
+   * label has to be a published intermediate.
+   *
+   * The two are the same fraction rounded twice, NOT one derived from the
+   * other — see `directionScaleFormula`, which prints the fraction they share
+   * so a reader can reach either published figure from it.
+   */
+  directionBalance: number;
+  /** Both roundings written out from the fraction underneath them. */
+  directionScaleFormula: string;
+  /**
    * Share of the model's WEIGHT that produced a score. Internal ruler.
    *
    * This is what `primeMinimumCoverage` is written on and it keeps that job:

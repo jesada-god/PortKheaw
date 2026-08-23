@@ -32,6 +32,7 @@ import {
   LIQUIDITY_BADGE,
   OPTIONS_SIGNAL_PRESENTATION,
   STALE_MIX_BADGE,
+  describePrimeBlocker,
   displayStatusOf,
   ivBasisLabel,
   ivPercentileText,
@@ -583,6 +584,24 @@ function DetailBody({ breakdown, summary }: {
                 {signedPoints(diagnostics.rawDirectionPoints)} / {diagnostics.availableWeight}
               </span>
             </div>
+            {/*
+              * COVERAGE, GIVEN A PLACE ON THE PAGE.
+              *
+              * Section 8 can block PRIME on this fraction, and until now it was
+              * quoting a percentage that appeared nowhere a reader could look.
+              * It is NOT section 7's "ความครบของข้อมูล" — that one counts inputs
+              * against a fixed 100 and reads lower — so it is named for what it
+              * is and shown beside the two numbers it is made of.
+              */}
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-400"
+              data-testid="options-signal-coverage"
+            >
+              <span>สัดส่วนน้ำหนักของโมเดลที่วัดได้ (ใช้เป็นเกณฑ์ PRIME · คนละตัวกับ &quot;ความครบของข้อมูล&quot; ในข้อ 7)</span>
+              <span className="font-mono">
+                {diagnostics.availableWeight} / {diagnostics.totalWeight} = {Math.round(diagnostics.coverage * 100)}%
+              </span>
+            </div>
             <div className="mt-2 flex items-center justify-between font-semibold text-white">
               <span>คะแนนทิศทางที่แสดงบนการ์ด</span>
               <span className="font-mono" data-testid="options-signal-score-modal">{diagnostics.directionScore0to100} / 100</span>
@@ -597,6 +616,36 @@ function DetailBody({ breakdown, summary }: {
             </p>
             <p className="mt-1 text-xs leading-5 text-slate-500">
               สูตร: (ผลรวมคะแนน + น้ำหนักที่มีข้อมูล) ÷ (2 × น้ำหนักที่มีข้อมูล) × 100 · 50 คือกลาง ไม่เอียงไปทางไหน
+            </p>
+            {/*
+              * THE SECOND RULER, named — because the thresholds are written on
+              * it and it was the one number on this path never shown.
+              *
+              * `directionBalance` is what decides bullish/bearish (±20) and what
+              * §8 compares against the PRIME floor of 55. A reader who only ever
+              * saw the 0–100 figure had no way to check either verdict: on this
+              * page 41/100 and −18 are the same measurement, and 55 is a
+              * threshold on the second one only.
+              */}
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-400"
+              data-testid="options-signal-direction-balance"
+            >
+              <span>สเกลเดียวกันแบบสองทาง (ใช้ตัดสิน bullish/bearish และเกณฑ์ PRIME)</span>
+              <span className="font-mono">
+                {signedPoints(diagnostics.directionBalance)} / ±100
+              </span>
+            </div>
+            {/*
+              * The shared fraction first, then BOTH roundings — not
+              * "balance ÷ 2 + 50", which is only true when the two roundings
+              * happen to agree. See `directionScaleFormula`.
+              */}
+            <p
+              className="mt-1 font-mono text-xs leading-5 text-slate-400"
+              data-testid="options-signal-scale-formula"
+            >
+              {diagnostics.directionScaleFormula}
             </p>
           </div>
         </div>
@@ -997,11 +1046,32 @@ function DetailBody({ breakdown, summary }: {
 
       <section>
         <h3 className="font-semibold text-white">8. เงื่อนไขที่ทำให้ยังไม่เป็น PRIME</h3>
+        {/*
+          * Thai, with both sides of every comparison — and the slug kept on the
+          * element rather than on the screen.
+          *
+          * The list used to be the engine's raw identifiers set in mono type in
+          * the middle of an otherwise-Thai page. `data-blocker-id` is what
+          * telemetry, tests and anyone grepping a DOM dump still match on, so
+          * nothing that could find a blocker before has lost the ability to.
+          */}
         {diagnostics.dataSufficiency.primeBlockers.length ? (
-          <ul className="mt-2 space-y-1">
-            {diagnostics.dataSufficiency.primeBlockers.map((blocker) => (
-              <li key={blocker} className="flex gap-2"><span aria-hidden="true">•</span><span className="font-mono text-xs">{blocker}</span></li>
-            ))}
+          <ul className="mt-2 space-y-1" data-testid="options-signal-prime-blockers">
+            {diagnostics.dataSufficiency.primeBlockers.map((blocker) => {
+              const copy = describePrimeBlocker(blocker, {
+                directionBalance: diagnostics.directionBalance,
+                directionScore0to100: diagnostics.directionScore0to100,
+                confidenceScore: summary.confidenceScore,
+                agreement: diagnostics.agreement,
+                coverage: diagnostics.coverage,
+              });
+              return (
+                <li key={blocker} className="flex gap-2" data-blocker-id={copy.id}>
+                  <span aria-hidden="true">•</span>
+                  <span className="text-xs leading-5">{copy.text}</span>
+                </li>
+              );
+            })}
           </ul>
         ) : <p className="mt-2 text-slate-500">ผ่านเงื่อนไข PRIME ครบทุกข้อ</p>}
         {diagnostics.gates.ivWarningReasons.map((reason) => (

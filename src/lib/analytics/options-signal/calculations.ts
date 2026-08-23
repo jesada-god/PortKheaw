@@ -997,6 +997,31 @@ export function directionScoreOutOf100(rawScore: number, maximumAbsolute: number
   return round(clamp((raw + maxAbs) / (2 * maxAbs) * 100, 0, 100), 0);
 }
 
+/**
+ * THE TWO RULERS, and the one unrounded quantity underneath both.
+ *
+ * `directionScoreOutOf100` and `directionBalance` round INDEPENDENTLY, off the
+ * same fraction, so `balance / 2 + 50` is not reliably the published score: on
+ * +1 of 80 the balance rounds to +1 and the card to 51, and the identity is out
+ * by half a point. Printing that identity as an equation would have been the
+ * same defect this pass exists to remove, one scale further along.
+ *
+ * So the line prints the shared fraction FIRST and both roundings after it, and
+ * a reader can land on either published number from it.
+ */
+export function directionScaleFormula(rawScore: number, maximumAbsolute: number): string {
+  const raw = round(finite(rawScore) ?? 0, 0);
+  const maxAbs = round(finite(maximumAbsolute) ?? 0, 0);
+  if (maxAbs <= 0) return 'ยังไม่มีน้ำหนักที่วัดได้ จึงยังไม่มีคะแนนให้แปลงสเกล';
+  const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+  const bipolar = raw / maxAbs * 100;
+  const card = bipolar / 2 + 50;
+  return `${signed(raw)} ÷ ${maxAbs} × 100 = ${signed(round(bipolar, 2))}`
+    + ` → สเกล ±100 ปัดเป็น ${signed(directionBalance(raw, maxAbs))}`
+    + ` · ${signed(round(bipolar, 2))} ÷ 2 + 50 = ${round(card, 2)}`
+    + ` → สเกล 0–100 ปัดเป็น ${directionScoreOutOf100(raw, maxAbs)}`;
+}
+
 /** The same conversion, written out for the reader. */
 export function directionScoreFormula(
   rawScore: number,
@@ -1075,10 +1100,11 @@ export function confidenceFormulaText(
   /**
    * The deductions, so the sentence ends on the number the CARD shows.
    *
-   * Without this the line stopped at the geometric mean — 46% — while the
-   * headline beside it said 31, which is the same defect one step further along:
-   * a reader who follows the arithmetic to the end has to land on the figure they
-   * were shown, not on an intermediate the copy never named as one.
+   * Without this the line stopped at the geometric mean. On the reported card
+   * that meant section 7 printed "คะแนนก่อนหักลบ 20%" beside a headline reading
+   * 5 — the same defect one step further along: a reader who follows the
+   * arithmetic to the end has to land on the figure they were shown, not on an
+   * intermediate the copy never named as one.
    */
   penaltyTotal = 0,
 ): string {
@@ -1404,6 +1430,8 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100: 50,
     scoreFormula: 'ไม่มีปัจจัยที่มีข้อมูลพอจะแปลงเป็นคะแนน',
+    directionBalance: 0,
+    directionScaleFormula: directionScaleFormula(0, 0),
     coverage: 0,
     completeness: measureCompleteness(input, {}),
     agreement: 0,
@@ -1642,7 +1670,29 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
    * explicitly not meant to introduce.
    */
   const agreement = absoluteScore > 0 ? Math.abs(summedPoints) / absoluteScore : 0;
-  const evidenceStrength = availableWeight > 0 ? clamp(absoluteScore / availableWeight, 0, 1) : 0;
+  /*
+   * STRENGTH IS MEASURED AGAINST THE WHOLE MODEL, not against what happened to
+   * be countable — because the divisor moves and the numerator does not.
+   *
+   * It used to be `absoluteScore / availableWeight`. When P0-2 struck the
+   * unranked Options Sentiment out of the fraction, that divisor fell 90 -> 80
+   * while the numerator stayed put (the factor was scoring zero), so the same
+   * evidence reported 0.40 before and 0.45 after. LOSING A FACTOR MADE THE
+   * EVIDENCE LOOK STRONGER, which no reading of the word can justify.
+   *
+   * On the reported card it happened to be masked: completeness fell far enough
+   * in the same release to swallow it. That is luck, not a design — two terms
+   * pulling opposite ways cancel at whatever ratio the inputs happen to have,
+   * and on a card whose completeness fell less, confidence would have RISEN
+   * because data went missing.
+   *
+   * Against the fixed total the numerator is the only thing that can move, so
+   * the term is monotone by construction: an input that disappears can lower
+   * this and can never raise it. Completeness still carries the "how much do we
+   * know" question; this one now answers only "how hard is what we have
+   * pushing", on a ruler that does not shrink to flatter the answer.
+   */
+  const evidenceStrength = clamp(absoluteScore / OPTIONS_SIGNAL_TOTAL_WEIGHT, 0, 1);
 
   const pricing = input.pricing.status === 'available' ? input.pricing.value : null;
   const ivLevel = pricing ? classifyIvLevel(pricing) : null;
@@ -1805,6 +1855,8 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100,
     scoreFormula,
+    directionBalance: balance,
+    directionScaleFormula: directionScaleFormula(directionScore, availableWeight),
     coverage: round(coverage, 4),
     completeness: { ...completeness, value: round(completeness.value, 4) },
     agreement: round(agreement, 4),

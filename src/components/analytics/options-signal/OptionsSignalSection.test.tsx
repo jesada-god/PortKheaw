@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
+import { OPTIONS_SIGNAL_CONFIG } from '@/src/lib/analytics/options-signal/config';
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -100,6 +101,8 @@ const eliteSignal: OptionsSignalDto = {
       totalWeight: 100,
       directionScore0to100: 82,
       scoreFormula: '(+64 + 100) ÷ (2 × 100) × 100 = 82',
+      directionBalance: 64,
+      directionScaleFormula: '+64 ÷ 100 × 100 = +64 → สเกล ±100 ปัดเป็น +64 · +64 ÷ 2 + 50 = 82 → สเกล 0–100 ปัดเป็น 82',
       coverage: 1,
       completeness: {
         value: 0.74,
@@ -120,7 +123,13 @@ const eliteSignal: OptionsSignalDto = {
         passed: true,
         missing: [],
         primeEligible: false,
-        primeBlockers: ['CONFIDENCE_BELOW_PRIME'],
+        /*
+         * The ENGINE'S OWN spelling. This fixture used to carry an invented
+         * `CONFIDENCE_BELOW_PRIME`, which no code path can produce — so the
+         * section rendered a slug that only existed in this file, and the
+         * §8 translation could have shipped broken with this test green.
+         */
+        primeBlockers: ['confidence-below-prime', 'score-below-prime'],
       },
       riskReward: {
         reachability: 1,
@@ -301,6 +310,112 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(document.body.querySelector('[data-testid="options-signal-rvol-formula"]')?.textContent)
       .toContain('เส้นโค้งโลจิสติก');
     expect(document.body.textContent).toContain('Confidence');
+  });
+
+  it('writes section 8 in Thai and keeps the engine slug on the element', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    const list = document.body.querySelector('[data-testid="options-signal-prime-blockers"]');
+    expect(list).not.toBeNull();
+    const items = [...(list?.querySelectorAll('li') ?? [])];
+
+    // The reader gets Thai, with both sides of the comparison…
+    expect(items.map((item) => item.textContent).join(' ')).toContain('Confidence ยังไม่ถึงเกณฑ์ PRIME');
+    expect(items.map((item) => item.textContent).join(' '))
+      .toContain(`ต้องการ ≥ ${OPTIONS_SIGNAL_CONFIG.quality.primeConfidence}`);
+    // …and no raw slug survives anywhere in the rendered text of the list.
+    expect(list?.textContent).not.toContain('confidence-below-prime');
+    expect(list?.textContent).not.toContain('score-below-prime');
+
+    // …while anything that searched by slug still finds it, on the element.
+    expect(items.map((item) => item.getAttribute('data-blocker-id')))
+      .toEqual(['confidence-below-prime', 'score-below-prime']);
+  });
+
+  it('states the PRIME score floor on the ruler the floor is actually written on', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * `score-below-prime` compares |directionBalance| against 55, NOT the 0-100
+     * figure on the card. With the fixture's balance of +64 and a card score of
+     * 82, a reader told only "score-below-prime" beside an 82 would read the
+     * card number against 55, conclude 82 ≥ 55, and find the page contradicting
+     * itself. Section 1 now prints the bipolar figure, and section 8 quotes it.
+     */
+    const balance = document.body.querySelector('[data-testid="options-signal-direction-balance"]');
+    expect(balance?.textContent).toContain('+64');
+    expect(balance?.textContent).toContain('±100');
+
+    const blocker = document.body.querySelector('[data-blocker-id="score-below-prime"]');
+    // The card's own figure and the threshold converted onto its scale, so a
+    // reader comparing the two numbers in front of them gets the right verdict.
+    expect(blocker?.textContent).toContain('82 / 100');
+    expect(blocker?.textContent).toContain(`≥ ${50 + OPTIONS_SIGNAL_CONFIG.quality.primeScore / 2}`);
+    // The engine's own comparison is still named, second.
+    expect(blocker?.textContent).toContain('|64| ≥ 55');
+    expect(blocker?.textContent).toContain('−100..+100');
+  });
+
+  it('lists the three confidence terms in the order the exponents are applied', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * A reader retypes this section into a calculator top to bottom. The formula
+     * line and the three tiles under it therefore have to name the terms in the
+     * same order, and that order has to be the one `config.exponents` applies —
+     * otherwise everyone who checks the page gets a different answer from the
+     * page, and the page is the thing that is wrong.
+     *
+     * Asserted against the rendered DOM rather than against source order,
+     * because CSS grid can reorder what source order suggests.
+     */
+    const body = document.body.textContent ?? '';
+    const formula = document.body
+      .querySelector('[data-testid="options-signal-confidence-formula"]')?.textContent ?? '';
+
+    const { exponents } = OPTIONS_SIGNAL_CONFIG.confidence;
+    expect(formula).toContain(`ความครบ^${exponents.coverage}`);
+    expect(formula).toContain(`ความสอดคล้อง^${exponents.agreement}`);
+    expect(formula).toContain(`ความหนักแน่น^${exponents.strength}`);
+    expect(formula.indexOf('ความครบ')).toBeLessThan(formula.indexOf('ความสอดคล้อง'));
+    expect(formula.indexOf('ความสอดคล้อง')).toBeLessThan(formula.indexOf('ความหนักแน่น'));
+
+    // The tiles, after the formula, in the same order as the formula.
+    const tiles = body.slice(body.indexOf(formula) + formula.length);
+    expect(tiles.indexOf('ความครบของข้อมูล')).toBeGreaterThanOrEqual(0);
+    expect(tiles.indexOf('ความครบของข้อมูล')).toBeLessThan(tiles.indexOf('ความสอดคล้อง'));
+    expect(tiles.indexOf('ความสอดคล้อง')).toBeLessThan(tiles.indexOf('ความหนักแน่น'));
+    // …and the deduction is named as a later step, not as a fourth term.
+    expect(tiles.indexOf('ความหนักแน่น')).toBeLessThan(tiles.indexOf('คะแนนก่อนหักลบ'));
+  });
+
+  it('shows the coverage fraction that section 8 can block PRIME on', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    // `coverage-below-floor` quotes this percentage. Before it had a line of its
+    // own, the blocker cited a number that appeared nowhere on the page.
+    const line = document.body.querySelector('[data-testid="options-signal-coverage"]');
+    expect(line?.textContent).toContain('100 / 100');
+    expect(line?.textContent).toContain('100%');
+    // …and it is named apart from section 7's completeness, which is a different
+    // fraction that reads differently on the same card.
+    expect(line?.textContent).toContain('คนละตัวกับ');
   });
 
   it('does not render an in-memory Elite breakdown after entitlement drops to Pro', async () => {

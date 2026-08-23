@@ -82,6 +82,8 @@ const result: OptionsSignalResult = {
     totalWeight: 100,
     directionScore0to100: 50,
     scoreFormula: '(0 + 100) ÷ (2 × 100) × 100 = 50',
+    directionBalance: 0,
+    directionScaleFormula: '0 ÷ 100 × 100 = 0 → สเกล ±100 ปัดเป็น 0 · 0 ÷ 2 + 50 = 50 → สเกล 0–100 ปัดเป็น 50',
     coverage: 1,
     completeness: {
       value: 0.74,

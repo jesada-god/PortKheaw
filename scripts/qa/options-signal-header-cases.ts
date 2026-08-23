@@ -99,6 +99,8 @@ function signalOf(options: {
         availableWeight: 100,
         totalWeight: 100,
         directionScore0to100: options.directionScore0to100,
+        directionBalance: 26,
+        directionScaleFormula: '+26 ÷ 100 × 100 = +26 → สเกล ±100 ปัดเป็น +26 · +26 ÷ 2 + 50 = 63 → สเกล 0–100 ปัดเป็น 63',
         scoreFormula: `(+26 + 100) ÷ (2 × 100) × 100 = ${options.directionScore0to100}`,
         coverage: 1,
         completeness: {

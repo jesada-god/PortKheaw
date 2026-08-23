@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateOptionsSignal, scoreRiskReward, scoreSentiment } from './calculations';
-import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_WEIGHTS } from './config';
+import { OPTIONS_SIGNAL_CONFIG, OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
 import { projectOptionsSignal } from './dto';
 import type {
   EventRiskInput,
@@ -17,7 +17,7 @@ import type {
 /**
  * Two questions this file answers with numbers rather than with reasoning.
  *
- * 1. THE CASE FROM THE REPORT. Every earlier check of the Risk/Reward rework used
+ * 1. THE HANDOVER SCREENSHOT CARD. Every earlier check of the Risk/Reward rework used
  *    a tape where nothing led, which is the one shape the sideways damping was
  *    written for. The case it actually came from does not look like that — four
  *    factors lead bullish — so this locks every published field for it, whatever
@@ -48,7 +48,16 @@ const base = {
 };
 
 // ---------------------------------------------------------------------------
-// 1. The case from the report
+// 1. The handover screenshot card
+//
+// From the EARLIER handover round (`docs/signal-handover.md`, "เคสจากภาพ"), and
+// not from the later contradiction report. Its Put/Call of 1.51 was scoring a
+// saturated -10 with nothing to rank it against, so striking that moved the
+// published score 52 -> 58.
+//
+// The report's own card is `report-card.fixture.ts` and reads 51 / confidence 5.
+// This fixture described itself as "the case from the report" for one release,
+// as did `putcall-fallback.fixture.ts`, and neither was.
 // ---------------------------------------------------------------------------
 
 /**
@@ -86,7 +95,7 @@ describe('screenshot-baseline', () => {
    * this test is the place it gets restated — including the two that are still
    * wrong, which are marked below so they cannot be quietly normalised.
    */
-  it('locks every published field for the case the report came from', () => {
+  it('locks every published field for the handover screenshot card', () => {
     const result = calculateOptionsSignal(screenshotCase);
     expect(result.status).toBe('available');
     if (result.status !== 'available') return;
@@ -215,13 +224,23 @@ describe('screenshot-baseline', () => {
     expect(diagnostics.completeness.missing).toContain('ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)');
     // The Put/Call itself IS here; what is absent is anything to rank it against.
     expect(diagnostics.completeness.notCounted).toContain('Put/Call จาก Open Interest');
-    expect(diagnostics.evidenceStrength).toBeCloseTo(0.5125, 4);
-    expect(result.confidenceScore).toBe(43);
+    /*
+     * STRENGTH IS NOW OVER THE MODEL'S FULL WEIGHT: 0.5125 -> 0.4556.
+     *
+     * 41 absolute points either way. The old divisor was `availableWeight`, so
+     * striking the unranked Options Sentiment took it 90 -> 80 and the same 41
+     * points reported as 0.5125 where they had reported 0.4556 — a factor
+     * LEAVING made the evidence read stronger. Against the fixed 90 the reading
+     * does not move when the factor set does, which is the whole point, and the
+     * published confidence falls 43 -> 42 because of it.
+     */
+    expect(diagnostics.evidenceStrength).toBeCloseTo(41 / OPTIONS_SIGNAL_TOTAL_WEIGHT, 4);
+    expect(result.confidenceScore).toBe(42);
     expect(result.confidenceScore).toBeLessThan(45);
 
     // And the sentence describing that confidence is reproducible by hand.
     expect(diagnostics.confidenceFormula)
-      .toBe('ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.81^0.2 × 0.32^0.55 × 0.51^0.25 = 0.43 → 43%');
+      .toBe('ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.81^0.2 × 0.32^0.55 × 0.46^0.25 = 0.42 → 42%');
 
     // And both surfaces still read the one field.
     const projected = projectOptionsSignal(result, { includeBreakdown: true });
@@ -283,8 +302,11 @@ describe('screenshot-baseline', () => {
         + 0.35 * result.diagnostics.agreement
         + 0.35 * result.diagnostics.evidenceStrength) * 100,
     );
-    expect(legacyConfidence).toBe(56);
-    expect(result.confidenceScore).toBe(43);
+    // 56 -> 54: the legacy average is recomputed from the CURRENT terms, and
+    // `evidenceStrength` is one of them, so fixing its divisor moves this
+    // comparison too. The gap it exists to show is unchanged in direction.
+    expect(legacyConfidence).toBe(54);
+    expect(result.confidenceScore).toBe(42);
     expect(result.confidenceScore).toBeLessThan(legacyConfidence);
   });
 });

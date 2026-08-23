@@ -1,4 +1,5 @@
 import type { DisplayDataStatus } from '@/src/components/market-data/DataProvenance';
+import { OPTIONS_SIGNAL_CONFIG } from '@/src/lib/analytics/options-signal/config';
 import type {
   IvLevel,
   IvPricingInput,
@@ -252,4 +253,128 @@ export function riskRewardDirectionNote(input: {
     + `ในขั้นก่อนหน้า ซึ่งเป็นทิศ "ก่อน" นำคะแนน R:R มารวมและก่อนหักด้วย trend veto · `
     + `${because} ป้ายบนการ์ดจึงเป็น ${badge} · `
     + `ทั้งสองประโยคมาจากคนละขั้นของการคำนวณ ไม่ได้ขัดกัน`;
+}
+
+/**
+ * §8 IN THAI, WITH THE ARITHMETIC THAT PRODUCED EACH LINE.
+ *
+ * The section used to print the engine's raw slugs — `score-below-prime`,
+ * `agreement-below-prime` — in the middle of a page that is Thai everywhere
+ * else, and a slug names the test without giving the reader either side of it.
+ * "score-below-prime" beside a card reading 41 invites the reader to compare 41
+ * against the PRIME floor; the floor is 55 and the quantity being compared is
+ * `directionBalance`, which for that card is −18. Same verdict, wrong sum — and
+ * on a card at 58 the wrong sum gives the wrong verdict.
+ *
+ * So each line states the measured value, the threshold, and the units both are
+ * in. The slug does not disappear: the caller puts it on `data-blocker-id`, and
+ * the payload that reaches logs and history is untouched, so anything that
+ * searched for a slug still finds it.
+ */
+const BLOCKER_FACTOR_LABEL: Record<string, string> = {
+  macro: 'Macro',
+  trend: 'Trend',
+  momentum: 'Momentum',
+  sentiment: 'Options Sentiment',
+  riskReward: 'Risk/Reward',
+};
+
+export interface PrimeBlockerContext {
+  /** −100..+100, the ruler `primeScore` is written on. */
+  directionBalance: number;
+  /** 0..100, what the card shows. Quoted so the two rulers cannot be confused. */
+  directionScore0to100: number;
+  confidenceScore: number;
+  agreement: number;
+  coverage: number;
+}
+
+export interface PrimeBlockerCopy {
+  /** The original engine slug. Belongs on `data-blocker-id`, not on screen. */
+  id: string;
+  text: string;
+}
+
+const pct = (value: number) => `${Math.round(value * 100)}%`;
+
+export function describePrimeBlocker(
+  blocker: string,
+  context: PrimeBlockerContext,
+  config = OPTIONS_SIGNAL_CONFIG,
+): PrimeBlockerCopy {
+  const { quality, sufficiency } = config;
+
+  if (blocker.startsWith('missing:')) {
+    const id = blocker.slice('missing:'.length);
+    const label = BLOCKER_FACTOR_LABEL[id] ?? id;
+    return { id: blocker, text: `ยังไม่มีข้อมูล ${label} ซึ่ง PRIME บังคับว่าต้องมีครบทุกตัว` };
+  }
+
+  switch (blocker) {
+    case 'data-insufficient':
+      return { id: blocker, text: 'ข้อมูลยังไม่พอจะคำนวณสัญญาณ จึงยังไม่ถึงขั้นพิจารณา PRIME' };
+    case 'coverage-below-floor':
+      return {
+        id: blocker,
+        // NOT "ความครบของข้อมูล" — that name belongs to §7's `completeness`,
+        // which is a different fraction with a different denominator. Two
+        // numbers under one Thai name is the confusion this section is fixing.
+        // The figure quoted here is the one section 1 prints under this name.
+        text: `สัดส่วนน้ำหนักของโมเดลที่วัดได้จริงยังต่ำเกินไป (${pct(context.coverage)}`
+          + ` · ต้องการ ≥ ${pct(sufficiency.primeMinimumCoverage)} · ดูข้อ 1)`,
+      };
+    case 'momentum-unconfirmed':
+      return { id: blocker, text: 'Momentum ยังไม่มี RVOL มายืนยัน จึงยังนับเป็นหลักฐานเต็มใบไม่ได้' };
+    case 'squeeze-still-compressing':
+      return { id: blocker, text: 'TTM Squeeze ยังบีบตัวอยู่ (ON) ตลาดยังไม่เลือกทาง' };
+    case 'iv-unavailable':
+      return { id: blocker, text: 'ยังตัดสินความถูก/แพงของค่าพรีเมียมไม่ได้ ด่านความเสี่ยงฝั่ง IV จึงยังไม่ได้ตรวจ' };
+    case 'score-below-prime': {
+      /*
+       * THE THRESHOLD, ON THE RULER THE READER CAN SEE.
+       *
+       * The engine compares `|directionBalance| ≥ 55` on the −100..+100 scale.
+       * Printing it that way was correct and useless: the only direction figure
+       * on the card is 0-100, so a reader had two numbers in front of them and
+       * no shared scale to compare. On the handover card that is not merely
+       * unhelpful — 58 against a printed "55" reads as PASSED beside a card
+       * saying it did not.
+       *
+       * So the card's scale leads, with the engine's own figure named second as
+       * the thing the code actually compares. Both are true, and the one a
+       * reader can check is first.
+       */
+      const half = quality.primeScore / 2;
+      const upper = 50 + half;
+      const lower = 50 - half;
+      return {
+        id: blocker,
+        text: `คะแนนทิศทางยังไม่ถึงเกณฑ์ PRIME — ปัจจุบัน ${context.directionScore0to100} / 100`
+          + ` · ต้องการ ≥ ${upper} หรือ ≤ ${lower} (ต้องเอียงไปทางใดทางหนึ่งให้ชัด)`
+          + ` · ในโค้ดเทียบบนสเกล −100..+100 ว่า |${context.directionBalance}| ≥ ${quality.primeScore}`
+          + ` ซึ่งเป็นค่าเดียวกันคนละสเกล (ดูข้อ 1)`,
+      };
+    }
+    case 'confidence-below-prime':
+      return {
+        id: blocker,
+        text: `Confidence ยังไม่ถึงเกณฑ์ PRIME (${context.confidenceScore} · ต้องการ ≥ ${quality.primeConfidence})`,
+      };
+    case 'agreement-below-prime':
+      return {
+        id: blocker,
+        text: `หลักฐานยังไปทางเดียวกันไม่พอ (ความสอดคล้อง ${pct(context.agreement)}`
+          + ` · ต้องการ ≥ ${pct(quality.primeAgreement)})`,
+      };
+    case 'trend-opposes-bias':
+      return { id: blocker, text: 'แนวโน้ม (Trend) ชี้สวนทางกับทิศที่คะแนนรวมสรุป' };
+    default:
+      /*
+       * A slug this function has not been taught is printed as-is rather than
+       * dropped. A blocker that vanished from the list would be the same
+       * withholding §8 exists to end, and the fallback is loud enough to notice
+       * in review.
+       */
+      return { id: blocker, text: blocker };
+  }
 }

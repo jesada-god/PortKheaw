@@ -33,7 +33,7 @@ import {
   riskReward,
   sentiment,
   trend,
-} from './reported-case.fixture';
+} from './putcall-fallback.fixture';
 import type {
   EventRiskInput,
   IvPricingInput,
