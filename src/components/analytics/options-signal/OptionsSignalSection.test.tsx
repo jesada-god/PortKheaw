@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
+import { OPTIONS_SIGNAL_CONFIG } from '@/src/lib/analytics/options-signal/config';
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -38,6 +40,8 @@ function factor(
     normalized: points / maxPoints,
     state: 'DELAYED',
     available: true,
+    measurement: 'measured',
+    fallbackReason: null,
     partial: false,
     detail,
     reason: null,
@@ -97,17 +101,35 @@ const eliteSignal: OptionsSignalDto = {
       totalWeight: 100,
       directionScore0to100: 82,
       scoreFormula: '(+64 + 100) ÷ (2 × 100) × 100 = 82',
+      directionBalance: 64,
+      directionScaleFormula: '+64 ÷ 100 × 100 = +64 → สเกล ±100 ปัดเป็น +64 · +64 ÷ 2 + 50 = 82 → สเกล 0–100 ปัดเป็น 82',
       coverage: 1,
+      completeness: {
+        value: 0.74,
+        inputs: [
+          { id: 'trend.ema50', group: 'trend', label: 'EMA50 ของหุ้น', available: true, counted: true, note: null },
+          { id: 'pricing.own-baseline', group: 'pricing', label: 'ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)', available: false, counted: false, note: 'ขาดอีก 59 วัน' },
+        ],
+        missing: ['ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)'],
+        notCounted: [],
+      },
       agreement: 0.86,
       evidenceStrength: 0.8,
       confidenceBase: 0.74,
+      confidenceFormula: 'ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 1.00^0.2 × 0.74^0.55 × 0.74^0.25 = 0.74 → 74%',
       penalties: [],
       penaltyTotal: 0,
       dataSufficiency: {
         passed: true,
         missing: [],
         primeEligible: false,
-        primeBlockers: ['CONFIDENCE_BELOW_PRIME'],
+        /*
+         * The ENGINE'S OWN spelling. This fixture used to carry an invented
+         * `CONFIDENCE_BELOW_PRIME`, which no code path can produce — so the
+         * section rendered a slug that only existed in this file, and the
+         * §8 translation could have shipped broken with this test green.
+         */
+        primeBlockers: ['confidence-below-prime', 'score-below-prime'],
       },
       riskReward: {
         reachability: 1,
@@ -131,6 +153,7 @@ const eliteSignal: OptionsSignalDto = {
       },
       iv: {
         level: 'normal',
+      levelSuppressedReason: null,
         basis: 'iv-vs-realized',
         ivRank: null,
         ivPercentile: null,
@@ -166,6 +189,7 @@ const eliteSignal: OptionsSignalDto = {
         expiration: '2026-08-21',
         marketOpenAtCapture: true,
         offHoursAssessment: null,
+      closedSpreadWarning: null,
         state: 'DELAYED',
         reason: null,
         detail: 'OI กลาง 2,400 · Volume กลาง 310',
@@ -178,6 +202,7 @@ const eliteSignal: OptionsSignalDto = {
         normalizedMomentumCapped: true,
         relativeVolume: 1.8,
         confirmation: 0.8,
+      confirmationFormula: rvolConfirmationFormula(1.06),
       },
       macro: {
         benchmarks: [
@@ -189,10 +214,11 @@ const eliteSignal: OptionsSignalDto = {
         asOf: AS_OF,
         newestAsOf: '2026-07-27T22:00:00.000Z',
         spreadHours: 2,
+        spreadSessions: 0,
         staleMix: false,
         sources: [
-          { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF },
-          { id: 'pricing', provider: 'fixture-options', asOf: '2026-07-27T22:00:00.000Z' },
+          { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF, fetchedAt: null },
+          { id: 'pricing', provider: 'fixture-options', asOf: '2026-07-27T22:00:00.000Z', fetchedAt: '2026-07-27T22:04:00.000Z' },
         ],
       },
       gates: { ivWarning: false, ivWarningReasons: [], downgrades: [] },
@@ -272,8 +298,124 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(trigger).toBeDefined();
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(document.body.textContent).toContain('คะแนนทิศทางมาจากอะไร');
-    expect(document.body.textContent).toContain('TTM Squeeze');
+    /*
+     * The heading names the mechanism the POINTS come from. It said "TTM
+     * Squeeze" on a card whose Squeeze read OFF and whose whole +9 came from the
+     * momentum histogram — a title claiming one thing while another did the
+     * scoring. The squeeze is still reported; it is a damping state, not the
+     * source.
+     */
+    expect(document.body.textContent).toContain('Momentum (TTM histogram + สถานะ Squeeze)');
+    // …and the RVOL curve names itself, instead of being "a continuous curve".
+    expect(document.body.querySelector('[data-testid="options-signal-rvol-formula"]')?.textContent)
+      .toContain('เส้นโค้งโลจิสติก');
     expect(document.body.textContent).toContain('Confidence');
+  });
+
+  it('writes section 8 in Thai and keeps the engine slug on the element', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    const list = document.body.querySelector('[data-testid="options-signal-prime-blockers"]');
+    expect(list).not.toBeNull();
+    const items = [...(list?.querySelectorAll('li') ?? [])];
+
+    // The reader gets Thai, with both sides of the comparison…
+    expect(items.map((item) => item.textContent).join(' ')).toContain('Confidence ยังไม่ถึงเกณฑ์ PRIME');
+    expect(items.map((item) => item.textContent).join(' '))
+      .toContain(`ต้องการ ≥ ${OPTIONS_SIGNAL_CONFIG.quality.primeConfidence}`);
+    // …and no raw slug survives anywhere in the rendered text of the list.
+    expect(list?.textContent).not.toContain('confidence-below-prime');
+    expect(list?.textContent).not.toContain('score-below-prime');
+
+    // …while anything that searched by slug still finds it, on the element.
+    expect(items.map((item) => item.getAttribute('data-blocker-id')))
+      .toEqual(['confidence-below-prime', 'score-below-prime']);
+  });
+
+  it('states the PRIME score floor on the ruler the floor is actually written on', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * `score-below-prime` compares |directionBalance| against 55, NOT the 0-100
+     * figure on the card. With the fixture's balance of +64 and a card score of
+     * 82, a reader told only "score-below-prime" beside an 82 would read the
+     * card number against 55, conclude 82 ≥ 55, and find the page contradicting
+     * itself. Section 1 now prints the bipolar figure, and section 8 quotes it.
+     */
+    const balance = document.body.querySelector('[data-testid="options-signal-direction-balance"]');
+    expect(balance?.textContent).toContain('+64');
+    expect(balance?.textContent).toContain('±100');
+
+    const blocker = document.body.querySelector('[data-blocker-id="score-below-prime"]');
+    // The card's own figure and the threshold converted onto its scale, so a
+    // reader comparing the two numbers in front of them gets the right verdict.
+    expect(blocker?.textContent).toContain('82 / 100');
+    expect(blocker?.textContent).toContain(`≥ ${50 + OPTIONS_SIGNAL_CONFIG.quality.primeScore / 2}`);
+    // The engine's own comparison is still named, second.
+    expect(blocker?.textContent).toContain('|64| ≥ 55');
+    expect(blocker?.textContent).toContain('−100..+100');
+  });
+
+  it('lists the three confidence terms in the order the exponents are applied', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * A reader retypes this section into a calculator top to bottom. The formula
+     * line and the three tiles under it therefore have to name the terms in the
+     * same order, and that order has to be the one `config.exponents` applies —
+     * otherwise everyone who checks the page gets a different answer from the
+     * page, and the page is the thing that is wrong.
+     *
+     * Asserted against the rendered DOM rather than against source order,
+     * because CSS grid can reorder what source order suggests.
+     */
+    const body = document.body.textContent ?? '';
+    const formula = document.body
+      .querySelector('[data-testid="options-signal-confidence-formula"]')?.textContent ?? '';
+
+    const { exponents } = OPTIONS_SIGNAL_CONFIG.confidence;
+    expect(formula).toContain(`ความครบ^${exponents.coverage}`);
+    expect(formula).toContain(`ความสอดคล้อง^${exponents.agreement}`);
+    expect(formula).toContain(`ความหนักแน่น^${exponents.strength}`);
+    expect(formula.indexOf('ความครบ')).toBeLessThan(formula.indexOf('ความสอดคล้อง'));
+    expect(formula.indexOf('ความสอดคล้อง')).toBeLessThan(formula.indexOf('ความหนักแน่น'));
+
+    // The tiles, after the formula, in the same order as the formula.
+    const tiles = body.slice(body.indexOf(formula) + formula.length);
+    expect(tiles.indexOf('ความครบของข้อมูล')).toBeGreaterThanOrEqual(0);
+    expect(tiles.indexOf('ความครบของข้อมูล')).toBeLessThan(tiles.indexOf('ความสอดคล้อง'));
+    expect(tiles.indexOf('ความสอดคล้อง')).toBeLessThan(tiles.indexOf('ความหนักแน่น'));
+    // …and the deduction is named as a later step, not as a fourth term.
+    expect(tiles.indexOf('ความหนักแน่น')).toBeLessThan(tiles.indexOf('คะแนนก่อนหักลบ'));
+  });
+
+  it('shows the coverage fraction that section 8 can block PRIME on', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    // `coverage-below-floor` quotes this percentage. Before it had a line of its
+    // own, the blocker cited a number that appeared nowhere on the page.
+    const line = document.body.querySelector('[data-testid="options-signal-coverage"]');
+    expect(line?.textContent).toContain('100 / 100');
+    expect(line?.textContent).toContain('100%');
+    // …and it is named apart from section 7's completeness, which is a different
+    // fraction that reads differently on the same card.
+    expect(line?.textContent).toContain('คนละตัวกับ');
   });
 
   it('does not render an in-memory Elite breakdown after entitlement drops to Pro', async () => {
@@ -608,8 +750,28 @@ describe('OptionsSignalSection gated DTO rendering', () => {
       .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
-    expect(document.body.textContent).toContain('1.20× / 0.50×');
+    // ATR rows say ATR. They used to print "×", which is the expected-move unit.
+    expect(document.body.textContent).toContain('1.20 ATR / 0.50 ATR');
     expect(document.body.textContent).toContain('Expected Move');
+  });
+
+  it('prints both distances unsigned, with the direction carried by the label', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
+    const trigger = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
+    await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    /*
+     * The row and the factor sentence above it are the pair that contradicted
+     * each other: `+10.91% / +4.55%` beside `ลงถึงแนวรับ -4.55%`. Neither sign
+     * was right, because a distance to a level does not have one.
+     */
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('10.91% / 4.55%');
+    expect(text).not.toContain('+10.91%');
+    expect(text).not.toContain('-4.55%');
+    expect(text).not.toContain('+4.55%');
   });
 
   it('renders nothing broken when every diagnostic number is absent', async () => {
@@ -686,7 +848,8 @@ describe('OptionsSignalSection gated DTO rendering', () => {
               score: null,
               medianSpreadPercent: 42,
               marketOpenAtCapture: false,
-              offHoursAssessment: { grade: 'fair', score: 60 },
+              offHoursAssessment: { standingPassed: false },
+              closedSpreadWarning: 'สเปรดกว้างผิดปกติแม้เผื่อผลของตลาดปิดแล้ว (42% ตอนปิด) ถ้าหดลงครึ่งหนึ่งตอนเปิดก็ยังเกินเกณฑ์ 5%',
             },
           },
         },
@@ -705,7 +868,24 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     // ...and the measurement behind it is still on screen, labelled.
     expect(document.body.querySelector('[data-testid="options-signal-liquidity-closed"]')).not.toBeNull();
     expect(document.body.textContent).toContain('ถ้าดูเฉพาะ OI และ Volume');
-    expect(document.body.textContent).toContain('สภาพคล่องพอใช้');
+
+    /*
+     * NO GRADE AND NO SCORE ANYWHERE IN THIS BOX.
+     *
+     * It used to print "สภาพคล่องดี · 100 / 100" one line under "คะแนนรวม: —",
+     * which is a refusal to judge and a full mark in the same breath — and the
+     * full mark is the half a reader keeps.
+     */
+    const box = document.body
+      .querySelector('[data-testid="options-signal-liquidity-section"]')?.textContent ?? '';
+    expect(box).not.toBe('');
+    expect(box).not.toContain('สภาพคล่องพอใช้');
+    expect(box).not.toContain('สภาพคล่องดี');
+    expect(box).not.toContain('/ 100');
+
+    // The closed-book spread survives as an upper bound rather than vanishing.
+    expect(document.body.querySelector('[data-testid="options-signal-liquidity-spread-warning"]')?.textContent)
+      .toContain('กว้างผิดปกติแม้เผื่อผลของตลาดปิด');
   });
 
   it('shows an outage as an outage, never as the accumulating countdown', async () => {
@@ -753,12 +933,29 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(document.body.querySelector('[data-testid="options-signal-percentile-outage"]')).toBeNull();
   });
 
-  it('keeps all six signal labels paired with beginner-facing Thai copy', () => {
+  it('keeps all seven signal labels paired with beginner-facing Thai copy', () => {
     const types = Object.keys(OPTIONS_SIGNAL_PRESENTATION) as OptionsSignalType[];
-    expect(types).toHaveLength(6);
+    expect(types).toHaveLength(7);
     for (const type of types) {
       expect(OPTIONS_SIGNAL_PRESENTATION[type].headline.length).toBeGreaterThan(10);
-      expect(OPTIONS_SIGNAL_PRESENTATION[type].title).toBe(type.replaceAll('_', ' '));
+      // CONFLICTED carries a Thai gloss in its title, because the English word
+      // alone does not tell a beginner what to do differently about it.
+      expect(OPTIONS_SIGNAL_PRESENTATION[type].title).toContain(type.replaceAll('_', ' '));
     }
+  });
+
+  it('does not let SIDEWAYS and CONFLICTED read as the same badge', () => {
+    const sideways = OPTIONS_SIGNAL_PRESENTATION.SIDEWAYS;
+    const conflicted = OPTIONS_SIGNAL_PRESENTATION.CONFLICTED;
+    /*
+     * They sit at the same score and call for opposite reactions, so a reader
+     * must be able to tell them apart at a glance rather than by reading. Grey
+     * reads as "nothing happening", which is the wrong impression for a chart
+     * whose factors are pulling against each other.
+     */
+    expect(conflicted.badgeTone).not.toBe(sideways.badgeTone);
+    expect(conflicted.dot).not.toBe(sideways.dot);
+    expect(conflicted.headline).toContain('ตีกัน');
+    expect(sideways.headline).toContain('เงียบ');
   });
 });

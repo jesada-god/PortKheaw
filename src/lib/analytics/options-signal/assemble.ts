@@ -2,7 +2,7 @@ import { calculateAtmIv } from '@/src/lib/market-data/options/analytics';
 import type { OptionContract, OptionsChain } from '@/src/lib/market-data/options/contracts';
 import type { OptionsSrResult } from '@/src/lib/analytics/options-sr/types';
 import { classifyUsEquitySession } from '@/src/lib/market-data/session';
-import { isUsTradingDay } from '@/src/lib/market-data/us-market-calendar';
+import { isUsTradingDay, lastUsSessionClose } from '@/src/lib/market-data/us-market-calendar';
 import { OPTIONS_SIGNAL_CONFIG } from './config';
 import { percentileRank } from './indicators';
 import type { RealizedVolatilityWindows } from './underlying';
@@ -151,6 +151,24 @@ export interface OptionsSignalOptionsInputs {
 }
 
 /**
+ * The session an options snapshot belongs to, from the only stamp it carries.
+ *
+ * Every options provider timestamps the REQUEST, not the market event: Alpaca's
+ * `asOf` is the moment we asked. A daily candle's `asOf` is a bar close. Those
+ * are two different quantities, and the freshness check was subtracting one from
+ * the other — so a Friday bar beside a Saturday-23:11 pull of Friday's chain
+ * read as 26.7 hours of drift, and every weekend signal raised STALE-MIX.
+ *
+ * The chain returned on Saturday night IS Friday's chain: nothing traded in
+ * between. Mapping the fetch instant back to the session that had closed by then
+ * is what makes the two comparable at all.
+ */
+function chainDataAsOf(fetchedAt: string | null): string | null {
+  if (!fetchedAt) return null;
+  return lastUsSessionClose(fetchedAt)?.closeAt ?? fetchedAt;
+}
+
+/**
  * Resolve which chain the options-derived factors should read.
  *
  * The live chain always wins. A stale fallback is used only when there is no
@@ -161,7 +179,10 @@ function resolveChainSource(options: OptionsSignalOptionsInputs): {
   chain: OptionsChain | null;
   result: OptionsSrResult | null;
   state: Exclude<OptionsSignalDataState, 'UNAVAILABLE'> | null;
+  /** The session the snapshot is of. Derived; the comparison reads this. */
   asOf: string | null;
+  /** When we asked the provider. Disclosure only. */
+  fetchedAt: string | null;
   staleReason: string | null;
 } {
   if (options.chain) {
@@ -169,7 +190,8 @@ function resolveChainSource(options: OptionsSignalOptionsInputs): {
       chain: options.chain,
       result: options.optionsSr,
       state: dataStateFromChainStatus(options.chain.status),
-      asOf: options.chain.asOf,
+      asOf: chainDataAsOf(options.chain.asOf),
+      fetchedAt: options.chain.asOf,
       staleReason: null,
     };
   }
@@ -179,11 +201,12 @@ function resolveChainSource(options: OptionsSignalOptionsInputs): {
       chain: fallback.chain,
       result: fallback.result,
       state: 'STALE',
-      asOf: fallback.fetchedAt,
+      asOf: chainDataAsOf(fallback.fetchedAt),
+      fetchedAt: fallback.fetchedAt,
       staleReason: fallback.reason,
     };
   }
-  return { chain: null, result: options.optionsSr, state: null, asOf: null, staleReason: null };
+  return { chain: null, result: options.optionsSr, state: null, asOf: null, fetchedAt: null, staleReason: null };
 }
 
 export function dataStateFromChainStatus(
@@ -429,8 +452,13 @@ export function buildPricingSlot(
    * chain's when it did not. This is what the card prints under "ดึงข้อมูลเมื่อ"
    * for this factor, and a timestamp belonging to a different fetch is a wrong
    * one however small the difference.
+   *
+   * `asOf` is then the SESSION that fetch landed in, because that is the
+   * quantity the freshness comparison is entitled to read; `fetchedAt` keeps the
+   * fetch instant itself for the card to print.
    */
-  const asOf = reading.asOf ?? source.asOf;
+  const fetchedAt = reading.asOf ?? source.fetchedAt;
+  const asOf = reading.asOf ? chainDataAsOf(reading.asOf) : source.asOf;
 
   if (options.ivRank) {
     return {
@@ -445,6 +473,7 @@ export function buildPricingSlot(
       },
       provider: chain?.provider ?? null,
       asOf,
+      fetchedAt,
     };
   }
 
@@ -476,6 +505,7 @@ export function buildPricingSlot(
       },
       provider: chain.provider,
       asOf,
+      fetchedAt,
     };
   }
 
@@ -501,6 +531,7 @@ export function buildPricingSlot(
     },
     provider: chain.provider,
     asOf,
+    fetchedAt,
   };
 }
 
@@ -556,7 +587,8 @@ export function buildSentimentSlot(
         ?? (options.ownHistory?.putCallRatio ?? []).filter((value) => Number.isFinite(value)).length,
     },
     provider: result.provider,
-    asOf: source.staleReason !== null ? source.asOf : result.asOf,
+    asOf: source.staleReason !== null ? source.asOf : chainDataAsOf(result.asOf),
+    fetchedAt: source.staleReason !== null ? source.fetchedAt : result.asOf,
   };
 }
 
@@ -610,11 +642,16 @@ export function buildLiquiditySlot(
        * Recorded at CAPTURE time, not read time. A chain fetched at the close
        * and served from cache an hour later was still quoted while the book was
        * open, and the spread in it is still a real cost.
+       *
+       * Explicitly the FETCH instant and never the derived `asOf`: the derived
+       * one is a session CLOSE, and 16:00 is not inside the regular session, so
+       * reading it here would report every capture as after-hours.
        */
-      marketOpenAtCapture: marketOpenAt(source.asOf ?? chain.asOf),
+      marketOpenAtCapture: marketOpenAt(source.fetchedAt ?? chain.asOf),
     },
     provider: chain.provider,
     asOf: source.asOf,
+    fetchedAt: source.fetchedAt,
   };
 }
 

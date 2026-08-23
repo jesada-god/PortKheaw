@@ -8,6 +8,7 @@
  * one-digit confidence — something a person can write down rather than
  * something a market has to happen to produce.
  */
+import { confidenceFormulaText, rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
 import type { OptionsSignalDto } from '@/src/lib/analytics/options-signal/dto';
 import type {
   OptionsSignalFactorId,
@@ -30,6 +31,8 @@ function factor(
     normalized: points / maxPoints,
     state: 'DELAYED',
     available: true,
+    measurement: 'measured',
+    fallbackReason: null,
     partial: false,
     detail,
     reason: null,
@@ -96,11 +99,23 @@ function signalOf(options: {
         availableWeight: 100,
         totalWeight: 100,
         directionScore0to100: options.directionScore0to100,
+        directionBalance: 26,
+        directionScaleFormula: '+26 ÷ 100 × 100 = +26 → สเกล ±100 ปัดเป็น +26 · +26 ÷ 2 + 50 = 63 → สเกล 0–100 ปัดเป็น 63',
         scoreFormula: `(+26 + 100) ÷ (2 × 100) × 100 = ${options.directionScore0to100}`,
         coverage: 1,
+        completeness: {
+          value: 0.74,
+          inputs: [
+            { id: 'trend.ema50', group: 'trend', label: 'EMA50 ของหุ้น', available: true, counted: true, note: null },
+            { id: 'pricing.own-baseline', group: 'pricing', label: 'ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)', available: false, counted: false, note: 'ขาดอีก 59 วัน' },
+          ],
+          missing: ['ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)'],
+          notCounted: [],
+        },
         agreement: 0.86,
         evidenceStrength: 0.8,
         confidenceBase: options.confidenceScore / 100,
+        confidenceFormula: confidenceFormulaText({ coverage: 1, agreement: 1, strength: options.confidenceScore / 100 }),
         penalties: [],
         penaltyTotal: 0,
         dataSufficiency: {
@@ -131,6 +146,7 @@ function signalOf(options: {
         },
         iv: {
           level: 'normal',
+      levelSuppressedReason: null,
           basis: 'iv-vs-realized',
           ivRank: null,
           ivPercentile: null,
@@ -166,6 +182,7 @@ function signalOf(options: {
           expiration: '2026-09-19',
           marketOpenAtCapture: true,
           offHoursAssessment: null,
+      closedSpreadWarning: null,
           state: 'DELAYED',
           reason: null,
           detail: 'OI กลาง 2,400 · Volume กลาง 310',
@@ -178,6 +195,7 @@ function signalOf(options: {
           normalizedMomentumCapped: false,
           relativeVolume: 1.8,
           confirmation: 0.8,
+      confirmationFormula: rvolConfirmationFormula(1.06),
         },
         macro: {
           benchmarks: [
@@ -189,10 +207,11 @@ function signalOf(options: {
           asOf: AS_OF,
           newestAsOf: '2026-08-19T22:00:00.000Z',
           spreadHours: 2,
+          spreadSessions: 0,
           staleMix: false,
           sources: [
-            { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF },
-            { id: 'pricing', provider: 'fixture-options', asOf: '2026-08-19T22:00:00.000Z' },
+            { id: 'trend', provider: 'fixture-market-data', asOf: AS_OF, fetchedAt: null },
+            { id: 'pricing', provider: 'fixture-options', asOf: '2026-08-19T22:00:00.000Z', fetchedAt: '2026-08-19T22:05:00.000Z' },
           ],
         },
         gates: { ivWarning: false, ivWarningReasons: [], downgrades: [] },

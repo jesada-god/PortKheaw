@@ -4,6 +4,7 @@ import type { OptionsSrResult } from '@/src/lib/analytics/options-sr/types';
 import type { DataFreshness } from '@/src/lib/market-data/types';
 import { assembleOptionsSignalInput, type OptionsSignalServerContext } from './assemble';
 import { calculateOptionsSignal } from './calculations';
+import { OPTIONS_SIGNAL_TOTAL_WEIGHT, OPTIONS_SIGNAL_WEIGHTS } from './config';
 import { buildMacroInput, buildUnderlyingInputs, type UnderlyingCandle } from './underlying';
 
 /**
@@ -144,7 +145,20 @@ describe('options-signal pipeline', () => {
     expect(['PRIME_CALL', 'CALL_WATCH']).toContain(result.signalType);
     expect(result.diagnostics.factors.trend.points).toBeGreaterThan(0);
     expect(result.diagnostics.factors.macro.points).toBeGreaterThan(0);
-    expect(result.diagnostics.factors.sentiment.points).toBeGreaterThan(0);
+    /*
+     * No `ownHistory` is passed here, which is the honest end-to-end shape for a
+     * symbol whose readings have not accumulated yet — and most symbols, most
+     * days, are that shape. Options Sentiment therefore has a real Put/Call and
+     * nothing on this symbol to rank it against, so it is struck from both sides
+     * of the fraction rather than voting out of the absolute bands.
+     *
+     * The bias above is bullish WITHOUT it, which is the point: the direction is
+     * carried by the factors that were actually measured.
+     */
+    expect(result.diagnostics.factors.sentiment.measurement).toBe('fallback-neutral');
+    expect(result.diagnostics.factors.sentiment.points).toBeNull();
+    expect(result.diagnostics.availableWeight)
+      .toBe(OPTIONS_SIGNAL_TOTAL_WEIGHT - OPTIONS_SIGNAL_WEIGHTS.sentiment);
     expect(result.diagnostics.iv.basis).toBe('iv-vs-realized');
     expect(result.diagnostics.iv.ratio).toBeCloseTo(0.75, 2);
     expect(result.diagnostics.iv.level).toBe('low');

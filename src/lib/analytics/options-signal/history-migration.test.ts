@@ -354,6 +354,89 @@ describe('retention · the access canary', () => {
   });
 });
 
+/**
+ * THE DEPLOY-ORDER RISK, DEMONSTRATED RATHER THAN DESCRIBED.
+ *
+ * `2026.08.23` publishes a label the shipped schema does not admit. The
+ * changelog and the runbook both say the migration must land first; this is the
+ * part that shows what happens if it does not, on a real Postgres, so the
+ * warning is a reproduction rather than a claim.
+ *
+ * On its OWN database, because it applies a migration the tests above are
+ * written against the absence of.
+ */
+describe('the CONFLICTED label migration', () => {
+  const CONFLICTED_MIGRATION_FILE = '202608230001_options_signal_history_conflicted_label.sql';
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(PLATFORM_ROLES);
+    await db.exec(migrationSql);
+    await db.exec(sweepMigrationSql);
+  });
+
+  const insertLabelled = (label: string, day: string) => db.exec(`
+    insert into public.options_signal_history (symbol, captured_at, config_version, signal_type)
+    values ('CONF', '${day}', '2026.08.23', '${label}');
+  `);
+
+  it('rejects CONFLICTED before it runs, with the SQLSTATE the boot guard keys on', async () => {
+    /*
+     * 23514 is not incidental. `checkOptionsSignalSchema` distinguishes "the
+     * migration has not run" from "the database did not answer" by exactly this
+     * code, and a guard that keyed on the wrong one would either refuse to boot
+     * on a network blip or fail to refuse on the real thing.
+     */
+    await expect(insertLabelled('CONFLICTED', '2026-08-23')).rejects.toMatchObject({ code: '23514' });
+
+    // …and SIDEWAYS still writes, which is what makes the failure SELECTIVE.
+    // Every symbol whose evidence agrees keeps accumulating history while the
+    // ones whose evidence disagrees stop, and nothing anywhere says so.
+    await expect(insertLabelled('SIDEWAYS', '2026-08-23')).resolves.toBeDefined();
+  });
+
+  it('admits CONFLICTED once it runs, and leaves the other labels alone', async () => {
+    await db.exec(readMigration(CONFLICTED_MIGRATION_FILE));
+
+    await expect(insertLabelled('CONFLICTED', '2026-08-24')).resolves.toBeDefined();
+    await expect(insertLabelled('PRIME_CALL', '2026-08-25')).resolves.toBeDefined();
+    // The set is still closed: a typo is still a rejected write, not a new label.
+    await expect(insertLabelled('CONFLICTING', '2026-08-26')).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('does not touch the rows already written, which is the deliberate part', async () => {
+    // A pre-existing SIDEWAYS row was produced by an engine that could not tell
+    // the two states apart. Reinterpreting it would be a guess about what a
+    // retired model meant, and the `config_version` on the row already says so.
+    const kept = await (await db.query<{ signal_type: string; config_version: string }>(
+      "select signal_type, config_version from public.options_signal_history where captured_at = '2026-08-23'",
+    )).rows;
+    expect(kept).toEqual([{ signal_type: 'SIDEWAYS', config_version: '2026.08.23' }]);
+  });
+
+  it('ROLLBACK: an older app reads a CONFLICTED row without erroring', async () => {
+    /*
+     * The question a rollback plan has to answer. The CHECK constraint is
+     * enforced on WRITE only, so rolling the app back while the migration stays
+     * applied is safe for reads: the previous build selects the row and gets the
+     * string 'CONFLICTED' in a column it types as a union that does not include
+     * it. It does not throw at the database layer — which is precisely why the
+     * label has to be handled defensively one layer up rather than trusted.
+     *
+     * What is NOT safe is reverting the migration under a new app, so the
+     * runbook does not offer that as a step.
+     */
+    const readBack = await (await db.query<{ signal_type: string }>(
+      "select signal_type from public.options_signal_history where captured_at = '2026-08-24'",
+    )).rows;
+    expect(readBack).toEqual([{ signal_type: 'CONFLICTED' }]);
+
+    // And the old engine's own writes keep working beside it, unchanged.
+    await expect(insertLabelled('CALL_WATCH', '2026-08-27')).resolves.toBeDefined();
+  });
+});
+
 describe('reversal', () => {
   it('is written in the file, and actually runs', async () => {
     expect(reversalBlock).toContain('drop table if exists public.options_signal_history');

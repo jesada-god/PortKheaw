@@ -11,7 +11,27 @@ export type OptionsSignalFactorId = 'macro' | 'trend' | 'momentum' | 'sentiment'
 
 export interface OptionsSignalProvenance {
   provider: string | null;
+  /**
+   * AS-OF OF THE DATA ITSELF — which session it is a picture of.
+   *
+   * A daily candle's `asOf` is the bar's close. An options chain's is the close
+   * of the session the snapshot belongs to, DERIVED when the provider only
+   * timestamps its own fetch. This is the only field the freshness comparison
+   * may read.
+   */
   asOf: string | null;
+  /**
+   * When the system went and got it. Disclosure, never a judgement input.
+   *
+   * The two were one field, and the field meant different things per provider:
+   * the candle pipeline stamps a bar close, Alpaca stamps the moment of the
+   * request. Subtracting one from the other produced 26.7 hours for a Friday bar
+   * and a Saturday-night pull of that same Friday chain — two views of ONE
+   * session, reported as a day and a half of drift. Every signal run on a
+   * weekend raised STALE-MIX, and a flag that is always up is a flag nobody
+   * reads on the day it is real.
+   */
+  fetchedAt?: string | null;
 }
 
 export type OptionsSignalInputSlot<T> = OptionsSignalProvenance & (
@@ -253,6 +273,15 @@ export type OptionsSignalType =
   | 'PRIME_CALL'
   | 'CALL_WATCH'
   | 'SIDEWAYS'
+  /**
+   * Middling score, evidence pulling against itself.
+   *
+   * Split out of SIDEWAYS because the two need opposite reactions and were
+   * getting one badge: a flat tape is "nothing to do", while Trend -8 against
+   * Momentum +9 cancelling to 51 is "the evidence disagrees", which is more
+   * dangerous than quiet, not less.
+   */
+  | 'CONFLICTED'
   | 'PUT_WATCH'
   | 'PRIME_PUT'
   | 'IV_WARNING';
@@ -260,6 +289,30 @@ export type OptionsSignalType =
 export type UnderlyingBias = 'bullish' | 'bearish' | 'neutral';
 
 export type IvLevel = 'low' | 'normal' | 'high' | 'extreme';
+
+/**
+ * What a factor's number actually IS, which "available" could never say.
+ *
+ * `available` collapsed two states the reader has to be able to tell apart, and
+ * the card printed both of them as a score out of the factor's weight:
+ *
+ *  - `measured` — the factor was judged and produced a value. A judged ZERO
+ *    belongs here: Macro at 0/15 because SPY and QQQ genuinely disagree is a
+ *    measurement, and it must keep its 15 in the divisor or a real "the market
+ *    has no view" would be silently dropped from the model.
+ *  - `fallback-neutral` — the raw data arrived, but the context needed to judge
+ *    it did not. Options Sentiment with no percentile basis of its own is this:
+ *    a Put/Call of 1.51 means different things on two tickers, so without the
+ *    symbol's own history there is nothing to rank it against. It scored 0
+ *    because the absolute band it fell back to is centred, NOT because anything
+ *    was measured as neutral.
+ *  - `unavailable` — no raw data at all.
+ *
+ * Only `measured` counts toward the divisor. The other two are struck from the
+ * numerator AND the denominator, which is the rule the modal's first paragraph
+ * has always claimed the engine follows.
+ */
+export type OptionsSignalFactorMeasurement = 'measured' | 'fallback-neutral' | 'unavailable';
 
 export interface OptionsSignalFactorScore {
   id: OptionsSignalFactorId;
@@ -269,12 +322,54 @@ export interface OptionsSignalFactorScore {
   normalized: number | null;
   state: OptionsSignalDataState;
   available: boolean;
+  /** See {@link OptionsSignalFactorMeasurement}. Only `measured` enters the divisor. */
+  measurement: OptionsSignalFactorMeasurement;
+  /**
+   * Why this factor could not be judged, when `measurement` is
+   * `fallback-neutral`. Null otherwise. The card prints it instead of a score.
+   */
+  fallbackReason: string | null;
   /** True when the factor scored but one of its own inputs was missing. */
   partial: boolean;
   detail: string;
   reason: string | null;
   provider: string | null;
   asOf: string | null;
+}
+
+/** One named input the card depends on, and whether it arrived. */
+export interface OptionsSignalCompletenessInput {
+  id: string;
+  /** Which weighted group it belongs to. */
+  group: string;
+  /** Thai label, shown in the "ขาด: …" list. */
+  label: string;
+  /** Did the raw input arrive. Stays true even when its factor could not use it. */
+  available: boolean;
+  /** Did it earn weight. False for an input whose factor could not be judged. */
+  counted: boolean;
+  /** Why not — a countdown where one applies, or the factor's own reason. */
+  note: string | null;
+}
+
+/**
+ * "ความครบของข้อมูล", and the receipts for it.
+ *
+ * `value` is what feeds the confidence coverage term; `missing` is what the card
+ * expands to show, so the figure can be argued with rather than believed.
+ */
+export interface OptionsSignalCompleteness {
+  /** 0-1, weighted over every registered input. */
+  value: number;
+  inputs: OptionsSignalCompletenessInput[];
+  /** Labels of the inputs that did not arrive at all, in registry order. */
+  missing: string[];
+  /**
+   * Labels of inputs that DID arrive but earned no weight, because the factor
+   * they feed could not be judged. Kept apart from `missing`: the data is there,
+   * and saying otherwise would be a second wrong statement told to fix a first.
+   */
+  notCounted: string[];
 }
 
 export interface OptionsSignalPenalty {
@@ -321,8 +416,23 @@ export interface OptionsSignalProvenanceSummary {
   newestAsOf: string | null;
   /** Hours between the two, or null when fewer than two timestamps exist. */
   spreadHours: number | null;
+  /**
+   * The same distance in TRADING SESSIONS, and the one STALE-MIX is decided on.
+   *
+   * Wall-clock hours cannot answer this question. 26.7 hours is two sessions
+   * apart in midweek and the same session across a weekend, and the flag was
+   * reading the calendar as though Saturday were a trading day.
+   */
+  spreadSessions: number | null;
   staleMix: boolean;
-  sources: Array<{ id: string; provider: string | null; asOf: string | null }>;
+  sources: Array<{
+    id: string;
+    provider: string | null;
+    /** The session the data is from. What the comparison above uses. */
+    asOf: string | null;
+    /** When it was fetched. Shown beside `asOf`, never compared against it. */
+    fetchedAt: string | null;
+  }>;
 }
 
 export interface OptionsSignalLiquidityDiagnostics {
@@ -340,7 +450,15 @@ export interface OptionsSignalLiquidityDiagnostics {
    * spread excluded. Present when the market was shut, so the reader keeps the
    * measurement even though the badge stops making a claim.
    */
-  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
+  /**
+   * What the STANDING interest alone says, when the book was shut. A pass/fail,
+   * never a grade and never a score: the pair used to be `{ grade: 'good',
+   * score: 100 }` and the card rendered it as a green "สภาพคล่องดี · 100 / 100"
+   * badge directly under "คะแนนรวม: —".
+   */
+  offHoursAssessment: { standingPassed: boolean } | null;
+  /** Set when a closed-book spread is wide enough to be worth saying out loud. */
+  closedSpreadWarning: string | null;
   state: OptionsSignalDataState;
   reason: string | null;
   detail: string;
@@ -383,10 +501,57 @@ export interface OptionsSignalDiagnostics {
   directionScore0to100: number;
   /** That conversion written out, so the card and the modal cannot drift apart. */
   scoreFormula: string;
+  /**
+   * THE SAME SCORE ON THE BIPOLAR RULER: `rawDirectionPoints / availableWeight
+   * × 100`, in −100..+100, where 0 is neutral.
+   *
+   * Published because it was being USED and never shown. Three thresholds read
+   * this quantity and not `directionScore0to100` — `direction.bullish` at +20,
+   * `direction.bearish` at −20, and `quality.primeScore` at 55 via
+   * `|balance| ≥ 55` — so section 8 could say "score-below-prime" beside a card
+   * reading 41 and a reader comparing 41 against 55 would get the right verdict
+   * from the wrong arithmetic, and a card reading 58 against the same 55 would
+   * get the wrong verdict entirely. An intermediate that decides a published
+   * label has to be a published intermediate.
+   *
+   * The two are the same fraction rounded twice, NOT one derived from the
+   * other — see `directionScaleFormula`, which prints the fraction they share
+   * so a reader can reach either published figure from it.
+   */
+  directionBalance: number;
+  /** Both roundings written out from the fraction underneath them. */
+  directionScaleFormula: string;
+  /**
+   * Share of the model's WEIGHT that produced a score. Internal ruler.
+   *
+   * This is what `primeMinimumCoverage` is written on and it keeps that job:
+   * "was enough of the direction model actually scored" is a different question
+   * from "how complete is what we know", and the PRIME floor was calibrated on
+   * the first one.
+   */
   coverage: number;
+  /**
+   * THE published "ความครบของข้อมูล", measured one level below the factors.
+   *
+   * The card was showing 100% while carrying a yellow "ข้อมูลบางส่วน" badge, an
+   * unavailable IV Rank and two percentiles still counting down, because
+   * completeness was asking whether each FACTOR had produced a number rather
+   * than whether the inputs under it had arrived.
+   */
+  completeness: OptionsSignalCompleteness;
   agreement: number;
   evidenceStrength: number;
   confidenceBase: number;
+  /**
+   * The confidence arithmetic written out, exponents and all.
+   *
+   * Produced by the same function that produces `confidenceBase`, from the same
+   * `confidence.exponents` constants, for the reason `scoreFormula` exists: the
+   * modal used to describe this as "การคูณกัน ของสามค่า", and a reader who
+   * multiplied the three printed terms got 2% beside a published 20%. It is a
+   * weighted GEOMETRIC mean and always was — only the sentence was wrong.
+   */
+  confidenceFormula: string;
   penalties: OptionsSignalPenalty[];
   penaltyTotal: number;
   dataSufficiency: {
@@ -431,7 +596,21 @@ export interface OptionsSignalDiagnostics {
     state: OptionsSignalDataState;
   };
   iv: {
+    /**
+     * The ถูก/แพง verdict, or NULL when it was withheld.
+     *
+     * Withheld across an earnings report inside the contract's own life: the
+     * ratio behind it compares a backward-looking realized volatility with a
+     * forward-looking implied one, and across a report most of the implied side
+     * is the price OF the report. Calling that "ต่ำ" points a reader at exactly
+     * the thing the same page warns them about.
+     *
+     * Only the VERDICT is withheld. The confidence penalties and the IV_WARNING
+     * gate read the unsuppressed level and are unchanged.
+     */
     level: IvLevel | null;
+    /** Why the verdict was withheld. Null when it was published. */
+    levelSuppressedReason: string | null;
     basis: IvPricingInput['basis'] | null;
     ivRank: number | null;
     ivPercentile: number | null;
@@ -475,6 +654,15 @@ export interface OptionsSignalDiagnostics {
     normalizedMomentumCapped: boolean;
     relativeVolume: number | null;
     confirmation: number | null;
+    /**
+     * WHICH curve, and the substitution through it.
+     *
+     * The card said the confirmation was "เส้นโค้งต่อเนื่องรอบ 1.00×" and left it
+     * there, so the step from "RVOL 1.06× → ยืนยัน 58%" to "ตัวคูณ 0.83" had no
+     * stated derivation — two of them, in fact: the logistic, and the mapping of
+     * a confirmation onto the multiplier band above `minimumConfirmation`.
+     */
+    confirmationFormula: string;
     /**
      * Every term between the raw indicator and the published momentum points,
      * so the factor's number can be re-derived rather than taken on trust.

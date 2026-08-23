@@ -18,6 +18,11 @@ import type {
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTimeCE } from '@/src/lib/presentation/datetime';
+import {
+  distanceAtrText,
+  distanceExpectedMovesText,
+  distancePercentText,
+} from '@/src/lib/presentation/distance';
 import { requestOptionsSignal, type OptionsSignalOutcome } from './signal-client';
 import {
   DATA_STATE_LABEL,
@@ -27,6 +32,7 @@ import {
   LIQUIDITY_BADGE,
   OPTIONS_SIGNAL_PRESENTATION,
   STALE_MIX_BADGE,
+  describePrimeBlocker,
   displayStatusOf,
   ivBasisLabel,
   ivPercentileText,
@@ -427,15 +433,32 @@ function Header({ timeframe }: { timeframe: string }) {
 
 function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
   const copy = FACTOR_COPY[factor.id];
+  /*
+   * A factor that was struck from the divisor never prints a score.
+   *
+   * "0 / 10" is the shape of a measurement, and it read as one: Options
+   * Sentiment showed it while the sentence underneath said the percentile could
+   * not be computed at all. Whatever replaces it must not be able to be mistaken
+   * for a number that was weighed.
+   */
+  const notCounted = factor.measurement === 'fallback-neutral';
   return (
     <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
       <dt className="flex items-center gap-1.5 text-slate-300">
         {copy.label}
-        {factor.partial && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
+        {factor.partial && !notCounted && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
       </dt>
       <dd className="flex items-center gap-2">
-        <span className="font-mono text-white">{signedPoints(factor.points)}</span>
-        <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
+        {notCounted ? (
+          <span className="text-[11px] text-amber-300" data-testid={`options-signal-factor-not-counted-${factor.id}`}>
+            ไม่นับรวม · {factor.fallbackReason}
+          </span>
+        ) : (
+          <>
+            <span className="font-mono text-white">{signedPoints(factor.points)}</span>
+            <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
+          </>
+        )}
         {!factor.available && <DataStatusBadge status="unavailable" />}
       </dd>
     </div>
@@ -510,7 +533,9 @@ function DetailBody({ breakdown, summary }: {
       <section>
         <h3 className="font-semibold text-white">1. คะแนนทิศทางมาจากอะไร</h3>
         <p className="mt-2 leading-6">
-          แต่ละปัจจัยให้คะแนนในช่วง −น้ำหนัก ถึง +น้ำหนัก แล้วนำมารวมกัน ปัจจัยที่ไม่มีข้อมูลจะถูกตัดออกจากทั้งตัวตั้งและตัวหาร ไม่ถูกแทนด้วยศูนย์
+          แต่ละปัจจัยให้คะแนนในช่วง −น้ำหนัก ถึง +น้ำหนัก แล้วนำมารวมกัน ปัจจัยที่ไม่มีข้อมูล
+          <b className="text-slate-300">หรือมีข้อมูลแต่ยังไม่มีฐานให้เทียบ</b>จะถูกตัดออกจากทั้งตัวตั้งและตัวหาร ไม่ถูกแทนด้วยศูนย์
+          ส่วนปัจจัยที่วัดได้แล้วได้ 0 จริงๆ ยังนับน้ำหนักเต็มอยู่ เพราะ 0 ที่วัดได้คือข้อค้นพบ ไม่ใช่ช่องว่าง
         </p>
         <div className="mt-3 space-y-2">
           {FACTOR_ORDER.map((id) => {
@@ -522,9 +547,15 @@ function DetailBody({ breakdown, summary }: {
                     <p className="font-semibold text-white">{FACTOR_COPY[id].label}</p>
                     <p className="mt-1 text-xs leading-5 text-slate-500">{FACTOR_COPY[id].helper}</p>
                   </div>
-                  <p className="shrink-0 font-mono text-white">
-                    {signedPoints(factor.points)} / {factor.maxPoints}
-                  </p>
+                  {factor.measurement === 'fallback-neutral' ? (
+                    <p className="shrink-0 text-xs text-amber-300" data-testid={`options-signal-detail-not-counted-${id}`}>
+                      ไม่นับรวม ({factor.fallbackReason})
+                    </p>
+                  ) : (
+                    <p className="shrink-0 font-mono text-white">
+                      {signedPoints(factor.points)} / {factor.maxPoints}
+                    </p>
+                  )}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-slate-300">{factor.detail}</p>
                 {/*
@@ -553,6 +584,24 @@ function DetailBody({ breakdown, summary }: {
                 {signedPoints(diagnostics.rawDirectionPoints)} / {diagnostics.availableWeight}
               </span>
             </div>
+            {/*
+              * COVERAGE, GIVEN A PLACE ON THE PAGE.
+              *
+              * Section 8 can block PRIME on this fraction, and until now it was
+              * quoting a percentage that appeared nowhere a reader could look.
+              * It is NOT section 7's "ความครบของข้อมูล" — that one counts inputs
+              * against a fixed 100 and reads lower — so it is named for what it
+              * is and shown beside the two numbers it is made of.
+              */}
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-400"
+              data-testid="options-signal-coverage"
+            >
+              <span>สัดส่วนน้ำหนักของโมเดลที่วัดได้ (ใช้เป็นเกณฑ์ PRIME · คนละตัวกับ &quot;ความครบของข้อมูล&quot; ในข้อ 7)</span>
+              <span className="font-mono">
+                {diagnostics.availableWeight} / {diagnostics.totalWeight} = {Math.round(diagnostics.coverage * 100)}%
+              </span>
+            </div>
             <div className="mt-2 flex items-center justify-between font-semibold text-white">
               <span>คะแนนทิศทางที่แสดงบนการ์ด</span>
               <span className="font-mono" data-testid="options-signal-score-modal">{diagnostics.directionScore0to100} / 100</span>
@@ -568,12 +617,55 @@ function DetailBody({ breakdown, summary }: {
             <p className="mt-1 text-xs leading-5 text-slate-500">
               สูตร: (ผลรวมคะแนน + น้ำหนักที่มีข้อมูล) ÷ (2 × น้ำหนักที่มีข้อมูล) × 100 · 50 คือกลาง ไม่เอียงไปทางไหน
             </p>
+            {/*
+              * THE SECOND RULER, named — because the thresholds are written on
+              * it and it was the one number on this path never shown.
+              *
+              * `directionBalance` is what decides bullish/bearish (±20) and what
+              * §8 compares against the PRIME floor of 55. A reader who only ever
+              * saw the 0–100 figure had no way to check either verdict: on this
+              * page 41/100 and −18 are the same measurement, and 55 is a
+              * threshold on the second one only.
+              */}
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-400"
+              data-testid="options-signal-direction-balance"
+            >
+              <span>สเกลเดียวกันแบบสองทาง (ใช้ตัดสิน bullish/bearish และเกณฑ์ PRIME)</span>
+              <span className="font-mono">
+                {signedPoints(diagnostics.directionBalance)} / ±100
+              </span>
+            </div>
+            {/*
+              * The shared fraction first, then BOTH roundings — not
+              * "balance ÷ 2 + 50", which is only true when the two roundings
+              * happen to agree. See `directionScaleFormula`.
+              */}
+            <p
+              className="mt-1 font-mono text-xs leading-5 text-slate-400"
+              data-testid="options-signal-scale-formula"
+            >
+              {diagnostics.directionScaleFormula}
+            </p>
           </div>
         </div>
       </section>
 
       <section>
-        <h3 className="font-semibold text-white">2. TTM Squeeze และ RVOL</h3>
+        {/*
+          * NAMED FOR WHAT SCORES, not for what is merely reported.
+          *
+          * The heading said "TTM Squeeze" on a card where the Squeeze read OFF
+          * and the whole +9 came from the momentum histogram — the title claimed
+          * one mechanism and the points came from another. The squeeze is still
+          * here and still matters (it halves conviction while ON, and blocks
+          * PRIME), but it is a STATE that damps, not the source of the points.
+          */}
+        <h3 className="font-semibold text-white">2. Momentum (TTM histogram + สถานะ Squeeze)</h3>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          คะแนนมาจาก <b className="text-slate-300">momentum histogram</b> เป็นหลัก ส่วนสถานะ Squeeze เป็นตัวลดทอน
+          (ON = ยังไม่เลือกทาง จึงหั่นความเชื่อมั่นลงครึ่งหนึ่ง) และ RVOL เป็นตัวคูณยืนยัน ทั้งสองอย่างไม่สร้างทิศทางเอง
+        </p>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="สถานะ Squeeze" value={squeeze.state ?? '—'} term="ttmSqueeze" />
           <Detail label="Squeeze Momentum" value={numberText(squeeze.momentum)} />
@@ -600,8 +692,16 @@ function DetailBody({ breakdown, summary }: {
           {squeeze.normalizedMomentumCapped
             && ` · ค่า Momentum ÷ ATR จริงเกินเพดาน ${squeeze.breakdown.saturation} ATR จึงคิดเท่าเพดาน (capped) ค่าหลัง normalize ที่แสดงคือ 1 เต็ม`}
         </p>
+        {/*
+          * WHICH curve, and both steps of the substitution. "เส้นโค้งต่อเนื่อง
+          * รอบ 1.00×" named a shape without naming the shape, and left the jump
+          * from "ยืนยัน 58%" to "ตัวคูณ 0.83" with no derivation at all.
+          */}
         <p className="mt-1 text-xs leading-5 text-slate-500">
           ระดับการยืนยันจาก RVOL เป็นเส้นโค้งต่อเนื่องรอบ 1.00× ไม่ใช่การกระโดดเป็นขั้น RVOL 1.00× คือ 50%
+        </p>
+        <p className="mt-1 font-mono text-xs leading-5 text-slate-400" data-testid="options-signal-rvol-formula">
+          {squeeze.confirmationFormula}
         </p>
       </section>
 
@@ -611,20 +711,32 @@ function DetailBody({ breakdown, summary }: {
           <Detail label="ราคาที่ใช้คำนวณ" value={numberText(riskReward.price)} />
           <Detail label="แนวรับใกล้สุด" value={numberText(riskReward.support)} />
           <Detail label="แนวต้านใกล้สุด" value={numberText(riskReward.resistance)} />
-          <Detail label="ระยะขึ้น / ระยะลง" value={`${percentText(riskReward.upsidePercent)} / ${percentText(riskReward.downsidePercent)}`} />
           {/*
-            * The same two distances in ATR. A +2.96% / -12.53% pair looks wildly
+            * UNSIGNED, and the direction is in the label.
+            *
+            * This row printed `+10.83% / +6.23%` from one formatter while the
+            * factor sentence above it printed the same downside as `-6.23%` from
+            * another. A distance to a level is not signed — it has a direction,
+            * which the label already carries — and `+6.23%` left a reader to work
+            * out whether it meant "up 6.23%" or "6.23% of room below".
+            */}
+          <Detail
+            label="ระยะขึ้น / ระยะลง"
+            value={`${distancePercentText(riskReward.upsidePercent)} / ${distancePercentText(riskReward.downsidePercent)}`}
+          />
+          {/*
+            * The same two distances in ATR. A 2.96% / 12.53% pair looks wildly
             * lopsided until you know one daily range is 3% of price, at which
             * point it is 1 ATR up and 4 ATR down — which is the sentence a reader
             * can actually use.
             */}
           <Detail
             label="ระยะขึ้น / ระยะลง (หน่วย ATR)"
-            value={`${atrText(riskReward.upsideAtr)} / ${atrText(riskReward.downsideAtr)}`}
+            value={`${distanceAtrText(riskReward.upsideAtr)} / ${distanceAtrText(riskReward.downsideAtr)}`}
           />
           <Detail
             label="ระยะขึ้น / ระยะลง (เทียบ Expected Move)"
-            value={`${atrText(riskReward.upsideExpectedMoves)} / ${atrText(riskReward.downsideExpectedMoves)}`}
+            value={`${distanceExpectedMovesText(riskReward.upsideExpectedMoves)} / ${distanceExpectedMovesText(riskReward.downsideExpectedMoves)}`}
           />
           {/*
             * The expected move NEVER appears without its horizon. Six dollars
@@ -703,12 +815,33 @@ function DetailBody({ breakdown, summary }: {
           />
           <Detail label="อายุสัญญาที่ใช้เทียบ (DTE)" value={iv.dte === null ? '—' : `${iv.dte} วัน`} />
           <Detail label="IV ÷ ความผันผวนจริง" value={numberText(iv.ratio)} />
-          <Detail label="ระดับความแพง" value={iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]} />
+          <Detail
+            label="ระดับความแพง"
+            value={iv.levelSuppressedReason !== null
+              ? 'ก่อนประกาศงบ — ตัดสินความแพงไม่ได้'
+              : iv.level === null ? 'ไม่พร้อมใช้งาน' : IV_LEVEL_LABEL[iv.level]}
+          />
           <Detail label="สถานะข้อมูล IV" value={DATA_STATE_LABEL[iv.state]} />
           <Detail label="แหล่งข้อมูล IV" value={iv.source ?? 'ไม่พร้อมใช้งาน'} />
           <Detail label="ดึงข้อมูลเมื่อ" value={iv.fetchedAt ? formatBangkokDateTimeCE(iv.fetchedAt) : '—'} />
           <Detail label="Put/Call (Open Interest)" value={diagnostics.factors.sentiment.detail} term="putCallRatio" />
         </dl>
+        {/*
+          * ATTACHED TO THE RATIO, not filed under a different heading.
+          *
+          * The card had the ratio and the verdict in section 4, the earnings
+          * date in section 6, the −15 penalty for it in section 7 and an IV
+          * Crush warning in the setup box. Four true statements about one
+          * contract, none of them next to the one they contradict.
+          */}
+        {iv.levelSuppressedReason !== null && (
+          <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-iv-pre-earnings">
+            {iv.levelSuppressedReason} · ตัวเลข IV ÷ ความผันผวนจริงด้านบนยังแสดงตามจริง แต่เป็นการเทียบคนละช่วงเวลา
+            ความผันผวนจริงเป็นค่าย้อนหลัง ส่วน IV สะท้อนความเสี่ยงที่ยังมาไม่ถึง
+            {iv.ivRank === null && iv.ivPercentile === null
+              && ' · และยังไม่มีทั้ง IV Rank และ IV Percentile ของหุ้นตัวนี้ จึงไม่มีฐานเทียบตัวเองเลย'}
+          </p>
+        )}
         {iv.percentileStoreUnavailable && (
           <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-percentile-outage">
             {HISTORY_DEGRADED_NOTICE.helper}
@@ -717,7 +850,7 @@ function DetailBody({ breakdown, summary }: {
         {iv.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{iv.reason}</p>}
       </section>
 
-      <section>
+      <section data-testid="options-signal-liquidity-section">
         <h3 className="font-semibold text-white">5. สภาพคล่องของ chain</h3>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail
@@ -731,10 +864,19 @@ function DetailBody({ breakdown, summary }: {
               ? '—'
               : liquidity.marketOpenAtCapture ? 'เปิด' : 'ปิด'}
           />
+          {/*
+            * PASS/FAIL, never a grade and never a score.
+            *
+            * This row used to read "สภาพคล่องดี · 100 / 100" one line under
+            * "คะแนนรวม: —" — the box refusing to judge and awarding full marks in
+            * the same breath, and 100/100 is the half a reader remembers. What
+            * the standing interest can honestly say is whether it cleared its own
+            * bar, which is not a liquidity verdict and must not look like one.
+            */}
           {liquidity.offHoursAssessment && (
             <Detail
               label="ถ้าดูเฉพาะ OI และ Volume"
-              value={`${LIQUIDITY_BADGE[liquidity.offHoursAssessment.grade].label} · ${liquidity.offHoursAssessment.score} / 100`}
+              value={liquidity.offHoursAssessment.standingPassed ? 'ผ่านเกณฑ์' : 'ยังบาง'}
             />
           )}
           <Detail label="Open Interest (ค่ากลาง)" value={numberText(liquidity.medianOpenInterest)} />
@@ -752,6 +894,17 @@ function DetailBody({ breakdown, summary }: {
         {liquidity.marketOpenAtCapture === false && (
           <p className="mt-2 text-xs leading-5 text-amber-300" data-testid="options-signal-liquidity-closed">
             ส่วนต่าง Bid/Ask ที่เห็นเก็บตอนตลาดปิด ซึ่งกว้างกว่าตอนเปิดเป็นปกติ จึงยังไม่ใช้ตัดสินสภาพคล่อง ให้ดูอีกครั้งตอนตลาดเปิด
+          </p>
+        )}
+        {/*
+          * The closed-book spread kept as an UPPER BOUND rather than discarded.
+          * A spread this wide would still be expensive at half the width, and
+          * dropping the observation because the market was shut is how a reader
+          * ends up in a chain nobody can get out of.
+          */}
+        {liquidity.closedSpreadWarning && (
+          <p className="mt-2 text-xs leading-5 text-red-300" data-testid="options-signal-liquidity-spread-warning">
+            {liquidity.closedSpreadWarning}
           </p>
         )}
         {liquidity.reason && <p className="mt-2 text-xs leading-5 text-amber-300">{liquidity.reason}</p>}
@@ -776,15 +929,77 @@ function DetailBody({ breakdown, summary }: {
           Confidence วัดว่าหลักฐานหนักแน่นและไปทางเดียวกันแค่ไหน <b className="text-white">ไม่ใช่โอกาสทำกำไร</b>
         </p>
         <p className="mt-2 text-xs leading-5 text-slate-500">
-          คิดจากการ<b className="text-slate-300">คูณกัน</b>ของสามค่า (ความครบ × ความสอดคล้อง × ความหนักแน่น) ไม่ใช่การเฉลี่ย
-          ค่าใดค่าหนึ่งที่ต่ำมากจึงดึงผลรวมลงเสมอ และความสอดคล้องมีน้ำหนักมากที่สุด เพราะเป็นค่าที่การเฉลี่ยแบบเดิมกลบไว้
+          คิดจากการคูณสามค่าเข้าด้วยกัน โดย<b className="text-slate-300">ยกกำลังตามน้ำหนักของแต่ละค่าก่อน</b> (weighted geometric mean) ไม่ใช่การเฉลี่ย
+          ค่าใดค่าหนึ่งที่ต่ำมากจึงดึงผลรวมลงเสมอ และความสอดคล้องมีเลขชี้กำลังสูงที่สุด เพราะเป็นค่าที่การเฉลี่ยแบบเดิมกลบไว้
+        </p>
+        {/*
+          * The arithmetic, printed from the engine's own constants.
+          *
+          * Without the exponents this paragraph read as a plain product, and a
+          * reader who multiplied the three percentages below landed two orders
+          * of magnitude away from the number beside them.
+          */}
+        <p className="mt-2 font-mono text-xs leading-5 text-slate-400" data-testid="options-signal-confidence-formula">
+          {diagnostics.confidenceFormula}
         </p>
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.coverage * 100)}%`} />
+          <Metric label="ความครบของข้อมูล" value={`${Math.round(diagnostics.completeness.value * 100)}%`} />
           <Metric label="ความสอดคล้อง" value={`${Math.round(diagnostics.agreement * 100)}%`} />
           <Metric label="ความหนักแน่น" value={`${Math.round(diagnostics.evidenceStrength * 100)}%`} />
           <Metric label="คะแนนก่อนหักลบ" value={`${Math.round(diagnostics.confidenceBase * 100)}%`} />
         </dl>
+        {/*
+          * The receipts for that first number.
+          *
+          * It read 100% on a card that was simultaneously showing a yellow
+          * "ข้อมูลบางส่วน" badge and an IV Rank marked unavailable, because it
+          * was counting factors rather than the inputs under them. A figure a
+          * reader cannot open is a figure they have to take on trust, and this
+          * one had not earned that.
+          */}
+        {diagnostics.completeness.inputs.some((entry) => !entry.counted) && (
+          <details className="mt-2 rounded-xl border border-slate-800 p-3 text-xs leading-5">
+            <summary className="cursor-pointer text-amber-300" data-testid="options-signal-completeness-missing">
+              ยังไม่ครบ {diagnostics.completeness.inputs.filter((entry) => !entry.counted).length} อย่าง — กดดูว่าอะไรบ้าง
+            </summary>
+            {diagnostics.completeness.missing.length > 0 && (
+              <>
+                <p className="mt-2 text-[11px] text-slate-500">ยังไม่มีข้อมูล</p>
+                <ul className="mt-1 space-y-1 text-slate-400">
+                  {diagnostics.completeness.inputs.filter((entry) => !entry.available).map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-slate-300">{entry.label}</span>
+                      <span className="font-mono text-[11px] text-slate-500">{entry.note ?? 'ไม่มีข้อมูล'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {/*
+              * Kept apart from the list above on purpose. The Put/Call really is
+              * there; what is missing is anything to judge it against. Filing it
+              * under "ยังไม่มีข้อมูล" would be a second wrong statement told to
+              * fix a first one.
+              */}
+            {diagnostics.completeness.notCounted.length > 0 && (
+              <>
+                <p className="mt-3 text-[11px] text-slate-500">มีข้อมูล แต่ยังตัดสินไม่ได้ จึงไม่นับ</p>
+                <ul className="mt-1 space-y-1 text-slate-400">
+                  {diagnostics.completeness.inputs.filter((entry) => entry.available && !entry.counted).map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-slate-300">{entry.label}</span>
+                      <span className="font-mono text-[11px] text-slate-500">{entry.note ?? 'ยังตัดสินไม่ได้'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </details>
+        )}
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          ความครบวัดที่<b className="text-slate-300">อินพุตย่อย</b> ไม่ใช่ที่จำนวนปัจจัย ปัจจัยหนึ่งอาจให้คะแนนออกมาได้ทั้งที่อินพุตของมันยังไม่ครบ
+          และปัจจัยที่ยังตัดสินไม่ได้เลยนับเป็น 0 ของน้ำหนักตัวเอง แม้ข้อมูลดิบจะมาถึงบางส่วนแล้วก็ตาม
+        </p>
         {diagnostics.penalties.length ? (
           <ul className="mt-3 space-y-1.5 text-xs">
             {diagnostics.penalties.map((penalty) => (
@@ -795,15 +1010,68 @@ function DetailBody({ breakdown, summary }: {
             ))}
           </ul>
         ) : <p className="mt-2 text-xs text-slate-500">ไม่มีการหักคะแนนจากความเสี่ยง</p>}
+
+        {/*
+          * THE TREND VETO, whether or not it fired.
+          *
+          * Section 3 talked about "ก่อนหักด้วย trend veto" while section 1 summed
+          * to +2/90 and section 7 listed one deduction for earnings — so the
+          * mechanism was named on the page and shown nowhere on it, which reads
+          * as something being kept back. A line that says "0, ไม่เข้าเงื่อนไข" is
+          * the difference between "the trend agreed" and "nobody checked".
+          */}
+        <h4 className="mt-4 font-semibold text-white">การหักคะแนนทิศทาง</h4>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          คนละก้อนกับด้านบน — ด้านบนหัก Confidence ส่วนก้อนนี้หักคะแนนทิศทางบนการ์ดโดยตรง
+        </p>
+        <ul className="mt-2 space-y-1.5 text-xs">
+          <li
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 p-2"
+            data-testid="options-signal-trend-veto"
+          >
+            <span className="text-slate-300">
+              trend veto
+              {diagnostics.trendVeto.applied
+                ? ` — แนวโน้มสวนทางกับทิศที่คะแนนรวมชี้ ${Math.round(diagnostics.trendVeto.opposition * 100)}%`
+                : ' — ไม่เข้าเงื่อนไข (ต้องมีแนวโน้มที่วัดได้ และสวนทางกับทิศที่คะแนนรวมชี้)'}
+            </span>
+            <span className="font-mono text-amber-300">
+              {diagnostics.trendVeto.applied
+                ? `${signedPoints(diagnostics.trendVeto.pointsBeforeVeto)} × ${diagnostics.trendVeto.multiplier} = ${signedPoints(diagnostics.rawDirectionPoints)}`
+                : '0'}
+            </span>
+          </li>
+        </ul>
       </section>
 
       <section>
         <h3 className="font-semibold text-white">8. เงื่อนไขที่ทำให้ยังไม่เป็น PRIME</h3>
+        {/*
+          * Thai, with both sides of every comparison — and the slug kept on the
+          * element rather than on the screen.
+          *
+          * The list used to be the engine's raw identifiers set in mono type in
+          * the middle of an otherwise-Thai page. `data-blocker-id` is what
+          * telemetry, tests and anyone grepping a DOM dump still match on, so
+          * nothing that could find a blocker before has lost the ability to.
+          */}
         {diagnostics.dataSufficiency.primeBlockers.length ? (
-          <ul className="mt-2 space-y-1">
-            {diagnostics.dataSufficiency.primeBlockers.map((blocker) => (
-              <li key={blocker} className="flex gap-2"><span aria-hidden="true">•</span><span className="font-mono text-xs">{blocker}</span></li>
-            ))}
+          <ul className="mt-2 space-y-1" data-testid="options-signal-prime-blockers">
+            {diagnostics.dataSufficiency.primeBlockers.map((blocker) => {
+              const copy = describePrimeBlocker(blocker, {
+                directionBalance: diagnostics.directionBalance,
+                directionScore0to100: diagnostics.directionScore0to100,
+                confidenceScore: summary.confidenceScore,
+                agreement: diagnostics.agreement,
+                coverage: diagnostics.coverage,
+              });
+              return (
+                <li key={blocker} className="flex gap-2" data-blocker-id={copy.id}>
+                  <span aria-hidden="true">•</span>
+                  <span className="text-xs leading-5">{copy.text}</span>
+                </li>
+              );
+            })}
           </ul>
         ) : <p className="mt-2 text-slate-500">ผ่านเงื่อนไข PRIME ครบทุกข้อ</p>}
         {diagnostics.gates.ivWarningReasons.map((reason) => (
@@ -817,25 +1085,54 @@ function DetailBody({ breakdown, summary }: {
           แหล่งข้อมูลปิดคนละเวลากัน สัญญาณจึงยึด<b className="text-slate-300">เวลาที่เก่าที่สุด</b>เป็นเวลาของตัวเอง
           เพราะสัญญาณจะใหม่กว่าข้อมูลที่เก่าที่สุดของมันไม่ได้ ทุกปีในหน้านี้เป็น ค.ศ. ทั้งหมด
         </p>
+        {/*
+          * TWO columns, because the two were one field and the field meant
+          * different things per provider: the candle pipeline stamps a bar
+          * close, the options provider stamps the moment we asked it. Subtracting
+          * one from the other made a Friday bar and a Saturday-night pull of
+          * that same Friday chain look 26.7 hours apart.
+          */}
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          <b className="text-slate-300">เวลาของข้อมูล</b> คือข้อมูลนั้นเป็นภาพของเซสชันไหน ส่วน <b className="text-slate-300">เวลาที่ดึง</b> คือตอนที่ระบบไปขอมา
+          ทั้งคู่ไม่ใช่อย่างเดียวกัน — chain ที่ดึงคืนวันเสาร์ก็ยังเป็น chain ของวันศุกร์อยู่ดี
+          STALE-MIX จึงตัดสินจาก<b className="text-slate-300">เวลาของข้อมูล</b>เท่านั้น และนับเป็นจำนวนเซสชันเทรด ไม่ใช่ชั่วโมงตามนาฬิกา
+        </p>
         <dl className="mt-2 divide-y divide-slate-800 rounded-xl border border-slate-800 px-3">
           <Detail label="เวลาของสัญญาณ (เก่าที่สุด)" value={formatBangkokDateTimeCE(provenance.asOf)} />
           <Detail label="แหล่งที่ใหม่ที่สุด" value={formatBangkokDateTimeCE(provenance.newestAsOf)} />
           <Detail
-            label="ห่างกัน"
+            label="ห่างกัน (ใช้ตัดสิน)"
+            value={provenance.spreadSessions === null ? '—' : `${provenance.spreadSessions} เซสชันเทรด`}
+          />
+          <Detail
+            label="ห่างกันตามนาฬิกา (ไม่ใช้ตัดสิน)"
             value={provenance.spreadHours === null ? '—' : `${provenance.spreadHours} ชั่วโมง`}
           />
-          <Detail label="STALE-MIX" value={provenance.staleMix ? 'ใช่ · ข้อมูลมาจากคนละเวลากันเกินเกณฑ์' : 'ไม่'} />
+          <Detail
+            label="STALE-MIX"
+            value={provenance.staleMix ? 'ใช่ · ข้อมูลมาจากคนละเซสชันเทรดกัน' : 'ไม่ · ข้อมูลทุกแหล่งเป็นเซสชันเดียวกัน'}
+          />
         </dl>
-        <ul className="mt-2 space-y-1 text-xs text-slate-400">
+        <div className="mt-2 space-y-1 text-xs text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1 text-[11px] text-slate-500">
+            <span>แหล่ง</span>
+            <span className="flex gap-4">
+              <span className="w-40 text-right">เวลาของข้อมูล</span>
+              <span className="w-40 text-right">เวลาที่ดึง</span>
+            </span>
+          </div>
           {provenance.sources.map((source) => (
-            <li key={source.id} className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-slate-300">{source.id}</span>
-              <span className="font-mono">
-                {source.provider ?? 'ไม่ทราบผู้ให้บริการ'} · {formatBangkokDateTimeCE(source.asOf)}
+            <div key={source.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-slate-300">{source.id} · {source.provider ?? 'ไม่ทราบผู้ให้บริการ'}</span>
+              <span className="flex gap-4 font-mono">
+                <span className="w-40 text-right text-slate-300">{formatBangkokDateTimeCE(source.asOf)}</span>
+                <span className="w-40 text-right text-slate-500">
+                  {source.fetchedAt ? formatBangkokDateTimeCE(source.fetchedAt) : '—'}
+                </span>
               </span>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       </section>
 
       <section>
@@ -895,10 +1192,3 @@ function numberText(value: number | null): string {
 }
 
 /** A multiple, printed as `1.24×`. Used for both ATR and Expected Move units. */
-function atrText(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(2)}×`;
-}
-
-function percentText(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
-}

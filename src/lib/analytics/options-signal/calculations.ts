@@ -1,9 +1,16 @@
+import { lastUsSessionClose, usTradingSessionsBetween } from '@/src/lib/market-data/us-market-calendar';
+import {
+  directedDistanceText,
+  distanceAtrText,
+  distanceExpectedMovesText,
+} from '@/src/lib/presentation/distance';
 import {
   OPTIONS_SIGNAL_CONFIG,
   OPTIONS_SIGNAL_CONFIG_VERSION,
   OPTIONS_SIGNAL_TOTAL_WEIGHT,
   OPTIONS_SIGNAL_WEIGHTS,
 } from './config';
+import { measureCompleteness } from './input-registry';
 import type {
   IvLevel,
   IvPricingInput,
@@ -55,8 +62,6 @@ const roundOrNull = (value: number | null | undefined, digits = 2): number | nul
   return safe === null ? null : Number(safe.toFixed(digits));
 };
 
-const percent = (value: number) => `${value > 0 ? '+' : ''}${round(value, 2)}%`;
-
 const HOUR_MS = 3_600_000;
 
 const FACTOR_LABELS: Record<OptionsSignalFactorId, string> = {
@@ -91,6 +96,16 @@ export interface FactorOutcome {
   normalized: number | null;
   detail: string;
   partial: boolean;
+  /**
+   * Set when the factor had raw data but no context to judge it against, so the
+   * value it produced is a fallback rather than a measurement. See
+   * {@link OptionsSignalFactorMeasurement}. The text is the reason, printed on
+   * the card in place of a score.
+   *
+   * Absent or null means the factor was measured — including when it measured
+   * zero, which is a finding and keeps its weight.
+   */
+  fallbackReason?: string | null;
 }
 
 export function scoreMacro(input: MacroInput): FactorOutcome & {
@@ -196,6 +211,37 @@ export function rvolConfirmation(
   const value = finite(relativeVolume);
   if (value === null) return 0;
   return 1 / (1 + Math.exp(-config.rvolSteepness * (value - config.rvolMidpoint)));
+}
+
+/**
+ * The RVOL curve, written out — WHICH curve, and the substitution.
+ *
+ * The card said "เป็นเส้นโค้งต่อเนื่องรอบ 1.00×" and stopped there, so the step
+ * from "RVOL 1.06× → ยืนยัน 58%" to "ตัวคูณ 0.83" had no stated derivation at
+ * all. It is a LOGISTIC curve, and naming it is what lets a reader work out that
+ * 1.06 sits barely above the midpoint and therefore barely above 50%.
+ *
+ * Both constants come from the config the arithmetic reads.
+ */
+export function rvolConfirmationFormula(
+  relativeVolume: number | null,
+  config = OPTIONS_SIGNAL_CONFIG.momentum,
+): string {
+  const shape = `เส้นโค้งโลจิสติก: ยืนยัน = 1 ÷ (1 + e^(−${config.rvolSteepness} × (RVOL − ${config.rvolMidpoint.toFixed(2)})))`;
+  const value = finite(relativeVolume);
+  if (value === null) return shape;
+  const confirmation = rvolConfirmation(value, config);
+  /*
+   * And the second step, which was the one with no stated derivation: the
+   * confirmation is not the multiplier. It is mapped onto the band between
+   * `minimumConfirmation` and 1, so a 58% confirmation lands at 0.83 rather than
+   * at 0.58 — the factor is scaled, never cancelled.
+   */
+  const multiplier = config.minimumConfirmation + (1 - config.minimumConfirmation) * confirmation;
+  return `${shape}`
+    + ` · แทนค่า RVOL ${round(value, 2)} → ยืนยัน ${Math.round(confirmation * 100)}%`
+    + ` · ตัวคูณ = ${config.minimumConfirmation} + ${round(1 - config.minimumConfirmation, 2)} × ${round(confirmation, 2)}`
+    + ` = ${round(multiplier, 2)}`;
 }
 
 export function scoreMomentum(
@@ -391,6 +437,21 @@ export function scoreSentiment(
     // A reading without the symbol's own history is a reading on a weaker basis,
     // and the card says so rather than presenting it as a complete measurement.
     partial: percentile === null,
+    /*
+     * No percentile basis means no baseline, and no baseline means this factor
+     * cannot be judged at all — the absolute bands are a shape to fall back to,
+     * not a measurement of this symbol.
+     *
+     * It used to score anyway and keep its 10 points in the divisor, so a
+     * centred Put/Call published "0 / 10" and pulled the whole card toward 50
+     * with nothing behind it. `fallbackReason` is what takes those 10 points out
+     * of both sides of the fraction.
+     */
+    fallbackReason: percentile !== null
+      ? null
+      : options.historyUnavailable === true
+        ? 'อ่านประวัติของหุ้นตัวนี้ไม่สำเร็จ จึงไม่มีฐานเทียบเปอร์เซ็นไทล์'
+        : `ยังไม่มี baseline: ประวัติ ${observations}/${config.minimumPercentileObservations} วัน`,
   };
 }
 
@@ -551,9 +612,18 @@ export function scoreRiskReward(
     partial: upside === null || downside === null,
   };
 
+  /*
+   * Both distances written the same way, by the one formatter.
+   *
+   * This line used to negate the downside — `percent(-downside)` — so the modal
+   * printed `ลงถึงแนวรับ -6.23%` two lines above a row that printed the same
+   * distance as `+6.23%`, and a third call site below printed it as `+6.23%`
+   * again. A distance to a level does not have a sign; the label carries the
+   * direction and the number carries the magnitude.
+   */
   const distanceText = [
-    upside === null ? null : `ขึ้นถึงแนวต้าน ${percent(upside)}${geometry.upsideAtr === null ? '' : ` (${round(geometry.upsideAtr, 2)} ATR)`}`,
-    downside === null ? null : `ลงถึงแนวรับ ${percent(-downside)}${geometry.downsideAtr === null ? '' : ` (${round(geometry.downsideAtr, 2)} ATR)`}`,
+    upside === null ? null : `${directedDistanceText('up', 'แนวต้าน', upside)}${geometry.upsideAtr === null ? '' : ` (${distanceAtrText(geometry.upsideAtr)})`}`,
+    downside === null ? null : `${directedDistanceText('down', 'แนวรับ', downside)}${geometry.downsideAtr === null ? '' : ` (${distanceAtrText(geometry.downsideAtr)})`}`,
   ].filter((part): part is string => part !== null).join(' · ');
 
   // A missing level on one side is unbounded on THAT side: no confirmed
@@ -588,7 +658,7 @@ export function scoreRiskReward(
     return {
       ...geometry,
       normalized: reachabilityOf(upsideExpectedMoves),
-      detail: `ราคาอยู่ที่แนวรับ ระยะถึงแนวต้าน ${percent(upside)}`,
+      detail: `ราคาอยู่ที่แนวรับ ${directedDistanceText('up', 'แนวต้าน', upside)}`,
       scoredSide: 'call',
       setupQuality: 1,
       reachability: reachabilityOf(upsideExpectedMoves),
@@ -598,7 +668,7 @@ export function scoreRiskReward(
     return {
       ...geometry,
       normalized: -reachabilityOf(downsideExpectedMoves),
-      detail: `ราคาอยู่ที่แนวต้าน ระยะถึงแนวรับ ${percent(downside)}`,
+      detail: `ราคาอยู่ที่แนวต้าน ${directedDistanceText('down', 'แนวรับ', downside)}`,
       scoredSide: 'put',
       setupQuality: 1,
       reachability: reachabilityOf(downsideExpectedMoves),
@@ -612,8 +682,8 @@ export function scoreRiskReward(
   const ratioText = `R:R Call ${round(callRewardRisk as number, 2)} · R:R Put ${round(putRewardRisk as number, 2)}`;
   const expectedMoveText = geometry.upsideExpectedMoves === null || geometry.downsideExpectedMoves === null
     ? ''
-    : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${round(geometry.upsideExpectedMoves, 2)}× `
-      + `ลง ${round(geometry.downsideExpectedMoves, 2)}×`;
+    : ` · เทียบ Expected Move (${expectedMoveDte ?? '—'} วัน): ขึ้น ${distanceExpectedMovesText(geometry.upsideExpectedMoves)} `
+      + `ลง ${distanceExpectedMovesText(geometry.downsideExpectedMoves)}`;
 
   /*
    * The signed tilt of the geometry, on the call frame of reference.
@@ -628,9 +698,29 @@ export function scoreRiskReward(
   const reachText = (reachability: number, distance: number | null) => (
     reachability >= 1 || distance === null
       ? ''
-      : ` · เป้าหมายอยู่ไกล ${round(distance, 2)} เท่าของ Expected Move `
+      : ` · เป้าหมายอยู่ไกล ${distanceExpectedMovesText(distance)} เท่าของ Expected Move `
         + `จึงคิดคะแนน R:R เพียง ${Math.round(reachability * 100)}%`
   );
+
+  /*
+   * THE SUBSTITUTION, in the same shape Momentum already prints.
+   *
+   * The card showed "คุณภาพ setup 80%" beside a score of +1 out of 15, and
+   * nothing on the page connected the two: `80% × 15` is 12, and the two damping
+   * multipliers that turn it into 1 were applied silently. A reader who tries the
+   * arithmetic and cannot reproduce it stops trusting every other number beside
+   * it.
+   *
+   * `setupQuality` is deliberately NOT a term here, because it is not one — it
+   * answers "is either side of this chart a workable trade", which is a different
+   * question from "how far does the geometry lean". Printing it inside the
+   * multiplication would only replace an unexplained gap with a wrong
+   * explanation; it is labelled separately instead.
+   */
+  const mathText = (terms: Array<[string, number]>, result: number) => {
+    const written = terms.map(([label, value]) => `${label} ${round(value, 2)}`).join(' × ');
+    return `คิดเป็น ${written} = ${round(result, 2)} ของน้ำหนักเต็ม`;
+  };
 
   if (direction === 'bullish') {
     const reachability = reachabilityOf(upsideExpectedMoves);
@@ -641,7 +731,8 @@ export function scoreRiskReward(
       setupQuality: callQuality,
       reachability,
       detail: `หลักฐานอื่นชี้ขาขึ้น จึงวัดจากฝั่ง Call · ${distanceText} · ${ratioText}${expectedMoveText}`
-        + reachText(reachability, upsideExpectedMoves),
+        + reachText(reachability, upsideExpectedMoves)
+        + ` · ${mathText([['เอียงฝั่ง Call', tilt], ['ตัวคูณระยะเอื้อม', reachability]], tilt * reachability)}`,
     };
   }
   if (direction === 'bearish') {
@@ -656,7 +747,8 @@ export function scoreRiskReward(
       setupQuality: putQuality,
       reachability,
       detail: `หลักฐานอื่นชี้ขาลง จึงวัดจากฝั่ง Put · ${distanceText} · ${ratioText}${expectedMoveText}`
-        + reachText(reachability, downsideExpectedMoves),
+        + reachText(reachability, downsideExpectedMoves)
+        + ` · ${mathText([['เอียงฝั่ง Put', -putTilt], ['ตัวคูณระยะเอื้อม', reachability]], -putTilt * reachability)}`,
     };
   }
 
@@ -685,7 +777,12 @@ export function scoreRiskReward(
     setupQuality: bestQuality,
     reachability,
     detail: `${distanceText} · ${ratioText} · ${qualityText}${expectedMoveText}`
-      + reachText(reachability, residualDistance),
+      + reachText(reachability, residualDistance)
+      + ` · คุณภาพ setup ${Math.round(bestQuality * 100)}% (บอกว่ามีฝั่งที่ใช้ได้ไหม ไม่ใช่ตัวคูณของคะแนน)`
+      + ` · ${mathText(
+        [['เอียง', tilt], ['ตัวคูณไร้ทิศทาง', config.sidewaysDamping], ['ตัวคูณระยะเอื้อม', reachability]],
+        tilt * config.sidewaysDamping * reachability,
+      )}`,
   };
 }
 
@@ -697,8 +794,25 @@ export interface LiquidityOutcome {
   grade: LiquidityGrade | null;
   score: number | null;
   detail: string;
-  /** OI and volume only, with the spread excluded. Present when the book was shut. */
-  offHoursAssessment: { grade: Exclude<LiquidityGrade, 'unknown'>; score: number } | null;
+  /**
+   * What the STANDING interest alone says, when the book was shut.
+   *
+   * Deliberately NOT a grade and NOT a score. It used to publish
+   * `{ grade: 'good', score: 100 }`, and the card rendered that as a green
+   * "สภาพคล่องดี · 100 / 100" badge one line under "คะแนนรวม: —". A reader
+   * remembers the 100, not the dash — so the box was simultaneously refusing to
+   * judge and awarding full marks.
+   */
+  offHoursAssessment: { standingPassed: boolean } | null;
+  /**
+   * The closed-book spread, kept as an UPPER BOUND rather than discarded.
+   *
+   * 6.18% was being thrown away whole because the market was shut. Overnight
+   * spreads really are unusable for grading, but a spread that wide would still
+   * be expensive at half the width, and silently dropping the observation is how
+   * a reader ends up in a chain nobody can get out of.
+   */
+  closedSpreadWarning: string | null;
 }
 
 const liquidityVerdict = (grade: Exclude<LiquidityGrade, 'unknown'>) => (
@@ -764,20 +878,41 @@ export function gradeLiquidity(
       score: null,
       detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
       offHoursAssessment: null,
+      closedSpreadWarning: null,
     };
   }
 
   if (marketOpen === false) {
     const standingOnly = compose(standing);
+    /*
+     * ONE sentence, not a verdict beside a refusal to give one.
+     *
+     * The two facts are different in kind and the box has to say so in the same
+     * breath: open interest and volume were measured and cleared their bar, and
+     * the spread was captured while the book was shut so it cannot be graded at
+     * all. Splitting them across a badge and a footnote is what let "100 / 100"
+     * be the part a reader took away.
+     */
+    const standingPassed = standingOnly !== null && standingOnly.grade === 'good';
+    const standingText = standingOnly === null
+      ? 'ยังไม่มี OI หรือ Volume พอจะดู'
+      : standingPassed
+        ? `OI/Volume ผ่านเกณฑ์ (${Math.round(openInterest ?? 0).toLocaleString('en-US')} / ${Math.round(volume ?? 0).toLocaleString('en-US')})`
+        : `OI/Volume ยังบาง (${Math.round(openInterest ?? 0).toLocaleString('en-US')} / ${Math.round(volume ?? 0).toLocaleString('en-US')})`;
+    const spreadText = spread === null
+      ? 'ไม่มีข้อมูลส่วนต่าง Bid/Ask'
+      : `สเปรดยังตัดสินไม่ได้ — เก็บตอนตลาดปิดที่ ${round(spread, 1)}% ต้องดูซ้ำตอนเปิด`;
+    const closedSpreadWarning = spread !== null && spread > config.closedSpreadWarnPercent
+      ? `สเปรดกว้างผิดปกติแม้เผื่อผลของตลาดปิดแล้ว (${round(spread, 1)}% ตอนปิด) `
+        + `ถ้าหดลงครึ่งหนึ่งตอนเปิดก็ยังเกินเกณฑ์ ${config.spreadGoodPercent}%`
+      : null;
     return {
       grade: 'unknown',
       score: null,
-      detail: `${measured} · ${context} · เก็บข้อมูลตอนตลาดปิด ส่วนต่าง Bid/Ask นอกเวลาทำการกว้างผิดปกติเป็นปกติ `
-        + 'จึงยังประเมินสภาพคล่องไม่ได้'
-        + (standingOnly === null
-          ? ''
-          : ` · ถ้าดูเฉพาะ OI และ Volume: ${liquidityVerdict(standingOnly.grade)}`),
-      offHoursAssessment: standingOnly,
+      detail: `${standingText} · ${spreadText} · ${context}`
+        + (closedSpreadWarning === null ? '' : ` · ${closedSpreadWarning}`),
+      offHoursAssessment: standingOnly === null ? null : { standingPassed },
+      closedSpreadWarning,
     };
   }
 
@@ -788,6 +923,7 @@ export function gradeLiquidity(
       score: null,
       detail: 'ไม่มีข้อมูล Open Interest, Volume หรือ Bid/Ask พอจะประเมินสภาพคล่อง',
       offHoursAssessment: null,
+      closedSpreadWarning: null,
     };
   }
   return {
@@ -795,6 +931,7 @@ export function gradeLiquidity(
     score: composed.score,
     detail: `${measured} · ${context} · ${liquidityVerdict(composed.grade)}`,
     offHoursAssessment: null,
+    closedSpreadWarning: null,
   };
 }
 
@@ -860,6 +997,31 @@ export function directionScoreOutOf100(rawScore: number, maximumAbsolute: number
   return round(clamp((raw + maxAbs) / (2 * maxAbs) * 100, 0, 100), 0);
 }
 
+/**
+ * THE TWO RULERS, and the one unrounded quantity underneath both.
+ *
+ * `directionScoreOutOf100` and `directionBalance` round INDEPENDENTLY, off the
+ * same fraction, so `balance / 2 + 50` is not reliably the published score: on
+ * +1 of 80 the balance rounds to +1 and the card to 51, and the identity is out
+ * by half a point. Printing that identity as an equation would have been the
+ * same defect this pass exists to remove, one scale further along.
+ *
+ * So the line prints the shared fraction FIRST and both roundings after it, and
+ * a reader can land on either published number from it.
+ */
+export function directionScaleFormula(rawScore: number, maximumAbsolute: number): string {
+  const raw = round(finite(rawScore) ?? 0, 0);
+  const maxAbs = round(finite(maximumAbsolute) ?? 0, 0);
+  if (maxAbs <= 0) return 'ยังไม่มีน้ำหนักที่วัดได้ จึงยังไม่มีคะแนนให้แปลงสเกล';
+  const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+  const bipolar = raw / maxAbs * 100;
+  const card = bipolar / 2 + 50;
+  return `${signed(raw)} ÷ ${maxAbs} × 100 = ${signed(round(bipolar, 2))}`
+    + ` → สเกล ±100 ปัดเป็น ${signed(directionBalance(raw, maxAbs))}`
+    + ` · ${signed(round(bipolar, 2))} ÷ 2 + 50 = ${round(card, 2)}`
+    + ` → สเกล 0–100 ปัดเป็น ${directionScoreOutOf100(raw, maxAbs)}`;
+}
+
 /** The same conversion, written out for the reader. */
 export function directionScoreFormula(
   rawScore: number,
@@ -918,6 +1080,52 @@ export function confidenceFromTerms(
 }
 
 /**
+ * The same arithmetic, written out for the reader — the confidence twin of
+ * {@link directionScoreFormula}.
+ *
+ * It exists because the modal described this as "การคูณกันของสามค่า", which is
+ * what a weighted geometric mean is NOT: a reader who multiplied the three
+ * printed percentages got `1.00 × 0.11 × 0.20 = 2%` beside a published 20%. The
+ * exponents are what closes that gap, so they are printed, and they are read
+ * from the same `config.exponents` the arithmetic above reads — there is no
+ * second copy of them in any sentence.
+ *
+ * The floored terms are printed, not the raw ones, so a genuinely-zero term
+ * shows the 0.01 the result was actually computed from rather than a 0.00 that
+ * would make the printed line unreproducible.
+ */
+export function confidenceFormulaText(
+  terms: { coverage: number; agreement: number; strength: number },
+  config = OPTIONS_SIGNAL_CONFIG.confidence,
+  /**
+   * The deductions, so the sentence ends on the number the CARD shows.
+   *
+   * Without this the line stopped at the geometric mean. On the reported card
+   * that meant section 7 printed "คะแนนก่อนหักลบ 20%" beside a headline reading
+   * 5 — the same defect one step further along: a reader who follows the
+   * arithmetic to the end has to land on the figure they were shown, not on an
+   * intermediate the copy never named as one.
+   */
+  penaltyTotal = 0,
+): string {
+  const floor = (value: number) => Math.max(config.termFloor, clamp(finite(value) ?? 0, 0, 1));
+  const parts: Array<[string, number, number]> = [
+    ['ความครบ', floor(terms.coverage), config.exponents.coverage],
+    ['ความสอดคล้อง', floor(terms.agreement), config.exponents.agreement],
+    ['ความหนักแน่น', floor(terms.strength), config.exponents.strength],
+  ];
+  const result = confidenceFromTerms(terms, config);
+  const names = parts.map(([name, , exponent]) => `${name}^${exponent}`).join(' × ');
+  const values = parts.map(([, value, exponent]) => `${value.toFixed(2)}^${exponent}`).join(' × ');
+  const base = `${names} = ${values} = ${result.toFixed(2)}`;
+  const penalty = clamp(finite(penaltyTotal) ?? 0, 0, 1);
+  if (penalty <= 0) return `${base} → ${Math.round(result * 100)}%`;
+  const published = clamp(result - penalty, 0, 1);
+  return `${base} → หักความเสี่ยง ${round(penalty, 2)}`
+    + ` = ${published.toFixed(2)} → ${Math.round(published * 100)}%`;
+}
+
+/**
  * Fold every source timestamp into ONE published `asOf`, plus the honest spread.
  *
  * Sources genuinely disagree: the candle provider closes at one hour, the
@@ -937,6 +1145,7 @@ export function summariseProvenance(
       id: entry.id,
       provider: entry.slot.provider,
       asOf: entry.slot.asOf,
+      fetchedAt: entry.slot.fetchedAt ?? null,
       usable: entry.slot.status === 'available' && Number.isFinite(Date.parse(entry.slot.asOf ?? '')),
     }));
 
@@ -945,18 +1154,54 @@ export function summariseProvenance(
     .map((source) => ({ asOf: source.asOf as string, ms: Date.parse(source.asOf as string) }))
     .sort((left, right) => left.ms - right.ms);
 
-  const published = sources.map(({ id, provider, asOf }) => ({ id, provider, asOf }));
+  const published = sources.map(({ id, provider, asOf, fetchedAt }) => ({ id, provider, asOf, fetchedAt }));
   if (!stamps.length) {
-    return { asOf: null, newestAsOf: null, spreadHours: null, staleMix: false, sources: published };
+    return {
+      asOf: null, newestAsOf: null, spreadHours: null, spreadSessions: null,
+      staleMix: false, sources: published,
+    };
   }
   const oldest = stamps[0];
   const newest = stamps[stamps.length - 1];
   const spreadHours = stamps.length > 1 ? round((newest.ms - oldest.ms) / HOUR_MS, 2) : null;
+
+  /*
+   * The gap, measured in the only unit that answers the question.
+   *
+   * Hours cannot: 26.7 of them is two sessions apart on a Tuesday and ZERO
+   * across a weekend, and the six-hour window was reading Saturday as though the
+   * exchange were open on it. Every signal computed on a Saturday or Sunday
+   * raised STALE-MIX for sources that were, in fact, two views of the same
+   * Friday. The flag was up so often it had stopped meaning anything.
+   *
+   * Both ends are mapped to the session they belong to first, so the comparison
+   * is session-to-session and never instant-to-instant. `spreadHours` survives
+   * as disclosure beside it — it is still the honest wall-clock answer, it is
+   * simply not the one the flag is allowed to be decided on.
+   */
+  const oldestSession = lastUsSessionClose(oldest.asOf);
+  const newestSession = lastUsSessionClose(newest.asOf);
+  const spreadSessions = oldestSession && newestSession && stamps.length > 1
+    ? usTradingSessionsBetween(oldestSession.date, newestSession.date)
+    : stamps.length > 1 ? null : 0;
+
   return {
     asOf: oldest.asOf,
     newestAsOf: newest.asOf,
     spreadHours,
-    staleMix: spreadHours !== null && spreadHours > config.staleMixHours,
+    spreadSessions,
+    /*
+     * One session apart is genuinely stale evidence: a signal mixing Thursday's
+     * chart with Friday's chain is comparing two different days of a market. The
+     * same instant on both sides of a weekend is not.
+     *
+     * When the sessions cannot be resolved at all the wall clock is the only
+     * thing left, and the old window is what it falls back to — a source with an
+     * unreadable timestamp should not silently stop being checked.
+     */
+    staleMix: spreadSessions === null
+      ? spreadHours !== null && spreadHours > config.staleMixHours
+      : spreadSessions >= config.staleMixSessions,
     sources: published,
   };
 }
@@ -982,6 +1227,8 @@ function unavailableFactor(
     normalized: null,
     state: 'UNAVAILABLE',
     available: false,
+    measurement: 'unavailable',
+    fallbackReason: null,
     partial: false,
     detail: reason,
     reason,
@@ -998,19 +1245,42 @@ function scoredFactor(
   const normalized = finite(outcome.normalized);
   if (normalized === null) return unavailableFactor(id, slot, outcome.detail);
   const maxPoints = OPTIONS_SIGNAL_WEIGHTS[id];
+  const fallbackReason = outcome.fallbackReason ?? null;
   return {
     id,
-    points: round(normalized * maxPoints, 0),
+    /*
+     * A fallback carries NO points, deliberately.
+     *
+     * Publishing the fallback's own number would put it back in every sum that
+     * reads `points ?? 0`, and printing it beside a weight ("0 / 10") is what
+     * made a missing baseline read as a measured neutral in the first place. The
+     * reading itself is not lost — it is still in `detail`, described as the
+     * fallback it is.
+     */
+    points: fallbackReason === null ? round(normalized * maxPoints, 0) : null,
     maxPoints,
-    normalized: round(normalized, 4),
+    normalized: fallbackReason === null ? round(normalized, 4) : null,
     state: slot.state,
     available: true,
+    measurement: fallbackReason === null ? 'measured' : 'fallback-neutral',
+    fallbackReason,
     partial: outcome.partial,
     detail: outcome.detail,
     reason: null,
     provider: slot.provider,
     asOf: slot.asOf,
   };
+}
+
+/**
+ * The divisor rule, in one place.
+ *
+ * `available` is not it and never was: a factor can have its data and still be
+ * unjudgeable, and counting its weight then pulls the published score toward 50
+ * on the strength of nothing.
+ */
+function countsTowardWeight(factor: OptionsSignalFactorScore): boolean {
+  return factor.measurement === 'measured';
 }
 
 function setupWarnings(daysToEarnings: number | null, liquidity: LiquidityOutcome | null): string[] {
@@ -1034,10 +1304,35 @@ function buildSetup(
   ivReason: string | null,
   daysToEarnings: number | null,
   liquidity: LiquidityOutcome | null,
+  /**
+   * Set when the ถูก/แพง verdict was withheld across an earnings report inside
+   * the contract.
+   *
+   * The SHAPE below still comes from the real `ivLevel` — this change is not
+   * allowed to move any behaviour, and withholding the shape would remove a
+   * recommendation rather than correct a sentence. What it replaces is the
+   * RATIONALE, which said "ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้"
+   * on a contract whose premium is mostly the report it straddles.
+   */
+  ivLevelSuppressedReason: string | null = null,
 ): SuggestedOptionsSetup {
   const warnings = setupWarnings(daysToEarnings, liquidity);
+  if (ivLevelSuppressedReason) warnings.push(ivLevelSuppressedReason);
   if (signalType === 'IV_WARNING') {
     return { status: 'not-recommended', reason: 'อยู่ในสถานะเตือนความเสี่ยง (IV สูงมาก หรือใกล้ประกาศงบ) จึงยังไม่เสนอรูปแบบสัญญา', warnings };
+  }
+  /*
+   * Both refuse a setup, and they refuse it for different reasons. A reader who
+   * is told "the tape is quiet" waits; a reader who is told "the evidence is
+   * fighting" knows a move may be coming and that nobody can say which way.
+   */
+  if (signalType === 'CONFLICTED') {
+    return {
+      status: 'not-recommended',
+      reason: 'หลักฐานขัดกันเอง ปัจจัยหนึ่งชี้ขึ้นอีกปัจจัยชี้ลงจนหักกลบไปเกือบหมด '
+        + 'คะแนนที่ออกมากลางๆ จึงไม่ได้แปลว่าตลาดเงียบ แต่แปลว่ายังไม่รู้ว่าจะไปทางไหน',
+      warnings,
+    };
   }
   if (signalType === 'SIDEWAYS' || bias === 'neutral') {
     return { status: 'not-recommended', reason: 'ทิศทางยังไม่ชัดเจน การซื้อ Call หรือ Put ตอนนี้คือการจ่ายค่าพรีเมียมให้กับความไม่แน่นอน', warnings };
@@ -1056,9 +1351,11 @@ function buildSetup(
     dteMax: shape.dteMax,
     deltaMin: shape.deltaMin,
     deltaMax: shape.deltaMax,
-    rationale: ivLevel === 'low'
-      ? 'ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้ และเลือก Delta ที่เกาะราคาหุ้นได้ดี'
-      : 'ค่าพรีเมียมอยู่ระดับปกติ จึงเผื่ออายุสัญญาให้ยาวขึ้นเพื่อลดผลของ Time Decay',
+    rationale: ivLevelSuppressedReason
+      ? 'รูปแบบด้านล่างเลือกจากอายุสัญญาและ Delta เท่านั้น ยังไม่ได้ตัดสินว่าค่าพรีเมียมคุ้มหรือไม่'
+      : ivLevel === 'low'
+        ? 'ค่าพรีเมียมยังไม่แพง จึงมีพื้นที่ให้ซื้อเวลาเผื่อไว้ และเลือก Delta ที่เกาะราคาหุ้นได้ดี'
+        : 'ค่าพรีเมียมอยู่ระดับปกติ จึงเผื่ออายุสัญญาให้ยาวขึ้นเพื่อลดผลของ Time Decay',
     warnings,
   };
 }
@@ -1085,7 +1382,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
-      marketOpenAtCapture: null, offHoursAssessment: null,
+      marketOpenAtCapture: null, offHoursAssessment: null, closedSpreadWarning: null,
       state: 'UNAVAILABLE', reason: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
       detail: 'ยังไม่ได้โหลด options chain จึงยังประเมินสภาพคล่องไม่ได้',
     };
@@ -1095,7 +1392,7 @@ function liquidityDiagnostics(
     return {
       grade: null, score: null, medianOpenInterest: null, medianVolume: null,
       medianSpreadPercent: null, contractsExamined: null, expiration: null,
-      marketOpenAtCapture: null, offHoursAssessment: null,
+      marketOpenAtCapture: null, offHoursAssessment: null, closedSpreadWarning: null,
       state: 'UNAVAILABLE', reason, detail: reason,
     };
   }
@@ -1109,6 +1406,7 @@ function liquidityDiagnostics(
     expiration: slot.value.expiration,
     marketOpenAtCapture: slot.value.marketOpenAtCapture ?? null,
     offHoursAssessment: outcome.offHoursAssessment,
+    closedSpreadWarning: outcome.closedSpreadWarning,
     state: slot.state,
     reason: outcome.grade === null ? outcome.detail : null,
     detail: outcome.detail,
@@ -1132,10 +1430,14 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100: 50,
     scoreFormula: 'ไม่มีปัจจัยที่มีข้อมูลพอจะแปลงเป็นคะแนน',
+    directionBalance: 0,
+    directionScaleFormula: directionScaleFormula(0, 0),
     coverage: 0,
+    completeness: measureCompleteness(input, {}),
     agreement: 0,
     evidenceStrength: 0,
     confidenceBase: 0,
+    confidenceFormula: confidenceFormulaText({ coverage: 0, agreement: 0, strength: 0 }),
     penalties: [],
     penaltyTotal: 0,
     dataSufficiency: { passed: false, missing: [], primeEligible: false, primeBlockers: ['data-insufficient'] },
@@ -1149,7 +1451,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
       state: input.riskReward.state,
     },
     iv: {
-      level: null, basis: null, ivRank: null, ivPercentile: null,
+      level: null, levelSuppressedReason: null, basis: null, ivRank: null, ivPercentile: null,
       percentilePending: input.historyDegraded === true ? null : input.ivPercentilePending ?? null,
       percentileStoreUnavailable: input.historyDegraded === true,
       impliedVolatility: null, realizedVolatility: null, realizedWindowDays: null, dte: null,
@@ -1166,6 +1468,7 @@ function emptyDiagnostics(input: OptionsSignalInput): OptionsSignalDiagnostics {
     squeeze: {
       state: null, momentum: null, normalizedMomentum: null,
       normalizedMomentumCapped: false, relativeVolume: null, confirmation: null,
+      confirmationFormula: rvolConfirmationFormula(null),
       breakdown: {
         rawAtr: null, saturation: OPTIONS_SIGNAL_CONFIG.momentum.momentumAtrSaturation,
         clamped: null, afterSqueeze: null, multiplier: 1,
@@ -1265,7 +1568,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     sentiment: scoredFactor('sentiment', input.sentiment, sentimentOutcome),
   };
   const leadEntries = Object.values(leadFactors);
-  const leadWeight = leadEntries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
+  const leadWeight = leadEntries.reduce((sum, factor) => sum + (countsTowardWeight(factor) ? factor.maxPoints : 0), 0);
   const leadScore = leadEntries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const leadDirection = leadWeight > 0
     ? biasFromDirectionBalance(directionBalance(leadScore, leadWeight))
@@ -1294,7 +1597,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     return insufficient(`ขาดปัจจัยหลักที่ต้องมี: ${missingRequired.map((id) => FACTOR_LABELS[id]).join(', ')}`);
   }
 
-  const availableWeight = entries.reduce((sum, factor) => sum + (factor.available ? factor.maxPoints : 0), 0);
+  const availableWeight = entries.reduce((sum, factor) => sum + (countsTowardWeight(factor) ? factor.maxPoints : 0), 0);
   const summedPoints = entries.reduce((sum, factor) => sum + (factor.points ?? 0), 0);
   const absoluteScore = entries.reduce((sum, factor) => sum + Math.abs(factor.points ?? 0), 0);
 
@@ -1343,6 +1646,21 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   // --- Stage 2: signal quality -------------------------------------------
   const coverage = availableWeight / OPTIONS_SIGNAL_TOTAL_WEIGHT;
   /*
+   * "ความครบของข้อมูล", measured one level below the factors.
+   *
+   * `coverage` above answers "how much of the model's WEIGHT produced a score",
+   * which is the right question for the PRIME floor and the wrong one for the
+   * reader: every factor can produce a score while each one stands on less than
+   * it needs, and the card then printed 100% beside a yellow "ข้อมูลบางส่วน"
+   * badge, an unavailable IV Rank and two percentiles still counting down.
+   *
+   * This is the figure the reader is shown and the one the confidence coverage
+   * term is computed from. The PRIME floor keeps reading `coverage`, because
+   * that threshold was calibrated on that ruler and moving it would be a retune
+   * smuggled in beside a bug fix.
+   */
+  const completeness = measureCompleteness(input, factors);
+  /*
    * Agreement is measured on the SUMMED points, before the veto.
    *
    * The veto is a statement about the headline, not a new piece of evidence, and
@@ -1352,11 +1670,66 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
    * explicitly not meant to introduce.
    */
   const agreement = absoluteScore > 0 ? Math.abs(summedPoints) / absoluteScore : 0;
-  const evidenceStrength = availableWeight > 0 ? clamp(absoluteScore / availableWeight, 0, 1) : 0;
+  /*
+   * STRENGTH IS MEASURED AGAINST THE WHOLE MODEL, not against what happened to
+   * be countable — because the divisor moves and the numerator does not.
+   *
+   * It used to be `absoluteScore / availableWeight`. When P0-2 struck the
+   * unranked Options Sentiment out of the fraction, that divisor fell 90 -> 80
+   * while the numerator stayed put (the factor was scoring zero), so the same
+   * evidence reported 0.40 before and 0.45 after. LOSING A FACTOR MADE THE
+   * EVIDENCE LOOK STRONGER, which no reading of the word can justify.
+   *
+   * On the reported card it happened to be masked: completeness fell far enough
+   * in the same release to swallow it. That is luck, not a design — two terms
+   * pulling opposite ways cancel at whatever ratio the inputs happen to have,
+   * and on a card whose completeness fell less, confidence would have RISEN
+   * because data went missing.
+   *
+   * Against the fixed total the numerator is the only thing that can move, so
+   * the term is monotone by construction: an input that disappears can lower
+   * this and can never raise it. Completeness still carries the "how much do we
+   * know" question; this one now answers only "how hard is what we have
+   * pushing", on a ruler that does not shrink to flatter the answer.
+   */
+  const evidenceStrength = clamp(absoluteScore / OPTIONS_SIGNAL_TOTAL_WEIGHT, 0, 1);
 
   const pricing = input.pricing.status === 'available' ? input.pricing.value : null;
   const ivLevel = pricing ? classifyIvLevel(pricing) : null;
   const daysToEarnings = input.event.status === 'available' ? finite(input.event.value.daysToEarnings) : null;
+  /*
+   * IS THE PREMIUM EXPENSIVE? — a question that cannot be asked across an
+   * earnings report inside the contract.
+   *
+   * The reported card said "IV ÷ ความผันผวนจริง = 0.768 → ระดับความแพง: ต่ำ" two
+   * sections above "งบประกาศ 27 ส.ค. อีก 5 วัน", a −15 confidence penalty for
+   * exactly that, and an IV Crush warning. All four about one contract.
+   *
+   * The ratio is comparing two different periods: realized volatility is
+   * BACKWARD-looking and describes shocks that have already happened, while the
+   * implied volatility holds a risk that has not arrived yet. IV at this level
+   * before a report is not cheap premium — it is the price OF the event, and
+   * most of it disappears the morning after. Calling it "ต่ำ" invites a reader
+   * to buy the one thing the same page is warning them about.
+   *
+   * The verdict is therefore WITHHELD, not recomputed: the engine has no
+   * separation of event vol from base vol and inventing one here would be a
+   * model change hidden inside a copy fix. What is published instead is that the
+   * question cannot be answered, and why.
+   *
+   * `ivLevel` itself is untouched. The confidence penalties and the IV_WARNING
+   * gate keep reading it, because those are scoring behaviour and this change is
+   * not allowed to move any of it — a premium that is genuinely extreme still
+   * gates, whether or not the card is willing to call it expensive.
+   */
+  const earningsInsideContract = daysToEarnings !== null
+    && pricing?.dte != null
+    && daysToEarnings >= 0
+    && daysToEarnings <= pricing.dte;
+  const ivLevelSuppression = earningsInsideContract
+    ? `งบประกาศในอีก ${daysToEarnings} วัน ซึ่งอยู่ในอายุสัญญา ${pricing?.dte} วัน `
+      + 'ค่า IV ส่วนหนึ่งจึงเป็นราคาของ event ที่จะหายไปหลังประกาศ ยังตัดสินความถูก/แพงไม่ได้'
+    : null;
 
   const penalties: OptionsSignalPenalty[] = [];
   const penaltyConfig = config.confidence.penalties;
@@ -1389,7 +1762,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
   const penaltyTotal = round(penalties.reduce((sum, penalty) => sum + penalty.amount, 0), 4);
 
-  const confidenceBase = confidenceFromTerms({ coverage, agreement, strength: evidenceStrength });
+  const confidenceBase = confidenceFromTerms({ coverage: completeness.value, agreement, strength: evidenceStrength });
   const confidenceScore = Math.round(clamp(confidenceBase - penaltyTotal, 0, 1) * 100);
 
   const primeBlockers: string[] = [];
@@ -1409,9 +1782,35 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
   }
   const primeEligible = primeBlockers.length === 0 && underlyingBias !== 'neutral';
 
+  /*
+   * QUIET, or FIGHTING? — two states that were sharing one badge.
+   *
+   * A total near 50 arrives two ways. Every factor near zero is a flat tape and
+   * the honest instruction is "there is nothing here". Trend -8 against Momentum
+   * +9 cancelling to 51 is not that: something IS happening and the evidence
+   * disagrees about what, which is strictly more dangerous than quiet — and the
+   * card printed the identical grey SIDEWAYS badge for both.
+   *
+   * Measured on `agreement`, which is |summed| ÷ Σ|points| and already exists for
+   * confidence. Reusing it means there is no second ruler that could disagree
+   * with the first, and it is a dispersion measure by construction: it falls as
+   * the factors cancel, whatever the total happens to be.
+   *
+   * The threshold alone is NOT enough. `agreement` is 0 by convention when there
+   * are no points at all — the quiet case exactly — so a structural clause does
+   * the rest: two measured factors have to be genuinely pointing opposite ways.
+   * That clause is a fact about the evidence, not a second number to tune.
+   */
+  const opposedFactors = entries.filter((factor) => (
+    countsTowardWeight(factor) && factor.points !== null && factor.points !== 0
+  ));
+  const evidenceIsFighting = opposedFactors.some((factor) => Math.sign(factor.points as number) > 0)
+    && opposedFactors.some((factor) => Math.sign(factor.points as number) < 0)
+    && agreement < config.quality.conflictedAgreement;
+
   let signalType: OptionsSignalType;
   if (underlyingBias === 'neutral' || Math.abs(balance) < config.quality.watchScore) {
-    signalType = 'SIDEWAYS';
+    signalType = evidenceIsFighting ? 'CONFLICTED' : 'SIDEWAYS';
   } else if (primeEligible) {
     signalType = underlyingBias === 'bullish' ? 'PRIME_CALL' : 'PRIME_PUT';
   } else {
@@ -1456,10 +1855,18 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     totalWeight: OPTIONS_SIGNAL_TOTAL_WEIGHT,
     directionScore0to100,
     scoreFormula,
+    directionBalance: balance,
+    directionScaleFormula: directionScaleFormula(directionScore, availableWeight),
     coverage: round(coverage, 4),
+    completeness: { ...completeness, value: round(completeness.value, 4) },
     agreement: round(agreement, 4),
     evidenceStrength: round(evidenceStrength, 4),
     confidenceBase: round(confidenceBase, 4),
+    confidenceFormula: confidenceFormulaText(
+      { coverage: completeness.value, agreement, strength: evidenceStrength },
+      config.confidence,
+      penaltyTotal,
+    ),
     penalties,
     penaltyTotal,
     dataSufficiency: {
@@ -1489,7 +1896,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       state: input.riskReward.state,
     },
     iv: {
-      level: ivLevel,
+      // Withheld across an earnings report inside the contract. See above: the
+      // gate still reads the unsuppressed level, only the VERDICT is withheld.
+      level: ivLevelSuppression === null ? ivLevel : null,
+      levelSuppressedReason: ivLevelSuppression,
       basis: pricing?.basis ?? null,
       ivRank: pricing?.basis === 'iv-rank' ? roundOrNull(pricing.ivRank, 1) : null,
       ivPercentile: pricing?.basis === 'iv-percentile' ? roundOrNull(pricing.ivPercentile, 1) : null,
@@ -1524,6 +1934,9 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       normalizedMomentum: roundOrNull(momentumOutcome.normalizedMomentum, 3),
       normalizedMomentumCapped: momentumOutcome.normalizedMomentumCapped,
       relativeVolume: input.momentum.status === 'available' ? roundOrNull(input.momentum.value.relativeVolume, 4) : null,
+      confirmationFormula: rvolConfirmationFormula(
+        input.momentum.status === 'available' ? input.momentum.value.relativeVolume : null,
+      ),
       confirmation: roundOrNull(momentumOutcome.confirmation, 4),
       breakdown: {
         rawAtr: roundOrNull(momentumOutcome.breakdown.rawAtr, 3),
@@ -1550,7 +1963,10 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       factors,
       signalType,
       underlyingBias,
-      ivLevel,
+      // The reason list is user-facing prose, so it gets the WITHHELD verdict —
+      // "ค่าพรีเมียมของ option ยังไม่แพง" is the same claim as the badge.
+      ivLevel: ivLevelSuppression === null ? ivLevel : null,
+      ivLevelSuppressedReason: ivLevelSuppression,
       ivWarningReasons,
       downgrades,
       penalties,
@@ -1563,6 +1979,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       expectedMoveHorizonWarning: riskRewardOutcome.expectedMoveHorizonWarning,
       staleMix: provenance.staleMix,
       spreadHours: provenance.spreadHours,
+      spreadSessions: provenance.spreadSessions,
     }),
     suggestedOptionsSetup: buildSetup(
       signalType,
@@ -1571,6 +1988,7 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
       input.pricing.status === 'unavailable' ? input.pricing.reason : null,
       daysToEarnings,
       liquidityOutcome,
+      ivLevelSuppression,
     ),
     diagnostics,
   };
@@ -1581,6 +1999,8 @@ function buildReasoning(context: {
   signalType: OptionsSignalType;
   underlyingBias: UnderlyingBias;
   ivLevel: IvLevel | null;
+  /** Set when the verdict was withheld; printed in place of a ถูก/แพง sentence. */
+  ivLevelSuppressedReason: string | null;
   ivWarningReasons: string[];
   downgrades: string[];
   penalties: OptionsSignalPenalty[];
@@ -1593,11 +2013,26 @@ function buildReasoning(context: {
   expectedMoveHorizonWarning: string | null;
   staleMix: boolean;
   spreadHours: number | null;
+  spreadSessions: number | null;
 }): OptionsSignalReason[] {
   const reasons: OptionsSignalReason[] = [];
   const supportive = context.underlyingBias === 'bullish' ? 1 : context.underlyingBias === 'bearish' ? -1 : 0;
 
   for (const factor of Object.values(context.factors)) {
+    /*
+     * A factor struck from the divisor says so here too. "ไม่มีข้อมูล" would be
+     * the wrong sentence for Options Sentiment holding a real Put/Call it simply
+     * cannot rank, and the reason list is where a reader looks to find out why a
+     * factor they can see on the card contributed nothing.
+     */
+    if (factor.measurement === 'fallback-neutral') {
+      reasons.push({
+        id: `${factor.id}-not-counted`,
+        polarity: 'information',
+        text: `${FACTOR_LABELS[factor.id]}: ไม่นับรวมในคะแนน (${factor.fallbackReason}) · ${factor.detail}`,
+      });
+      continue;
+    }
     if (!factor.available || factor.points === null) {
       reasons.push({ id: `${factor.id}-unavailable`, polarity: 'information', text: `${FACTOR_LABELS[factor.id]}: ${factor.detail}` });
       continue;
@@ -1622,6 +2057,12 @@ function buildReasoning(context: {
       id: 'iv-level',
       polarity: context.ivLevel === 'low' || context.ivLevel === 'normal' ? 'information' : 'caution',
       text,
+    });
+  } else if (context.ivLevelSuppressedReason) {
+    reasons.push({
+      id: 'iv-level-pre-earnings',
+      polarity: 'caution',
+      text: `ยังตัดสินความถูก/แพงของค่าพรีเมียมไม่ได้ · ${context.ivLevelSuppressedReason}`,
     });
   } else if (context.pricingReason) {
     reasons.push({ id: 'iv-unavailable', polarity: 'information', text: `Implied Volatility: ${context.pricingReason}` });
@@ -1677,7 +2118,13 @@ function buildReasoning(context: {
     reasons.push({
       id: 'stale-mix',
       polarity: 'caution',
-      text: `แหล่งข้อมูลของสัญญาณนี้ต่างเวลากันถึง ${context.spreadHours ?? 0} ชั่วโมง จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`,
+      /*
+       * Sessions, not hours. Hours is what put this sentence on every weekend
+       * card for a set of sources that were all looking at the same Friday.
+       */
+      text: context.spreadSessions === null
+        ? `แหล่งข้อมูลของสัญญาณนี้ต่างเวลากันถึง ${context.spreadHours ?? 0} ชั่วโมง จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`
+        : `แหล่งข้อมูลของสัญญาณนี้มาจากคนละเซสชันเทรดกัน ห่างกัน ${context.spreadSessions} เซสชัน จึงยึดเวลาที่เก่าที่สุดเป็นเวลาของสัญญาณ`,
     });
   }
 

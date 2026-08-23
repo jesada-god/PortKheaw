@@ -21,8 +21,16 @@
  * alone would then describe two different models. `2026.08.19b` is the momentum
  * saturation widening from 1.0 to 3.5 ATR; `2026.08.19` is everything before it;
  * `2026.08.19c` moved the implied volatility onto the horizon chain.
+ *
+ * `2026.08.23` is the internal-contradiction pass. No weight and no threshold
+ * below moved; what changed is WHICH factors reach the fraction at all. A factor
+ * holding raw data it has no basis to judge (`fallback-neutral`) is now struck
+ * from the numerator and the divisor, where it used to vote out of an absolute
+ * band and keep its full weight. Options Sentiment without its own percentile
+ * history is the case that reaches this on most symbols, so most divisors move
+ * from 90 to 80 and every quality term downstream of the divisor moves with them.
  */
-export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.19c';
+export const OPTIONS_SIGNAL_CONFIG_VERSION = '2026.08.23';
 
 export const OPTIONS_SIGNAL_WEIGHTS = {
   macro: 15,
@@ -34,6 +42,38 @@ export const OPTIONS_SIGNAL_WEIGHTS = {
 
 export const OPTIONS_SIGNAL_TOTAL_WEIGHT = Object.values(OPTIONS_SIGNAL_WEIGHTS)
   .reduce((sum, weight) => sum + weight, 0);
+
+/**
+ * Weights for "ความครบของข้อมูล" ONLY. Not a scoring weight, and no directional
+ * point is ever multiplied by one of these.
+ *
+ * The five directional entries are the model's own weights, restated by
+ * reference so they cannot drift: a factor's say in how complete the picture is,
+ * is its say in the picture.
+ *
+ * `pricing` is the one addition, and the one NEW number in this table. The risk
+ * gate is not part of the direction and correctly has no scoring weight, but it
+ * is very much part of what the card claims to know: the reported case showed
+ * "ความครบของข้อมูล 100%" beside an IV Rank reading "ไม่พร้อมใช้งาน" and an IV
+ * percentile 59 days short, which is a completeness figure that had been told
+ * about the gap and did not pass it on.
+ *
+ * 10 — the lightest directional weight — rather than a number chosen to land the
+ * result somewhere. The gate is one input group of roughly the standing of the
+ * lightest factor, and borrowing an existing magnitude is a claim that can be
+ * argued with; inventing 12 or 18 would only look more precise.
+ */
+export const OPTIONS_SIGNAL_COMPLETENESS_WEIGHTS = {
+  macro: OPTIONS_SIGNAL_WEIGHTS.macro,
+  trend: OPTIONS_SIGNAL_WEIGHTS.trend,
+  momentum: OPTIONS_SIGNAL_WEIGHTS.momentum,
+  sentiment: OPTIONS_SIGNAL_WEIGHTS.sentiment,
+  riskReward: OPTIONS_SIGNAL_WEIGHTS.riskReward,
+  pricing: 10,
+} as const;
+
+export const OPTIONS_SIGNAL_COMPLETENESS_TOTAL_WEIGHT =
+  Object.values(OPTIONS_SIGNAL_COMPLETENESS_WEIGHTS).reduce((sum, weight) => sum + weight, 0);
 
 export const OPTIONS_SIGNAL_CONFIG = {
   timeframe: '1D',
@@ -86,6 +126,30 @@ export const OPTIONS_SIGNAL_CONFIG = {
     primeConfidence: 65,
     primeAgreement: 0.7,
     watchScore: 20,
+    /**
+     * Agreement below which a middling score is CONFLICTED rather than SIDEWAYS.
+     *
+     * One label was carrying two states that call for opposite behaviour:
+     *
+     *   quiet       every factor near zero. Nothing is happening, and the honest
+     *               instruction is "there is nothing to do here".
+     *   conflicted  Trend -8 against Momentum +9, cancelling to 51. Something IS
+     *               happening and the evidence disagrees about what, which is
+     *               strictly more dangerous than a flat tape — and the card was
+     *               printing the identical badge for both.
+     *
+     * 0.5 on `agreement`, which is |summed points| ÷ Σ|points| and already
+     * computed for confidence — no new quantity, no second ruler that could
+     * disagree with the first. Below a half, more of the evidence is cancelling
+     * out than is pointing anywhere; above it, a majority points one way and the
+     * tape is merely gentle.
+     *
+     * The threshold is NOT sufficient on its own. `agreement` is 0 by convention
+     * when there are no points at all, which is the quiet case exactly — so the
+     * label additionally requires two measured factors actually pointing opposite
+     * ways. That clause is structural rather than a second number to tune.
+     */
+    conflictedAgreement: 0.5,
   },
 
   momentum: {
@@ -271,6 +335,20 @@ export const OPTIONS_SIGNAL_CONFIG = {
     /** Bid-ask spread as % of mid: at or below `good` scores 1.0, at `poor` scores 0. */
     spreadGoodPercent: 5,
     spreadPoorPercent: 25,
+    /**
+     * A spread captured while the book was SHUT is not scored — market makers
+     * widen or pull quotes overnight, and the same chain that costs 2% to cross
+     * at 10:00 can quote 40% at 02:00. It is still an UPPER BOUND, and above this
+     * the card says so rather than discarding the observation.
+     *
+     * 10, which is twice `spreadGoodPercent`. The reasoning is the halving: a
+     * closed-book spread is expected to be several times its open-book value, so
+     * the bar has to sit well clear of the open-book threshold to mean anything.
+     * At 10% even a spread that halves on the open still fails `spreadGoodPercent`,
+     * which is the weakest claim that is worth printing — and the case that
+     * prompted this, a 6.2% capture, correctly stays quiet.
+     */
+    closedSpreadWarnPercent: 10,
     /** Composite score bands for the badge. */
     goodFrom: 70,
     fairFrom: 45,
@@ -361,10 +439,28 @@ export const OPTIONS_SIGNAL_CONFIG = {
   /**
    * Timestamp hygiene. Every factor carries its own `asOf`; the signal publishes
    * ONE `asOf` — the oldest of them, because a signal is only as current as its
-   * stalest input — and flags the spread when the sources disagree by more than
-   * `staleMixHours`.
+   * stalest input — and flags the spread when the sources are far enough apart.
    */
   provenance: {
+    /**
+     * How many TRADING SESSIONS the sources may span before STALE-MIX fires.
+     *
+     * 1, which is the narrowest useful setting: it fires the moment two sources
+     * describe two different days of the market, and never inside one day
+     * however many hours the clock says. That last part is the whole change.
+     * A Friday closing bar beside a chain pulled at 23:11 on SATURDAY is 26.7
+     * clock hours apart and ZERO sessions apart, because nothing traded in
+     * between — the chain Alpaca returned on Saturday night IS Friday's chain.
+     * On the old wall-clock rule every signal computed at a weekend raised this
+     * flag, which is the fastest way to teach a reader to stop looking at it.
+     */
+    staleMixSessions: 1,
+    /**
+     * Wall-clock fallback, used only when a timestamp cannot be mapped to a
+     * session at all. Unchanged from when it was the primary rule, so a source
+     * the calendar cannot place is checked exactly as it used to be rather than
+     * quietly stopping being checked.
+     */
     staleMixHours: 6,
   },
 

@@ -53,6 +53,16 @@ const firedBearishMomentum: MomentumInput = {
 const bullishSentiment: SentimentInput = {
   putCallRatio: 0.45, basis: 'open-interest', putTotal: 4_500, callTotal: 10_000, expiration: '2026-08-21',
 };
+
+/**
+ * The same reading WITH the symbol's own percentile basis, so the factor is
+ * MEASURED and keeps its 10 points in the divisor. Without a basis it is
+ * `fallback-neutral` and leaves the fraction entirely, which is the subject of
+ * its own tests and not of the engine tests below.
+ */
+const ratedSentiment = (ownPercentile: number): SentimentInput => ({
+  ...bullishSentiment, ownPercentile, percentileObservations: 60,
+});
 const bullishRiskReward: RiskRewardInput = { price: 110, support: 105, resistance: 130 };
 const bearishRiskReward: RiskRewardInput = { price: 90, support: 70, resistance: 95 };
 const cheapIv: IvPricingInput = {
@@ -72,7 +82,7 @@ function input(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput 
     trend: available(bullishTrend),
     momentum: available(firedBullishMomentum),
     pricing: available<IvPricingInput>(cheapIv),
-    sentiment: available(bullishSentiment),
+    sentiment: available(ratedSentiment(0)),
     riskReward: available(bullishRiskReward),
     event: available(farEarnings),
     ...overrides,
@@ -339,7 +349,7 @@ describe('calculateOptionsSignal', () => {
       macro: available(bearishMacro),
       trend: available(bearishTrend),
       momentum: available(firedBearishMomentum),
-      sentiment: available({ ...bullishSentiment, putCallRatio: 1.6 }),
+      sentiment: available(ratedSentiment(1)),
       riskReward: available(bearishRiskReward),
     }));
     expect(result.signalType).toBe('PRIME_PUT');
@@ -352,7 +362,7 @@ describe('calculateOptionsSignal', () => {
       macro: available<MacroInput>({ benchmarks: [{ symbol: 'SPY', close: 500, ema20: 480 }, { symbol: 'QQQ', close: 380, ema20: 390 }] }),
       trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
       momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
-      sentiment: available({ ...bullishSentiment, putCallRatio: 0.9 }),
+      sentiment: available(ratedSentiment(0.5)),
       riskReward: available<RiskRewardInput>({ price: 100, support: 90, resistance: 110 }),
     }));
     expect(result.signalType).toBe('SIDEWAYS');

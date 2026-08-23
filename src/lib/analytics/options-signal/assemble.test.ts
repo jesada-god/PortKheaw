@@ -368,6 +368,8 @@ describe('assembleOptionsSignalInput', () => {
 
 describe('stale-if-error fallback (429/5xx keeps Put/Call and IV readable)', () => {
   const FETCHED_AT = '2026-07-28T19:30:00.000Z';
+  /** 15:30 ET on Tuesday is mid-session, so the last CLOSED session is Monday's. */
+  const LAST_SESSION_CLOSE = '2026-07-27T20:00:00.000Z';
   const fallback = {
     chain: chain(0.4),
     result: availableSr,
@@ -383,8 +385,17 @@ describe('stale-if-error fallback (429/5xx keeps Put/Call and IV readable)', () 
     expect(slot.value.putCallRatio).toBe(0.45);
     expect(slot.value.basis).toBe('open-interest');
     expect(slot.provider).toBe('alpaca');
-    // Disclosed as of the moment the data was really fetched, not "now".
-    expect(slot.asOf).toBe(FETCHED_AT);
+    /*
+     * TWO timestamps, and they are not the same quantity.
+     *
+     * `fetchedAt` is the moment the data was really pulled — not "now", which is
+     * what this test has always been guarding. `asOf` is the SESSION that pull
+     * belongs to, which is the only thing the freshness comparison may read: the
+     * 15:30 ET fetch above lands mid-session on Tuesday, so the last CLOSED
+     * session behind it is Monday.
+     */
+    expect(slot.fetchedAt).toBe(FETCHED_AT);
+    expect(slot.asOf).toBe(LAST_SESSION_CLOSE);
   });
 
   it('serves IV from the last-good chain as STALE, still on the labelled realized basis', () => {
@@ -396,7 +407,8 @@ describe('stale-if-error fallback (429/5xx keeps Put/Call and IV readable)', () 
     if (slot.status !== 'available') return;
     expect(slot.state).toBe('STALE');
     expect(slot.value.basis).toBe('iv-vs-realized');
-    expect(slot.asOf).toBe(FETCHED_AT);
+    expect(slot.fetchedAt).toBe(FETCHED_AT);
+    expect(slot.asOf).toBe(LAST_SESSION_CLOSE);
   });
 
   it('prefers the live chain and ignores the fallback whenever one is present', () => {

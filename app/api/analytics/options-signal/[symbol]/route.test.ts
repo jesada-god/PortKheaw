@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { rvolConfirmationFormula } from '@/src/lib/analytics/options-signal/calculations';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   OptionsSignalFactorId,
@@ -35,6 +36,8 @@ function factor(id: OptionsSignalFactorId): OptionsSignalFactorScore {
     normalized: 0,
     state: 'DELAYED',
     available: true,
+    measurement: 'measured',
+    fallbackReason: null,
     partial: false,
     detail: 'test',
     reason: null,
@@ -79,10 +82,22 @@ const result: OptionsSignalResult = {
     totalWeight: 100,
     directionScore0to100: 50,
     scoreFormula: '(0 + 100) ÷ (2 × 100) × 100 = 50',
+    directionBalance: 0,
+    directionScaleFormula: '0 ÷ 100 × 100 = 0 → สเกล ±100 ปัดเป็น 0 · 0 ÷ 2 + 50 = 50 → สเกล 0–100 ปัดเป็น 50',
     coverage: 1,
+    completeness: {
+      value: 0.74,
+      inputs: [
+        { id: 'trend.ema50', group: 'trend', label: 'EMA50 ของหุ้น', available: true, counted: true, note: null },
+        { id: 'pricing.own-baseline', group: 'pricing', label: 'ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)', available: false, counted: false, note: 'ขาดอีก 59 วัน' },
+      ],
+      missing: ['ฐานเทียบความแพงของตัวเอง (IV Rank / IV percentile)'],
+      notCounted: [],
+    },
     agreement: 1,
     evidenceStrength: 1,
     confidenceBase: 74,
+    confidenceFormula: 'ความครบ^0.2 × ความสอดคล้อง^0.55 × ความหนักแน่น^0.25 = 0.74 → 74%',
     penalties: [],
     penaltyTotal: 0,
     dataSufficiency: { passed: true, missing: [], primeEligible: true, primeBlockers: [] },
@@ -108,6 +123,7 @@ const result: OptionsSignalResult = {
     },
     iv: {
       level: 'normal',
+      levelSuppressedReason: null,
       basis: 'iv-vs-realized',
       ivRank: null,
       ivPercentile: null,
@@ -143,6 +159,7 @@ const result: OptionsSignalResult = {
       expiration: null,
       marketOpenAtCapture: null,
       offHoursAssessment: null,
+      closedSpreadWarning: null,
       state: 'UNAVAILABLE',
       reason: 'test',
       detail: 'test',
@@ -155,12 +172,14 @@ const result: OptionsSignalResult = {
       normalizedMomentumCapped: false,
       relativeVolume: 1,
       confirmation: 0,
+      confirmationFormula: rvolConfirmationFormula(1.06),
     },
     macro: { benchmarks: [] },
     provenance: {
       asOf: '2026-07-28T00:00:00.000Z',
       newestAsOf: '2026-07-28T00:00:00.000Z',
       spreadHours: null,
+      spreadSessions: 0,
       staleMix: false,
       sources: [],
     },

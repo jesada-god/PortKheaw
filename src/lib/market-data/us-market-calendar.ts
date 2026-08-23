@@ -20,6 +20,12 @@
  * Arithmetic runs on UTC midnights so a DST transition can never move a date.
  */
 
+import {
+  REGULAR_SESSION_CLOSE_MINUTE,
+  zonedLocalToUtc,
+  zonedParts,
+} from './session';
+
 export const US_MARKET_TIMEZONE = 'America/New_York';
 
 /** 13:00 ET — the published half-day close. */
@@ -211,4 +217,75 @@ export function nextUsTradingDate(date: string): string | null {
     if (isUsTradingDay(candidate)) return candidate;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Sessions as instants, and distances measured in sessions
+// ---------------------------------------------------------------------------
+
+/**
+ * The regular close of the latest trading session at or before `timestamp`.
+ *
+ * This is the answer to "which session is this data FROM", which is a different
+ * question from "when was it fetched" — and confusing the two is what made
+ * STALE-MIX fire on every weekend. A chain pulled at 23:11 on Saturday is a
+ * snapshot of FRIDAY's session: nothing traded between the two, so it is exactly
+ * as current as a Friday closing bar, and subtracting the two timestamps to get
+ * 26.7 hours measures the gap between a clock read and a market event.
+ *
+ * Half-days close at 13:00 ET and are handled, because a Black Friday capture at
+ * 14:00 belongs to that day's session and not to Wednesday's.
+ *
+ * Returns null for an unparseable instant, or when no trading day can be found
+ * within the bounded walk.
+ */
+export function lastUsSessionClose(timestamp: string): { date: string; closeAt: string } | null {
+  const instant = new Date(timestamp);
+  if (Number.isNaN(instant.valueOf())) return null;
+  const parts = zonedParts(instant, US_MARKET_TIMEZONE);
+  const localDate = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  const minuteOfDay = parts.hour * 60 + parts.minute;
+
+  const closedOn = isUsTradingDay(localDate) && minuteOfDay >= usSessionCloseMinute(localDate)
+    ? localDate
+    : previousUsTradingDate(localDate);
+  if (closedOn === null) return null;
+  const closeAt = sessionCloseInstant(closedOn);
+  return closeAt === null ? null : { date: closedOn, closeAt };
+}
+
+/** 16:00 ET, or 13:00 ET on a published half-day. */
+export function usSessionCloseMinute(date: string): number {
+  return isUsMarketEarlyClose(date) ? EARLY_CLOSE_MINUTE : REGULAR_SESSION_CLOSE_MINUTE;
+}
+
+function sessionCloseInstant(date: string): string | null {
+  const minute = usSessionCloseMinute(date);
+  const clock = `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}:00`;
+  return zonedLocalToUtc(`${date}T${clock}`, US_MARKET_TIMEZONE);
+}
+
+/**
+ * How many trading SESSIONS separate two exchange-local dates.
+ *
+ * 0 when both fall in the same session — the property that makes a Friday bar
+ * and a Saturday-night capture of the same Friday chain read as simultaneous,
+ * which is what they are. 1 for consecutive sessions, whether that is Thursday
+ * to Friday or Friday to Monday, because a weekend is not a session.
+ *
+ * The walk is bounded: beyond `limit` sessions the exact count stops mattering
+ * and the cap is returned, so a wildly out-of-date source cannot spin here.
+ */
+export function usTradingSessionsBetween(from: string, to: string, limit = 400): number | null {
+  if (parseDate(from) === null || parseDate(to) === null) return null;
+  if (from === to) return 0;
+  const [earlier, later] = from < to ? [from, to] : [to, from];
+  let cursor = earlier;
+  for (let sessions = 1; sessions <= limit; sessions += 1) {
+    const next = nextUsTradingDate(cursor);
+    if (next === null) return null;
+    if (next >= later) return sessions;
+    cursor = next;
+  }
+  return limit;
 }

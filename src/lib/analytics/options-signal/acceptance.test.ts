@@ -78,6 +78,22 @@ const neutralSentiment: SentimentInput = {
   putCallRatio: 0.9, basis: 'open-interest', putTotal: 9_000, callTotal: 10_000, expiration: '2026-09-18',
 };
 
+/**
+ * The same reading WITH the symbol's own percentile basis.
+ *
+ * `neutralSentiment` alone has no basis to be ranked against, which now makes it
+ * `fallback-neutral` — struck from the numerator AND the divisor. Every test
+ * below that is about something other than that rule needs a sentiment that is
+ * genuinely MEASURED, or it would be asserting against a 90 that quietly became
+ * an 80 for a reason it never meant to exercise.
+ *
+ * 0.5 sits inside the neutral percentile band, so this scores exactly what the
+ * absolute bands scored for a 0.9 ratio: zero, and measured.
+ */
+const ratedSentiment = (ownPercentile: number): SentimentInput => ({
+  ...neutralSentiment, ownPercentile, percentileObservations: 60,
+});
+
 function input(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput {
   return {
     symbol: 'TEST',
@@ -89,7 +105,7 @@ function input(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput 
     trend: available(bullishTrend),
     momentum: available<MomentumInput>({ squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }),
     pricing: available<IvPricingInput>(cheapIv),
-    sentiment: available(neutralSentiment),
+    sentiment: available(ratedSentiment(0.5)),
     riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }),
     event: available(farEarnings),
     ...overrides,
@@ -183,7 +199,7 @@ describe('B · Risk/Reward is scored for the side the evidence points at', () =>
       }),
       trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
       momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
-      sentiment: available(neutralSentiment),
+      sentiment: available(ratedSentiment(0.5)),
       riskReward: available(lopsided),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
@@ -246,7 +262,7 @@ describe('the published score is built from post-damping points over live weight
     }),
     trend: available<TrendInput>({ close: 100, ema20: 100, ema50: 100 }),
     momentum: available<MomentumInput>({ squeeze: 'OFF', squeezeMomentum: 0, atr: 2, relativeVolume: 1 }),
-    sentiment: available(neutralSentiment),
+    sentiment: available(ratedSentiment(0.5)),
     riskReward: available(lopsided),
     ...overrides,
   });
@@ -404,7 +420,7 @@ describe('the published score is built from post-damping points over live weight
     // A signal with real weight behind it: dropping a factor that scored zero
     // raises the score, because the surviving evidence is now a larger share of
     // what could have been scored.
-    const bullish = input({ sentiment: available(neutralSentiment) });
+    const bullish = input({ sentiment: available(ratedSentiment(0.5)) });
     const withoutSentiment = input({ sentiment: missing<SentimentInput>('ไม่มี Open Interest') });
 
     const before = calculateOptionsSignal(bullish).diagnostics;
@@ -462,7 +478,7 @@ describe('C · confidence is a product, so a collapsed term cannot be bought bac
       macro: available(bearishMacro),
       trend: available(bullishTrend),
       momentum: available<MomentumInput>({ squeeze: 'FIRED_BEARISH', squeezeMomentum: -2.4, atr: 2, relativeVolume: 1.8 }),
-      sentiment: available(neutralSentiment),
+      sentiment: available(ratedSentiment(0.5)),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
     expect(result.diagnostics.agreement).toBeLessThanOrEqual(0.25);
@@ -471,7 +487,7 @@ describe('C · confidence is a product, so a collapsed term cannot be bought bac
 
   it('still rewards evidence that genuinely agrees', () => {
     const result = calculateOptionsSignal(input({
-      sentiment: available<SentimentInput>({ ...neutralSentiment, putCallRatio: 0.45 }),
+      sentiment: available<SentimentInput>(ratedSentiment(0.05)),
     }));
     if (result.status !== 'available') throw new Error('expected a signal');
     expect(result.diagnostics.agreement).toBe(1);
@@ -584,7 +600,7 @@ describe('G · one published timestamp, and an honest badge when sources diverge
     expect(result.diagnostics.provenance.asOf).toBe(result.asOf);
   });
 
-  it('does NOT raise STALE-MIX at a 5-hour spread', () => {
+  it('does NOT raise STALE-MIX inside one session, whatever the clock says', () => {
     const result = calculateOptionsSignal(input({
       macro: available(bullishMacro, 'DELAYED', at(0)),
       trend: available(bullishTrend, 'DELAYED', at(0)),
@@ -592,39 +608,84 @@ describe('G · one published timestamp, and an honest badge when sources diverge
         { squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }, 'DELAYED', at(0),
       ),
       pricing: available<IvPricingInput>(cheapIv, 'DELAYED', at(5)),
-      sentiment: available(neutralSentiment, 'DELAYED', at(5)),
+      sentiment: available(ratedSentiment(0.5), 'DELAYED', at(5)),
       riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }, 'DELAYED', at(0)),
       event: available(farEarnings, 'DELAYED', at(0)),
     }));
     expect(result.diagnostics.provenance.spreadHours).toBe(5);
+    expect(result.diagnostics.provenance.spreadSessions).toBe(0);
     expect(result.staleMix).toBe(false);
     expect(result.diagnostics.provenance.staleMix).toBe(false);
   });
 
-  it('DOES raise STALE-MIX at a 7-hour spread', () => {
-    const result = calculateOptionsSignal(input({
-      macro: available(bullishMacro, 'DELAYED', at(0)),
-      trend: available(bullishTrend, 'DELAYED', at(0)),
-      momentum: available<MomentumInput>(
-        { squeeze: 'FIRED_BULLISH', squeezeMomentum: 2.4, atr: 2, relativeVolume: 1.8 }, 'DELAYED', at(0),
-      ),
-      pricing: available<IvPricingInput>(cheapIv, 'DELAYED', at(7)),
-      sentiment: available(neutralSentiment, 'DELAYED', at(7)),
-      riskReward: available<RiskRewardInput>({ price: 110, support: 105, resistance: 130, atr: 3 }, 'DELAYED', at(0)),
-      event: available(farEarnings, 'DELAYED', at(0)),
-    }));
-    expect(result.diagnostics.provenance.spreadHours).toBe(7);
-    expect(result.staleMix).toBe(true);
-    expect(result.reasoning.some((reason) => reason.id === 'stale-mix')).toBe(true);
+  /*
+   * THE CASE THE FLAG WAS FIRING ON, AND SHOULD NEVER HAVE FIRED ON.
+   *
+   * 2026-08-21 is a Friday and 2026-08-22 a Saturday. A chain pulled at 23:11 on
+   * the Saturday is a snapshot of FRIDAY's session — the exchange did not open in
+   * between, so there is no newer chain to have pulled. Beside a Friday closing
+   * bar that is 26.7 clock hours and ZERO trading sessions, and only one of those
+   * two numbers is about how current the evidence is.
+   *
+   * Under the old wall-clock rule this fired on every signal computed at a
+   * weekend. A flag that is always up is a flag nobody reads on the day it is
+   * real, which is the entire cost of getting this wrong.
+   */
+  it('does NOT raise STALE-MIX for a Saturday capture of the Friday session', () => {
+    const fridayClose = '2026-08-21T20:00:00.000Z';
+    const saturdayNightPull = '2026-08-22T03:11:00.000Z';
+    const summary = summariseProvenance([
+      { id: 'trend', slot: available(1, 'DELAYED', fridayClose) },
+      { id: 'pricing', slot: available(2, 'DELAYED', saturdayNightPull) },
+    ]);
+    expect(summary.spreadHours).toBeGreaterThan(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours);
+    expect(summary.spreadSessions).toBe(0);
+    expect(summary.staleMix).toBe(false);
   });
 
-  it('sits exactly on the configured boundary without flipping', () => {
+  it('DOES raise STALE-MIX when the sources really are two sessions apart', () => {
+    // Wednesday's close against Friday's: two different days of a market, which
+    // is what the flag has always been for.
     const summary = summariseProvenance([
-      { id: 'a', slot: available(1, 'DELAYED', at(0)) },
-      { id: 'b', slot: available(2, 'DELAYED', at(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours)) },
+      { id: 'trend', slot: available(1, 'DELAYED', '2026-08-19T20:00:00.000Z') },
+      { id: 'pricing', slot: available(2, 'DELAYED', '2026-08-21T20:00:00.000Z') },
     ]);
-    expect(summary.spreadHours).toBe(OPTIONS_SIGNAL_CONFIG.provenance.staleMixHours);
-    expect(summary.staleMix).toBe(false);
+    expect(summary.spreadSessions).toBe(2);
+    expect(summary.staleMix).toBe(true);
+  });
+
+  it('raises it on the first FULL session of separation, and not before', () => {
+    const sameSession = summariseProvenance([
+      // Both inside Wednesday's session: 09:35 and 15:55 ET.
+      { id: 'a', slot: available(1, 'DELAYED', '2026-08-19T13:35:00.000Z') },
+      { id: 'b', slot: available(2, 'DELAYED', '2026-08-19T19:55:00.000Z') },
+    ]);
+    expect(sameSession.spreadSessions).toBe(0);
+    expect(sameSession.staleMix).toBe(false);
+
+    const oneApart = summariseProvenance([
+      { id: 'a', slot: available(1, 'DELAYED', '2026-08-19T20:00:00.000Z') },
+      { id: 'b', slot: available(2, 'DELAYED', '2026-08-20T20:00:00.000Z') },
+    ]);
+    expect(oneApart.spreadSessions).toBe(OPTIONS_SIGNAL_CONFIG.provenance.staleMixSessions);
+    expect(oneApart.staleMix).toBe(true);
+  });
+
+  it('carries the fetch time beside the data time, never instead of it', () => {
+    const summary = summariseProvenance([
+      {
+        id: 'pricing',
+        slot: {
+          status: 'available', state: 'DELAYED', value: 1, provider: 'alpaca',
+          asOf: '2026-08-21T20:00:00.000Z', fetchedAt: '2026-08-22T03:11:00.000Z',
+        },
+      },
+    ]);
+    const [source] = summary.sources;
+    expect(source.asOf).toBe('2026-08-21T20:00:00.000Z');
+    expect(source.fetchedAt).toBe('2026-08-22T03:11:00.000Z');
+    // The published signal time is the DATA time. The fetch never becomes it.
+    expect(summary.asOf).toBe('2026-08-21T20:00:00.000Z');
   });
 
   it('ignores the timestamps of sources that produced nothing', () => {
@@ -842,10 +903,53 @@ describe('a bid-ask spread quoted while the book is shut is not a liquidity grad
 
   it('keeps the open-interest and volume evidence rather than throwing it away', () => {
     const shut = gradeLiquidity({ ...thinLookingAfterHours, marketOpenAtCapture: false });
-    // The badge stops making a claim; the measurement is still there, labelled.
-    expect(shut.offHoursAssessment).toEqual({ grade: 'fair', score: 60 });
-    expect(shut.detail).toContain('ตลาดปิด');
-    expect(shut.detail).toContain('OI กลาง 400');
+    /*
+     * A PASS/FAIL, not a grade and not a score.
+     *
+     * This used to publish `{ grade: 'fair', score: 60 }` and the card rendered
+     * the pair as a badge one line under "คะแนนรวม: —". The measurement is still
+     * kept and still labelled — what it no longer does is dress a partial view up
+     * as a liquidity verdict with a number beside it.
+     */
+    expect(shut.offHoursAssessment).toEqual({ standingPassed: false });
+    expect(shut.detail).toContain('OI/Volume ยังบาง');
+    expect(shut.detail).toContain('สเปรดยังตัดสินไม่ได้');
+    expect(shut.detail).toContain('42%');
+  });
+
+  it('never publishes a score or a green grade in a box whose gate did not pass', () => {
+    const shut = gradeLiquidity({
+      // The case from the report: standing interest comfortably through, and a
+      // spread nobody can grade because the book was shut.
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 6.18,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(shut.grade).toBe('unknown');
+    expect(shut.score).toBeNull();
+    expect(shut.offHoursAssessment).toEqual({ standingPassed: true });
+    // The two facts, in one sentence, in the order a reader needs them.
+    expect(shut.detail).toContain('OI/Volume ผ่านเกณฑ์ (899 / 533)');
+    expect(shut.detail).toContain('สเปรดยังตัดสินไม่ได้ — เก็บตอนตลาดปิดที่ 6.2% ต้องดูซ้ำตอนเปิด');
+    // Nothing anywhere in the box claims a full mark.
+    expect(shut.detail).not.toContain('100');
+    expect(shut.detail).not.toContain('สภาพคล่องดี');
+  });
+
+  it('keeps a very wide closed-book spread as an upper bound instead of discarding it', () => {
+    const wide = gradeLiquidity({
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 42,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(wide.closedSpreadWarning).toContain('กว้างผิดปกติแม้เผื่อผลของตลาดปิด');
+
+    // 6.18% is wide but not wide enough to survive the halving argument, so it
+    // stays a "look again", not a warning. A warning that fires on every closed
+    // book is the flag nobody reads.
+    const ordinary = gradeLiquidity({
+      medianOpenInterest: 899, medianVolume: 533, medianSpreadPercent: 6.18,
+      contractsExamined: 12, expiration: '2026-09-18', marketOpenAtCapture: false,
+    });
+    expect(ordinary.closedSpreadWarning).toBeNull();
   });
 
   it('treats an unknown capture time as unknown, not as closed', () => {
@@ -861,7 +965,7 @@ describe('a bid-ask spread quoted while the book is shut is not a liquidity grad
     }));
     expect(result.liquidityGrade).toBe('unknown');
     expect(result.diagnostics.liquidity.marketOpenAtCapture).toBe(false);
-    expect(result.diagnostics.liquidity.offHoursAssessment?.grade).toBe('fair');
+    expect(result.diagnostics.liquidity.offHoursAssessment).toEqual({ standingPassed: false });
     // And the setup warns the reader to look again when the book reopens.
     expect(result.suggestedOptionsSetup.warnings.some((warning) => warning.includes('ตลาดปิด'))).toBe(true);
     // It is NOT the thin-chain warning: that would be the false claim.
