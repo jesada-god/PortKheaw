@@ -53,16 +53,13 @@ export interface ToolCatalogEntry {
   title: string;
   /** The instrument the tool works on, shown on the card before it is opened. */
   assetScope: ToolAssetScope;
-  description: string;
   /**
-   * Who the tool is for, in one short phrase.
-   *
-   * The index already said what each tool does and which plan it needs; what it
-   * never said is whether the reader is the person it was built for. Static
-   * editorial copy — it names no metric, reads nothing about the reader, and
-   * takes no part in entitlement.
+   * One line, printed on the card. The index is a list of instruments, not a
+   * brochure: what the tool does belongs here, and everything a reader needs
+   * before opening it — the plan, the instrument — is a label elsewhere on the
+   * card rather than another sentence.
    */
-  audience: string;
+  description: string;
   /** The one capability that decides the badge, the locked state and the route guard. */
   capability: SubscriptionCapability;
   category: ToolCategory;
@@ -91,8 +88,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     id: 'what-if',
     title: 'ทดลองสถานการณ์ (What-If)',
     assetScope: 'options',
-    description: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน เพื่อดูว่ามูลค่าสัญญาออปชันอาจเปลี่ยนไปอย่างไร',
-    audience: 'เหมาะกับคนที่ถือสัญญาออปชันอยู่ และอยากรู้ว่าถ้าราคาเปลี่ยนจะเป็นอย่างไร',
+    description: 'ลองเปลี่ยนราคา · วันหมดอายุ · IV',
     capability: 'simulator.what_if',
     category: 'วิเคราะห์ Options',
     route: '/tools/what-if',
@@ -107,8 +103,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     id: 'monte-carlo',
     title: 'จำลองความเป็นไปได้ (Monte Carlo)',
     assetScope: 'options',
-    description: 'จำลองราคาหุ้นหลายพันสถานการณ์ เพื่อดูโอกาสกำไรและความเสี่ยงของสัญญาออปชัน',
-    audience: 'เหมาะกับคนที่อยากเห็นช่วงผลลัพธ์และความเสี่ยงก่อนตัดสินใจ ไม่ใช่แค่ตัวเลขเดียว',
+    description: 'จำลองหลายพันครั้ง ดูช่วงผลลัพธ์',
     capability: 'simulator.monte_carlo',
     category: 'วิเคราะห์ Options',
     route: '/tools/monte-carlo',
@@ -123,8 +118,7 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     id: 'stock-planner',
     title: 'วางแผนหุ้นรายตัว (Stock Planner)',
     assetScope: 'stock',
-    description: 'กำหนดเป้าหมาย ระดับความเสี่ยง และดู Risk : Reward ของแผนก่อนตัดสินใจ',
-    audience: 'เหมาะกับคนที่สนใจหุ้นหรือ ETF รายตัว และอยากวางแผนก่อนซื้อ',
+    description: 'กำหนดจุดเข้า · TP · SL และ Risk/Reward',
     capability: 'planner.stock',
     category: 'วิเคราะห์หุ้น',
     route: '/tools/stock-planner',

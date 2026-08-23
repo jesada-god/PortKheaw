@@ -20,15 +20,33 @@ describe('tools index presentation', () => {
     expect(toolsPageSource).not.toContain('activeTab');
   });
 
-  it('answers what a tool does, who it is for and which plan it needs, on every card', () => {
+  /*
+    The card answers three things and stops: what the tool is, what it does, and
+    which plan opens it. The paragraph naming who each tool was "เหมาะกับ" is
+    gone, and the description is one line rather than a sentence — a catalogue
+    entry, not a pitch. The instrument label stays, because it is the one fact a
+    reader needs before opening a tool that the name does not carry.
+  */
+  it('answers what a tool does and which plan it needs, in one line per card', () => {
     for (const tool of TOOL_CATALOG) {
       expect(tool.description.length).toBeGreaterThan(0);
-      expect(tool.audience.startsWith('เหมาะกับ')).toBe(true);
+      // One line, not a paragraph: short enough that no card wraps into prose.
+      expect(tool.description.length).toBeLessThanOrEqual(48);
+      expect(tool.description).not.toMatch(/เหมาะ(กับ|สำหรับ)|เพื่อดูว่า/);
     }
     expect(toolsPageSource).toContain('{tool.description}');
-    expect(toolsPageSource).toContain('{tool.audience}');
+    expect(toolsPageSource).not.toContain('tool.audience');
     expect(toolsPageSource).toContain('TOOL_ASSET_SCOPE_LABEL[tool.assetScope]');
     expect(toolsPageSource).toContain('PLAN_DISPLAY_NAME');
+  });
+
+  /*
+    The row under the rule printed the category that the heading directly above
+    the grid already printed. One of the two had to go, and it was not the
+    heading.
+  */
+  it('does not repeat the category heading inside the card', () => {
+    expect(toolsPageSource).not.toContain('{tool.category}');
   });
 
   it('leaves entitlement exactly where it was — derived, never written on the card', () => {

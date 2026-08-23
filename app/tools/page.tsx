@@ -83,7 +83,7 @@ export default function ToolsPage() {
                       className="group relative flex min-w-0 flex-col justify-between rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] sm:p-5"
                     >
                       <div className="min-w-0">
-                        <div className="mb-3 flex min-w-0 items-start gap-3">
+                        <div className="mb-2 flex min-w-0 items-start gap-3">
                           <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-control)] ${
                             unlocked ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'bg-[var(--surface-elevated)] text-[var(--text-muted)]'
                           }`}>
@@ -103,24 +103,7 @@ export default function ToolsPage() {
                             </span>
                           )}
                         </div>
-                        {/*
-                          Which instrument the tool is for, said before the reader
-                          opens it. Secondary weight on purpose: it must be readable at
-                          a glance without competing with the plan badge, and it adds
-                          one short line rather than a second block to the card.
-                        */}
-                        <p data-testid={`tool-scope-${tool.id}`} className="mb-2 break-words text-xs font-semibold text-[var(--text-muted)]">
-                          {TOOL_ASSET_SCOPE_LABEL[tool.assetScope]}
-                        </p>
                         <p className="break-words text-sm leading-6 text-[var(--text-secondary)]">{tool.description}</p>
-                        {/*
-                          The third question every card now answers, after what it
-                          does and which plan it needs: whether the reader is the
-                          person it was built for. Static catalog copy.
-                        */}
-                        <p data-testid={`tool-audience-${tool.id}`} className="mt-2 break-words text-xs leading-5 text-[var(--text-muted)]">
-                          {tool.audience}
-                        </p>
                         {!unlocked && (
                           <>
                             {/*
@@ -154,10 +137,18 @@ export default function ToolsPage() {
                         )}
                       </div>
 
-                      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-3.5">
-                        <span className="min-w-0 break-words text-[10px] uppercase tracking-widest text-[var(--text-muted)]">{tool.category}</span>
+                      {/*
+                        The row under the rule used to repeat the category heading
+                        printed directly above the grid. What a reader actually needs
+                        before opening a tool is the instrument it takes, so that label
+                        moves down here and the duplicate goes.
+                      */}
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-3">
+                        <span data-testid={`tool-scope-${tool.id}`} className="min-w-0 break-words text-[10px] uppercase tracking-widest text-[var(--text-muted)]">
+                          {TOOL_ASSET_SCOPE_LABEL[tool.assetScope]}
+                        </span>
                         <span className="flex shrink-0 items-center gap-1 text-sm font-bold text-[var(--accent)]">
-                          {unlocked ? 'ใช้งาน' : `อัปเกรดเป็น ${planName ?? ''}`} <ChevronRight size={16} />
+                          {unlocked ? 'ใช้งาน' : 'อัปเกรด'} <ChevronRight size={16} />
                         </span>
                       </div>
                     </button>

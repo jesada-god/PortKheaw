@@ -203,7 +203,7 @@ describe('the tools index', () => {
     expect(TOOL_CATEGORIES).toEqual(['วิเคราะห์หุ้น', 'วิเคราะห์ Options']);
     const planner = TOOL_CATALOG.find((tool) => tool.id === 'stock-planner')!;
     expect(planner.category).toBe('วิเคราะห์หุ้น');
-    expect(planner.description).toBe('กำหนดเป้าหมาย ระดับความเสี่ยง และดู Risk : Reward ของแผนก่อนตัดสินใจ');
+    expect(planner.description).toBe('กำหนดจุดเข้า · TP · SL และ Risk/Reward');
   });
 
   /* The options tools keep the entitlements they already had. */
