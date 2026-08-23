@@ -1072,6 +1072,15 @@ export function confidenceFromTerms(
 export function confidenceFormulaText(
   terms: { coverage: number; agreement: number; strength: number },
   config = OPTIONS_SIGNAL_CONFIG.confidence,
+  /**
+   * The deductions, so the sentence ends on the number the CARD shows.
+   *
+   * Without this the line stopped at the geometric mean — 46% — while the
+   * headline beside it said 31, which is the same defect one step further along:
+   * a reader who follows the arithmetic to the end has to land on the figure they
+   * were shown, not on an intermediate the copy never named as one.
+   */
+  penaltyTotal = 0,
 ): string {
   const floor = (value: number) => Math.max(config.termFloor, clamp(finite(value) ?? 0, 0, 1));
   const parts: Array<[string, number, number]> = [
@@ -1082,7 +1091,12 @@ export function confidenceFormulaText(
   const result = confidenceFromTerms(terms, config);
   const names = parts.map(([name, , exponent]) => `${name}^${exponent}`).join(' × ');
   const values = parts.map(([, value, exponent]) => `${value.toFixed(2)}^${exponent}`).join(' × ');
-  return `${names} = ${values} = ${result.toFixed(2)} → ${Math.round(result * 100)}%`;
+  const base = `${names} = ${values} = ${result.toFixed(2)}`;
+  const penalty = clamp(finite(penaltyTotal) ?? 0, 0, 1);
+  if (penalty <= 0) return `${base} → ${Math.round(result * 100)}%`;
+  const published = clamp(result - penalty, 0, 1);
+  return `${base} → หักความเสี่ยง ${round(penalty, 2)}`
+    + ` = ${published.toFixed(2)} → ${Math.round(published * 100)}%`;
 }
 
 /**
@@ -1796,7 +1810,11 @@ export function calculateOptionsSignal(input: OptionsSignalInput): OptionsSignal
     agreement: round(agreement, 4),
     evidenceStrength: round(evidenceStrength, 4),
     confidenceBase: round(confidenceBase, 4),
-    confidenceFormula: confidenceFormulaText({ coverage: completeness.value, agreement, strength: evidenceStrength }),
+    confidenceFormula: confidenceFormulaText(
+      { coverage: completeness.value, agreement, strength: evidenceStrength },
+      config.confidence,
+      penaltyTotal,
+    ),
     penalties,
     penaltyTotal,
     dataSufficiency: {

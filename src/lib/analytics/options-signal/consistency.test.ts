@@ -26,6 +26,14 @@ import {
   distanceAtrText,
   distancePercentText,
 } from '@/src/lib/presentation/distance';
+import {
+  available,
+  baseInput,
+  momentum,
+  riskReward,
+  sentiment,
+  trend,
+} from './reported-case.fixture';
 import type {
   EventRiskInput,
   IvPricingInput,
@@ -33,54 +41,10 @@ import type {
   MacroInput,
   MomentumInput,
   OptionsSignalInput,
-  OptionsSignalInputSlot,
   RiskRewardInput,
   SentimentInput,
   TrendInput,
 } from './types';
-
-function available<T>(value: T, state: 'LIVE' | 'DELAYED' | 'STALE' = 'DELAYED'): OptionsSignalInputSlot<T> {
-  return { status: 'available', state, value, provider: 'fixture', asOf: '2026-08-21T20:00:00.000Z' };
-}
-
-const macro: MacroInput = {
-  benchmarks: [
-    { symbol: 'SPY', close: 500, ema20: 480 },
-    { symbol: 'QQQ', close: 380, ema20: 390 },
-  ],
-};
-const trend: TrendInput = { close: 90, ema20: 95, ema50: 100 };
-const momentum: MomentumInput = {
-  squeeze: 'OFF', squeezeMomentum: 1.6, atr: 2, relativeVolume: 1.06,
-};
-const sentiment: SentimentInput = {
-  putCallRatio: 0.9, basis: 'open-interest', putTotal: 9_000, callTotal: 10_000, expiration: '2026-10-02',
-  percentileObservations: 1, ownPercentile: null,
-};
-const riskReward: RiskRewardInput = { price: 100, support: 93.77, resistance: 110.83 };
-const pricing: IvPricingInput = {
-  basis: 'iv-vs-realized', impliedVolatility: 0.986, realizedVolatility: 1.284, ratio: 0.768,
-  observations: 30, realizedWindowDays: 30, dte: 41,
-};
-const event: EventRiskInput = { reportDate: '2026-08-27', daysToEarnings: 5, timeOfDay: 'post-market' };
-
-export function baseInput(overrides: Partial<OptionsSignalInput> = {}): OptionsSignalInput {
-  return {
-    symbol: 'TEST',
-    timeframe: '1D',
-    calculatedAt: '2026-08-22T00:00:00.000Z',
-    latestCandleAt: '2026-08-21',
-    finalizedCandles: 250,
-    macro: available(macro),
-    trend: available(trend),
-    momentum: available(momentum),
-    pricing: available<IvPricingInput>(pricing),
-    sentiment: available(sentiment),
-    riskReward: available(riskReward),
-    event: available(event),
-    ...overrides,
-  };
-}
 
 describe('confidence — the printed formula is the formula that ran', () => {
   it('prints the exponents, so the printed terms multiply out to the printed result', () => {
@@ -117,12 +81,18 @@ describe('confidence — the printed formula is the formula that ran', () => {
     const { diagnostics } = result;
     // The COMPLETENESS is the coverage term, not the weight share: the two are
     // different numbers now, and the sentence has to name the one that ran.
-    expect(diagnostics.confidenceFormula).toBe(confidenceFormulaText({
-      coverage: diagnostics.completeness.value,
-      agreement: diagnostics.agreement,
-      strength: diagnostics.evidenceStrength,
-    }));
-    expect(diagnostics.confidenceFormula).toContain(`${Math.round(diagnostics.confidenceBase * 100)}%`);
+    expect(diagnostics.confidenceFormula).toBe(confidenceFormulaText(
+      {
+        coverage: diagnostics.completeness.value,
+        agreement: diagnostics.agreement,
+        strength: diagnostics.evidenceStrength,
+      },
+      OPTIONS_SIGNAL_CONFIG.confidence,
+      diagnostics.penaltyTotal,
+    ));
+    // And the sentence ends on the number the CARD shows, not on the geometric
+    // mean before the deductions — an intermediate the copy never named as one.
+    expect(diagnostics.confidenceFormula.endsWith(`${result.confidenceScore}%`)).toBe(true);
   });
 
   it('prints the floor rather than a 0.00 nobody could reproduce', () => {
