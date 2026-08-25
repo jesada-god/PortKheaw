@@ -633,7 +633,9 @@ export async function verifyStripeWebhook(
     : null;
 
   let subscription: Stripe.Subscription | null = null;
-  const subscriptionId = classifyStripeEvent(event.type) !== 'ignored'
+  let lookupFailed = false;
+  const kind = classifyStripeEvent(event.type);
+  const subscriptionId = kind !== 'ignored'
     ? subscriptionIdFromEvent(event)
     : refundLinkage?.subscriptionId ?? null;
   if (subscriptionId) {
@@ -644,10 +646,18 @@ export async function verifyStripeWebhook(
       }
     } catch (error) {
       if (error instanceof BillingModeMismatchError) throw error;
-      // A subscription we cannot read yields an event with no state, which the
-      // database routine records and applies nothing from. Failing closed here
-      // is what stops a transient API error from clearing someone's plan.
+      /*
+       * A subscription we cannot read is a failure, not an answer. Failing
+       * closed here still stops a transient API error from clearing someone's
+       * plan — nothing is written — but the delivery is now *flagged* rather
+       * than quietly normalized into a stateless event: an event this build
+       * would otherwise act on must be retried until the provider answers, and
+       * dead-lettered if it never does. Reported only for the kinds that carry
+       * entitlement; a refund whose linkage we already resolved does not need
+       * the subscription object to reach its own ledger.
+       */
       subscription = null;
+      lookupFailed = kind !== 'ignored';
     }
   }
 
@@ -656,6 +666,7 @@ export async function verifyStripeWebhook(
     : null;
 
   const normalized = normalizeStripeEvent(event, subscription, refund);
+  if (lookupFailed) return { ...normalized, providerLookupFailed: true };
   if (
     normalized.state
     && normalized.planKey

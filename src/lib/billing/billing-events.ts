@@ -103,6 +103,17 @@ export interface NormalizedBillingEvent {
   /** Absent on events that carry identity but assert no subscription state. */
   state: NormalizedSubscriptionState | null;
   /**
+   * The provider's current view of the subscription could not be read.
+   *
+   * Distinct from `state: null`, which is a *decision* — an event that asserts
+   * nothing, and is meant to be recorded and applied from. This is a failure:
+   * we do not know what the subscription says, so nothing may be written from
+   * it and the delivery has to be retried rather than settled. Without the
+   * distinction a transient provider outage claimed the event id as `ignored`
+   * and every redelivery of it came back `duplicate`, losing the event for good.
+   */
+  providerLookupFailed?: boolean;
+  /**
    * Phase 5. What the provider billed, when the event concerned an invoice.
    *
    * Recorded separately from entitlement and by a routine that cannot grant
