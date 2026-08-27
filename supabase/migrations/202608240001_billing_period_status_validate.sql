@@ -1,0 +1,37 @@
+-- ---------------------------------------------------------------------------
+-- Validate the granting-status/period constraint
+-- ---------------------------------------------------------------------------
+--
+-- Separate from `202608240003` because it can only succeed *after* the five
+-- rows reported as `missing-period-end` have been corrected by
+-- `scripts/backfill-billing-period-end.ts`. Running it first would abort the
+-- release; running it after turns the rule from "enforced going forward" into
+-- "true of every row in the table", which is what lets the planner and every
+-- later reader rely on it.
+--
+-- Ordering, deliberately:
+--
+--   1. deploy `202608240003` — new rows can no longer break the rule;
+--   2. run the backfill with `--dry-run`, read the report, then run it for real;
+--   3. deploy this file.
+--
+-- Renumbered from `202608230002` to `202608240001` so filename order matches
+-- deployment order: `supabase db push` applies migrations in name order and
+-- cannot be told to skip one, and at `202608230002` this file sorted *before*
+-- `202608230003` and therefore before the backfill it depends on.
+--
+-- `validate constraint` takes only a SHARE UPDATE EXCLUSIVE lock: it scans the
+-- table without blocking reads or writes, which matters because
+-- `user_subscriptions` is on the path of every authenticated request.
+--
+-- If this migration fails with 23514, the backfill has not finished — some row
+-- still holds `active`/`past_due` with no `current_period_end`. Find them with:
+--
+--   select user_id, status, tier, billing_subscription_id, current_period_end
+--   from public.user_subscriptions
+--   where status in ('active', 'past_due') and current_period_end is null;
+--
+-- Do not fix them by hand with a guessed date. The backfill exists so the value
+-- comes from a paid invoice or does not come at all.
+alter table public.user_subscriptions
+  validate constraint user_subscriptions_granting_status_period_check;

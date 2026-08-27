@@ -107,6 +107,21 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'verification_failed' }, { status: 400 });
   }
 
+  /*
+   * The provider's own view of the subscription could not be read, so this
+   * build does not know what the event asserts.
+   *
+   * Nothing is applied and — importantly — nothing is *claimed*: calling the
+   * apply routine here would insert the event id as `ignored`, and every
+   * redelivery of it would then come back `duplicate`, so a thirty-second
+   * provider outage would silently lose a paid subscription. Instead the
+   * delivery takes the ordinary failure path: 500 while retries remain, and a
+   * dead letter with an operator alert once they run out.
+   */
+  if (event.providerLookupFailed) {
+    return failDelivery(event, 'subscription_unavailable');
+  }
+
   // A digest, never the body. Enough to prove two deliveries carried the same
   // bytes, and useless to anybody who reads the row.
   const payloadDigest = createHash('sha256').update(rawBody).digest('hex');

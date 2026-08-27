@@ -6,6 +6,15 @@ const mocks = vi.hoisted(() => ({
   applyBillingEvent: vi.fn(),
   applyBillingPaymentRail: vi.fn(),
   revalidate: vi.fn(),
+  readWebhookAttemptCount: vi.fn(),
+  recordWebhookAttempt: vi.fn(),
+  markWebhookAlerted: vi.fn(),
+  resolveWebhookRetry: vi.fn(),
+  recordBillingInvoice: vi.fn(),
+  applyBillingRefundEvent: vi.fn(),
+  notifyAdmins: vi.fn(),
+  notifyAccount: vi.fn(),
+  captureServerError: vi.fn(),
 }));
 
 vi.mock('@/src/lib/billing/billing-server', () => ({ getBillingConfig: mocks.getBillingConfig }));
@@ -22,6 +31,19 @@ vi.mock('@/src/lib/billing/providers/stripe/stripe-provider', () => ({
 vi.mock('@/src/lib/subscription/revalidate-entitlements', () => ({
   revalidateEveryEntitlementSurface: mocks.revalidate,
 }));
+vi.mock('@/src/lib/billing/billing-operations', () => ({
+  readWebhookAttemptCount: mocks.readWebhookAttemptCount,
+  recordWebhookAttempt: mocks.recordWebhookAttempt,
+  markWebhookAlerted: mocks.markWebhookAlerted,
+  resolveWebhookRetry: mocks.resolveWebhookRetry,
+  recordBillingInvoice: mocks.recordBillingInvoice,
+  applyBillingRefundEvent: mocks.applyBillingRefundEvent,
+}));
+vi.mock('@/src/lib/notifications/dispatch', () => ({
+  notifyAdmins: mocks.notifyAdmins,
+  notifyAccount: mocks.notifyAccount,
+}));
+vi.mock('@/src/lib/monitoring/report', () => ({ captureServerError: mocks.captureServerError }));
 
 const { POST } = await import('./route');
 const { BillingModeMismatchError, BillingSignatureError } = await import(
@@ -40,6 +62,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getBillingConfig.mockReturnValue({ providerMode: 'live' });
   mocks.applyBillingPaymentRail.mockResolvedValue({ railUpdated: true, pendingCleared: true });
+  mocks.readWebhookAttemptCount.mockResolvedValue(0);
+  mocks.recordWebhookAttempt.mockResolvedValue({ attemptCount: 1, status: 'retrying', nextAttemptAt: null, newlyDeadLettered: false });
+  mocks.markWebhookAlerted.mockResolvedValue(true);
+  mocks.resolveWebhookRetry.mockResolvedValue(undefined);
 });
 
 describe('billing webhook route isolation', () => {
@@ -145,6 +171,66 @@ describe('billing webhook route isolation', () => {
       await POST(request());
 
       expect(mocks.applyBillingPaymentRail).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+   * The provider's own view of the subscription could not be read.
+   *
+   * This is a failure, not an event that happens to assert nothing — and the
+   * difference is the whole point: applying it would claim the event id, every
+   * redelivery would come back `duplicate`, and a thirty-second Stripe outage
+   * would silently lose a paid subscription for good.
+   */
+  describe('when the provider lookup fails', () => {
+    const unreadable = {
+      eventType: 'invoice.payment_failed',
+      providerMode: 'live' as const,
+      eventId: 'evt_unreadable',
+      kind: 'payment_failed',
+      userId: null,
+      subscriptionId: null,
+      collectionMethod: null,
+      occurredAt: '2026-08-23T00:00:00.000Z',
+      state: null,
+      providerLookupFailed: true,
+    };
+
+    it('asks for a redelivery instead of applying or claiming the event', async () => {
+      mocks.verifyStripeWebhook.mockResolvedValue(unreadable);
+
+      const response = await POST(request());
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'processing_failed' });
+      expect(mocks.applyBillingEvent).not.toHaveBeenCalled();
+      expect(mocks.applyBillingPaymentRail).not.toHaveBeenCalled();
+      expect(mocks.revalidate).not.toHaveBeenCalled();
+      expect(mocks.recordWebhookAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ errorCode: 'subscription_unavailable', eventId: 'evt_unreadable' }),
+      );
+    });
+
+    /*
+     * The bound. Once the retries are spent the delivery stops being a retry and
+     * becomes an operator's problem — answered 200 so the provider releases the
+     * endpoint, with an alert and a monitoring report so the loss is visible.
+     */
+    it('dead-letters and alerts once the retries are spent', async () => {
+      mocks.verifyStripeWebhook.mockResolvedValue(unreadable);
+      mocks.recordWebhookAttempt.mockResolvedValue({
+        attemptCount: 8, status: 'dead_letter', nextAttemptAt: null, newlyDeadLettered: true,
+      });
+
+      const response = await POST(request());
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ received: true, outcome: 'dead_letter' });
+      expect(mocks.applyBillingEvent).not.toHaveBeenCalled();
+      expect(mocks.notifyAdmins).toHaveBeenCalledOnce();
+      expect(mocks.captureServerError).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'billing.webhook.dead-letter' }),
+      );
     });
   });
 
