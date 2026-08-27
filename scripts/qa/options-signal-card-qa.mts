@@ -40,7 +40,7 @@ import { EntitlementProvider } from '@/src/components/subscription/EntitlementPr
 import { OptionsSignalSection } from '@/src/components/analytics/options-signal/OptionsSignalSection';
 import { OPTIONS_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
 import { OPTIONS_SIGNAL_PRESENTATION } from '@/src/components/analytics/options-signal/presentation';
-import { CASES } from './options-signal-header-cases';
+import { CASES } from './options-signal-card-cases';
 
 /*
  * The project compiles JSX with the classic runtime under tsx, so the
@@ -138,6 +138,19 @@ for (const entry of CASES) {
   }
   if (/\d/.test(card.headline)) {
     failures.push(`${entry.name}: headline carries a figure — "${card.headline}"`);
+  }
+  /*
+   * AND NO FACTOR SCORE EITHER, by the same shape rule.
+   *
+   * `Macro +12/ 20 · Trend +18/ 25 · …` sat under the state line until the
+   * change this check arrived with. `+n/m` is the form and nothing else on the
+   * card takes it: the setup line is a RANGE ("30–60 DTE", "Delta 0.35–0.50"),
+   * the IV row is a multiple ("1.08×"), and the earnings row is a count of days
+   * — none of them signed, none of them over a denominator.
+   */
+  const factorScore = /[+\-]\d+\s*\/\s*\d+/.exec(card.cardText);
+  if (factorScore) {
+    failures.push(`${entry.name}: card carries a factor score — "${factorScore[0]}"`);
   }
 
   // 3 — the card agrees with the mapper, in level and in wording.

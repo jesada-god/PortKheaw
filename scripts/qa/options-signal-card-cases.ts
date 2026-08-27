@@ -1,5 +1,5 @@
 /**
- * Fixtures for the Options Signal card header probe.
+ * Fixtures for the Options Signal card probe.
  *
  * They are DTOs rather than engine output on purpose: the header prints two
  * numbers and two words, and what this probe is about is where those four boxes

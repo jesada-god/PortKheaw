@@ -32,7 +32,7 @@ import React from 'react';
 import { hydrateRoot } from 'react-dom/client';
 import { EntitlementProvider } from '@/src/components/subscription/EntitlementProvider';
 import { OptionsSignalSection } from '@/src/components/analytics/options-signal/OptionsSignalSection';
-import { CASES } from './options-signal-header-cases';
+import { CASES } from './options-signal-card-cases';
 
 const byName = new Map(CASES.map((entry) => [entry.name, entry]));
 
