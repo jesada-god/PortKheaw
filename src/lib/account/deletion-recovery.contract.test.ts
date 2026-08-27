@@ -159,6 +159,29 @@ describe('the QA cleanup', () => {
   });
 
   /*
+   * Recovering a stuck deletion is a per-account decision, and PLAN.md §7
+   * requires every step that touches somebody's rows to name one. Without the
+   * flag the only options were "every matching account" or "edit the source
+   * first", which is not a choice anybody should be making against production.
+   *
+   * The narrowing must sit AFTER the owner and mailbox proofs, never instead of
+   * them: an id that is not a QA account has to select nothing rather than
+   * bypassing the rules that decide what is ours.
+   */
+  it('can act on one named account, without loosening what counts as ours', () => {
+    expect(QA_CLEANUP).toContain("--user=");
+    expect(QA_CLEANUP).toMatch(/UUID_PATTERN\.test\(value\)/);
+
+    const finder = QA_CLEANUP.slice(QA_CLEANUP.indexOf('async function findQaAccounts'));
+    const ownerAt = finder.indexOf('owners.has(owner)');
+    const mailboxAt = finder.indexOf('QA_EMAIL_DOMAIN');
+    const narrowAt = finder.indexOf('onlyUser');
+    expect(ownerAt).toBeGreaterThan(-1);
+    expect(narrowAt).toBeGreaterThan(ownerAt);
+    expect(narrowAt).toBeGreaterThan(mailboxAt);
+  });
+
+  /*
    * A failure has to be readable. `auth.admin.deleteUser` reports a GoTrue 500
    * as an `AuthRetryableFetchError` whose `message` is the string "{}" — which
    * is what this command printed for four accounts while the real answer was a

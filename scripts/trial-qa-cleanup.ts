@@ -12,6 +12,7 @@
  *   npm run trial:qa-cleanup                # preview, the default
  *   npm run trial:qa-cleanup -- --apply
  *   npm run trial:qa-cleanup -- --mark=<claim-id>,<claim-id> --apply
+ *   npm run trial:qa-cleanup -- --user=<uuid> --apply     # one account only
  *
  * THE SECOND KIND: QA ACCOUNTS. The browser QA runs sign in as real accounts,
  * so they create real users — `qa:phase1-ux` alone makes two per run, one Elite
@@ -56,7 +57,32 @@ if (!url || !serviceRoleKey) {
   process.exit(1);
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const apply = process.argv.includes('--apply');
+
+/**
+ * `--user=<uuid>`: act on ONE account and refuse the rest.
+ *
+ * The account sweep is the only part of this command that touches somebody's
+ * rows, and recovering a stuck deletion is a per-account decision — the plan in
+ * PLAN.md §7 requires it, and `account:reconcile` already spells the flag this
+ * way. Without it the only options were "all of them" or "edit the source",
+ * which is not a choice anybody should have to make against production.
+ *
+ * The narrowing is applied AFTER the owner and mailbox rules, never instead of
+ * them: naming an id that is not a QA account selects nothing.
+ */
+const onlyUser = (() => {
+  const flag = process.argv.find((argument) => argument.startsWith('--user='));
+  if (!flag) return null;
+  const value = flag.slice('--user='.length).trim();
+  if (!UUID_PATTERN.test(value)) {
+    console.error(`--user must be a uuid; got ${JSON.stringify(value)}`);
+    process.exit(1);
+  }
+  return value.toLowerCase();
+})();
 const markIds = (() => {
   const flag = process.argv.find((argument) => argument.startsWith('--mark='));
   if (!flag) return [] as string[];
@@ -64,7 +90,7 @@ const markIds = (() => {
     .slice('--mark='.length)
     .split(',')
     .map((value) => value.trim())
-    .filter((value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value));
+    .filter((value) => UUID_PATTERN.test(value));
 })();
 
 /*
@@ -111,6 +137,8 @@ async function findQaAccounts(): Promise<AdminUser[]> {
       const owner = user.user_metadata?.qa_owner;
       if (typeof owner !== 'string' || !owners.has(owner)) continue;
       if (!user.email?.endsWith(QA_EMAIL_DOMAIN)) continue;
+      // The narrowing goes here, past both proofs, never in place of them.
+      if (onlyUser && user.id.toLowerCase() !== onlyUser) continue;
       found.push(user);
     }
     if (users.length < 200) break;
@@ -235,6 +263,7 @@ async function main() {
     event: 'trial_qa_cleanup',
     stage: 'accounts_preview',
     owners: QA_OWNERS,
+    scopedToUser: onlyUser,
     deletable: accounts.length,
     emails: accounts.map((account) => account.email),
   }));
