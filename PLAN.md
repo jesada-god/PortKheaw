@@ -190,3 +190,162 @@ pure function อ่านจาก payload ที่ `app/page.tsx` โหล�
 **ข้อจำกัดของการตรวจ 390px:** รันแบบ **ไม่ล็อกอิน** (ไม่สร้าง user ใน Supabase จริง) จึงยืนยันได้เฉพาะ layout / overflow / placeholder
 สิ่งที่ยังไม่ได้ตรวจสด: ลำดับเหนือ fold ของ **ผู้ใช้ที่ล็อกอินแล้ว** (ตลาดวันนี้ → การ์ดพอร์ต) และแถวสถานะ แนวโน้ม/แรงส่ง ซึ่งต้องมีสิทธิ์ Elite
 ถ้าต้องการตรวจครบ ใช้ `npm run qa:phase1-ux` ซึ่งสร้าง session จริง (แตะ Supabase ของจริง)
+---
+
+## 7. Account deletion recovery
+
+> ### ✅ ปิดเรื่องแล้ว — ไม่มีบัญชีผู้ใช้จริงติดค้าง (2026-08-28)
+>
+> ตรวจ **ก่อน** ลง migration ด้วย query ชุดที่ 1 → **0 ทุกคอลัมน์**
+> `accounts_closed_and_unfinished = 0` แปลว่า `account_lifecycle` **ไม่มีแถวไหนที่ `status='deleting'` เลย**
+> ชุดที่ 2 ใช้เงื่อนไข `where` เดียวกัน จึงคืน **0 แถวโดยปริยาย** ไม่ต้องรันก็รู้ผล
+>
+> **ผลนี้ไม่ได้รับผลจาก migration** — ชุดที่ 1 ไม่ได้เรียก `account_residual_data_count` เลย
+> มันนับเองทั้งหมดจาก `account_lifecycle` + inline count และ `202608280001` แก้แค่สองฟังก์ชัน ไม่แตะตารางนั้น
+> (ที่ §7.1 เตือนว่าตัวเลขจะขยับหลัง migration คือ **คอลัมน์ `residual_reported` ของชุดที่ 2** เท่านั้น — พิสูจน์แล้วกับ QA account: 20 → 27)
+>
+> **`202608280001` จึงเป็นงานป้องกัน ไม่ใช่งานกู้ซาก** ไม่มีใครเคยติดบั๊กนี้จริงก่อนถูกแก้
+>
+> ขั้นตอนกู้ทั้ง 3 กรณีข้างล่าง **คงไว้ทั้งหมด** เผื่อเกิดอีก · ใช้คู่กับ [`docs/operations/account-deletion-recovery.md`](docs/operations/account-deletion-recovery.md)
+> ถ้าจะใช้จริงวันหลัง ให้รันชุดที่ 1 ก่อนเสมอเพื่อดูว่ามีใครค้างไหม แล้วค่อยดูรายตัวด้วยชุดที่ 2
+
+แผนกู้บัญชีที่ `deleteAccount` ค้างกลางทาง
+
+เอกสารปฏิบัติการฉบับเต็มคือ [`docs/operations/account-deletion-recovery.md`](docs/operations/account-deletion-recovery.md) — หัวข้อนี้ไม่แทนที่ มันคือ **ส่วนต่อขยายสำหรับบั๊ก 23503 ตัวนี้โดยเฉพาะ** และจุดที่ runbook เดิมยังไม่ครอบ
+
+### 7.0 กฎที่ใช้กับทุกกรณี
+
+| กฎ | เหตุผล |
+|---|---|
+| **ทีละคน ห้าม batch** — `--user=<uuid>` เสมอ ห้ามรัน `--apply` เปล่า ๆ | `--apply` เปล่าจะไล่ทุกแถวที่ค้าง รวมถึงคนที่เรายังไม่ได้ตรวจ |
+| **verify ก่อนขั้นถัดไปทุกครั้ง** | ทุกขั้นหลัง step 3 ทำลายข้อมูลถาวร ย้อนไม่ได้ |
+| **ห้ามยิง `delete` ใส่ data table เอง** | `purge_account_data` คือตัวที่รู้ลำดับ dependency · เขียนเองแปลว่าเดา |
+| **ห้ามเรียก `auth.admin.deleteUser` ตรง ๆ** | มันเป็น step 6 ที่ต้องมี residual = 0 พิสูจน์ก่อน · reconciler บังคับให้ ส่วนมือเราไม่บังคับ |
+| ทุกคำสั่ง **preview เป็น default** — `--apply` คือการตัดสินใจ | ตรงกับ contract ของ `account:reconcile` อยู่แล้ว |
+
+**ลำดับใหญ่ที่ห้ามสลับ:** รัน migration `202608280001` → verify → ค่อยกู้รายคน
+กู้ก่อน migration ไม่ได้ เพราะ `purge_account_data` ตัวเก่ายังล้มด้วย 23503 เหมือนเดิม
+
+### 7.1 ⚠️ ผลข้างเคียงของ migration ที่ต้องรู้ก่อนตัดสินใจ
+
+`202608280001` แก้ **สองฟังก์ชัน** — `purge_account_data` (ลบครบขึ้น) และ `account_residual_data_count` (นับครบขึ้น)
+
+แปลว่า **บัญชีที่วันนี้อ่านได้ residual = 0 อาจกลายเป็น > 0 หลัง migration** ถ้ามันเคยผ่าน purge ตัวเก่าไปแล้วแต่ยังมีแถวลูกค้างอยู่
+
+ผลที่ตามมา: **กรณี 3 บางรายจะกลายเป็นกรณี 1** และ reconciler จะ**ปฏิเสธ**ที่จะลบ auth user ให้ — ซึ่ง **ถูกต้องแล้ว** เพราะสมุดบัญชียังอยู่จริง ๆ
+
+> อย่าตกใจถ้าตัวเลข "ค้าง" เพิ่มขึ้นหลัง migration — นั่นคือของที่ซ่อนอยู่ก่อนหน้านี้โผล่มา ไม่ใช่ของใหม่ที่เพิ่งพัง
+> **ให้รัน query ชุดที่ 2 ซ้ำอีกรอบหลัง migration** แล้วใช้ผลรอบนั้นเป็นฐานในการกู้
+
+---
+
+### กรณี 1 — `blocked by 23503 (step 4)`
+
+reconciler เรียกสถานะนี้ว่า **`purge_pending`** (`stage='provider_settled'`) · provider settle แล้ว ข้อมูลยังอยู่
+
+**เงื่อนไขตรวจก่อนทำ**
+- [ ] migration `202608280001` ลงบน production แล้ว และ `pg_get_functiondef('public.purge_account_data(uuid)'::regprocedure)` มีคำว่า `portfolio_transactions`
+- [ ] รัน query ชุดที่ 2 **ซ้ำหลัง migration** — ยืนยันว่า user คนนี้ยัง `stage='provider_settled'` และ `purge_would_fail = true`
+- [ ] `user_id` ไม่ใช่ owner account ที่ seed ไว้ (`52e7b434-1dca-4636-88ab-ea9bdf063761`)
+- [ ] จดค่า `ledger_rows` / `residual_reported` ไว้ก่อน เพื่อเทียบหลังทำ
+
+**คำสั่ง — ทีละคน**
+```bash
+npm run account:reconcile -- --user=<uuid>            # preview: ต้องได้ resume-purge
+npm run account:reconcile -- --user=<uuid> --apply
+```
+`--apply` จะทำให้ครบสาย: ล้าง storage → `purge_account_data` → advance stage → วัด residual → ลบ auth user
+**ไม่ต้องเรียก RPC เอง** — เรียกเองคือข้ามด่านตรวจ residual ที่ reconciler บังคับไว้
+
+**verify ว่าสำเร็จ**
+```sql
+select public.account_residual_data_count('<uuid>');                          -- ต้องได้ 0
+select count(*) from public.account_lifecycle where user_id = '<uuid>';       -- ต้องได้ 0
+select count(*) from auth.users where id = '<uuid>';                          -- ต้องได้ 0
+```
+ครบสามข้อ = จบจริง (แถว lifecycle หายเพราะ cascade จาก `auth.users` — "จบ" สังเกตได้จากการ**ไม่มี**แถว)
+
+**🛑 หยุดขออนุมัติเมื่อ**
+- preview คืน `report-only` แทน `resume-purge` → สถานะไม่ตรงกับที่คาด **อย่า apply**
+- `--apply` แล้ว residual ยังไม่เป็น 0 → ยังมีตารางที่ purge list ไม่รู้จักอีก ต้องหาก่อน **ห้ามลบ auth user ต่อ**
+- คนแรกที่กู้สำเร็จ → **หยุด รายงาน ขออนุมัติก่อนทำคนที่ 2** (ตามกฎ 1 user พิสูจน์)
+
+---
+
+### กรณี 2 — `never got past step 1-3`
+
+reconciler เรียกสถานะนี้ว่า **`closing`** (`stage='requested'`) · **migration นี้ไม่ได้แก้ให้** เพราะยังไปไม่ถึง purge เลย
+
+**❗ แก้ความเข้าใจผิดหนึ่งข้อ:** `cancel_account_deletion` **ยังใช้ได้กับกรณีนี้** — มันทำงานได้ *เฉพาะ* ตอน `stage='requested'` และจะ raise `ACCOUNT_DELETION_IRREVERSIBLE` เมื่อพ้นไปแล้ว ([`202608060002:556`](supabase/migrations/202608060002_account_deletion_and_trial_identity.sql#L556))
+กรณี 2 คือ `stage='requested'` พอดี → **ยังไม่มีอะไรถูกทำลาย และคืนบัญชีได้**
+ที่คืนไม่ได้คือกรณี 1 กับ 3 ซึ่งพ้น `requested` ไปแล้ว
+
+**สาเหตุที่ต้องดูต่อ** — ล้มที่ step 2 หรือ 3
+| step | ล้มเพราะอะไร | ดูที่ไหน |
+|---|---|---|
+| 2 · trial ledger | เขียน `trial_identity_claims` ไม่สำเร็จ | `npm run probe:trial-retention` · ตาราง `trial_identity_claims` |
+| 3 · settle provider | ยกเลิก subscription บน Stripe ไม่สำเร็จ / Stripe ไม่ตอบ | **Stripe dashboard** ดูสถานะจริงของ subscription · `billing_subscription_id` ใน `user_subscriptions` |
+
+**เงื่อนไขตรวจก่อนทำ**
+- [ ] เช็ค Stripe dashboard ก่อน — subscription ยังเก็บเงินอยู่หรือยกเลิกไปแล้ว **นี่คือข้อที่สำคัญที่สุด** เพราะคนนี้เขียนอะไรไม่ได้แต่ยังอาจถูกเรียกเก็บเงิน
+- [ ] `stage='requested'` จริง (ไม่ใช่ `provider_settled`)
+
+**คำสั่ง — เลือกทางเดียว ต้องให้ Bas ตัดสิน**
+
+*ทาง ก. ปิดบัญชีต่อให้จบ* — reconciler ทำให้ไม่ได้ (มันไม่แตะ Stripe โดยตั้งใจ) ต้องรันผ่าน in-app pipeline จาก authenticated context: ให้เจ้าของกดลบซ้ำ หรือรันแทน · ทุก step idempotent กดซ้ำไม่ double-cancel
+
+*ทาง ข. คืนบัญชีให้กลับมาใช้ได้*
+```sql
+-- ต้องได้ 'active' · ถ้า raise ACCOUNT_DELETION_IRREVERSIBLE แปลว่าไม่ใช่กรณี 2
+select public.cancel_account_deletion('<uuid>');
+```
+ต้องแน่ใจก่อนว่า Stripe อยู่ในสถานะที่เจ้าของยอมรับได้ — คืนบัญชีทั้งที่ subscription ถูกยกเลิกไปแล้ว = คนละเรื่องกับที่เขาสมัครไว้
+
+*ทาง ค. ปล่อยไว้* — runbook §4 บอกว่าถ้า provider ติดต่อไม่ได้นาน ปล่อยไว้ได้ บัญชีปิดรับ write และไม่มีอะไรหาย
+
+**verify**
+- ทาง ก → เหมือนกรณี 1 (residual 0 / ไม่มีแถว lifecycle / ไม่มี auth user)
+- ทาง ข → `select status, stage from public.account_lifecycle where user_id='<uuid>'` ต้องได้ `active` / `null` และเจ้าของเขียนข้อมูลได้อีกครั้ง
+
+**🛑 หยุดขออนุมัติเมื่อ** — **ทุกกรณีของกรณี 2** นี่ไม่ใช่งาน routine: เลือกระหว่างปิดบัญชีถาวรกับคืนบัญชีให้คน เป็นการตัดสินใจของ Bas ไม่ใช่ของสคริปต์ และมีเงินของจริงอยู่ปลายทาง
+
+---
+
+### กรณี 3 — `purged but auth user remains (step 6)`
+
+reconciler เรียกสถานะนี้ว่า **`awaiting_auth_delete`** (`stage='data_purged'`) · ข้อมูลหมดแล้ว เหลือ auth user
+
+**❗ ไม่มี nightly job** — ตรวจแล้ว: cron route มีตัวเดียวคือ [`app/api/cron/alerts`](app/api/cron/alerts) และไม่มี `vercel.json` / schedule ไหนเรียก `account:reconcile` เลย
+**`account:reconcile` เป็นคำสั่งมือล้วน ๆ ไม่มีรอบอัตโนมัติให้รอ** ต้องมีคนรัน ถ้าอยากให้มีรอบอัตโนมัติ นั่นคืองานแยก (Phase 2)
+
+**เงื่อนไขตรวจก่อนทำ**
+- [ ] รัน query ชุดที่ 2 **หลัง migration** — เพราะ `account_residual_data_count` นับครบขึ้นแล้ว บางรายอาจเด้งไปเป็นกรณี 1 (ดู §7.1) ถ้าเด้ง → ใช้ขั้นตอนกรณี 1 แทน
+- [ ] `residual_reported = 0` และ `purge_would_fail = false`
+
+**คำสั่ง — ทีละคน**
+```bash
+npm run account:reconcile -- --user=<uuid>            # preview: ต้องได้ delete-auth-user
+npm run account:reconcile -- --user=<uuid> --apply
+```
+reconciler จะ **วัด residual ใหม่** และยืนยัน stage อีกครั้งก่อนลบเสมอ — มันไม่ลบจากชื่อ stage เฉย ๆ
+
+**verify**
+```sql
+select count(*) from auth.users where id = '<uuid>';                     -- 0
+select count(*) from public.account_lifecycle where user_id = '<uuid>';  -- 0
+```
+แล้วเช็คว่า trial claim ยังอยู่ (runbook §6) — ledger คือสิ่งที่กันคนสมัครใหม่ด้วยอีเมลเดิมเพื่อเอา trial ซ้ำ การกู้ต้องไม่ลบมันทิ้ง
+
+**🛑 หยุดขออนุมัติเมื่อ**
+- preview คืน `report-only` เพราะ `residual row count unreadable` → **อ่านไม่ได้ ไม่เท่ากับ 0** ห้าม apply
+- preview คืน `resume-purge` แทน `delete-auth-user` → แปลว่ากลายเป็นกรณี 1 ไปแล้ว
+
+---
+
+### 7.2 หลังกู้เสร็จทุกคน
+
+```bash
+npm run account:reconcile          # preview เปล่า ต้องไม่เหลืออะไรค้าง (หรือเหลือเฉพาะที่ตั้งใจ)
+npm run probe:trial-retention      # ต้องสะอาด
+```
+แล้วรัน query ชุดที่ 1 ซ้ำ — `accounts_closed_and_unfinished` ควรเป็น 0 หรือเท่ากับจำนวนที่ตั้งใจปล่อยไว้

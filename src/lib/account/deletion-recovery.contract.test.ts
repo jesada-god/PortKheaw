@@ -117,9 +117,65 @@ describe('the QA cleanup', () => {
     expect(QA_CLEANUP).not.toMatch(/admin\.from\(/);
     expect(QA_CLEANUP).not.toMatch(/\.delete\(\)/);
 
+    /*
+     * THE LIST GREW BY TWO, and the property it protects is unchanged: every
+     * name here is a routine whose own body decides what it may touch, and the
+     * command still builds no query of its own.
+     *
+     * The command now also sweeps the ACCOUNTS the browser QA leaves behind, and
+     * an auth user cannot be deleted before its data is — `portfolios` cascades
+     * from `auth.users` while `portfolio_transactions` is `on delete restrict`,
+     * so a bare `deleteUser` raises 23503 and fails. `purge_account_data` is the
+     * routine that knows the order (the same one `deleteAccount` calls), and
+     * `account_residual_data_count` is asked afterwards whether it worked: a
+     * non-zero answer leaves the auth user in place, because once it is gone the
+     * rows it left behind belong to nobody.
+     *
+     * Both are `security definer` and both take only a user id. Neither is a
+     * query this file assembled, which is the distinction the test exists for.
+     */
     const calls = [...QA_CLEANUP.matchAll(/admin\.rpc\('([a-z_]+)'/g)].map((match) => match[1]);
-    expect([...new Set(calls)].sort())
-      .toEqual(['delete_qa_trial_identity_claims', 'mark_trial_identity_claim_origin']);
+    expect([...new Set(calls)].sort()).toEqual([
+      'account_residual_data_count',
+      'delete_qa_trial_identity_claims',
+      'mark_trial_identity_claim_origin',
+      'purge_account_data',
+    ]);
+  });
+
+  /*
+   * The auth user goes LAST, and only over a proved-empty account. Asserted on
+   * the source because the ordering is the whole fix: the previous version
+   * deleted the user first and reported four failures whose message was "{}".
+   */
+  it('purges the data before it deletes the auth user, and proves it emptied', () => {
+    const purgeAt = QA_CLEANUP.indexOf("admin.rpc('purge_account_data'");
+    const countAt = QA_CLEANUP.indexOf("admin.rpc('account_residual_data_count'");
+    const deleteAt = QA_CLEANUP.indexOf('/auth/v1/admin/users/');
+    expect(purgeAt).toBeGreaterThan(-1);
+    expect(countAt).toBeGreaterThan(purgeAt);
+    expect(deleteAt).toBeGreaterThan(countAt);
+    expect(QA_CLEANUP).toMatch(/row\(s\) still present after the purge/);
+  });
+
+  /*
+   * A failure has to be readable. `auth.admin.deleteUser` reports a GoTrue 500
+   * as an `AuthRetryableFetchError` whose `message` is the string "{}" — which
+   * is what this command printed for four accounts while the real answer was a
+   * plain foreign-key violation. The status line and the body are the diagnosis,
+   * so the delete goes through the raw endpoint.
+   */
+  it('reports a failed delete with its status and body, never a stringified error', () => {
+    expect(QA_CLEANUP).toMatch(/response\.status/);
+    expect(QA_CLEANUP).toMatch(/await response\.text\(\)/);
+    expect(QA_CLEANUP).not.toMatch(/JSON\.stringify\((error|cause|failure)\b/);
+    /*
+     * Comments stripped: the block above the fetch names `auth.admin.deleteUser`
+     * to explain why it is NOT used, and a source-reading test that could not
+     * tell the note from the call would forbid recording the reason.
+     */
+    const code = QA_CLEANUP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/auth\.admin\.deleteUser/);
   });
 
   /*
