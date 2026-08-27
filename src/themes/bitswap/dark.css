@@ -40,6 +40,7 @@ html[data-theme="bitswap"]:not([data-appearance]) {
    * warning still reads as a warning beside the yellow-white text.
    */
   --warning: #FFE066;
+  --caution: #FF9A3C;
   --info: #7AB8FF;
   /* Market-session icon tones — unchanged from PortKheaw. A session icon means
      the same thing whichever palette the reader chose, and each tone is still

@@ -20,15 +20,47 @@ describe('tools index presentation', () => {
     expect(toolsPageSource).not.toContain('activeTab');
   });
 
-  it('answers what a tool does, who it is for and which plan it needs, on every card', () => {
+  /*
+   * NAME, ONE LINE, BUTTON — and the two facts that are not copy.
+   *
+   * The card used to answer a third question, "เหมาะกับคนที่…", in a field
+   * called `audience`. That went with the value preview and the sample outcome:
+   * all three were written to sell a reader on opening the tool, and a
+   * catalogue of three items does not need selling.
+   *
+   * The instrument scope stays, and is the one line here worth defending. It is
+   * the only thing a reader cannot infer from the name — somebody holding
+   * shares opened "ทดลองสถานการณ์" and met a form asking for a strike — so it
+   * is a fact about the tool rather than a pitch for it. The plan badge stays
+   * for the same reason: it answers "can I open this".
+   */
+  it('says the tool’s name, what it does in one line, and which plan opens it', () => {
     for (const tool of TOOL_CATALOG) {
       expect(tool.description.length).toBeGreaterThan(0);
-      expect(tool.audience.startsWith('เหมาะกับ')).toBe(true);
+      // One line means one sentence: no bullet, no second clause after a break.
+      expect(tool.description).not.toContain('\n');
+      expect(tool.description).not.toContain('•');
     }
     expect(toolsPageSource).toContain('{tool.description}');
-    expect(toolsPageSource).toContain('{tool.audience}');
     expect(toolsPageSource).toContain('TOOL_ASSET_SCOPE_LABEL[tool.assetScope]');
     expect(toolsPageSource).toContain('PLAN_DISPLAY_NAME');
+  });
+
+  it('carries no copy written to sell the tool', () => {
+    /*
+     * Comments stripped: the block at the top of the page lists what each card
+     * used to carry, by name. A source-reading test that could not tell code
+     * from the note explaining a removal would forbid documenting it.
+     */
+    const code = toolsPageSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toContain('ปลดล็อกแล้วได้อะไร');
+    expect(code).not.toContain('ตัวอย่าง');
+    expect(code).not.toContain('tool.audience');
+    expect(code).not.toContain('valuePreview');
+    expect(code).not.toContain('sampleOutcome');
+    for (const tool of TOOL_CATALOG) {
+      expect(tool.description).not.toMatch(/เครื่องมือนี้จะช่วย|เหมาะกับ|ช่วยให้คุณ/);
+    }
   });
 
   it('leaves entitlement exactly where it was — derived, never written on the card', () => {

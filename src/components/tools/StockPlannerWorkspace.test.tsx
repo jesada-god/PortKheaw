@@ -26,6 +26,7 @@ vi.mock('@/src/components/layout/Header', () => ({
 }));
 
 import { StockPlannerWorkspace } from './StockPlannerWorkspace';
+import { evaluateStockPlan, formatRiskRewardRatio, stockPlanStatus, STOCK_PLAN_STATUS_LABEL } from '@/src/lib/tools/stock-plan';
 
 const SEARCH_RESULT = {
   symbol: 'AAPL', name: 'Apple Inc. - Common Stock', assetType: 'Stock', exchange: 'NASDAQ',
@@ -435,5 +436,25 @@ describe('Stock Planner workspace', () => {
     expect(update, 'no edit was sent').toBeDefined();
     expect(update!.body).toMatchObject({ targetPrice: 260, invalidationPrice: 180 });
     expect(update!.body).not.toHaveProperty('baselinePrice');
+  });
+});
+
+/*
+ * The plan's status is a restatement of the ratio beside it, in words. What
+ * these hold is the line it must not cross: it describes the proportion between
+ * three prices the reader chose, and never whether the plan is a good one.
+ */
+describe('the plan status line', () => {
+  it('says nothing about the plan until all three prices are stated', () => {
+    expect(stockPlanStatus(null)).toBe('unknown');
+    expect(STOCK_PLAN_STATUS_LABEL.unknown).toBe('ยังกรอกไม่ครบ');
+  });
+
+  it('reads the same ratio the Risk / Reward figure prints', () => {
+    const levels = evaluateStockPlan({
+      entry: 100, stopLoss: 90, target: 130, sizing: { mode: 'budget', amount: null },
+    }).levels!;
+    expect(formatRiskRewardRatio(levels.rewardToRisk)).toBe('1 : 3.0');
+    expect(stockPlanStatus(levels)).toBe('good');
   });
 });

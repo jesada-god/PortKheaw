@@ -7,6 +7,7 @@ import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { SymbolPreview } from '@/src/components/portfolio/SymbolPreview';
 import { EmptyState } from '@/src/components/ui/EmptyState';
 import { InfoHint } from '@/src/components/ui/InfoHint';
+import { StatusRow } from '@/src/components/ui/StatusLabel';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import { Tabs } from '@/src/components/ui/Tabs';
 import { useToast } from '@/src/components/ui/Toast';
@@ -21,6 +22,8 @@ import {
   formatPlanPercent,
   formatPlanShares,
   formatRiskRewardRatio,
+  stockPlanStatus,
+  STOCK_PLAN_STATUS_LABEL,
   parsePlanNumber,
   type StockPlanEvaluation,
   type StockPlanSizingMode,
@@ -77,9 +80,17 @@ import {
  * client gate is not what keeps a locked reader out.
  */
 
-const card = 'rounded-2xl border border-slate-800 bg-[#151B28] p-4 shadow-xl md:p-6';
-const stepHeading = 'text-base font-bold text-white';
-const fieldLabel = 'flex items-center gap-1 text-sm font-medium text-slate-200';
+/*
+ * The three shared classes, on tokens.
+ *
+ * `card` used to carry `bg-[var(--surface)]` and a `shadow-xl`. The hex was a
+ * dark-appearance value the light theme had to rescue, and the shadow made
+ * every step of the form claim the elevation `foundation.css` reserves for one
+ * block per page — five heroes on one screen is no hero at all.
+ */
+const card = 'rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-4 md:p-6';
+const stepHeading = 'text-base font-bold text-[var(--text)]';
+const fieldLabel = 'flex items-center gap-1 text-sm font-medium text-[var(--text-secondary)]';
 
 interface PlannerPricePayload {
   symbol: string;
@@ -419,14 +430,14 @@ export function StockPlannerWorkspace() {
     <div className="min-w-0">
       <Header
         title="วางแผนหุ้น"
-        subtitle="กำหนดเป้าหมาย ระดับความเสี่ยง และดู Risk : Reward ของแผนก่อนตัดสินใจ"
+        subtitle="กรอกจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย"
         backFallbackHref="/tools"
       />
 
       <div className="w-full min-w-0 max-w-full space-y-6 p-4 md:p-8">
         <section className={card} aria-labelledby="stock-planner-plan">
           <h2 id="stock-planner-plan" className={stepHeading}>แผนของคุณ</h2>
-          <p className="mt-1 break-words text-xs text-slate-400">
+          <p className="mt-1 break-words text-xs text-[var(--text-muted)]">
             ราคาเป้าหมายและระดับที่แผนไม่เป็นไปตามคาดเป็นค่าที่คุณกำหนดเอง ระบบไม่ได้คาดการณ์ราคาให้
           </p>
 
@@ -446,11 +457,11 @@ export function StockPlannerWorkspace() {
           </div>
 
           {asset && (
-            <div data-testid="stock-planner-asset" className="mt-4 flex min-w-0 items-start gap-3 rounded-xl border border-slate-800 bg-[#0A0E17] p-3">
+            <div data-testid="stock-planner-asset" className="mt-4 flex min-w-0 items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3">
               <InstrumentLogo symbol={asset.symbol} companyName={asset.name} logoUrl={asset.logoUrl ?? null} size={40} />
               <div className="min-w-0 flex-1">
-                <p className="min-w-0 break-words text-sm font-bold text-white">{asset.symbol}</p>
-                <p className="min-w-0 break-words text-xs text-slate-300">
+                <p className="min-w-0 break-words text-sm font-bold text-[var(--text)]">{asset.symbol}</p>
+                <p className="min-w-0 break-words text-xs text-[var(--text-secondary)]">
                   {priceState.status === 'ready' ? priceState.price.name ?? asset.name : asset.name}
                 </p>
               </div>
@@ -458,10 +469,10 @@ export function StockPlannerWorkspace() {
                 {priceState.status === 'loading' && <Skeleton className="h-9 w-24" />}
                 {priceState.status === 'ready' && (
                   <>
-                    <p data-testid="stock-planner-current-price" className="break-words font-mono text-sm font-bold text-white">
+                    <p data-testid="stock-planner-current-price" className="break-words font-mono text-sm font-bold text-[var(--text)]">
                       {formatPlanMoney(priceState.price.acceptedPrice as number, currency)}
                     </p>
-                    <p className="break-words text-[10px] uppercase tracking-wider text-slate-500">
+                    <p className="break-words text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                       {priceState.price.session}
                     </p>
                   </>
@@ -476,12 +487,12 @@ export function StockPlannerWorkspace() {
             something it will not plan.
           */}
           {priceState.status === 'unsupported' && (
-            <p data-testid="stock-planner-unsupported" role="status" className="mt-3 min-w-0 break-words rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-5 text-amber-300">
+            <p data-testid="stock-planner-unsupported" role="status" className="mt-3 min-w-0 break-words rounded-xl border border-[var(--warning-line)] bg-[var(--warning-soft)] p-3 text-xs leading-5 text-[var(--warning)]">
               {priceState.price.unsupported}
             </p>
           )}
           {priceState.status === 'unavailable' && (
-            <p data-testid="stock-planner-price-unavailable" role="status" className="mt-3 min-w-0 break-words text-xs text-amber-300">
+            <p data-testid="stock-planner-price-unavailable" role="status" className="mt-3 min-w-0 break-words text-xs text-[var(--warning)]">
               ยังดึงราคาล่าสุดของหุ้นตัวนี้ไม่ได้ จึงยังวางแผนต่อไม่ได้ ลองใหม่อีกครั้งภายหลัง
             </p>
           )}
@@ -501,11 +512,11 @@ export function StockPlannerWorkspace() {
                   */}
                   <input
                     id="stock-planner-current" data-testid="stock-planner-baseline"
-                    className="form-input mt-1.5 cursor-not-allowed text-slate-300"
+                    className="form-input mt-1.5 cursor-not-allowed text-[var(--text-secondary)]"
                     readOnly value={baselinePrice === null ? '' : formatPlanMoney(baselinePrice, currency)}
                     aria-describedby="stock-planner-current-note"
                   />
-                  <p id="stock-planner-current-note" className="mt-1 break-words text-[11px] text-slate-500">
+                  <p id="stock-planner-current-note" className="mt-1 break-words text-[11px] text-[var(--text-muted)]">
                     {editing ? 'ราคาตั้งต้นของแผนเดิม แก้ไขไม่ได้' : 'ดึงจากแหล่งเดียวกับหน้ารายละเอียดหุ้น'}
                   </p>
                 </div>
@@ -549,8 +560,8 @@ export function StockPlannerWorkspace() {
                       onClick={() => { setPreset(option); setAnalyzed(false); }}
                       className={`min-h-[44px] shrink-0 rounded-lg border px-3 text-sm transition-colors ${
                         preset === option
-                          ? 'border-[#D4FF00] bg-[#D4FF00]/10 font-semibold text-[#D4FF00]'
-                          : 'border-slate-700 text-slate-300'
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
+                          : 'border-[var(--border)] text-[var(--text-secondary)]'
                       }`}
                     >
                       {HORIZON_PRESET_LABEL[option]}
@@ -564,11 +575,11 @@ export function StockPlannerWorkspace() {
                     value={customDate} onChange={(event) => { setCustomDate(event.target.value); setAnalyzed(false); }}
                   />
                 )}
-                <p className="mt-2 break-words text-[11px] text-slate-500">
+                <p className="mt-2 break-words text-[11px] text-[var(--text-muted)]">
                   {horizonDate ? `แผนนี้มีระยะเวลาถึง ${horizonDate}` : 'เลือกวันสิ้นสุดของแผน'}
                 </p>
                 {issueFor('horizon') && (
-                  <p role="alert" className="mt-1 break-words text-xs text-amber-300">{issueFor('horizon')}</p>
+                  <p role="alert" className="mt-1 break-words text-xs text-[var(--warning)]">{issueFor('horizon')}</p>
                 )}
               </div>
 
@@ -592,11 +603,11 @@ export function StockPlannerWorkspace() {
                     aria-describedby={investmentIssue ? 'stock-planner-investment-error' : 'stock-planner-investment-note'}
                   />
                 </label>
-                <p id="stock-planner-investment-note" className="mt-1 break-words text-[11px] leading-5 text-slate-500">
+                <p id="stock-planner-investment-note" className="mt-1 break-words text-[11px] leading-5 text-[var(--text-muted)]">
                   ใช้สำหรับคำนวณผลลัพธ์จำลองของแผนนี้ ไม่ได้บันทึกลงพอร์ตและไม่ได้ถูกเก็บไว้กับแผน
                 </p>
                 {investmentIssue && (
-                  <p id="stock-planner-investment-error" role="alert" className="mt-1 break-words text-xs text-amber-300">
+                  <p id="stock-planner-investment-error" role="alert" className="mt-1 break-words text-xs text-[var(--warning)]">
                     {investmentIssue}
                   </p>
                 )}
@@ -649,13 +660,13 @@ export function StockPlannerWorkspace() {
               The sentence that keeps the number honest, next to the number rather
               than at the foot of the page where it would be read by nobody.
             */}
-            <p data-testid="stock-planner-not-probability" className="mt-4 flex min-w-0 gap-2 rounded-xl border border-slate-800 bg-[#0A0E17] p-3 text-xs leading-5 text-slate-400">
+            <p data-testid="stock-planner-not-probability" className="mt-4 flex min-w-0 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-xs leading-5 text-[var(--text-muted)]">
               <TriangleAlert aria-hidden="true" size={14} className="mt-0.5 shrink-0" />
               <span className="min-w-0 break-words">{OUTLOOK_NOT_PROBABILITY_NOTICE}</span>
             </p>
 
-            <h3 className="mt-6 text-sm font-bold text-white">ถ้าราคาไปถึงระดับที่คุณกำหนด</h3>
-            <p className="mt-1 break-words text-[11px] leading-5 text-slate-500">
+            <h3 className="mt-6 text-sm font-bold text-[var(--text)]">ถ้าราคาไปถึงระดับที่คุณกำหนด</h3>
+            <p className="mt-1 break-words text-[11px] leading-5 text-[var(--text-muted)]">
               ทั้งสามกรณีนี้คือระดับราคาที่คุณกำหนดไว้เอง ไม่ใช่การคาดการณ์ว่าราคาจะไปทางไหน
             </p>
             <ul data-testid="stock-planner-scenarios" className="mt-3 min-w-0 space-y-2">
@@ -663,14 +674,14 @@ export function StockPlannerWorkspace() {
                 <li
                   key={scenario.kind}
                   data-testid={`stock-planner-scenario-${scenario.kind}`}
-                  className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#0A0E17] p-3"
+                  className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3"
                 >
-                  <span className="min-w-0 break-words text-sm text-slate-200">{scenario.label}</span>
+                  <span className="min-w-0 break-words text-sm text-[var(--text-secondary)]">{scenario.label}</span>
                   <span className="flex shrink-0 items-baseline gap-2">
-                    <span className="font-mono text-sm text-white">{formatPlanMoney(scenario.price, currency)}</span>
+                    <span className="font-mono text-sm text-[var(--text)]">{formatPlanMoney(scenario.price, currency)}</span>
                     <span className={`font-mono text-xs ${
                       scenario.changePercent < 0 ? 'text-[var(--negative)]'
-                        : scenario.changePercent > 0 ? 'text-[var(--positive)]' : 'text-slate-400'
+                        : scenario.changePercent > 0 ? 'text-[var(--positive)]' : 'text-[var(--text-muted)]'
                     }`}>
                       {scenario.changePercent > 0 ? '+' : ''}{formatPlanPercent(scenario.changePercent)}
                     </span>
@@ -697,7 +708,7 @@ export function StockPlannerWorkspace() {
               data-testid="stock-planner-save"
               disabled={saving}
               onClick={() => { void savePlan(); }}
-              className="mt-6 min-h-[44px] w-full rounded-xl border border-[#D4FF00] px-4 text-sm font-bold text-[#D4FF00] disabled:opacity-60 sm:w-auto sm:px-8"
+              className="mt-6 min-h-[44px] w-full rounded-xl border border-[var(--accent)] px-4 text-sm font-bold text-[var(--accent)] disabled:opacity-60 sm:w-auto sm:px-8"
             >
               {saving ? 'กำลังบันทึก…' : editing ? 'บันทึกการแก้ไข' : 'บันทึกแผน'}
             </button>
@@ -705,7 +716,7 @@ export function StockPlannerWorkspace() {
               <button
                 type="button"
                 onClick={() => { setEditing(null); setAnalyzed(false); }}
-                className="ml-0 mt-3 min-h-[44px] w-full rounded-xl border border-slate-700 px-4 text-sm text-slate-300 sm:ml-3 sm:mt-6 sm:w-auto sm:px-6"
+                className="ml-0 mt-3 min-h-[44px] w-full rounded-xl border border-[var(--border)] px-4 text-sm text-[var(--text-secondary)] sm:ml-3 sm:mt-6 sm:w-auto sm:px-6"
               >
                 ยกเลิกการแก้ไข
               </button>
@@ -714,7 +725,7 @@ export function StockPlannerWorkspace() {
         )}
 
         {showResult && investmentDraft.trim() === '' && (
-          <p data-testid="stock-planner-simulation-hint" className="min-w-0 break-words px-1 text-xs leading-5 text-slate-400">
+          <p data-testid="stock-planner-simulation-hint" className="min-w-0 break-words px-1 text-xs leading-5 text-[var(--text-muted)]">
             กรอกจำนวนเงินที่ต้องการลงทุนในแบบฟอร์มด้านบน เพื่อดูผลลัพธ์จำลองเป็นจำนวนเงิน
           </p>
         )}
@@ -732,7 +743,7 @@ export function StockPlannerWorkspace() {
 
         <section className={card} aria-labelledby="stock-planner-saved">
           <h2 id="stock-planner-saved" className={stepHeading}>แผนที่บันทึกไว้</h2>
-          <p className="mt-1 break-words text-xs text-slate-400">
+          <p className="mt-1 break-words text-xs text-[var(--text-muted)]">
             เปอร์เซ็นต์ในแต่ละแผนวัดจากราคาตั้งต้นของแผนนั้น เทียบกับราคาล่าสุด
           </p>
           <div className="mt-4 min-w-0">
@@ -743,8 +754,8 @@ export function StockPlannerWorkspace() {
           </div>
         </section>
 
-        <section className="min-w-0 rounded-xl border border-slate-800 p-4" data-testid="stock-planner-disclaimer">
-          <p className="flex min-w-0 gap-2 text-xs leading-5 text-slate-500">
+        <section className="min-w-0 rounded-xl border border-[var(--border)] p-4" data-testid="stock-planner-disclaimer">
+          <p className="flex min-w-0 gap-2 text-xs leading-5 text-[var(--text-muted)]">
             <TriangleAlert aria-hidden="true" size={14} className="mt-0.5 shrink-0" />
             <span className="min-w-0 break-words">
               เครื่องมือนี้ใช้สำหรับช่วยวางแผนและประเมินสถานการณ์ ไม่ใช่คำแนะนำการลงทุน
@@ -802,7 +813,7 @@ function PriceField({
           aria-describedby={error ? `${id}-error` : undefined}
         />
       </label>
-      {error && <p id={`${id}-error`} role="alert" className="mt-1 break-words text-xs text-amber-300">{error}</p>}
+      {error && <p id={`${id}-error`} role="alert" className="mt-1 break-words text-xs text-[var(--warning)]">{error}</p>}
     </div>
   );
 }
@@ -822,10 +833,10 @@ function Figure({
 }) {
   const toneClass = tone === 'positive'
     ? 'text-[var(--positive)]'
-    : tone === 'negative' ? 'text-[var(--negative)]' : 'text-white';
+    : tone === 'negative' ? 'text-[var(--negative)]' : 'text-[var(--text)]';
   return (
-    <div className="min-w-0 rounded-xl border border-slate-800 bg-[#0A0E17] p-3">
-      <dt className="flex min-w-0 items-center gap-1 text-xs text-slate-400">
+    <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3">
+      <dt className="flex min-w-0 items-center gap-1 text-xs text-[var(--text-muted)]">
         <span className="min-w-0 break-words">{label}</span>
         <InfoHint term={term} align={termAlign} />
       </dt>
@@ -880,11 +891,11 @@ function PlanSimulation({
   return (
     <section className={card} aria-labelledby="stock-planner-simulation-heading" data-testid="stock-planner-simulation">
       <h2 id="stock-planner-simulation-heading" className={stepHeading}>ผลตอบแทนจำลอง</h2>
-      <p className="mt-1 break-words text-xs leading-5 text-slate-400">
+      <p className="mt-1 break-words text-xs leading-5 text-[var(--text-muted)]">
         คิดจากราคาเข้าที่คุณกรอก และซื้อเป็นจำนวนหุ้นเต็มจำนวน เงินส่วนที่ซื้อไม่ถึงหนึ่งหุ้นจึงไม่ถูกนำมาคำนวณ
       </p>
 
-      <h3 className="mt-4 text-sm font-bold text-white">สรุปการลงทุนจำลอง</h3>
+      <h3 className="mt-4 text-sm font-bold text-[var(--text)]">สรุปการลงทุนจำลอง</h3>
       <dl className="mt-3 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3" data-testid="stock-planner-simulation-summary">
         <SimulationStat label="เงินลงทุน" value={money(investment)} testId="stock-planner-sim-investment" />
         <SimulationStat label="ราคาเข้า" value={money(entry)} testId="stock-planner-sim-entry" />
@@ -902,7 +913,7 @@ function PlanSimulation({
         <SimulationStat label="จุดผิดแผน" value={money(invalidation)} testId="stock-planner-sim-invalidation" />
       </dl>
 
-      <h3 className="mt-6 text-sm font-bold text-white">ผลลัพธ์จำลอง</h3>
+      <h3 className="mt-6 text-sm font-bold text-[var(--text)]">ผลลัพธ์จำลอง</h3>
       <dl className="mt-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
         <Figure
           label="กำไรหากถึงเป้า" term="planRewardPercent" tone="positive" testId="stock-planner-sim-profit"
@@ -920,13 +931,34 @@ function PlanSimulation({
         />
       </dl>
 
+      {/*
+        THE PLAN'S STATUS, and strictly not its prospects.
+        
+        It reads the ratio directly above it and says nothing the three figures
+        do not already contain — which is the point: a reader who cannot parse
+        "1 : 2.4" gets the same fact in words, at the same moment, from the same
+        `evaluateStockPlan` result.
+        
+        It is a status rather than a grade because a grade would be a verdict.
+        A 1:3 plan on a stock in freefall is 🟢 here, and that is correct: the
+        ratio is a fact about three prices the reader chose, and nothing in this
+        tool has ever looked at a chart. `stockPlanStatus` is ⚪ until all three
+        are stated, so an unfinished form is never told its plan is a bad one.
+      */}
+      <StatusRow
+        name="สถานะแผน"
+        level={stockPlanStatus(levels)}
+        label={STOCK_PLAN_STATUS_LABEL[stockPlanStatus(levels)]}
+        className="mt-3"
+      />
+
       {blocked && (
-        <p data-testid="stock-planner-sim-blocked" role="status" className="mt-3 min-w-0 break-words text-xs text-amber-300">
+        <p data-testid="stock-planner-sim-blocked" role="status" className="mt-3 min-w-0 break-words text-xs text-[var(--warning)]">
           {blocked}
         </p>
       )}
 
-      <p data-testid="stock-planner-sim-note" className="mt-4 flex min-w-0 gap-2 rounded-xl border border-slate-800 bg-[#0A0E17] p-3 text-xs leading-5 text-slate-400">
+      <p data-testid="stock-planner-sim-note" className="mt-4 flex min-w-0 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-xs leading-5 text-[var(--text-muted)]">
         <TriangleAlert aria-hidden="true" size={14} className="mt-0.5 shrink-0" />
         <span className="min-w-0 break-words">
           ผลลัพธ์เป็นการจำลองจากราคาในแผน ไม่ใช่การรับประกันผลตอบแทน และไม่ได้สร้างรายการซื้อขายในพอร์ตของคุณ
@@ -939,9 +971,9 @@ function PlanSimulation({
 /** One line of the simulation summary: a label, and the figure it names. */
 function SimulationStat({ label, value, testId }: { label: string; value: string; testId: string }) {
   return (
-    <div className="min-w-0 rounded-xl border border-slate-800 bg-[#0A0E17] p-3">
-      <dt className="min-w-0 break-words text-[11px] leading-4 text-slate-500">{label}</dt>
-      <dd data-testid={testId} className="mt-1 break-words font-mono text-sm font-semibold text-slate-100">{value}</dd>
+    <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] p-3">
+      <dt className="min-w-0 break-words text-[11px] leading-4 text-[var(--text-muted)]">{label}</dt>
+      <dd data-testid={testId} className="mt-1 break-words font-mono text-sm font-semibold text-[var(--text)]">{value}</dd>
     </div>
   );
 }

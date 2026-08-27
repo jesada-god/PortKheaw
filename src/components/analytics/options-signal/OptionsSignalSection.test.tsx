@@ -10,6 +10,7 @@ import type { OptionsSignalDto } from '@/src/lib/analytics/options-signal/dto';
 import type { OptionsSignalFactorId, OptionsSignalFactorScore, OptionsSignalType } from '@/src/lib/analytics/options-signal/types';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import { OPTIONS_SIGNAL_PRESENTATION } from './presentation';
+import { OPTIONS_SIGNAL_STATUS } from '@/src/lib/presentation/status';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -275,7 +276,9 @@ describe('OptionsSignalSection gated DTO rendering', () => {
 
     const section = container.querySelector('section[aria-label="Options Signal Engine"]');
     expect(section?.getAttribute('data-signal')).toBe('CALL_WATCH');
-    expect(container.textContent).toContain('74');
+    // The READING, which is what a Pro reader gets. The confidence score behind
+    // it is Elite's, and it is no longer printed on anybody's card.
+    expect(container.textContent).toContain(OPTIONS_SIGNAL_PRESENTATION.CALL_WATCH.thai);
     expect(container.querySelector('[data-testid="options-signal-breakdown-locked"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="locked-options.signal.breakdown"]')).not.toBeNull();
     expect(container.textContent).not.toContain('Macro');
@@ -288,15 +291,34 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
     await renderFor('elite');
 
-    expect(container.textContent).toContain('Macro');
-    expect(container.textContent).toContain('Risk/Reward');
-    expect(container.textContent).toContain(BREAKDOWN_SECRET);
+    /*
+     * THE FACTOR NAMES ARE NOT ON THE CARD ANY MORE, and this is where that is
+     * asserted from the entitled side.
+     *
+     * `Macro +12/ 20 · Trend +18/ 25 · …` used to sit under the state line for
+     * an Elite reader, and this test read them off `container` before opening
+     * anything. They moved into the dialog with the two headline scores, for
+     * the same reason: +12 out of 20 is only usable next to another +12 out of
+     * 20, and the weights differ per factor so the five do not add to anything
+     * visible either.
+     *
+     * The Pro case a few lines above still asserts their ABSENCE, and that
+     * assertion is the one carrying the entitlement guarantee — it is unchanged,
+     * because the card never showed them to Pro in the first place.
+     */
+    expect(container.textContent).not.toContain('Macro');
+    expect(container.textContent).not.toContain('Risk/Reward');
+    expect(container.textContent).not.toMatch(/[+\-]\d+\s*\/\s*\d+/);
     expect(container.querySelector('[data-testid="options-signal-breakdown-locked"]')).toBeNull();
 
     const trigger = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
     expect(trigger).toBeDefined();
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // Everything the card stopped showing is here, with the sentence explaining it.
+    expect(document.body.textContent).toContain('Macro');
+    expect(document.body.textContent).toContain('Risk/Reward');
+    expect(document.body.textContent).toContain(BREAKDOWN_SECRET);
     expect(document.body.textContent).toContain('คะแนนทิศทางมาจากอะไร');
     /*
      * The heading names the mechanism the POINTS come from. It said "TTM
@@ -487,75 +509,57 @@ describe('OptionsSignalSection gated DTO rendering', () => {
   });
 
   /*
-   * The defect this whole block exists for: the card printed one number and the
-   * dialog printed another, because the card was showing confidence and the
-   * dialog was showing the signed sum. Both now read the SAME payload field, and
-   * these assertions compare the two rendered strings rather than trusting that.
+   * THE CARD NO LONGER CARRIES EITHER NUMBER, AND THAT IS THE POINT.
+   *
+   * Four tests used to live here, and all four were defending a layout that
+   * existed to make two scores legible side by side: that the card and the
+   * dialog printed the SAME direction score (they had once disagreed, the card
+   * showing confidence and the dialog the signed sum), that the two were
+   * labelled as different things, and that each number sat in a container
+   * holding only its own label so `82` could not be read as Confidence's.
+   *
+   * Every one of those was solving a problem the numbers created by being on the
+   * card at all. A score out of 100 invites a reader to compare two stocks by
+   * their scores, and 82 against 79 is not three points of anything a reader
+   * means. So the card states which of the seven readings this is, and both
+   * numbers moved into the dialog — where the formula, the deductions and the
+   * factor table sit beside them.
+   *
+   * What is asserted now is that pair of facts, and nothing about geometry.
    */
-  it('shows the identical direction score on the card and inside the dialog', async () => {
+  it('states the reading on the card and keeps both scores off it', async () => {
     mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
     await renderFor('elite');
 
-    const card = container.querySelector('[data-testid="options-signal-score-card"]');
-    expect(card?.textContent).toBe('82');
+    const card = container.querySelector('section[aria-label="Options Signal Engine"]')!;
+    expect(card.getAttribute('data-status')).toBe(OPTIONS_SIGNAL_STATUS.CALL_WATCH);
+    expect(container.querySelector('[data-testid="options-signal-state-headline"]')?.textContent)
+      .toContain(OPTIONS_SIGNAL_PRESENTATION.CALL_WATCH.thai);
+
+    // Neither score, and neither of the words that introduced them.
+    const text = card.textContent ?? '';
+    expect(text).not.toContain('คะแนนทิศทาง');
+    expect(text).not.toContain('/ 100');
+    expect(text).not.toContain('82');
+    expect(text).not.toContain('74');
+  });
+
+  it('keeps both scores, and the arithmetic behind them, inside the dialog', async () => {
+    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
+    await renderFor('elite');
 
     const trigger = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
-    const modal = document.body.querySelector('[data-testid="options-signal-score-modal"]');
-    expect(modal?.textContent).toContain('82');
-    expect(modal?.textContent?.replace(/\D/g, '')).toContain(card?.textContent ?? '');
-    // And the arithmetic that produced it is on screen, not asserted on trust.
+    expect(document.body.querySelector('[data-testid="options-signal-score-modal"]')?.textContent)
+      .toContain('82');
     expect(document.body.querySelector('[data-testid="options-signal-score-formula"]')?.textContent)
       .toBe('(+64 + 100) ÷ (2 × 100) × 100 = 82');
-  });
-
-  it('labels the direction score and the confidence score as different things', async () => {
-    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
-    await renderFor('elite');
-    expect(container.textContent).toContain('คะแนนทิศทาง');
-    expect(container.textContent).toContain('Confidence');
-    expect(container.querySelector('[data-testid="options-signal-score-card"]')?.textContent).toBe('82');
-    expect(container.textContent).toContain('74');
-  });
-
-  /*
-   * Labelling the two numbers was not enough to pair them.
-   *
-   * They used to be two right-aligned blocks 16px apart, which printed the value
-   * runs as one strip — `82 / 100  74 / 100` — whose only break was smaller than
-   * the distance from either number to the word above it. Chrome at 1280px and
-   * at 380px measured 16px between the groups against 22px inside each one, so
-   * by proximity the numbers belonged to each other rather than to their labels.
-   *
-   * Geometry is not assertable in jsdom, so what is asserted here is the
-   * STRUCTURE that produced it: each number and the word for it are inside one
-   * container that holds no OTHER label, which is the property a reader relies
-   * on and the one a future layout edit would have to break deliberately.
-   */
-  it('keeps each headline number inside a container that holds only its own label', async () => {
-    mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
-    await renderFor('elite');
-
-    const scoreGroup = container
-      .querySelector('[data-testid="options-signal-score-card"]')
-      ?.closest('p');
-    const confidenceGroup = container
-      .querySelector('[data-testid="options-signal-confidence-card"]')
-      ?.closest('p');
-
-    expect(scoreGroup).not.toBeNull();
-    expect(confidenceGroup).not.toBeNull();
-    expect(scoreGroup).not.toBe(confidenceGroup);
-
-    expect(scoreGroup?.textContent).toContain('คะแนนทิศทาง');
-    expect(scoreGroup?.textContent).toContain('82');
-    expect(scoreGroup?.textContent).not.toContain('Confidence');
-
-    expect(confidenceGroup?.textContent).toContain('Confidence');
-    expect(confidenceGroup?.textContent).toContain('74');
-    expect(confidenceGroup?.textContent).not.toContain('คะแนนทิศทาง');
+    // Confidence too, with the formula that produced it.
+    const dialog = document.body.textContent ?? '';
+    expect(dialog).toContain('Confidence');
+    expect(dialog).toContain('74');
   });
 
   /*
@@ -684,10 +688,17 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     });
   });
 
-  it('shows the card score to a Pro reader who has no breakdown at all', async () => {
+  it('shows the reading to a Pro reader who has no breakdown at all', async () => {
     await renderFor('pro');
-    // The score lives in the SUMMARY precisely so this reader still sees it.
-    expect(container.querySelector('[data-testid="options-signal-score-card"]')?.textContent).toBe('82');
+    /*
+     * `signalType` lives in the SUMMARY, which is the half of the payload a Pro
+     * reader receives — so the card still says what it read, even though the
+     * factor table and both scores are behind the Elite gate. The score used to
+     * be what this test checked; the reading is strictly more useful to a reader
+     * who cannot open the breakdown that would explain a number.
+     */
+    expect(container.querySelector('[data-testid="options-signal-state-headline"]')?.textContent)
+      .toContain(OPTIONS_SIGNAL_PRESENTATION.CALL_WATCH.thai);
     expect(container.querySelector('[data-testid="options-signal-breakdown-locked"]')).not.toBeNull();
   });
 
@@ -787,7 +798,14 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     expect(text).not.toContain('NaN');
     expect(text).not.toContain('undefined');
     expect(text).not.toContain('Infinity');
-    expect(container.querySelector('[data-testid="options-signal-score-card"]')?.textContent).toBe('—');
+    /*
+     * A null score used to reach the card as an em dash. It reaches nothing now,
+     * because the card carries no score at all — so what this asserts instead is
+     * that the reading is still stated: a payload missing every diagnostic
+     * number must not leave the reader with a blank card.
+     */
+    expect(container.querySelector('[data-testid="options-signal-state-headline"]')?.textContent)
+      .toContain(OPTIONS_SIGNAL_PRESENTATION.CALL_WATCH.thai);
   });
 
   it('shows the expected move with the horizon it was priced over', async () => {
@@ -944,17 +962,23 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     }
   });
 
-  it('does not let SIDEWAYS and CONFLICTED read as the same badge', () => {
+  it('does not let SIDEWAYS and CONFLICTED read as the same thing', () => {
     const sideways = OPTIONS_SIGNAL_PRESENTATION.SIDEWAYS;
     const conflicted = OPTIONS_SIGNAL_PRESENTATION.CONFLICTED;
     /*
      * They sit at the same score and call for opposite reactions, so a reader
-     * must be able to tell them apart at a glance rather than by reading. Grey
-     * reads as "nothing happening", which is the wrong impression for a chart
-     * whose factors are pulling against each other.
+     * must be able to tell them apart at a glance rather than by reading. "Doing
+     * nothing" is the wrong impression for a chart whose factors are pulling
+     * against each other.
+     *
+     * The mark and the colour used to be written into this table by hand; they
+     * now come from `OPTIONS_SIGNAL_STATUS`, so that half of the separation is
+     * asserted there, once, alongside every other surface that reads the same
+     * five levels. What is left here is the half this file owns — the wording,
+     * which has to make the same distinction the marks do.
      */
-    expect(conflicted.badgeTone).not.toBe(sideways.badgeTone);
-    expect(conflicted.dot).not.toBe(sideways.dot);
+    expect(OPTIONS_SIGNAL_STATUS.CONFLICTED).not.toBe(OPTIONS_SIGNAL_STATUS.SIDEWAYS);
+    expect(conflicted.thai).not.toBe(sideways.thai);
     expect(conflicted.headline).toContain('ตีกัน');
     expect(sideways.headline).toContain('เงียบ');
   });

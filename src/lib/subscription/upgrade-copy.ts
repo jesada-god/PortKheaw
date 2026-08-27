@@ -42,17 +42,17 @@ const COPY: Partial<Record<SubscriptionCapability, UpgradeCopy>> = {
   },
   'simulator.what_if': {
     title: 'ทดลองสถานการณ์ (What-If)',
-    benefit: 'ลองเปลี่ยนราคาหุ้น วันที่ และความผันผวน แล้วดูว่ากำไรหรือขาดทุนของสถานะจะเปลี่ยนไปเท่าไร',
+    benefit: 'เปลี่ยนราคาหุ้น วันที่ และความผันผวน แล้วดูกำไรขาดทุนของสถานะ',
     lockedLabel: 'คำนวณ What-If ได้ใน Pro',
   },
   'simulator.monte_carlo': {
     title: 'จำลองความเป็นไปได้ (Monte Carlo)',
-    benefit: 'จำลองราคาหุ้นหลายพันเส้นทาง เพื่อดูโอกาสได้กำไร ระดับความเสี่ยง VaR และ Expected Shortfall',
+    benefit: 'จำลองราคาหุ้นหลายพันเส้นทาง แล้วดูช่วงผลลัพธ์ VaR และ Expected Shortfall',
     lockedLabel: 'เริ่มจำลอง Monte Carlo ได้ใน Elite',
   },
   'planner.stock': {
     title: 'วางแผนหุ้นรายตัว (Stock Planner)',
-    benefit: 'กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมายของหุ้นรายตัว แล้วดูความเสี่ยง ผลตอบแทนคาดหวัง สัดส่วน Risk/Reward และเงินที่ใช้จริงตามขนาดที่ตั้งไว้',
+    benefit: 'กรอกจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย แล้วดูกำไรที่คาดหวัง ขาดทุนสูงสุด และ R:R',
     lockedLabel: 'วางแผนหุ้นรายตัวได้ใน Pro',
   },
   'options.analytics.walls': {

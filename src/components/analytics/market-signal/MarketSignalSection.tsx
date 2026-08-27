@@ -5,6 +5,8 @@ import { Activity, Info, Minus, TrendingDown, TrendingUp, TriangleAlert, Zap } f
 import type { MarketSignalActionable, MarketSignalBias, MarketSignalHistory, MarketSignalMetrics, MarketSignalReason, MarketSignalResult, MarketSignalState, MarketSignalZones } from '@/src/lib/analytics/market-signal/types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { BANGKOK_TIME_ZONE, formatBangkokDateTime, formatThaiDateOnly, THAI_LOCALE } from '@/src/lib/presentation/datetime';
+import { MARKET_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import { InfoHint } from '@/src/components/ui/InfoHint';
 import { ResponsiveDialog } from '@/src/components/ui/ResponsiveDialog';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
@@ -242,13 +244,11 @@ export const MARKET_SIGNAL_PRESENTATION = {
     thai: 'ขาขึ้นชัดเจน',
     description: 'ราคากำลังขึ้นอย่างแข็งแรง • ทั้งตัวราคาและแรงส่งของราคาไปทางเดียวกัน และมีแรงซื้อหนุนอยู่',
     icon: TrendingUp,
-    tone: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300',
   },
   BULLISH: {
     thai: 'กำลังเป็นขาขึ้น',
     description: 'แนวโน้มโดยรวมกำลังขึ้น • แต่ยังไม่มีอะไรยืนยันหนักแน่น ควรดูต่ออีกสักพัก',
     icon: TrendingUp,
-    tone: 'border-green-500/35 bg-green-500/10 text-green-300',
   },
   /*
    * SIDEWAYS, bound to now instead of to a state that keeps being true.
@@ -274,38 +274,48 @@ export const MARKET_SIGNAL_PRESENTATION = {
     thai: 'ตอนนี้ยังไม่มีทิศทางชัดเจน',
     description: 'ตอนนี้ราคายังไม่ไปทางขึ้นหรือทางลง ไม่ได้ขึ้นต่อเนื่องและไม่ได้ลงต่อเนื่อง',
     icon: Minus,
-    tone: 'border-sky-500/30 bg-slate-500/10 text-sky-200',
   },
   SQUEEZE: {
     thai: 'ราคาแกว่งแคบลงเรื่อย ๆ',
     description: 'ช่วงที่ราคาแกว่งในแต่ละวันแคบลงกว่าปกติ • ยังบอกไม่ได้ว่าจะออกทางไหน',
     icon: Zap,
-    tone: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
   },
   OVEREXTENDED: {
     thai: 'ราคาวิ่งไปไกลจากค่าเฉลี่ยมาก',
     description: 'ราคาอยู่ห่างจากค่าเฉลี่ยของตัวเองมากกว่าปกติ • ยังไม่ได้แปลว่าจะกลับ แต่ระยะห่างนี้ผิดจากที่เคยเป็น',
     icon: TriangleAlert,
-    tone: 'border-orange-400/40 bg-orange-500/10 text-orange-200',
   },
   BEARISH: {
     thai: 'กำลังเป็นขาลง',
     description: 'แนวโน้มโดยรวมกำลังลง • แรงขายยังมีมากกว่าแรงซื้อ',
     icon: TrendingDown,
-    tone: 'border-red-500/35 bg-red-500/10 text-red-300',
   },
   STRONG_BEARISH: {
     thai: 'ขาลงชัดเจน',
     description: 'ราคากำลังลงอย่างแข็งแรง • ทั้งตัวราคา แรงส่งของราคา และแรงขายไปทางเดียวกัน',
     icon: TrendingDown,
-    tone: 'border-red-700/50 bg-red-950/40 text-red-300',
   },
 } as const satisfies Record<MarketSignalState, {
   thai: string;
   description: string;
   icon: typeof Activity;
-  tone: string;
 }>;
+
+/*
+ * THE COLOUR IS NO LONGER WRITTEN HERE.
+ *
+ * Each entry used to carry its own `tone` — seven hand-picked Tailwind triples,
+ * `border-sky-500/30 bg-slate-500/10 text-sky-200` among them, none of which
+ * appeared anywhere else in the product. The options-signal card had its own
+ * seven, the overview's service dot had three more, and the same amber ended up
+ * meaning "แกว่งแคบ" on one page and "อ่อนแรง" on the next.
+ *
+ * `MARKET_SIGNAL_STATUS` now maps each state onto the five-level vocabulary in
+ * `src/lib/presentation/status.ts`, and the card paints itself from that. What
+ * stays here is the WORDING, which is what this file is for and what the
+ * `no-unsourced-frame-word` rule in `eslint.config.mjs` watches: the levels are
+ * shared, the sentences are this card's own.
+ */
 
 /**
  * Flag chips, in the order a reader should meet them.
@@ -464,9 +474,9 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
   const [open, setOpen] = useState(false);
   if (!entitled) {
     return (
-      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5" data-testid="technical-outlook-locked">
-        <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
-        <div className="mt-2 flex items-center gap-2 text-slate-300">
+      <section aria-label="Technical Outlook" className="rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-5" data-testid="technical-outlook-locked">
+        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Technical Signal · 1D</p>
+        <div className="mt-2 flex items-center gap-2 text-[var(--text-secondary)]">
           <Info aria-hidden="true" size={18} />
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
@@ -490,9 +500,9 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
   if (!result) {
     return (
-      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
-        <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
-        <div className="mt-2 flex items-center gap-2 text-slate-300">
+      <section aria-label="Technical Outlook" className="rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-5">
+        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Technical Signal · 1D</p>
+        <div className="mt-2 flex items-center gap-2 text-[var(--text-secondary)]">
           <Info aria-hidden="true" size={18} />
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
@@ -504,9 +514,9 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
   if (result.status === 'insufficient-data') {
     return (
-      <section aria-label="Technical Outlook" className="rounded-2xl border border-slate-800 bg-[#151B28] p-5">
-        <p className="text-xs uppercase tracking-wide text-slate-500">Technical Signal · 1D</p>
-        <div className="mt-2 flex items-center gap-2 text-slate-300">
+      <section aria-label="Technical Outlook" className="rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-5">
+        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Technical Signal · 1D</p>
+        <div className="mt-2 flex items-center gap-2 text-[var(--text-secondary)]">
           <Info aria-hidden="true" size={18} />
           <h2 className="font-bold">Technical Outlook · Market Signal</h2>
         </div>
@@ -534,6 +544,8 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
 
   const presentation = MARKET_SIGNAL_PRESENTATION[result.state];
   const Icon = presentation.icon;
+  const status = MARKET_SIGNAL_STATUS[result.state];
+  const statusTone = STATUS_PRESENTATION[status];
   const cautions = result.reasons.filter((reason) => readsAsCaution(reason, result.metrics, result.bias));
   const supporting = result.reasons.filter((reason) => !readsAsCaution(reason, result.metrics, result.bias));
   const unconfirmed = result.warnings;
@@ -623,7 +635,16 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
     && !(result.reasons.some((reason) => reason.id === 'earnings-proximity') && result.gate?.daysToEarnings !== null);
 
   return (
-    <section aria-label="Technical Outlook" data-state={result.state} className={`rounded-2xl border p-5 ${presentation.tone}`}>
+    <section
+      aria-label="Technical Outlook"
+      data-state={result.state}
+      data-status={status}
+      className="rounded-[var(--radius-panel)] border p-5"
+      style={{
+        borderColor: `var(${statusTone.line})`,
+        background: `var(${statusTone.soft})`,
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-slate-400">Technical Signal · 1D</p>
@@ -662,12 +683,22 @@ function MarketSignalContent({ result, entitled, capability, livePrice }: {
             line, and the half that would be clipped is the half a beginner
             needs. It wraps to a second line instead.
           */}
-          <p className="mt-2 flex flex-wrap items-baseline gap-x-2 break-words font-mono text-lg font-bold text-white sm:text-xl">
+          {/*
+            The Thai half is now a StatusLabel rather than a dimmed span.
+            Same words, same position, same wrap behaviour — what it gains is
+            the mark, which is the part that survives a reader skimming the page
+            at arm's length, and a colour that means the same thing here as it
+            does on the watchlist and in the planner.
+          */}
+          <p className="mt-2 flex flex-wrap items-baseline gap-x-2 break-words font-mono text-lg font-bold text-[var(--text)] sm:text-xl">
             <span>{result.state}</span>
-            <span aria-hidden="true" className="font-sans text-sm font-normal opacity-40">·</span>
-            <span className="font-sans text-sm font-semibold opacity-90" data-testid="signal-state-headline">
-              {presentation.thai}
-            </span>
+            <span aria-hidden="true" className="font-sans text-sm font-normal text-[var(--text-muted)]">·</span>
+            <StatusLabel
+              level={status}
+              label={presentation.thai}
+              className="font-sans text-sm"
+              data-testid="signal-state-headline"
+            />
           </p>
           {/*
             THE SECOND PARAGRAPH THAT USED TO SIT HERE IS GONE, AND SO IS THE

@@ -37,6 +37,7 @@ html[data-theme="cosmic"]:not([data-appearance]) {
   --positive: #34D9A0;
   --negative: #FF6B6B;
   --warning: #F5B94C;
+  --caution: #FF9354;
   --info: #6FB4FF;
   /* Market-session icon tones — unchanged from PortKheaw. */
   --session-pre: #A3B2FF;

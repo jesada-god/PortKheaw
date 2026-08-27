@@ -1,4 +1,3 @@
-import { Target } from 'lucide-react';
 import Header from '@/src/components/layout/Header';
 import { LockedNotice } from '@/src/components/subscription/EntitlementGate';
 import { StockPlannerWorkspace } from '@/src/components/tools/StockPlannerWorkspace';
@@ -36,17 +35,21 @@ export default async function StockPlannerPage() {
   const copy = upgradeCopy(CAPABILITY);
   return (
     <div className="min-w-0">
-      <Header title="วางแผนหุ้น" subtitle="กำหนดจุดเข้า จุดตัดขาดทุน และราคาเป้าหมายของหุ้นรายตัว" backFallbackHref="/tools" />
+      <Header title="วางแผนหุ้น" subtitle="กรอกจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย" backFallbackHref="/tools" />
       <div className="w-full min-w-0 max-w-full p-4 md:p-8">
+        {/*
+          The locked panel, on tokens and without the furniture. It carried a
+          `#151B28` fill the light theme had to rescue, a `shadow-xl` claiming
+          the page's one elevation for a paywall, and a 48px purple glyph plate
+          in a colour that appears nowhere else in the product — purple is not a
+          plan tone, a status, or the accent.
+        */}
         <section
           data-testid="stock-planner-locked"
-          className="min-w-0 rounded-2xl border border-slate-800 bg-[#151B28] p-6 shadow-xl"
+          className="min-w-0 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-6"
         >
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
-            <Target aria-hidden="true" size={24} />
-          </div>
-          <h1 className="mt-4 min-w-0 break-words text-lg font-bold text-white">{copy.title}</h1>
-          <p className="mt-2 min-w-0 break-words text-sm leading-relaxed text-slate-400">{copy.benefit}</p>
+          <h1 className="min-w-0 break-words text-lg font-bold text-[var(--text)]">{copy.title}</h1>
+          <p className="mt-2 min-w-0 break-words text-sm leading-6 text-[var(--text-secondary)]">{copy.benefit}</p>
           <LockedNotice capability={CAPABILITY} source="tools.stock-planner.page" className="mt-5" />
         </section>
       </div>

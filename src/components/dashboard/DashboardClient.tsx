@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   ArrowDownRight,
   ArrowUpRight,
-  Banknote,
   ChevronRight,
   Eye,
   EyeOff,
@@ -16,12 +15,10 @@ import {
   RefreshCw,
   Star,
   TrendingUp,
-  WalletCards,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
-import { OverviewPortfolioGoalCard } from '@/src/components/dashboard/OverviewPortfolioGoalCard';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
 import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { OVERVIEW_STATUS_COPY } from '@/src/lib/overview/presentation';
@@ -43,7 +40,10 @@ import { OnboardingCard } from '@/src/components/onboarding/OnboardingCard';
 import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
 import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
-import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
+import { statusFromChangePercent, type StatusLevel } from '@/src/lib/presentation/status';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import { buildMarketSummary } from '@/src/lib/overview/market-summary';
+import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/changes';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
@@ -390,16 +390,33 @@ function SectionInfo({
   );
 }
 
+/**
+ * Which of the five levels each service level reads as.
+ *
+ * `connecting` is 🟡 rather than its own blue. It was the only place in the
+ * product where `--info` carried a status, and a reader does not need a fourth
+ * colour to learn that a section is still being fetched.
+ *
+ * `delayed` and `partial` used to share one amber, which is what having only
+ * three dots forced. They are now told apart: delayed data is all there and
+ * behind the clock (🟡), while partial means some sections did not answer at
+ * all (🟠) — the page is still worth reading, which is what 🟠 says and 🔴 would
+ * not.
+ */
+const SERVICE_STATUS_LEVEL = {
+  ready: 'good',
+  connecting: 'neutral',
+  delayed: 'neutral',
+  partial: 'weak',
+} as const satisfies Record<OverviewDashboardData['serviceStatus']['level'], StatusLevel>;
+
 function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] }) {
-  const dot = data.level === 'ready' ? 'bg-[var(--positive)]'
-    : data.level === 'connecting' ? 'bg-[var(--info)]'
-      : 'bg-[var(--warning)]';
+  const level = SERVICE_STATUS_LEVEL[data.level];
   return (
     <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
         <span className="flex min-w-0 items-center gap-2">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-          <span className="font-medium text-[var(--text-secondary)]">{data.label}</span>
+          <StatusLabel level={level} label={data.label} className="font-medium" />
         </span>
         <span className="pl-4 text-[10px] text-[var(--text-muted)] sm:shrink-0 sm:pl-0 sm:text-xs">
           ตรวจล่าสุด {formatBangkokDateTime(data.checkedAt)}
@@ -419,190 +436,135 @@ function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] 
   );
 }
 
-function PortfolioCard({ data, usdThbRate }: {
+/**
+ * The portfolio, in one line.
+ *
+ * It used to be the largest block on the overview: a scope selector, the total,
+ * today's move, total gain, a three-facet cash/equity/options strip, the goal
+ * card, and a four-way row of quick links — roughly a third of the page before
+ * the market was mentioned.
+ *
+ * Every one of those still exists, on `/portfolio`, which is a whole page built
+ * for exactly that reading. What the overview is for is the glance: is my money
+ * up or down today, and by how much. So this answers that and links to the rest.
+ *
+ * WHAT IT KEEPS, and neither is decoration:
+ *  - the privacy mask, because a balance a reader has chosen to hide must stay
+ *    hidden wherever it would otherwise be printed; and
+ *  - `hasMissingPrices`, because a total assembled from some of the holdings is
+ *    a different number from a total, and the page has to say which one this is.
+ */
+function PortfolioSummaryLine({ data, usdThbRate }: {
   data: OverviewDashboardData['portfolio'];
   usdThbRate: string | null;
 }) {
-  const [selectedId, setSelectedId] = useState('aggregate');
   const { visible, toggleVisibility } = usePortfolioPrivacy();
-  const selectedPortfolio = data.portfolios.find((portfolio) => portfolio.id === selectedId);
-  const summary = selectedPortfolio?.summary ?? data.summary;
-  const baseCurrency = selectedPortfolio?.baseCurrency ?? data.baseCurrency;
-  const targetValueUsd = selectedPortfolio ? selectedPortfolio.targetValueUsd : data.targetValueUsd;
-  const targetDate = selectedPortfolio ? selectedPortfolio.targetDate : data.targetDate;
-  const coverage = selectedPortfolio?.coverage ?? data.coverage;
-  const portfolioName = selectedPortfolio?.name ?? data.portfolioName;
+  const summary = data.summary;
+  const baseCurrency = data.baseCurrency;
   const rate = baseCurrency === 'THB' ? Number(usdThbRate) : 1;
   const convert = (value: number | null) =>
     value === null || !Number.isFinite(rate) || rate <= 0 ? null : value * rate;
-  const goalCard = summary ? buildPortfolioGoalCardModel({
-    scope: selectedPortfolio ? 'selected' : 'aggregate',
-    summary,
-    goal: { targetValueUsd, targetDate },
-    activePortfolios: data.portfolioCount,
-    totalPortfolios: data.totalPortfolioCount,
-  }) : null;
-  const actions = [
-    { href: '#market-overview', label: 'ภาพรวมตลาด', icon: TrendingUp },
-    { href: '/portfolio', label: 'พอร์ตของฉัน', icon: PieChart },
-    { href: '/watchlist', label: 'รายการติดตาม', icon: Star },
-    { href: '/portfolio', label: 'รายการเงินสด', icon: Banknote },
-  ];
 
-  if (!data.authenticated || !summary || !goalCard) {
+  if (!data.authenticated || !summary) {
     return (
-      <section className="panel-hero p-4 sm:p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-            <WalletCards aria-hidden="true" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h1 className="font-bold text-[var(--text)]">
-              {data.authenticated ? 'เริ่มบันทึกพอร์ตแรกของคุณ' : 'ติดตามพอร์ตได้ในที่เดียว'}
-            </h1>
-            <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
-              ใช้บันทึกหุ้นและออปชันที่ถืออยู่ โดยยังดูข้อมูลตลาดได้โดยไม่ต้องสร้างพอร์ต
-            </p>
-            <Link
-              href={data.authenticated ? '/portfolio' : '/auth/sign-in?next=/portfolio'}
-              className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-fg)]"
-            >
-              <Plus size={17} />
-              {data.authenticated ? 'สร้างพอร์ตแรก' : 'เข้าสู่ระบบเพื่อสร้างพอร์ต'}
-            </Link>
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-4 gap-2 border-t border-[var(--border)] pt-4">
-          {actions.map(({ href, label, icon: Icon }) => (
-            <Link key={label} href={href} className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl bg-[var(--surface-elevated)] px-1 text-center text-[11px] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
-              <Icon size={18} aria-hidden="true" />
-              <span>{label}</span>
-            </Link>
-          ))}
-        </div>
+      <section className="panel min-w-0 p-4">
+        <h2 className="font-bold text-[var(--text)]">
+          {data.authenticated ? 'เริ่มบันทึกพอร์ตแรกของคุณ' : 'ติดตามพอร์ตได้ในที่เดียว'}
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
+          ใช้บันทึกหุ้นและออปชันที่ถืออยู่ โดยยังดูข้อมูลตลาดได้โดยไม่ต้องสร้างพอร์ต
+        </p>
+        <Link
+          href={data.authenticated ? '/portfolio' : '/auth/sign-in?next=/portfolio'}
+          className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 text-sm font-bold text-[var(--accent-fg)]"
+        >
+          <Plus size={17} aria-hidden="true" />
+          {data.authenticated ? 'สร้างพอร์ตแรก' : 'เข้าสู่ระบบเพื่อสร้างพอร์ต'}
+        </Link>
       </section>
     );
   }
 
+  const total = summary.totalValue ?? data.coverage?.verifiedValueUsd ?? null;
+  /*
+   * ⚪ while the balances are hidden, and that is not a technicality. The status
+   * mark is a colour, and a green one beside a masked total tells anybody
+   * looking over the reader's shoulder the very thing the mask is for.
+   */
+  const level = visible ? statusFromChangePercent(summary.todayChangePercent) : 'unknown';
+
   return (
-    <section className="panel-hero overflow-hidden">
-      <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1.2fr_1fr]">
-        <div>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="figure-label">
-                {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
-                {portfolioName ? ` · ${portfolioName}` : ''}
-              </p>
-              <p className="figure-hero mt-1.5 break-all">
-                {visible
-                  ? formatMoney(
-                    convert(summary.totalValue ?? coverage?.verifiedValueUsd ?? null),
-                    baseCurrency,
-                  )
-                  : SENSITIVE_VALUE_MASK}
-              </p>
-              {data.portfolios.length > 0 && (
-                <label className="mt-3 block text-xs text-[var(--text-secondary)]">
-                  ขอบเขตพอร์ต
-                  <select
-                    value={selectedId}
-                    onChange={(event) => setSelectedId(event.target.value)}
-                    className="mt-1 min-h-11 w-full max-w-xs rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] px-3 text-sm text-[var(--text)]"
-                  >
-                    <option value="aggregate">รวมทุกพอร์ต</option>
-                    {data.portfolios.map((portfolio) => (
-                      <option key={portfolio.id} value={portfolio.id}>
-                        {portfolio.name}{portfolio.archived ? ' (Archive)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            <button
-              type="button"
-              aria-label={visible ? 'ซ่อนยอดพอร์ต' : 'แสดงยอดพอร์ต'}
-              onClick={toggleVisibility}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"
-            >
-              {visible ? <EyeOff size={20} /> : <Eye size={20} />}
-            </button>
-          </div>
-          {/*
-            The two figures that rank straight under the total. They were set
-            at `text-sm` — smaller than several captions elsewhere on this
-            card — so the two numbers a reader checks every single morning
-            were the ones the page said least about. They now sit one step
-            below the headline, with the percentage kept quiet underneath.
-          */}
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            <div className="min-w-0">
-              <p className="figure-label">วันนี้</p>
-              <p className={`figure-lead mt-1 break-all ${tone(summary.todayChange)}`}>
-                {visible ? signed(convert(summary.todayChange)) : SENSITIVE_VALUE_MASK}
-              </p>
-              <p className={`figure mt-0.5 text-xs ${tone(summary.todayChangePercent)}`}>
-                {visible ? signed(summary.todayChangePercent, '%') : SENSITIVE_VALUE_MASK}
-              </p>
-            </div>
-            <div className="min-w-0">
-              <p className="figure-label">กำไร / ขาดทุนรวม</p>
-              <p className={`figure-lead mt-1 break-all ${tone(summary.totalGain)}`}>
-                {visible ? signed(convert(summary.totalGain)) : SENSITIVE_VALUE_MASK}
-              </p>
-              <p className={`figure mt-0.5 text-xs ${tone(summary.totalGainPercent)}`}>
-                {visible ? signed(summary.totalGainPercent, '%') : SENSITIVE_VALUE_MASK}
-              </p>
-            </div>
-          </div>
-          {/*
-            Cash, equities and options: one object with three facets, so they
-            are separated by hairlines rather than by three tinted boxes. The
-            tiles they replace gave a supporting breakdown a surface of its
-            own, which is weight this level of the hierarchy has not earned.
-          */}
-          <div className="data-strip data-strip--3 mt-5 min-[360px]:grid-cols-3">
-            {[
-              ['เงินสด', summary.cashBalance],
-              ['หุ้น', summary.equityMarketValue],
-              ['ออปชัน', summary.optionsMarketValue],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="data-strip__cell">
-                <p className="figure-label">{label}</p>
-                <p className="figure mt-1 break-all text-xs font-semibold text-[var(--text)]">
-                  {visible ? formatMoney(convert(value as number | null), baseCurrency) : SENSITIVE_VALUE_MASK}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
+    <section className="panel min-w-0 p-4" data-testid="overview-portfolio-summary">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <OverviewPortfolioGoalCard
-            model={goalCard}
-            money={(value) => visible
-              ? formatMoney(convert(value), baseCurrency)
-              : SENSITIVE_VALUE_MASK}
-            signed={(value) => visible ? signed(convert(value)) : SENSITIVE_VALUE_MASK}
-            percent={(value) => visible ? signed(value, '%') : SENSITIVE_VALUE_MASK}
-            showBalances={visible}
-          />
-          {summary.hasMissingPrices && (
-            <p className="mt-3 rounded-[var(--radius-control)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-2.5 text-xs leading-5 text-[var(--warning)]">
-              คำนวณได้ {coverage?.pricedAssets ?? 0} จาก {coverage?.totalAssets ?? 0} สินทรัพย์
-              {' '}โดยแสดงยอดที่ยืนยันได้และไม่ล้างค่าที่คำนวณสำเร็จแล้ว
-            </p>
-          )}
+          <p className="figure-label">
+            {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
+          </p>
+          <p className="figure-hero mt-1 break-all">
+            {visible ? formatMoney(convert(total), baseCurrency) : SENSITIVE_VALUE_MASK}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="text-xs text-[var(--text-muted)]">วันนี้</span>
+            <StatusLabel
+              level={level}
+              label={visible
+                ? `${signed(convert(summary.todayChange))} (${signed(summary.todayChangePercent, '%')})`
+                : SENSITIVE_VALUE_MASK}
+              className="text-sm"
+            />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Link
+            href="/portfolio"
+            className="flex min-h-11 items-center rounded-[var(--radius-control)] px-3 text-sm font-semibold text-[var(--accent)] hover:bg-[var(--surface-hover)]"
+          >
+            ดูพอร์ต
+          </Link>
+          <button
+            type="button"
+            aria-label={visible ? 'ซ่อนยอดพอร์ต' : 'แสดงยอดพอร์ต'}
+            onClick={toggleVisibility}
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-hover)]"
+          >
+            {visible ? <EyeOff size={20} /> : <Eye size={20} />}
+          </button>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-px border-t border-[var(--border)] bg-[var(--border)]">
-        {actions.map(({ href, label, icon: Icon }) => (
-          <Link key={label} href={href} className="flex min-h-16 flex-col items-center justify-center gap-1 bg-[var(--surface)] px-1 text-center text-[11px] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
-            <Icon size={18} aria-hidden="true" />
-            <span>{label}</span>
-          </Link>
+      {summary.hasMissingPrices && (
+        <p className="mt-3 text-xs leading-5 text-[var(--warning)]">
+          คำนวณได้ {data.coverage?.pricedAssets ?? 0} จาก {data.coverage?.totalAssets ?? 0} สินทรัพย์
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * "สิ่งที่เปลี่ยนไป" — and nothing at all on a quiet day.
+ *
+ * The block renders only when {@link buildOverviewChanges} found something. A
+ * section heading over "ไม่มีการเปลี่ยนแปลง" takes the same space as real news
+ * and carries none, and a reader who meets it three mornings running stops
+ * looking at the block on the fourth.
+ */
+function ChangesSection({ changes }: { changes: readonly OverviewChange[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <section className="panel-quiet min-w-0" data-testid="overview-changes">
+      <SectionTitle title="สิ่งที่เปลี่ยนไป" />
+      <ul className="grid min-w-0 gap-1">
+        {changes.map((change) => (
+          <li key={change.id} className="min-w-0">
+            <Link
+              href={stockDetailHref(change.symbol)}
+              className="flex min-h-11 min-w-0 items-center rounded-[var(--radius-control)] px-2 hover:bg-[var(--surface-hover)]"
+            >
+              <StatusLabel level={change.level} label={change.text} className="text-sm" />
+            </Link>
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
   );
 }
@@ -1192,6 +1154,29 @@ export function DashboardClient({
     void retry('breadth');
   }, [retry, view.breadth]);
 
+  const marketSummary = useMemo(() => buildMarketSummary(view.indices), [view.indices]);
+  const changes = useMemo(() => buildOverviewChanges(view.watchlist), [view.watchlist]);
+  /*
+   * S&P and NASDAQ first, everything else in the order the catalogue gives.
+   *
+   * The section holds ten assets — the two broad indices, Dow, Russell, three
+   * commodities, rare earths and Bitcoin — and on a handset it is a horizontal
+   * scroller, so whichever two are drawn first are the two most readers will
+   * ever see. Those should be the two the summary line above is about, or the
+   * sentence and the cards under it are describing different things.
+   *
+   * A sort rather than a filter: nothing is taken off the page, it is put in an
+   * order.
+   */
+  const orderedIndices = useMemo(() => {
+    const lead = ['SPY', 'QQQ'];
+    const rank = (symbol: string) => {
+      const index = lead.indexOf(symbol);
+      return index === -1 ? lead.length : index;
+    };
+    return [...view.indices].sort((left, right) => rank(left.symbol) - rank(right.symbol));
+  }, [view.indices]);
+
   return (
     <div className="min-w-0">
       <Header title="ภาพรวม" subtitle="พอร์ต ตลาด อุตสาหกรรม และข่าวสำคัญ" />
@@ -1207,22 +1192,51 @@ export function DashboardClient({
         <OnboardingCard view={onboarding} />
 
         {/*
-          The reading order is the order the questions are asked in: what is
-          mine, what am I watching, what is the market doing, what is coming up,
-          and what is being said about it. Nothing was removed to get here —
-          breadth, the industry ranking and the service status are all still on
-          this page, one disclosure below, because they answer a question a
-          reader asks occasionally rather than every time they open the app.
+          THE READING ORDER, AND WHY IT CHANGED.
+
+          It used to run: my portfolio, my watchlist, the market, what is coming
+          up, what is being said. The market now leads.
+
+          The reason is that everything below it is read AGAINST it. A portfolio
+          down 1.2% on a day the whole market is down 1.4% is a different fact
+          from the same 1.2% on a green day, and the old order asked the reader
+          to hold their own number in their head while they scrolled to find out
+          which day they were having. Context first, then the numbers it
+          contextualises.
+
+          The portfolio stays second — above the watchlist — because somebody
+          opening the app is here for their own money before anybody else's.
+          Both of them fit above the fold on a 390px handset now, which is what
+          condensing the portfolio block to a line bought.
+
+          Nothing was removed. Breadth, the industry ranking and the service
+          status are all still on this page, one disclosure below, because they
+          answer a question a reader asks occasionally rather than every visit.
         */}
-        {/*
-          `stack-lead` marks this as what the page is about, which buys it
-          more room underneath than the sections that follow get between
-          themselves. It is the only block on the overview carrying either
-          that mark or an elevation.
-        */}
-        <div className="stack-lead">
-          <PortfolioCard data={view.portfolio} usdThbRate={view.usdThbRate} />
-        </div>
+        <section id="market-overview" className="stack-lead scroll-mt-24">
+          <SectionTitle
+            title="ตลาดวันนี้"
+            action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
+          />
+          {/*
+            The reading, above the numbers it is a reading of. Four cards in a
+            scroller present the market; this states it, which is the difference
+            between a page a reader parses and one they glance at.
+          */}
+          {marketSummary && (
+            <StatusLabel
+              level={marketSummary.level}
+              label={marketSummary.text}
+              className="mb-3 text-sm"
+              data-testid="overview-market-summary"
+            />
+          )}
+          <div className="bleed-mobile flex snap-x snap-mandatory gap-3 overflow-x-auto px-[var(--page-gutter)] pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
+            {orderedIndices.map((item) => <MarketCard key={item.symbol} item={item} />)}
+          </div>
+        </section>
+
+        <PortfolioSummaryLine data={view.portfolio} usdThbRate={view.usdThbRate} />
 
         <WatchlistSection
           items={view.watchlist}
@@ -1230,15 +1244,7 @@ export function DashboardClient({
           onRetry={retry}
         />
 
-        <section id="market-overview" className="scroll-mt-24">
-          <SectionTitle
-            title="ตลาดวันนี้"
-            action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
-          />
-          <div className="bleed-mobile flex snap-x snap-mandatory gap-3 overflow-x-auto px-[var(--page-gutter)] pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
-            {view.indices.map((item) => <MarketCard key={item.symbol} item={item} />)}
-          </div>
-        </section>
+        <ChangesSection changes={changes} />
 
         {view.upcoming && <UpcomingSection feed={view.upcoming} />}
 

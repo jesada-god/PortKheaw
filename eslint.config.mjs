@@ -3,6 +3,7 @@ import next from "eslint-config-next";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import noUnsourcedFrameWord from "./eslint-rules/no-unsourced-frame-word.mjs";
+import noBannedCopy from "./eslint-rules/no-banned-copy.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +11,39 @@ const __dirname = path.dirname(__filename);
 export default defineConfig([
     {
         extends: [...next],
+    },
+    {
+        /*
+         * THE PRODUCT'S COPY, over the five pages a reader actually spends time
+         * on plus the components those pages are assembled from.
+         *
+         * The phrases and the reasoning are in
+         * `src/lib/presentation/banned-copy.ts`. What matters here is the
+         * SCOPE, because the previous scope is the whole reason the rule
+         * exists: the list lived inside `MarketSignalSection.test.tsx`, so one
+         * component in the product was held to it while a Tools card shipped
+         * "เครื่องมือนี้จะช่วยให้คุณ" and the stock page grew a banner reading
+         * "การวิเคราะห์ด้วย AI — กำลังจะมา".
+         *
+         * Tests are excluded for the same reason the frame-word rule excludes
+         * them: a test asserting that a phrase is absent has to name the phrase,
+         * and holding the assertion to the rule would ban checking it.
+         */
+        files: [
+            "app/page.tsx",
+            "app/search/**/*.{ts,tsx}",
+            "app/stock/**/*.{ts,tsx}",
+            "app/tools/**/*.{ts,tsx}",
+            "src/components/{dashboard,search,stock,tools,analytics,upcoming,watchlist,ui}/**/*.{ts,tsx}",
+            "src/lib/{overview,stock-detail,tools,presentation}/**/*.ts",
+        ],
+        ignores: ["**/*.test.ts", "**/*.test.tsx", "**/banned-copy.ts"],
+        plugins: {
+            portkheaw: { rules: { "no-banned-copy": noBannedCopy } },
+        },
+        rules: {
+            "portkheaw/no-banned-copy": "error",
+        },
     },
     {
         /*

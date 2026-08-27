@@ -66,14 +66,56 @@ describe('Overview dashboard contracts', () => {
     const dashboard = read('src/components/dashboard/DashboardClient.tsx');
     const body = dashboard.slice(dashboard.indexOf('<main className="mx-auto w-full max-w-[1440px]'));
     const order = [
-      '<PortfolioCard',
-      '<WatchlistSection',
       'id="market-overview"',
+      '<PortfolioSummaryLine',
+      '<WatchlistSection',
+      '<ChangesSection',
       '<UpcomingSection',
       'title="ข่าวสำคัญต่อตลาดหุ้น"',
     ].map((marker) => body.indexOf(marker));
     expect(order.every((index) => index > -1)).toBe(true);
     expect([...order].sort((left, right) => left - right)).toEqual(order);
+  });
+
+  /*
+   * The market leads, and the portfolio is second rather than absent.
+   *
+   * Everything below the market is read against it: a portfolio down 1.2% on a
+   * day the market is down 1.4% is a different fact from the same 1.2% on a
+   * green day, and the previous order asked a reader to carry their own number
+   * down the page to find out which day they were having.
+   *
+   * What made that affordable is the second assertion. The portfolio block was
+   * a scope selector, four figures, a three-facet strip, the goal card and a
+   * four-way link row — it could not follow anything and still leave the
+   * watchlist above the fold on a handset. It is a line now, and `/portfolio`
+   * is where all of it still lives.
+   */
+  it('leads with the market and keeps the portfolio to a line above the watchlist', () => {
+    const dashboard = read('src/components/dashboard/DashboardClient.tsx');
+    expect(dashboard).toContain('<PortfolioSummaryLine');
+    expect(dashboard).not.toContain('<PortfolioCard');
+    // The detail is not deleted, it is one tap away.
+    expect(dashboard).toContain('href="/portfolio"');
+  });
+
+  /*
+   * "สิ่งที่เปลี่ยนไป" is built from the watchlist rows the page already has,
+   * and it renders nothing on a quiet day. Both halves are load-bearing: the
+   * first is what keeps it inside Phase 1 (no new request, no new engine), and
+   * the second is what stops a section heading standing over
+   * "ไม่มีการเปลี่ยนแปลง" every other morning.
+   */
+  it('derives what changed from data already on the page, and hides itself when nothing did', () => {
+    const dashboard = read('src/components/dashboard/DashboardClient.tsx');
+    expect(dashboard).toContain('buildOverviewChanges(view.watchlist)');
+    const section = dashboard.slice(dashboard.indexOf('function ChangesSection'));
+    expect(section.slice(0, 400)).toContain('if (changes.length === 0) return null;');
+
+    const changes = read('src/lib/overview/changes.ts');
+    for (const forbidden of ['fetch(', 'useState', 'await ', 'new Date(']) {
+      expect(changes, `changes.ts must stay a pure function of the payload`).not.toContain(forbidden);
+    }
   });
 
   it('keeps breadth, the industry ranking and the service status reachable behind one disclosure', () => {

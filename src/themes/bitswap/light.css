@@ -27,6 +27,7 @@ html[data-theme="bitswap"][data-appearance="light"] {
   --positive: #0B7A38;
   --negative: #C4123C;
   --warning: #8A5A00;
+  --caution: #A8430A;
   --info: #1F5FB8;
   /* Market-session icon tones — the same five meanings as dark, at the light
      appearance's depth, unchanged from PortKheaw. */

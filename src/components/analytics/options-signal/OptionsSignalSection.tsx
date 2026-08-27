@@ -18,6 +18,8 @@ import type {
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTimeCE } from '@/src/lib/presentation/datetime';
+import { OPTIONS_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import {
   distanceAtrText,
   distanceExpectedMovesText,
@@ -168,7 +170,7 @@ function OptionsSignalContent({
 /**
  * The card itself, exported so the two probes that cannot go through the
  * fetching wrapper can render it: the jsdom test drives the wrapper, while
- * `scripts/qa/options-signal-header-qa.mts` needs the real markup at a real
+ * `scripts/qa/options-signal-card-qa.mts` needs the real markup at a real
  * width in a real browser and has no endpoint to answer it.
  */
 export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
@@ -195,6 +197,8 @@ export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
   }
 
   const presentation = OPTIONS_SIGNAL_PRESENTATION[summary.signalType];
+  const status = OPTIONS_SIGNAL_STATUS[summary.signalType];
+  const statusTone = STATUS_PRESENTATION[status];
   const highlights = (breakdown?.reasoning ?? [])
     .filter((reason) => reason.polarity === 'positive' || reason.polarity === 'caution')
     .slice(0, 4);
@@ -203,73 +207,47 @@ export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
     <section
       aria-label="Options Signal Engine"
       data-signal={summary.signalType}
-      className={`rounded-2xl border p-5 ${presentation.tone}`}
+      data-status={status}
+      className="rounded-[var(--radius-panel)] border p-5"
+      style={{
+        borderColor: `var(${statusTone.line})`,
+        background: `var(${statusTone.soft})`,
+      }}
     >
       <Header timeframe={summary.timeframe} />
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-mono text-base font-bold sm:text-lg ${presentation.badgeTone}`}>
-          <span aria-hidden="true">{presentation.dot}</span>
-          {presentation.title}
-        </p>
-        {/*
-          * TWO numbers, each labelled, and neither of them derived here.
-          *
-          * The card used to print one bare "55 / 100" that the modal contradicted
-          * with "+13 / 90 -> 14", because the card was showing confidence and the
-          * modal was showing the signed sum. Both now come from the payload, the
-          * direction score is the SAME field the modal renders, and each carries
-          * the word for what it measures so no reader has to guess which is which.
-          *
-          * LABELLING THEM WAS NOT ENOUGH, and this is the second fix.
-          *
-          * The pair used to be two right-aligned blocks 16px apart, which put
-          * the two value runs on one line as `63 / 100  60 / 100` — a single
-          * strip of digits whose only break was smaller than the distance from
-          * either number to the word above it. Measured in Chrome at both 1280px
-          * and 380px: 16px between the groups against a 22px label-to-value
-          * distance inside each one, so by proximity alone the numbers belonged
-          * to each other more than to their own labels, and `63` read as
-          * Confidence's as easily as the score's.
-          *
-          * Each pair is now ONE column that centres its value under its own
-          * label (measured offset 0.0px, was 4.7px), the groups are separated by
-          * 33px AND a hairline rule, and the hint moved onto the word it
-          * explains so the value line is a clean number in both columns.
-          */}
-        <div className="flex items-stretch text-center" data-testid="options-signal-headline-pair">
-          <p className="flex flex-col items-center gap-0.5 pr-4">
-            <span
-              className="flex h-[1lh] items-center justify-center text-[11px] font-normal leading-tight text-slate-400"
-              data-testid="options-signal-score-label"
-            >
-              คะแนนทิศทาง
-            </span>
-            <span className="font-mono leading-tight" data-testid="options-signal-score-value">
-              <span className="text-lg font-bold text-white" data-testid="options-signal-score-card">
-                {summary.directionScore0to100 ?? '—'}
-              </span>
-              <span className="text-sm font-normal text-slate-400"> / 100</span>
-            </span>
-          </p>
-          <p className="flex flex-col items-center gap-0.5 border-l border-white/20 pl-4">
-            <span
-              className="flex h-[1lh] items-center justify-center gap-1 text-[11px] font-normal leading-tight text-slate-400"
-              data-testid="options-signal-confidence-label"
-            >
-              Confidence
-              <InfoHint term="optionsSignalConfidence" align="end" />
-            </span>
-            <span className="font-mono leading-tight" data-testid="options-signal-confidence-value">
-              <span className="text-lg font-bold text-white" data-testid="options-signal-confidence-card">
-                {summary.confidenceScore}
-              </span>
-              <span className="text-sm font-normal text-slate-400"> / 100</span>
-            </span>
-          </p>
-        </div>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-slate-300">{presentation.headline}</p>
+      {/*
+        THE TWO NUMBERS THAT USED TO SIT HERE ARE IN THE DIALOG.
+
+        The card printed `คะแนนทิศทาง 63 / 100` and `Confidence 60 / 100` at
+        18px, side by side, as the largest thing on it — and a great deal of care
+        had gone into making that pair legible: labelling both, centring each
+        value under its own word, and putting a hairline between the columns so
+        `63` could not be read as Confidence's.
+
+        All of that was solving a problem the numbers themselves created. A score
+        out of 100 invites the reader to compare two stocks by their scores, which
+        is precisely what a signal engine cannot support: 63 and 66 are not three
+        points apart in any sense the reader means. So the card now says which of
+        the seven readings this is, in the identifier and in Thai, and both scores
+        — with the full breakdown, the formula and every deduction — are one tap
+        away in the dialog, where a number can be read next to what produced it.
+
+        Nothing was deleted: `options-signal-score-modal` and
+        `options-signal-confidence-formula` render the same fields they always
+        did, from the same payload.
+      */}
+      <p className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 break-words font-mono text-base font-bold text-[var(--text)] sm:text-lg">
+        <span>{presentation.title}</span>
+        <span aria-hidden="true" className="font-sans text-sm font-normal text-[var(--text-muted)]">·</span>
+        <StatusLabel
+          level={status}
+          label={presentation.thai}
+          className="font-sans text-sm"
+          data-testid="options-signal-state-headline"
+        />
+      </p>
+      <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{presentation.headline}</p>
 
       <SignalBadges summary={summary} />
 
@@ -305,12 +283,24 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
 
   return (
     <>
-      <dl className="mt-4 space-y-1.5" aria-label="คะแนนแต่ละปัจจัย">
-        {FACTOR_ORDER.map((id) => (
-          <FactorRow key={id} factor={diagnostics.factors[id]} />
-        ))}
-      </dl>
+      {/*
+        THE FACTOR SCORES ARE NOT ON THE CARD.
 
+        `Macro +12/20 · Trend +18/25 · Momentum +14/20 · Options Sentiment
+        +8/15 · Risk/Reward +12/20` used to sit here, directly under the state
+        line. It was the same mistake as the two headline scores one change
+        earlier, spread over five rows: a reader cannot do anything with +12 out
+        of 20 except compare it to another +12 out of 20, and the comparison is
+        not one the engine supports — the weights differ per factor and the sum
+        is signed, so the five numbers do not add up to anything a reader can
+        see either.
+
+        The dialog has carried the full table all along, with each factor's
+        label, its helper sentence explaining what it measures, its points and
+        its data state. Nothing was moved and nothing was added: this deletes a
+        second, abbreviated copy that stood where the card is supposed to say
+        one thing.
+      */}
       <dl className="mt-4 space-y-1.5 border-t border-white/10 pt-3 text-sm">
         <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1">
           <dt className="flex items-center gap-1.5 text-slate-300">
@@ -427,40 +417,6 @@ function Header({ timeframe }: { timeframe: string }) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="font-bold text-white">Options Signal Engine</h2>
       <span className="rounded-full border border-slate-700 px-2 py-1 font-mono text-[11px] text-slate-300">{timeframe}</span>
-    </div>
-  );
-}
-
-function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
-  const copy = FACTOR_COPY[factor.id];
-  /*
-   * A factor that was struck from the divisor never prints a score.
-   *
-   * "0 / 10" is the shape of a measurement, and it read as one: Options
-   * Sentiment showed it while the sentence underneath said the percentile could
-   * not be computed at all. Whatever replaces it must not be able to be mistaken
-   * for a number that was weighed.
-   */
-  const notCounted = factor.measurement === 'fallback-neutral';
-  return (
-    <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
-      <dt className="flex items-center gap-1.5 text-slate-300">
-        {copy.label}
-        {factor.partial && !notCounted && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
-      </dt>
-      <dd className="flex items-center gap-2">
-        {notCounted ? (
-          <span className="text-[11px] text-amber-300" data-testid={`options-signal-factor-not-counted-${factor.id}`}>
-            ไม่นับรวม · {factor.fallbackReason}
-          </span>
-        ) : (
-          <>
-            <span className="font-mono text-white">{signedPoints(factor.points)}</span>
-            <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
-          </>
-        )}
-        {!factor.available && <DataStatusBadge status="unavailable" />}
-      </dd>
     </div>
   );
 }

@@ -98,40 +98,36 @@ describe('tools catalog', () => {
 });
 
 /**
- * The locked card explains the tool's VALUE without becoming the tool.
+ * THE LOCKED CARD SAYS WHAT THE TOOL IS AND WHICH PLAN OPENS IT. Nothing else.
  *
- * A preview that fetched, computed, or reproduced the paid output would be the
- * paywall failing rather than the paywall explaining itself, so the copy is
- * static, sourced from this catalog, and shown only in the locked branch.
+ * It used to carry a tinted "ปลดล็อกแล้วได้อะไร" box with three bulleted
+ * outcomes and a labelled ตัวอย่าง sentence, and this block held three tests
+ * over that copy — that every tool had at least two preview lines, that the
+ * illustrative one was labelled, and that none of it contained a digit so it
+ * could never be read as a figure about the reader's own positions.
+ *
+ * The copy is gone: it was written to sell somebody on opening a tool, and a
+ * catalogue of three items does not need selling. What survives is the property
+ * that actually mattered — a locked card costs nothing and reveals nothing —
+ * which is now the only thing asserted, and is asserted more strictly than
+ * before because there is no preview to make an exception for.
  */
-describe('locked tool value preview', () => {
-  it('says what each locked tool answers, in outcomes', () => {
-    for (const tool of TOOL_CATALOG) {
-      expect(tool.valuePreview.length).toBeGreaterThanOrEqual(2);
-      for (const line of tool.valuePreview) expect(line.trim().length).toBeGreaterThan(0);
-      expect(tool.sampleOutcome.trim().length).toBeGreaterThan(0);
-    }
-  });
-
-  it('labels the illustrative line and renders it only while locked', () => {
-    expect(toolsPageSource).toContain('ตัวอย่าง');
-    expect(toolsPageSource).toContain('tool.valuePreview');
-    expect(toolsPageSource).toContain('tool.sampleOutcome');
-    // Both live inside the `!unlocked` branch, which is the only place the
-    // preview may appear.
-    const lockedBranch = toolsPageSource.slice(toolsPageSource.indexOf('{!unlocked && ('));
-    expect(lockedBranch).toContain('tool.valuePreview');
-    expect(lockedBranch).toContain('tool.sampleOutcome');
-  });
-
+describe('a locked tool card', () => {
   it('adds no request and no computation for a locked reader', () => {
     expect(toolsPageSource).not.toContain('fetch(');
     expect(toolsPageSource).not.toContain('useEffect');
+  });
+
+  it('reveals no figure of any kind, from the catalog or the page', () => {
     for (const tool of TOOL_CATALOG) {
-      // The preview carries no figures at all, so nothing in it can be read as
-      // a result — least of all one about the reader's own positions.
-      const text = [...tool.valuePreview, tool.sampleOutcome].join(' ');
-      expect(text).not.toMatch(/\d/);
+      // Titles carry no numbers either, so a digit anywhere in a tool's own copy
+      // would be a figure that arrived from somewhere it should not have.
+      expect(`${tool.title} ${tool.description}`).not.toMatch(/\d/);
     }
+  });
+
+  it('names the plan from the matrix rather than writing it into the card', () => {
+    expect(toolsPageSource).toContain('toolRequiredTier(tool)');
+    expect(toolsPageSource).toContain('PLAN_DISPLAY_NAME[tier]');
   });
 });

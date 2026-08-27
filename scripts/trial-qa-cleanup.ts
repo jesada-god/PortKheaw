@@ -1,5 +1,7 @@
 /**
- * Remove the claims our own Production QA left behind — and provably nothing else.
+ * Remove what our own Production QA left behind — and provably nothing else.
+ *
+ * TWO KINDS OF RESIDUE, one command, the same rule for both.
  *
  * Every QA run that proves the trial ledger works has to spend a real trial on a
  * real mailbox, which leaves a real claim. Those claims must keep blocking while
@@ -10,6 +12,21 @@
  *   npm run trial:qa-cleanup                # preview, the default
  *   npm run trial:qa-cleanup -- --apply
  *   npm run trial:qa-cleanup -- --mark=<claim-id>,<claim-id> --apply
+ *
+ * THE SECOND KIND: QA ACCOUNTS. The browser QA runs sign in as real accounts,
+ * so they create real users — `qa:phase1-ux` alone makes two per run, one Elite
+ * and one Pro, and it has never deleted them. They are labelled at creation
+ * with `user_metadata.qa_owner`, and that label is what this sweeps.
+ *
+ * IT IS DELIBERATELY NOT A PREDICATE OVER TIME OR SHAPE. An account must carry
+ * one of the tags in `QA_OWNERS` AND hold a `@example.com` address — a reserved
+ * domain nobody receives mail at. Both, never either: a tag can be typed into
+ * metadata by hand, and an address could in principle belong to something else,
+ * but nothing that is not ours carries both. That is the same standard `--mark`
+ * holds for claims — prove it is ours, or leave it alone.
+ *
+ * Deleting the account is what removes its portfolios, watchlists and alerts;
+ * they go by foreign key, so this command issues no delete against a data table.
  *
  * Three constraints, enforced in the database rather than here:
  *
@@ -53,6 +70,44 @@ const markIds = (() => {
 const admin = createClient(url, serviceRoleKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+
+/**
+ * The QA runs whose accounts this command owns.
+ *
+ * One entry per script that creates users, using the exact string that script
+ * writes into `user_metadata.qa_owner`. A run whose tag is not listed is not
+ * swept: adding a browser QA means adding its tag on purpose, in a diff
+ * somebody reviewed, rather than a sweep quietly widening to fit.
+ */
+const QA_OWNERS = ['phase1-ux-qa'] as const;
+
+/** Reserved domain, so a candidate cannot be an address anybody receives mail at. */
+const QA_EMAIL_DOMAIN = '@example.com';
+
+interface AdminUser {
+  id: string;
+  email?: string | null;
+  user_metadata?: { qa_owner?: unknown } | null;
+}
+
+/** Every account carrying one of our tags AND a reserved address. Paged. */
+async function findQaAccounts(): Promise<AdminUser[]> {
+  const owners = new Set<string>(QA_OWNERS);
+  const found: AdminUser[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(`Could not list accounts: ${error.message}`);
+    const users = (data?.users ?? []) as AdminUser[];
+    for (const user of users) {
+      const owner = user.user_metadata?.qa_owner;
+      if (typeof owner !== 'string' || !owners.has(owner)) continue;
+      if (!user.email?.endsWith(QA_EMAIL_DOMAIN)) continue;
+      found.push(user);
+    }
+    if (users.length < 200) break;
+  }
+  return found;
+}
 
 interface QaCleanupResult {
   matched: number;
@@ -104,10 +159,37 @@ async function main() {
     skippedActiveHolder: previewRow?.skipped_active_holder ?? 0,
   }));
 
+  /*
+   * The accounts are previewed in the same breath as the claims, so an operator
+   * sees both before either is touched, and `--apply` covers both or neither.
+   */
+  const accounts = await findQaAccounts();
+  console.info(JSON.stringify({
+    event: 'trial_qa_cleanup',
+    stage: 'accounts_preview',
+    owners: QA_OWNERS,
+    deletable: accounts.length,
+    emails: accounts.map((account) => account.email),
+  }));
+
   if (!apply) {
-    console.info('\npreview only. Re-run with --apply to delete the QA-owned claims above.');
+    console.info('\npreview only. Re-run with --apply to delete the QA-owned claims and accounts above.');
     return;
   }
+
+  let deletedAccounts = 0;
+  const failedAccounts: string[] = [];
+  for (const account of accounts) {
+    const { error } = await admin.auth.admin.deleteUser(account.id);
+    if (error) failedAccounts.push(`${account.email}: ${error.message}`);
+    else deletedAccounts += 1;
+  }
+  console.info(JSON.stringify({
+    event: 'trial_qa_cleanup',
+    stage: 'accounts_applied',
+    deleted: deletedAccounts,
+    failed: failedAccounts,
+  }));
 
   const applied = await admin.rpc('delete_qa_trial_identity_claims', { input_apply: true });
   if (applied.error) {
