@@ -16,74 +16,65 @@ import type {
  */
 
 export interface SignalPresentation {
-  /** Screen-reader-safe status word; the emoji is decorative only. */
-  dot: string;
+  /** The identifier the payload carries and the docs use. Never translated. */
   title: string;
+  /**
+   * The identifier said in Thai, in four or five words.
+   *
+   * A condensation of `headline` and never a second claim — the card prints
+   * both, the gloss beside the identifier and the sentence under it, which is
+   * the shape the technical-outlook card already uses.
+   */
+  thai: string;
   headline: string;
-  tone: string;
-  badgeTone: string;
 }
 
 export const OPTIONS_SIGNAL_PRESENTATION = {
   PRIME_CALL: {
-    dot: '🟢',
     title: 'PRIME CALL',
+    thai: 'สัญญาณขาขึ้นชัดเจน',
     headline: 'หลักฐานฝั่งขาขึ้นหนักแน่นและสอดคล้องกัน',
-    tone: 'border-emerald-400/40 bg-emerald-500/10',
-    badgeTone: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200',
   },
   CALL_WATCH: {
-    dot: '🟡',
     title: 'CALL WATCH',
+    thai: 'ขาขึ้น ยังไม่ยืนยัน',
     headline: 'เอนไปทางขาขึ้น แต่หลักฐานยังไม่ครบพอจะเรียกว่าแข็งแรง',
-    tone: 'border-lime-400/30 bg-lime-500/10',
-    badgeTone: 'border-lime-400/40 bg-lime-500/15 text-lime-200',
   },
   SIDEWAYS: {
-    dot: '⚪',
     title: 'SIDEWAYS',
+    thai: 'ยังไม่มีทิศทาง',
     headline: 'ตลาดเงียบ ทุกปัจจัยอยู่ใกล้ศูนย์ ยังไม่มีอะไรให้ทำ',
-    tone: 'border-slate-600/40 bg-slate-500/10',
-    badgeTone: 'border-slate-500/40 bg-slate-500/15 text-slate-200',
   },
   /*
-   * A DIFFERENT badge, not a differently-worded one.
+   * A DIFFERENT LEVEL, not a differently-worded one.
    *
    * SIDEWAYS and CONFLICTED both sit near 50 and call for opposite reactions, so
-   * they must not be able to be confused at a glance. Grey reads as "nothing
-   * happening", which is exactly the wrong impression for a chart whose Trend
-   * and Momentum are pulling against each other — amber says "look closer".
+   * they must not be able to be confused at a glance. That separation used to be
+   * made by hand here — grey against amber — and is now made by
+   * `OPTIONS_SIGNAL_STATUS`, which puts SIDEWAYS at 🟡 and CONFLICTED at 🟠 and
+   * is checked by a test in `status.test.ts` that these two never collapse onto
+   * one level. Same distinction, one place, and it now matches what those two
+   * marks mean everywhere else in the product.
    */
   CONFLICTED: {
-    dot: '🟣',
     title: 'ขัดแย้ง (CONFLICTED)',
+    thai: 'หลักฐานขัดแย้งกันเอง',
     headline: 'หลักฐานตีกันเอง ไม่ใช่ตลาดเงียบ — ปัจจัยหนึ่งชี้ขึ้น อีกปัจจัยชี้ลง จนหักกลบกันไป',
-    // Violet rather than fuchsia: the palette compatibility map already carries a
-    // light-mode value for `text-violet-200`, and a badge that glows on the dark
-    // surface but drops to 2:1 on the light one is not a badge.
-    tone: 'border-violet-400/40 bg-violet-500/10',
-    badgeTone: 'border-violet-400/40 bg-violet-500/15 text-violet-200',
   },
   PUT_WATCH: {
-    dot: '🟠',
     title: 'PUT WATCH',
+    thai: 'ขาลง ยังไม่ยืนยัน',
     headline: 'เอนไปทางขาลง แต่หลักฐานยังไม่ครบพอจะเรียกว่าแข็งแรง',
-    tone: 'border-orange-400/30 bg-orange-500/10',
-    badgeTone: 'border-orange-400/40 bg-orange-500/15 text-orange-200',
   },
   PRIME_PUT: {
-    dot: '🔴',
     title: 'PRIME PUT',
+    thai: 'สัญญาณขาลงชัดเจน',
     headline: 'หลักฐานฝั่งขาลงหนักแน่นและสอดคล้องกัน',
-    tone: 'border-red-500/40 bg-red-500/10',
-    badgeTone: 'border-red-500/40 bg-red-500/15 text-red-200',
   },
   IV_WARNING: {
-    dot: '⚠️',
     title: 'IV WARNING',
+    thai: 'ค่าพรีเมียมแพงผิดปกติ',
     headline: 'ค่าพรีเมียมแพงมากหรือใกล้ประกาศงบ ความเสี่ยงสูงกว่าปกติ',
-    tone: 'border-amber-400/40 bg-amber-500/10',
-    badgeTone: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
   },
 } as const satisfies Record<OptionsSignalType, SignalPresentation>;
 

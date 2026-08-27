@@ -7,7 +7,9 @@ import {
   formatPlanShares,
   formatRiskRewardRatio,
   parsePlanNumber,
+  stockPlanStatus,
   stockPlanSummary,
+  STOCK_PLAN_STATUS_LABEL,
   type StockPlanInput,
 } from './stock-plan';
 
@@ -160,5 +162,47 @@ describe('stock plan presentation', () => {
     expect(entryMarkerPercent(tinyRisk)).toBe(18);
     const tinyReward = evaluateStockPlan(plan({ entry: 100, stopLoss: 10, target: 100.1 })).levels!;
     expect(entryMarkerPercent(tinyReward)).toBe(82);
+  });
+});
+
+describe('the status of a stated plan', () => {
+  const levelsFor = (stopLoss: number, target: number) =>
+    evaluateStockPlan(plan({ entry: 100, stopLoss, target })).levels;
+
+  it('reads the ratio, at the cut points the tool has always drawn', () => {
+    // 1:3, 1:2, 1:1.75, 1:1.25, 1:0.5 — one on each side of every boundary.
+    expect(stockPlanStatus(levelsFor(90, 130))).toBe('good');
+    expect(stockPlanStatus(levelsFor(90, 120))).toBe('good');
+    expect(stockPlanStatus(levelsFor(90, 117.5))).toBe('neutral');
+    expect(stockPlanStatus(levelsFor(90, 112.5))).toBe('weak');
+    expect(stockPlanStatus(levelsFor(90, 105))).toBe('bad');
+  });
+
+  /*
+   * A plan the reader has not finished stating is ⚪, never 🔴.
+   *
+   * `levels` is null until all three prices are usable together, and a form that
+   * turned "you have not filled this in" into "this plan risks more than it
+   * reaches for" would be delivering a verdict on numbers nobody has entered.
+   */
+  it('does not deliver a verdict on a plan that is not stated yet', () => {
+    expect(stockPlanStatus(null)).toBe('unknown');
+    expect(stockPlanStatus(evaluateStockPlan(plan({ target: null })).levels)).toBe('unknown');
+    expect(stockPlanStatus(evaluateStockPlan(plan({ stopLoss: 120 })).levels)).toBe('unknown');
+  });
+
+  it('describes the proportion and never whether the plan is a good one', () => {
+    for (const label of Object.values(STOCK_PLAN_STATUS_LABEL)) {
+      /*
+       * The tool states what the numbers imply, and never whether to act on
+       * them. These are the words that would cross that line — the bare "ควร"
+       * is deliberately NOT among them, because "ปานกลาง" and "พอสมควร" contain
+       * it while advising nothing, and a substring check would have quietly
+       * banned every ordinary adverb in the language.
+       */
+      expect(label).not.toMatch(/คุ้มค่า|ควรซื้อ|ควรเข้า|ควรขาย|น่าสนใจ|แนะนำ/);
+    }
+    expect(STOCK_PLAN_STATUS_LABEL.bad).toContain('เสี่ยงมากกว่า');
+    expect(STOCK_PLAN_STATUS_LABEL.unknown).toContain('ยังกรอกไม่ครบ');
   });
 });

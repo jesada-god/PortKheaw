@@ -17,6 +17,7 @@
  *    numbers imply — how much is at stake, how much is hoped for — and never
  *    whether to act on them.
  */
+import { statusFromRewardRisk, type StatusLevel } from '@/src/lib/presentation/status';
 
 /** The one field a message belongs to, so the form can show it in place. */
 export type StockPlanField = 'entry' | 'stopLoss' | 'target' | 'size';
@@ -225,6 +226,43 @@ export function formatRiskRewardRatio(rewardToRisk: number): string {
   if (!Number.isFinite(rewardToRisk)) return 'ไม่มีข้อมูล';
   return `1 : ${rewardToRisk.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
 }
+
+/**
+ * THE SHAPE OF THE PLAN, AND STRICTLY NOT ITS PROSPECTS.
+ *
+ * A plan's status here answers one question: how the reader's own three prices
+ * are proportioned against each other. It is 🟢 at 1:2 or better, and 🔴 below
+ * 1:1 — the point at which the plan risks more than it reaches for.
+ *
+ * WHAT IT IS NOT, and the reason the wording is this careful: it is not a
+ * judgement of whether the plan will work. A 1:3 plan on a stock in freefall is
+ * still 🟢 here, because the ratio is a fact about the numbers and nothing in
+ * this module has ever looked at a chart. That is the same line
+ * {@link stockPlanSummary} holds and the same one the Planner prints beside the
+ * figures.
+ *
+ * `levels` is `null` whenever the three prices are not usable together, and the
+ * status is ⚪ then — never the level a zero would give, which would be 🔴 and
+ * would read as a verdict on a plan the reader has not finished stating.
+ */
+export function stockPlanStatus(levels: StockPlanLevels | null): StatusLevel {
+  return statusFromRewardRisk(levels?.rewardToRisk ?? null);
+}
+
+/**
+ * The status said in the reader's own terms, for the row beside it.
+ *
+ * Deliberately about proportion rather than quality — "คุ้มค่า" would be the
+ * verdict this module refuses to give, so the words describe the ratio: how much
+ * the plan reaches for against how much it puts at risk.
+ */
+export const STOCK_PLAN_STATUS_LABEL: Readonly<Record<StatusLevel, string>> = {
+  good: 'หวังผลมากกว่าที่เสี่ยงหลายเท่า',
+  neutral: 'หวังผลมากกว่าที่เสี่ยงปานกลาง',
+  weak: 'หวังผลมากกว่าที่เสี่ยงไม่มาก',
+  bad: 'เสี่ยงมากกว่าที่หวังผล',
+  unknown: 'ยังกรอกไม่ครบ',
+};
 
 /**
  * The same three figures again, as sentences.

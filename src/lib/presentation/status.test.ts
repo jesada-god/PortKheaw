@@ -140,8 +140,17 @@ describe('STATUS_PRESENTATION', () => {
 
   it('names a CSS custom property, never a literal colour', () => {
     for (const level of levels) {
-      expect(STATUS_PRESENTATION[level].token).toMatch(/^--[a-z-]+$/);
+      const { token, soft, line } = STATUS_PRESENTATION[level];
+      for (const value of [token, soft, line]) {
+        expect(value).toMatch(/^--[a-z-]+$/);
+      }
     }
+  });
+
+  it('gives unknown a neutral surface rather than a coloured wash', () => {
+    // There is no colour that means "no reading", so it does not get one.
+    expect(STATUS_PRESENTATION.unknown.soft).toBe('--surface-elevated');
+    expect(STATUS_PRESENTATION.unknown.line).toBe('--border');
   });
 
   it('carries a Thai fallback word for every level', () => {

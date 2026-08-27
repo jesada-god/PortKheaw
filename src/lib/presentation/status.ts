@@ -49,23 +49,35 @@ export const STATUS_RANK: Readonly<Record<StatusLevel, number>> = {
 export interface StatusPresentation {
   /** Decorative at the render site; the label carries the meaning. */
   emoji: string;
-  /** The CSS custom property the level paints with. */
+  /** The CSS custom property the level's TEXT and mark paint with. */
   token: string;
+  /**
+   * The wash and the hairline, for the rare block that is entirely about one
+   * status — the technical-outlook card is the whole list.
+   *
+   * Deliberately separate from `token`: a status inside a sentence gets colour
+   * and nothing else, and a surface that tinted itself every time a status
+   * appeared would put the product straight back into the wall of coloured
+   * boxes this vocabulary replaced. `unknown` borrows the neutral surface
+   * rather than a wash, because there is no colour that means "no reading".
+   */
+  soft: string;
+  line: string;
   /** The default Thai word, used when a caller has nothing more specific. */
   fallbackLabel: string;
 }
 
 export const STATUS_PRESENTATION: Readonly<Record<StatusLevel, StatusPresentation>> = {
-  good: { emoji: '🟢', token: '--positive', fallbackLabel: 'แข็งแรง' },
-  neutral: { emoji: '🟡', token: '--warning', fallbackLabel: 'ทรงตัว' },
+  good: { emoji: '🟢', token: '--positive', soft: '--positive-soft', line: '--positive-line', fallbackLabel: 'แข็งแรง' },
+  neutral: { emoji: '🟡', token: '--warning', soft: '--warning-soft', line: '--warning-line', fallbackLabel: 'ทรงตัว' },
   /*
    * `--caution` rather than a second use of `--warning`. 🟡 and 🟠 are two
    * different sentences — "ปกติ ระวังไว้" and "อ่อนแรงแล้ว" — and painting them
    * the same amber collapses the distinction the five levels were split for.
    */
-  weak: { emoji: '🟠', token: '--caution', fallbackLabel: 'อ่อนแรง' },
-  bad: { emoji: '🔴', token: '--negative', fallbackLabel: 'อ่อนแอ' },
-  unknown: { emoji: '⚪', token: '--text-muted', fallbackLabel: 'ยังไม่มีข้อมูล' },
+  weak: { emoji: '🟠', token: '--caution', soft: '--caution-soft', line: '--caution-line', fallbackLabel: 'อ่อนแรง' },
+  bad: { emoji: '🔴', token: '--negative', soft: '--negative-soft', line: '--negative-line', fallbackLabel: 'อ่อนแอ' },
+  unknown: { emoji: '⚪', token: '--text-muted', soft: '--surface-elevated', line: '--border', fallbackLabel: 'ยังไม่มีข้อมูล' },
 };
 
 /**

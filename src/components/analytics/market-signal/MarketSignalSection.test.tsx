@@ -8,7 +8,24 @@ import type { MarketSignalResult, MarketSignalState } from '@/src/lib/analytics/
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { MARKET_SIGNAL_HISTORY, MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
+import { MARKET_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
 import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle, zoneScaleFor } from './MarketSignalSection';
+
+/**
+ * What the card SAYS, with the decorative marks taken out.
+ *
+ * The state line carries a StatusLabel now, and its 🟡 is `aria-hidden` — a
+ * screen reader is read the Thai phrase and nothing else. These assertions are
+ * about the wording, so they read the card the same way that reader does;
+ * asserting on the raw `textContent` would pin the emoji into a test whose
+ * subject is the sentence.
+ */
+function spokenText(node: Element | null | undefined): string {
+  if (!node) return '';
+  const clone = node.cloneNode(true) as Element;
+  for (const decoration of clone.querySelectorAll('[aria-hidden="true"]')) decoration.remove();
+  return clone.textContent ?? '';
+}
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -229,7 +246,7 @@ describe('MarketSignalSection', () => {
     await render();
     expect(container.textContent).toContain('SQUEEZE');
     expect(container.textContent).not.toContain('Bullish Bias');
-    expect(container.querySelector('[data-testid="signal-state-headline"]')!.textContent)
+    expect(spokenText(container.querySelector('[data-testid="signal-state-headline"]')))
       .toBe('ราคาแกว่งแคบลงเรื่อย ๆ');
     // The reasons are on the card now, as labels rather than as sentences.
     const reasons = container.querySelector('[data-testid="signal-beginner-reasons"]')!;
@@ -405,17 +422,43 @@ describe('MarketSignalSection', () => {
     expect(dialog.textContent).toContain('Source: yahoo-finance-chart');
   }, 15_000);
 
-  it('maps all seven states to distinct text-labelled state styling', async () => {
+  /*
+   * The card used to carry seven hand-picked Tailwind triples, one per state,
+   * and this test asserted the first class of each landed on the section. They
+   * are gone: the card paints itself from the five-level status vocabulary in
+   * `src/lib/presentation/status.ts`, which is what the overview, the search
+   * rows and the planner also read.
+   *
+   * So what is checked is the same relationship one layer up — the state still
+   * decides the styling, it just decides it through a table every other surface
+   * shares — plus the part that has not changed at all: whichever state is
+   * rendered, its own English name and its own Thai gloss are both on the card.
+   */
+  it('paints all seven states from the shared status vocabulary', async () => {
     const states = Object.keys(MARKET_SIGNAL_PRESENTATION) as MarketSignalState[];
     for (const state of states) {
       await render({ ...result, state, bias: state.includes('BEARISH') ? 'bearish' : state === 'SIDEWAYS' ? 'neutral' : 'bullish' });
       const section = container.querySelector<HTMLElement>('[data-state]')!;
+      const level = MARKET_SIGNAL_STATUS[state];
       expect(section.dataset.state).toBe(state);
-      expect(section.className).toContain(MARKET_SIGNAL_PRESENTATION[state].tone.split(' ')[0]);
+      expect(section.dataset.status).toBe(level);
+      // A token, never a literal colour — so a theme swap carries the card with it.
+      expect(section.style.borderColor).toContain(STATUS_PRESENTATION[level].line);
+      expect(section.style.background).toContain(STATUS_PRESENTATION[level].soft);
       expect(container.textContent).toContain(state);
       expect(container.textContent).toContain(MARKET_SIGNAL_PRESENTATION[state].thai);
     }
   }, 15_000);
+
+  /*
+   * The four levels the seven states collapse onto have to stay distinguishable,
+   * or the vocabulary has bought nothing: a reader glancing at 🟢 and 🔴 on two
+   * stock pages must be reading two different claims.
+   */
+  it('does not collapse a rising state and a falling one onto one level', () => {
+    expect(MARKET_SIGNAL_STATUS.STRONG_BULLISH).not.toBe(MARKET_SIGNAL_STATUS.STRONG_BEARISH);
+    expect(MARKET_SIGNAL_STATUS.SIDEWAYS).not.toBe(MARKET_SIGNAL_STATUS.BEARISH);
+  });
 
   /*
    * THE GLOSS BESIDE THE STATE NAME, AND THE THREE RULES IT IS HELD TO.
@@ -2973,7 +3016,7 @@ describe('the SIDEWAYS label says when it is talking about', () => {
    *
    * `?.` is kept: the insufficient-data card renders no state line.
    */
-  const headline = () => container.querySelector('[data-testid="signal-state-headline"]')?.textContent ?? '';
+  const headline = () => spokenText(container.querySelector('[data-testid="signal-state-headline"]'));
   const zoneBarHeadline = () => container
     .querySelector('[data-testid="signal-zone-bar"] [data-zone-row="headline"]')?.textContent ?? '';
   const description = async () => (await openAdvanced())

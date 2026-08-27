@@ -18,6 +18,8 @@ import type {
 } from '@/src/lib/analytics/options-signal/types';
 import type { GlossaryTermId } from '@/src/lib/analytics/glossary';
 import { formatBangkokDateTimeCE } from '@/src/lib/presentation/datetime';
+import { OPTIONS_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import {
   distanceAtrText,
   distanceExpectedMovesText,
@@ -195,6 +197,8 @@ export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
   }
 
   const presentation = OPTIONS_SIGNAL_PRESENTATION[summary.signalType];
+  const status = OPTIONS_SIGNAL_STATUS[summary.signalType];
+  const statusTone = STATUS_PRESENTATION[status];
   const highlights = (breakdown?.reasoning ?? [])
     .filter((reason) => reason.polarity === 'positive' || reason.polarity === 'caution')
     .slice(0, 4);
@@ -203,73 +207,47 @@ export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
     <section
       aria-label="Options Signal Engine"
       data-signal={summary.signalType}
-      className={`rounded-2xl border p-5 ${presentation.tone}`}
+      data-status={status}
+      className="rounded-[var(--radius-panel)] border p-5"
+      style={{
+        borderColor: `var(${statusTone.line})`,
+        background: `var(${statusTone.soft})`,
+      }}
     >
       <Header timeframe={summary.timeframe} />
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-mono text-base font-bold sm:text-lg ${presentation.badgeTone}`}>
-          <span aria-hidden="true">{presentation.dot}</span>
-          {presentation.title}
-        </p>
-        {/*
-          * TWO numbers, each labelled, and neither of them derived here.
-          *
-          * The card used to print one bare "55 / 100" that the modal contradicted
-          * with "+13 / 90 -> 14", because the card was showing confidence and the
-          * modal was showing the signed sum. Both now come from the payload, the
-          * direction score is the SAME field the modal renders, and each carries
-          * the word for what it measures so no reader has to guess which is which.
-          *
-          * LABELLING THEM WAS NOT ENOUGH, and this is the second fix.
-          *
-          * The pair used to be two right-aligned blocks 16px apart, which put
-          * the two value runs on one line as `63 / 100  60 / 100` — a single
-          * strip of digits whose only break was smaller than the distance from
-          * either number to the word above it. Measured in Chrome at both 1280px
-          * and 380px: 16px between the groups against a 22px label-to-value
-          * distance inside each one, so by proximity alone the numbers belonged
-          * to each other more than to their own labels, and `63` read as
-          * Confidence's as easily as the score's.
-          *
-          * Each pair is now ONE column that centres its value under its own
-          * label (measured offset 0.0px, was 4.7px), the groups are separated by
-          * 33px AND a hairline rule, and the hint moved onto the word it
-          * explains so the value line is a clean number in both columns.
-          */}
-        <div className="flex items-stretch text-center" data-testid="options-signal-headline-pair">
-          <p className="flex flex-col items-center gap-0.5 pr-4">
-            <span
-              className="flex h-[1lh] items-center justify-center text-[11px] font-normal leading-tight text-slate-400"
-              data-testid="options-signal-score-label"
-            >
-              คะแนนทิศทาง
-            </span>
-            <span className="font-mono leading-tight" data-testid="options-signal-score-value">
-              <span className="text-lg font-bold text-white" data-testid="options-signal-score-card">
-                {summary.directionScore0to100 ?? '—'}
-              </span>
-              <span className="text-sm font-normal text-slate-400"> / 100</span>
-            </span>
-          </p>
-          <p className="flex flex-col items-center gap-0.5 border-l border-white/20 pl-4">
-            <span
-              className="flex h-[1lh] items-center justify-center gap-1 text-[11px] font-normal leading-tight text-slate-400"
-              data-testid="options-signal-confidence-label"
-            >
-              Confidence
-              <InfoHint term="optionsSignalConfidence" align="end" />
-            </span>
-            <span className="font-mono leading-tight" data-testid="options-signal-confidence-value">
-              <span className="text-lg font-bold text-white" data-testid="options-signal-confidence-card">
-                {summary.confidenceScore}
-              </span>
-              <span className="text-sm font-normal text-slate-400"> / 100</span>
-            </span>
-          </p>
-        </div>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-slate-300">{presentation.headline}</p>
+      {/*
+        THE TWO NUMBERS THAT USED TO SIT HERE ARE IN THE DIALOG.
+
+        The card printed `คะแนนทิศทาง 63 / 100` and `Confidence 60 / 100` at
+        18px, side by side, as the largest thing on it — and a great deal of care
+        had gone into making that pair legible: labelling both, centring each
+        value under its own word, and putting a hairline between the columns so
+        `63` could not be read as Confidence's.
+
+        All of that was solving a problem the numbers themselves created. A score
+        out of 100 invites the reader to compare two stocks by their scores, which
+        is precisely what a signal engine cannot support: 63 and 66 are not three
+        points apart in any sense the reader means. So the card now says which of
+        the seven readings this is, in the identifier and in Thai, and both scores
+        — with the full breakdown, the formula and every deduction — are one tap
+        away in the dialog, where a number can be read next to what produced it.
+
+        Nothing was deleted: `options-signal-score-modal` and
+        `options-signal-confidence-formula` render the same fields they always
+        did, from the same payload.
+      */}
+      <p className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 break-words font-mono text-base font-bold text-[var(--text)] sm:text-lg">
+        <span>{presentation.title}</span>
+        <span aria-hidden="true" className="font-sans text-sm font-normal text-[var(--text-muted)]">·</span>
+        <StatusLabel
+          level={status}
+          label={presentation.thai}
+          className="font-sans text-sm"
+          data-testid="options-signal-state-headline"
+        />
+      </p>
+      <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{presentation.headline}</p>
 
       <SignalBadges summary={summary} />
 

@@ -43,6 +43,8 @@ import { OnboardingCard } from '@/src/components/onboarding/OnboardingCard';
 import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
 import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
+import { statusFromChangePercent, type StatusLevel } from '@/src/lib/presentation/status';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import { buildPortfolioGoalCardModel } from '@/src/lib/portfolio/goal-card';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
@@ -390,16 +392,33 @@ function SectionInfo({
   );
 }
 
+/**
+ * Which of the five levels each service level reads as.
+ *
+ * `connecting` is 🟡 rather than its own blue. It was the only place in the
+ * product where `--info` carried a status, and a reader does not need a fourth
+ * colour to learn that a section is still being fetched.
+ *
+ * `delayed` and `partial` used to share one amber, which is what having only
+ * three dots forced. They are now told apart: delayed data is all there and
+ * behind the clock (🟡), while partial means some sections did not answer at
+ * all (🟠) — the page is still worth reading, which is what 🟠 says and 🔴 would
+ * not.
+ */
+const SERVICE_STATUS_LEVEL = {
+  ready: 'good',
+  connecting: 'neutral',
+  delayed: 'neutral',
+  partial: 'weak',
+} as const satisfies Record<OverviewDashboardData['serviceStatus']['level'], StatusLevel>;
+
 function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] }) {
-  const dot = data.level === 'ready' ? 'bg-[var(--positive)]'
-    : data.level === 'connecting' ? 'bg-[var(--info)]'
-      : 'bg-[var(--warning)]';
+  const level = SERVICE_STATUS_LEVEL[data.level];
   return (
     <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
         <span className="flex min-w-0 items-center gap-2">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-          <span className="font-medium text-[var(--text-secondary)]">{data.label}</span>
+          <StatusLabel level={level} label={data.label} className="font-medium" />
         </span>
         <span className="pl-4 text-[10px] text-[var(--text-muted)] sm:shrink-0 sm:pl-0 sm:text-xs">
           ตรวจล่าสุด {formatBangkokDateTime(data.checkedAt)}
