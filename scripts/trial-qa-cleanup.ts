@@ -67,7 +67,16 @@ const markIds = (() => {
     .filter((value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value));
 })();
 
-const admin = createClient(url, serviceRoleKey, {
+/*
+ * The two settings again, past the guard above, so the direct admin-API call in
+ * `removeQaAccount` has them as plain strings. The guard exits, but a `const`
+ * read out of `process.env` is still `string | undefined` inside a function
+ * declared after it.
+ */
+const SUPABASE_URL: string = url;
+const SERVICE_ROLE_KEY: string = serviceRoleKey;
+
+const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -107,6 +116,64 @@ async function findQaAccounts(): Promise<AdminUser[]> {
     if (users.length < 200) break;
   }
   return found;
+}
+
+/**
+ * Delete one QA account, in the order the account-deletion pipeline uses.
+ *
+ * THE DATA FIRST, THE AUTH USER LAST. Deleting the auth user on its own cannot
+ * work and never could: GoTrue cascades into `public.portfolios`, and
+ * `portfolio_transactions_portfolio_id_fkey` is `on delete restrict`, so the
+ * cascade stops on the ledger and the whole delete fails with 23503. The first
+ * version of this sweep did exactly that against four accounts and reported
+ * four failures.
+ *
+ * `purge_account_data` is the routine that knows the order — it is the same one
+ * `deleteAccount` calls at step 4, it is `security definer`, and it is the
+ * reason nothing here issues a delete against a data table by hand.
+ *
+ * `account_residual_data_count` is then asked whether the purge actually
+ * emptied the account, and a non-zero answer stops the sweep for that account.
+ * That is the rule the deletion reconciler already follows: an auth user is not
+ * removed over rows that are still there, because once it is gone those rows
+ * belong to nobody and nothing will come back for them.
+ */
+async function removeQaAccount(account: AdminUser): Promise<string | null> {
+  const label = account.email ?? account.id;
+
+  const purged = await admin.rpc('purge_account_data', { input_user_id: account.id });
+  if (purged.error) {
+    return `${label}: purge failed [${purged.error.code ?? 'no-code'}] ${purged.error.message}`;
+  }
+
+  const residual = await admin.rpc('account_residual_data_count', { input_user_id: account.id });
+  if (residual.error) {
+    return `${label}: residual count failed [${residual.error.code ?? 'no-code'}] ${residual.error.message}`;
+  }
+  if (typeof residual.data === 'number' && residual.data > 0) {
+    return `${label}: ${residual.data} row(s) still present after the purge — auth user left in place`;
+  }
+
+  /*
+   * The raw admin endpoint rather than `auth.admin.deleteUser`, because the
+   * supabase-js error is not readable: a 500 from GoTrue arrives as
+   * `AuthRetryableFetchError` whose `message` is the string "{}", which is what
+   * put "{}" in this command's own failure report and hid a plain foreign-key
+   * violation for a full run. The status line and the body are the diagnosis.
+   */
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${account.id}`, {
+    method: 'DELETE',
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!response.ok) {
+    const body = (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 400);
+    return `${label}: HTTP ${response.status} ${response.statusText} ${body || '(empty body)'}`;
+  }
+  return null;
 }
 
 interface QaCleanupResult {
@@ -180,8 +247,8 @@ async function main() {
   let deletedAccounts = 0;
   const failedAccounts: string[] = [];
   for (const account of accounts) {
-    const { error } = await admin.auth.admin.deleteUser(account.id);
-    if (error) failedAccounts.push(`${account.email}: ${error.message}`);
+    const failure = await removeQaAccount(account);
+    if (failure) failedAccounts.push(failure);
     else deletedAccounts += 1;
   }
   console.info(JSON.stringify({
