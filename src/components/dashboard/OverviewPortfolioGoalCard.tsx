@@ -1,5 +1,29 @@
 'use client';
 
+/**
+ * DEAD COMPONENT — nothing renders this any more.
+ *
+ * It was the overview's compact goal card until Phase 1
+ * (`refactor(overview): ตลาด → พอร์ต → watchlist → สิ่งที่เปลี่ยนไป`), which
+ * condensed the overview's portfolio block to a single line — total, today's
+ * move, a status and a link — and moved the goal card, the scope selector and
+ * the cash/equity/options strip to `/portfolio`, the page built for that
+ * reading. `DashboardClient.tsx` no longer imports it, and no other page ever
+ * did. `overview.contract.test.ts` asserts that absence deliberately.
+ *
+ * WHY IT IS STILL HERE. Two suites render their fixtures through it —
+ * `PortfolioGoalMascot.test.tsx` and `PortfolioGoalSelector.test.tsx` — because
+ * it is the only COMPACT rendering of the goal model in the tree, and those
+ * suites are about the mascot's moods and the selector's behaviour rather than
+ * about the overview. Deleting it would mean rewriting both against the full
+ * `PortfolioGoalCard`, whose layout is not the one they were written to check.
+ *
+ * WHEN IT CAN GO. As soon as those two suites stop referring to it — either by
+ * moving their fixtures onto the full card, or by getting a purpose-built
+ * harness of their own. Nothing else needs to happen first, and no product
+ * behaviour depends on this file.
+ */
+
 import type { CSSProperties } from 'react';
 import {
   formatPortfolioGoalTime,
