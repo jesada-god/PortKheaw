@@ -40,7 +40,7 @@ import { OnboardingCard } from '@/src/components/onboarding/OnboardingCard';
 import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
 import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
-import { statusFromChangePercent, type StatusLevel } from '@/src/lib/presentation/status';
+import { statusFromSignedValue, type StatusLevel } from '@/src/lib/presentation/status';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import { buildMarketSummary } from '@/src/lib/overview/market-summary';
 import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/changes';
@@ -486,13 +486,37 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
    * mark is a colour, and a green one beside a masked total tells anybody
    * looking over the reader's shoulder the very thing the mask is for.
    */
-  const level = (value: number | null) =>
-    visible ? statusFromChangePercent(value) : 'unknown';
+  /*
+   * The percentage decides the mark, and the AMOUNT decides it when there is no
+   * percentage to ask.
+   *
+   * `portfolioTotalReturnPercent` returns null whenever the invested basis is
+   * zero or below — a portfolio funded entirely by transfers — while `totalGain`
+   * stays a real, signed number. Asking only about the percentage drew
+   * "-$746.28" beside ⚪: a loss on the screen, and a mark beside it saying
+   * there was no reading. Both routes go through the same mapper, so the
+   * fallback is coarser, never different.
+   */
+  const level = (percent: number | null, amount: number | null = null) =>
+    visible ? statusFromSignedValue(percent ?? amount) : 'unknown';
   /*
    * "-$746.28 · -80.18%", the same sentence `/portfolio` prints for the same
    * number, through the same two formatters. The card used to compose its own
    * with a local `Intl.NumberFormat` that omitted `currencyDisplay`, so the
    * overview said "US$184.44" over a portfolio page saying "$184.44".
+   */
+  /*
+   * ON A THB PORTFOLIO WITH NO FX RATE, this reads "— · -80.18%", and that is
+   * deliberate.
+   *
+   * `signedMoney` converts through `usdThbRate` and returns an em dash when
+   * there is no rate to convert with. The percentage needs no rate — it is a
+   * ratio of two USD figures and is just as true in either currency — so half
+   * the row is genuinely known and half genuinely is not.
+   *
+   * The row therefore stays. Hiding it would withhold a return the reader can
+   * act on because a conversion rate was missing, which is a worse answer than
+   * showing the half that survived and marking the half that did not.
    */
   const move = (amount: number, percent: number | null) => {
     if (!visible) return SENSITIVE_VALUE_MASK;
@@ -538,7 +562,7 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
             <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-xs text-[var(--text-muted)]">กำไร/ขาดทุนรวม</span>
               <StatusLabel
-                level={level(summary.totalGainPercent)}
+                level={level(summary.totalGainPercent, summary.totalGain)}
                 label={totalGainLabel}
                 className="text-sm"
               />
@@ -548,7 +572,7 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
             <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-xs text-[var(--text-muted)]">วันนี้</span>
               <StatusLabel
-                level={level(summary.todayChangePercent)}
+                level={level(summary.todayChangePercent, summary.todayChange)}
                 label={todayLabel}
                 className="text-sm"
               />

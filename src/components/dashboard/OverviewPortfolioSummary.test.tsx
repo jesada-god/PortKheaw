@@ -184,18 +184,34 @@ describe('when a figure cannot be computed', () => {
   /*
    * `portfolioTotalReturnPercent` returns null when the invested basis is zero
    * or below — a portfolio funded entirely by transfers — while `totalGain`
-   * stays a real number. The money is therefore printed with a sign and no
-   * percentage, and the MARK falls back to ⚪ because the mapper is asked about
-   * the percentage rather than the money.
+   * stays a real, signed number.
    *
-   * Recorded as current behaviour, not endorsed: see the review note. A reader
-   * gets "-$746.28" beside a mark that says "no reading", which are two
-   * different claims about the same number.
+   * This used to draw "-$746.28" beside ⚪: a loss on the screen and a mark
+   * beside it saying there was no reading. The mark now falls back to the sign
+   * of the amount, through the same mapper, so the two halves of the row agree.
    */
-  it('marks a signed loss ⚪ when only the percentage is missing', () => {
+  it('reads the sign off the amount when only the percentage is missing', () => {
     const node = card({ totalGainPercent: null });
     expect(node.textContent).toContain('กำไร/ขาดทุนรวม');
-    expect(marks(node)).toEqual(['unknown']);
+    expect(marks(node)).toEqual(['bad']);
+  });
+
+  it('does the same for a gain, and for today’s row', () => {
+    expect(marks(card({ totalGain: 512.4, totalGainPercent: null }))).toEqual(['good']);
+    // Today's row takes the same fallback: its own percentage, then its amount.
+    expect(marks(card({
+      totalGain: null, totalGainPercent: null, todayChange: -8.25, todayChangePercent: null,
+    }))).toEqual(['bad']);
+  });
+
+  /*
+   * The fallback is coarser, never different: an amount of exactly zero is the
+   * same 🟡 the percentage would have given, and a missing amount stays ⚪
+   * rather than inventing a direction from nothing.
+   */
+  it('does not invent a direction when the amount is missing too', () => {
+    expect(marks(card({ totalGain: 0, totalGainPercent: null }))).toEqual(['neutral']);
+    expect(marks(card({ totalGain: null, totalGainPercent: null }))).toEqual([]);
   });
 });
 

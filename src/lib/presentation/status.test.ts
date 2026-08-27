@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MARKET_SIGNAL_STATUS,
+  statusFromSignedValue,
   OPTIONS_SIGNAL_STATUS,
   STATUS_PRESENTATION,
   STATUS_RANK,
@@ -33,6 +34,7 @@ describe('missing data never improves a reading', () => {
   it.each(missing)('maps %p to unknown in every mapper', (value) => {
     expect(statusFromScore(value, THRESHOLDS)).toBe('unknown');
     expect(statusFromChangePercent(value)).toBe('unknown');
+    expect(statusFromSignedValue(value)).toBe('unknown');
     expect(statusFromRewardRisk(value)).toBe('unknown');
   });
 

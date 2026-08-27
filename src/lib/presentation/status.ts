@@ -122,6 +122,27 @@ export function statusFromScore(
  * rows carrying real prices.
  */
 export function statusFromChangePercent(value: number | null | undefined): StatusLevel {
+  return statusFromSignedValue(value);
+}
+
+/**
+ * A signed number, as a status — whatever it is a number OF.
+ *
+ * The arithmetic above never cared about the unit: it reads a sign. The name
+ * did care, and that turned out to matter. The overview's portfolio card asked
+ * it about a percentage while printing an amount, and
+ * `portfolioTotalReturnPercent` returns `null` whenever the invested basis is
+ * zero or below — a portfolio funded entirely by transfers — so the card drew
+ * "-$746.28" beside ⚪. The loss was real, signed, and on the screen; the mark
+ * beside it said there was no reading.
+ *
+ * So a caller holding two views of one movement can fall back from the finer to
+ * the coarser without reaching for a second rule: the percentage when it exists,
+ * the amount when it does not, one mapper either way. Exactly zero is `neutral`
+ * in both, and a missing value is `unknown` in both — a fallback that invented a
+ * direction from an absent number would be the thing this whole module refuses.
+ */
+export function statusFromSignedValue(value: number | null | undefined): StatusLevel {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'unknown';
   if (value > 0) return 'good';
   if (value < 0) return 'bad';
