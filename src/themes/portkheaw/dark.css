@@ -25,6 +25,7 @@ html[data-theme="portkheaw"]:not([data-appearance]) {
   --positive: #10B981;
   --negative: #EF4444;
   --warning: #F59E0B;
+  --caution: #F97316;
   --info: #3B82F6;
   /*
    * Market-session icon tones. Kept clear of --positive/--negative on purpose: a

@@ -26,6 +26,7 @@ html[data-theme="portkheaw"][data-appearance="light"] {
   --positive: #087A55;
   --negative: #C93636;
   --warning: #9A5A00;
+  --caution: #B04A0C;
   --info: #2563B8;
   /*
    * Market-session icon tones, same five meanings as dark, darkened to clear AA on

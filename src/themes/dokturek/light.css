@@ -26,6 +26,7 @@ html[data-theme="dokturek"][data-appearance="light"] {
   --positive: #087A55;
   --negative: #C93636;
   --warning: #9A5A00;
+  --caution: #AE4610;
   --info: #2563B8;
   /* Market-session icon tones — the same five meanings as dark, at the light
      appearance's depth, unchanged from PortKheaw. */

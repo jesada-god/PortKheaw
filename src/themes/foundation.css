@@ -84,6 +84,18 @@ html {
   --negative-line: color-mix(in srgb, var(--negative) 32%, transparent);
   --warning-soft: color-mix(in srgb, var(--warning) 14%, transparent);
   --warning-line: color-mix(in srgb, var(--warning) 34%, transparent);
+  /*
+   * `--caution` — the fourth status colour, and the reason there is one.
+   *
+   * The status vocabulary has five levels and two of them were sharing amber:
+   * 🟡 "ปกติ ระวังไว้" and 🟠 "อ่อนแรงแล้ว". Those are different sentences that
+   * ask for different reactions, and a reader who has to tell them apart by the
+   * wording alone is not being helped by the colour at all. So `--caution` sits
+   * between `--warning` and `--negative` in every theme — visibly warmer than
+   * the amber, visibly not the error red. See `src/lib/presentation/status.ts`.
+   */
+  --caution-soft: color-mix(in srgb, var(--caution) 14%, transparent);
+  --caution-line: color-mix(in srgb, var(--caution) 34%, transparent);
   --info-soft: color-mix(in srgb, var(--info) 12%, transparent);
   --info-line: color-mix(in srgb, var(--info) 32%, transparent);
   /* A rule that is a hair lighter than --border: used inside a panel, where a

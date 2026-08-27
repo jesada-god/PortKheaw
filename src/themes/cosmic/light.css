@@ -31,6 +31,7 @@ html[data-theme="cosmic"][data-appearance="light"] {
   --positive: #076B4B;
   --negative: #B62E2E;
   --warning: #855000;
+  --caution: #9E3F0C;
   --info: #1F58A6;
   /* Market-session icon tones — the same five meanings as dark, at the light
      appearance's depth, unchanged from PortKheaw. */

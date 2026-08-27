@@ -1,0 +1,160 @@
+# PortKheaw Phase 1 — UX + Data Reliability · PLAN
+
+สถานะ: **ตอบคำถามครบแล้ว · กำลังลงมือตาม 9 commits**
+
+---
+
+## 0. สิ่งที่พบจากการอ่านโค้ดจริง (สรุปสั้น)
+
+ระบบนี้ **ไม่ได้เริ่มจากศูนย์** — งานหลายอย่างใน brief ทำไปแล้วบางส่วน และมีของที่ต้อง reuse ไม่ใช่สร้างใหม่:
+
+| เรื่อง | ของที่มีอยู่แล้ว | เหลือทำ |
+|---|---|---|
+| Design tokens | `src/themes/foundation.css` — radius 4 ระดับ, `--stack-*`, `.panel` / `.panel-hero` / `.panel-quiet` / `.inset`, `--positive/--negative/--warning/--info` + `-soft`/`-line` | เพิ่ม `--caution` (ส้ม) ให้ระดับ "อ่อนแรง" แยกจาก "ระวัง" |
+| ห้าม gradient/glow/card ซ้อน card | `foundation.css` เขียนกฎนี้ไว้แล้ว และ Tools page ถอด blob/shadow ไปแล้ว | บังคับใช้กับ Search / Key Statistics / Planner locked panel ที่ยังเป็น hardcoded slate |
+| Status primitive | ยังไม่มีตัวกลาง — มี `MARKET_SIGNAL_PRESENTATION.tone`, `OPTIONS_SIGNAL_PRESENTATION.dot/tone`, `DataStatusBadge`, `ServiceStatus` dot กระจาย 4 ที่ | **สร้าง `<StatusLabel>` ตัวเดียว** แล้วให้ 4 ที่นั้นเรียกใช้ |
+| Score → Status | Market Signal ซ่อน score ไว้ใน dialog แล้ว (การ์ดโชว์ state ไทย) | Options Signal ยัง **โชว์ score ตัวใหญ่บนการ์ด** (`options-signal-score-card`) → ต้องเป็น status |
+| เวลาไทย (ICT) | `src/lib/presentation/datetime.ts` เป็น util ตัวเดียวอยู่แล้ว (`Asia/Bangkok`) | บังคับให้ทุกจุดที่ยังพิมพ์เวลาเองมาใช้ตัวนี้ |
+| 4 data states | Overview มีครบ (`RetryButton` + retry endpoint) แต่เป็น pattern เฉพาะหน้า Overview | ยกขึ้นเป็น shared `<DataState>` แล้วใช้กับ Search / Key Statistics / Stock Detail |
+| คำต้องห้าม | `CARD_MUST_NOT_SAY` อยู่ใน **ไฟล์เทสต์** (`MarketSignalSection.test.tsx:2205`) + eslint rule `no-unsourced-frame-word` ครอบเฉพาะ `market-signal/**` | ย้ายเป็น module กลาง + eslint rule ใหม่ครอบ 5 หน้า |
+| Investment Score | **ไม่มีในโค้ด** (grep แล้วไม่เจอ) | out-of-scope ข้อนี้เป็นโมฆะ |
+| `src/lib/analytics/decision-panel/**` | dead code — ไม่มีใคร import (17 ไฟล์) | ไม่แตะ (นอก scope) |
+
+---
+
+## 1. ไฟล์ที่จะแก้ (แยกตามลำดับ commit)
+
+### commit 1 — `feat(ui): status primitive เดียวสำหรับทั้งเว็บ`
+
+| ไฟล์ | ทำอะไร |
+|---|---|
+| `src/lib/presentation/status.ts` **(ใหม่)** | `StatusLevel = 'good' \| 'neutral' \| 'weak' \| 'bad' \| 'unknown'` + mapper กลาง |
+| `src/lib/presentation/status.test.ts` **(ใหม่)** | boundary + missing data |
+| `src/components/ui/StatusLabel.tsx` **(ใหม่)** | `<StatusLabel level label />` — emoji dot (`aria-hidden`) + คำไทย + สี token |
+| `src/components/ui/StatusLabel.test.tsx` **(ใหม่)** | |
+| `src/themes/foundation.css` | เพิ่ม `--caution` + `--caution-soft` / `--caution-line` (ส้ม สำหรับ 🟠 อ่อนแรง) |
+| `src/themes/{portkheaw,bitswap,cosmic,dokturek,orchid}/{dark,light}.css` | ค่า `--caution` ต่อธีม (10 ไฟล์ · บรรทัดละไฟล์) |
+
+**หมายเหตุ emoji:** ใช้ emoji dot ตามที่ brief ระบุ — โค้ดเดิมมี precedent อยู่แล้ว (`OPTIONS_SIGNAL_PRESENTATION.dot = '🟢'` พร้อมคอมเมนต์ "the emoji is decorative only") ไม่ขัดกับข้อห้าม "emoji ทุกหัวข้อ" เพราะนี่คือ data mark ไม่ใช่หัวข้อ
+
+### commit 2 — `feat(status): mapper กลาง score → status`
+
+| ไฟล์ | ของเดิม → ของใหม่ |
+|---|---|
+| `src/lib/presentation/status.ts` | ตารางใน §2 |
+| `src/components/analytics/market-signal/MarketSignalSection.tsx` | `MARKET_SIGNAL_PRESENTATION[state].tone` (tailwind emerald/green/sky/amber/orange/red hardcode) → `StatusLabel level=…` · เก็บคำไทย `thai` ไว้เหมือนเดิม (มี eslint rule คุมคำอยู่) |
+| `src/components/analytics/options-signal/OptionsSignalSection.tsx` | ลบ `options-signal-score-card` (ตัวเลขใหญ่บนการ์ด) → `StatusLabel` · `dot: '🟢'` → `level` |
+| `src/lib/tools/stock-plan.ts` | เพิ่ม `planStatus(levels)` จาก `rewardToRisk` |
+| `src/components/dashboard/DashboardClient.tsx` | `ServiceStatus` dot (3 สี inline) → `StatusLabel` |
+| ไฟล์เทสต์ที่เกี่ยวข้อง | อัปเดต assertion |
+
+### commit 3 — `feat(ui): 4 data states เป็น pattern เดียว`
+
+| ไฟล์ | ทำอะไร |
+|---|---|
+| `src/components/ui/DataState.tsx` **(ใหม่)** | `loading` → `<Skeleton>` · `empty` → "ไม่มีข้อมูลสำหรับช่วงเวลานี้" · `error` → "โหลดข้อมูลไม่สำเร็จ" + ปุ่มลองอีกครั้ง (**ไม่ส่ง message จาก API ออกจอ**) · `stale` → 🟡 + `formatMarketDataAsOf()` |
+| `src/components/ui/DataState.test.tsx` **(ใหม่)** | ครอบทั้ง 4 + กันเคส `undefined` / `null` / `NaN` หลุดจอ |
+| `src/components/ui/DataSourceBadge.tsx`, `src/components/market-data/DataProvenance.tsx` | เลิก hardcode emerald/sky/violet/amber/red → token |
+
+### commit 4 — `refactor(overview): ตลาด → watchlist → สิ่งที่เปลี่ยนไป`
+
+`src/components/dashboard/DashboardClient.tsx` · `app/page.tsx` · `src/lib/overview/presentation.ts` (+test) — ลำดับตาม §3 Q1 · ไม่มี VIX/US10Y (§3 Q2) · "สิ่งที่เปลี่ยนไป" ตาม §3.1
+
+### commit 5 — `refactor(search): tokens + 4 data states`
+
+| ไฟล์ | ของเดิม → ของใหม่ |
+|---|---|
+| `src/components/search/SearchClient.tsx` | `#151B28` / `#D4FF00` / `slate-*` hardcode → token · `setError(cause.message)` **leak error จาก API** → "ค้นหาไม่สำเร็จ" + ปุ่มลองอีกครั้ง · `กำลังค้นหา…` (ข้อความเปล่า) → skeleton rows · `DELISTED` (อังกฤษ) → `เลิกซื้อขายแล้ว` · เพิ่ม `<StatusLabel>` %เปลี่ยนต่อแถว |
+| `app/search/page.tsx` | subtitle |
+
+### commit 6 — `refactor(stock): หัวราคา → 5 แถวสถานะ → แนวรับ/แนวต้าน → สรุป 1 บรรทัด`
+
+| ไฟล์ | ของเดิม → ของใหม่ |
+|---|---|
+| `src/lib/stock-detail/summary.ts` (+test) | ปัจจุบันคืน 3 แถว (แนวรับ / แนวต้าน / วันประกาศงบ) → เพิ่ม 5 แถวสถานะ + สรุป 1 บรรทัด · เฉพาะแถวที่มี service จริง (§3 Q5) |
+| `src/components/stock/StockSummaryCard.tsx` | bullet + chevron → แถวสถานะ `StatusLabel` |
+| `src/components/stock/StockDetailClient.tsx` | ลบแบนเนอร์ **"การวิเคราะห์ด้วย AI — กำลังจะมา"** (`StockDetailClient.tsx:770`) — ผิด §9 ตรง ๆ |
+| `src/components/analytics/key-statistics/KeyStatisticsSection.tsx` | **เขียนใหม่ทั้งไฟล์** — ตอนนี้เป็นบรรทัดยาวบรรทัดเดียว, `slate-800` / `#151B28` hardcode, `Unavailable` / `Not meaningful` (อังกฤษ), โชว์ raw metric key (`trailingPe`) เป็นหัวข้อ, `h-28 animate-pulse` แทน `<Skeleton>`, card ซ้อน card 3 ชั้น |
+
+### commit 7 — `refactor(tools): ชื่อ → คำอธิบาย 1 บรรทัด → ปุ่ม`
+
+| ไฟล์ | ของเดิม → ของใหม่ |
+|---|---|
+| `src/lib/tools/catalog.ts` | ตัด `valuePreview[]` (3 bullet ขายของ), `sampleOutcome` ("เช่น แผนนี้ยอมเสี่ยงกี่ส่วน…"), `audience` ("เหมาะกับคนที่…") → เหลือ `title` + `description` 1 บรรทัด |
+| `app/tools/page.tsx` | ตัดบล็อก "ปลดล็อกแล้วได้อะไร" + ตัวอย่าง + icon plate 36px + footer 2 แถว → ชื่อ / คำอธิบาย / ปุ่ม |
+| `src/lib/tools/tools-index.contract.test.ts`, `src/components/options-simulator/tools-copy.contract.test.tsx` | อัปเดต |
+| `src/lib/subscription/upgrade-copy.ts` | `benefit` ของ 3 tool ยาวเกิน → 1 บรรทัด |
+
+### commit 8 — `refactor(planner): สถานะแผนแทนตัวเลขล้วน`
+
+`src/components/tools/StockPlannerWorkspace.tsx` · `app/tools/stock-planner/page.tsx` (locked panel ยังเป็น `bg-[#151B28]` + `purple-500/10` + `shadow-xl`)
+
+> ตัวเลขที่ §6 ขอ — กำไรที่คาดหวัง / ขาดทุนสูงสุด / R:R — **มีครบแล้ว** ใน `evaluateStockPlan()` (`profitAtTarget`, `lossAtStop`, `rewardToRisk`) เหลือแค่เติม "สถานะแผน"
+
+### commit 9 — `chore(lint): คำต้องห้ามครอบ 5 หน้า`
+
+| ไฟล์ | ทำอะไร |
+|---|---|
+| `src/lib/presentation/banned-copy.ts` **(ใหม่)** | ย้าย `CARD_MUST_NOT_SAY` ออกจากไฟล์เทสต์ + เพิ่ม §9: `ระบบประเมินว่า`, `จากการวิเคราะห์ปัจจัย`, `มีความเป็นไปได้ว่า`, `เครื่องมือนี้จะช่วยให้คุณ`, `AI วิเคราะห์ว่า`, `การวิเคราะห์ด้วย AI` |
+| `eslint-rules/no-banned-copy.mjs` **(ใหม่)** | |
+| `eslint.config.mjs` | ครอบ `app/{page,search,tools,stock}/**` + `src/components/{dashboard,search,stock,tools,analytics}/**` |
+| `src/components/analytics/market-signal/MarketSignalSection.test.tsx` | ชี้ `CARD_MUST_NOT_SAY` ไปที่ module กลาง |
+
+---
+
+## 2. ตาราง mapping score → status (ร่าง)
+
+`statusFromScore()` — **ข้อมูลขาด = `unknown` เสมอ ห้ามตกไป `neutral` หรือดีกว่า**
+
+| แหล่ง | ของเดิม | → status |
+|---|---|---|
+| Market Signal `state` | `STRONG_BULLISH` | 🟢 good · "ขาขึ้นชัดเจน" |
+| | `BULLISH` | 🟢 good · "กำลังเป็นขาขึ้น" |
+| | `SIDEWAYS` | 🟡 neutral · "ตอนนี้ยังไม่มีทิศทางชัดเจน" |
+| | `SQUEEZE` | 🟡 neutral · "ราคาแกว่งแคบลงเรื่อย ๆ" |
+| | `OVEREXTENDED` | 🟠 weak · "ราคาวิ่งไปไกลจากค่าเฉลี่ยมาก" |
+| | `BEARISH` | 🔴 bad · "กำลังเป็นขาลง" |
+| | `STRONG_BEARISH` | 🔴 bad · "ขาลงชัดเจน" |
+| | `result === null` (ไม่มีสิทธิ์ / โหลดไม่ได้) | ⚪ unknown · "ยังไม่มีข้อมูล" |
+| Options Signal | `directionScore0to100` ตัวใหญ่บนการ์ด | ลบออกจากการ์ด · ใช้ `signalType` → level (PRIME_CALL→good, CALL_WATCH→neutral, SIDEWAYS→neutral, CONFLICTED→weak, …) |
+| Stock Planner | `rewardToRisk` | ≥ 2.0 🟢 · 1.5–2.0 🟡 · 1.0–1.5 🟠 · < 1.0 🔴 · ไม่ครบ ⚪ |
+| Watchlist / ตลาด | `changePercent` | > 0 🟢 · = 0 🟡 · < 0 🔴 · `null` ⚪ (**ไม่ใช่ 0**) |
+| Overview service | `level: ready / connecting / degraded` | good / neutral / weak |
+| ความสด (stale) | `freshness.status` | เข้า `<DataState state="stale">` ไม่ใช่ `StatusLabel` |
+
+---
+
+## 3. ข้อตัดสินใจ (ตอบแล้ว — 2026-08-27)
+
+| # | คำถาม | คำตอบที่ยึด |
+|---|---|---|
+| Q0 | repo ค้าง merge | commit merge ตามปกติ (`Merge branch 'fix/billing-period-status-atomicity'`) แล้วแตก branch จาก main · ห้าม abort / squash · ห้ามเอาไฟล์ billing ปนเข้า Phase 1 |
+| Q1 | ลำดับบล็อก Overview | เก็บครบ 6 บล็อก ไม่ลบอะไร — เรียงใหม่: ตลาดวันนี้ → การ์ดพอร์ต (สรุปบรรทัดเดียว) → Watchlist → สิ่งที่เปลี่ยนไป → ข่าว → insights |
+| Q2 | VIX / US10Y | **ตัดออกจาก Phase 1** — แสดงเฉพาะที่มีจริง (S&P 500 + NASDAQ) + สรุปสถานะตลาด 1 บรรทัด |
+| Q3 | "สิ่งที่เปลี่ยนไป" | derive จากข้อมูลที่หน้า Overview โหลดอยู่แล้ว 3 rule เท่านั้น (ดู §3.1) · ไม่เรียก API เพิ่ม · ไม่มีอะไรเข้าเงื่อนไข = ซ่อนทั้งบล็อก |
+| Q4 | score / confidence | การ์ด = status ล้วน · dialog เก็บตัวเลข + breakdown ไว้ · "ความสอดคล้องของหลักฐาน" อยู่ใน dialog เช่นกัน |
+| Q5 | 5 แถวสถานะ | ทำเท่าที่มี service จริง — แนวโน้ม / แรงส่ง (Elite, non-Elite **ซ่อนแถว** ไม่ใช่โชว์ "ล็อก") + งบการเงิน · **ไม่ทำ มูลค่าหุ้น / ความเสี่ยง** · แถวไม่มีข้อมูล = ตัดทิ้ง ห้าม "—" / "N/A" |
+
+### 3.1 "สิ่งที่เปลี่ยนไป" — 3 rule เท่านั้น
+
+pure function อ่านจาก payload ที่ `app/page.tsx` โหลดอยู่แล้ว ไม่มี state ใหม่ ไม่มี request ใหม่:
+
+1. ราคาแตะ / ทะลุแนวรับ–แนวต้านที่ service เดิมคำนวณอยู่แล้ว → "NVDA ใกล้แนวต้าน" / "NVDA ทะลุแนวต้าน"
+2. `changePercent` เกิน ±4% → "RKLB ลงแรง"
+3. label สถานะจาก Market Signal เปลี่ยนจากบาร์ก่อน → "META เปลี่ยนเป็นทรงตัว"
+
+ไม่มีอะไรเข้าเงื่อนไข → **ซ่อนบล็อกทั้งอัน** ห้ามโชว์ "ไม่มีการเปลี่ยนแปลง"
+
+---
+
+## 4. ยกไป Phase 2 (ไม่ทำใน Phase 1)
+
+- **VIX / US10Y บนแถบตลาดวันนี้** — ต้องเพิ่ม proxy เข้า `MARKET_ASSETS` (`VIXY` / `IEF` / `^TNX`) แล้ว probe ว่า provider คืนค่าจริงไหม = แตะ data layer ซึ่งเกิน scope Phase 1
+- **แถวสถานะ มูลค่าหุ้น + ความเสี่ยง บน Stock Detail** — ต้องมี canonical service ตัดสินก่อน การตั้ง threshold "ค่อนข้างแพง" เองคือการเดาแล้วโชว์เป็นความจริง
+- **`src/lib/analytics/decision-panel/**`** — dead code 17 ไฟล์ ไม่มีใคร import รอตัดสินใจว่าจะลบหรือใช้
+
+---
+
+## 5. ลำดับงาน
+
+9 commits ตาม §1 → `npm run typecheck` + `npm run test` + `npm run lint` ผ่าน → ตรวจ 5 หน้าที่ 390px → สรุปท้ายงาน
