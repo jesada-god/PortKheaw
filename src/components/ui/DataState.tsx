@@ -48,7 +48,6 @@ export type DataStateKind = 'loading' | 'empty' | 'error' | 'ready';
  * load, and they can try again.
  */
 export function reportDataError(scope: string, cause: unknown): void {
-  // eslint-disable-next-line no-console
   console.error(`[${scope}]`, cause);
 }
 

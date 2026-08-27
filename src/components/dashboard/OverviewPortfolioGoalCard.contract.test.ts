@@ -7,10 +7,25 @@ const compact = read('src/components/dashboard/OverviewPortfolioGoalCard.tsx');
 const dashboard = read('src/components/dashboard/DashboardClient.tsx');
 const full = read('src/components/portfolio/PortfolioGoalCard.tsx');
 
+/*
+ * THE OVERVIEW NO LONGER MOUNTS THIS CARD, and that is deliberate.
+ *
+ * Phase 1 condensed the overview's portfolio block to a single line — total,
+ * today's move, a status and a link — so the goal card, the scope selector and
+ * the cash/equity/options strip all moved to `/portfolio`, which is a page built
+ * for that reading. The two assertions that pinned `<OverviewPortfolioGoalCard`
+ * and `buildPortfolioGoalCardModel` into `DashboardClient.tsx` went with them;
+ * `overview.contract.test.ts` now asserts the opposite, on purpose.
+ *
+ * The COMPONENT is still here, and so is every guarantee below it, because the
+ * compact card is what `PortfolioGoalMascot.test.tsx` and
+ * `PortfolioGoalSelector.test.tsx` render their fixtures through — it is the
+ * only compact rendering of the goal model in the tree, and those two suites are
+ * about the mascot and the selector rather than about the overview. Its parity
+ * with the full card is therefore still worth holding.
+ */
 describe('Overview compact portfolio goal card contract', () => {
   it('uses the same model, mood presentation, formatter, and mascot as Portfolio', () => {
-    expect(dashboard).toContain('buildPortfolioGoalCardModel');
-    expect(dashboard).toContain('<OverviewPortfolioGoalCard');
     expect(compact).toContain('portfolioGoalAppearance[model.mascot.mood]');
     expect(compact).toContain('<PortfolioGoalMascot compact state={model.mascot}');
     expect(full).toContain('<PortfolioGoalMascot state={model.mascot}');
