@@ -117,9 +117,23 @@ function MetricRow({ metricKey, metric }: { metricKey: string; metric: MetricRes
 export function KeyStatisticsSection({ symbol }: { symbol: string }) {
   const [data, setData] = useState<KeyStatisticsResult | null>(null);
   const [state, setState] = useState<DataStateKind>('loading');
+  /*
+   * Which symbol the state in this component belongs to.
+   *
+   * Resetting on a symbol change happens DURING RENDER rather than in an
+   * effect. Setting state synchronously inside an effect body schedules a second
+   * render pass with the previous symbol's figures still on screen — which is
+   * both the cascading render `react-hooks/set-state-in-effect` is about and a
+   * visible frame of AAPL's numbers under NVDA's heading.
+   */
+  const [loadedSymbol, setLoadedSymbol] = useState(symbol);
+  if (loadedSymbol !== symbol) {
+    setLoadedSymbol(symbol);
+    setData(null);
+    setState('loading');
+  }
 
   const load = useCallback((signal?: AbortSignal) => {
-    setState('loading');
     void fetch(`/api/analytics/key-statistics/${encodeURIComponent(symbol)}`, { signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`key-statistics responded ${response.status}`);
@@ -157,7 +171,7 @@ export function KeyStatisticsSection({ symbol }: { symbol: string }) {
       <h2 className="section-eyebrow">ตัวเลขสำคัญ</h2>
       <DataState
         state={state}
-        onRetry={() => load()}
+        onRetry={() => { setState('loading'); load(); }}
         emptyMessage="ยังไม่มีตัวเลขสำคัญของหุ้นตัวนี้"
         skeleton={
           <div className="mt-3 grid grid-cols-2 gap-4 lg:grid-cols-4">
