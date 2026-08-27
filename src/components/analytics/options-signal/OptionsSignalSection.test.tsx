@@ -291,15 +291,34 @@ describe('OptionsSignalSection gated DTO rendering', () => {
     mocks.requestOptionsSignal.mockResolvedValue({ status: 'ready', signal: eliteSignal });
     await renderFor('elite');
 
-    expect(container.textContent).toContain('Macro');
-    expect(container.textContent).toContain('Risk/Reward');
-    expect(container.textContent).toContain(BREAKDOWN_SECRET);
+    /*
+     * THE FACTOR NAMES ARE NOT ON THE CARD ANY MORE, and this is where that is
+     * asserted from the entitled side.
+     *
+     * `Macro +12/ 20 · Trend +18/ 25 · …` used to sit under the state line for
+     * an Elite reader, and this test read them off `container` before opening
+     * anything. They moved into the dialog with the two headline scores, for
+     * the same reason: +12 out of 20 is only usable next to another +12 out of
+     * 20, and the weights differ per factor so the five do not add to anything
+     * visible either.
+     *
+     * The Pro case a few lines above still asserts their ABSENCE, and that
+     * assertion is the one carrying the entitlement guarantee — it is unchanged,
+     * because the card never showed them to Pro in the first place.
+     */
+    expect(container.textContent).not.toContain('Macro');
+    expect(container.textContent).not.toContain('Risk/Reward');
+    expect(container.textContent).not.toMatch(/[+\-]\d+\s*\/\s*\d+/);
     expect(container.querySelector('[data-testid="options-signal-breakdown-locked"]')).toBeNull();
 
     const trigger = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('ดูรายละเอียดการคำนวณ'));
     expect(trigger).toBeDefined();
     await act(async () => trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // Everything the card stopped showing is here, with the sentence explaining it.
+    expect(document.body.textContent).toContain('Macro');
+    expect(document.body.textContent).toContain('Risk/Reward');
+    expect(document.body.textContent).toContain(BREAKDOWN_SECRET);
     expect(document.body.textContent).toContain('คะแนนทิศทางมาจากอะไร');
     /*
      * The heading names the mechanism the POINTS come from. It said "TTM

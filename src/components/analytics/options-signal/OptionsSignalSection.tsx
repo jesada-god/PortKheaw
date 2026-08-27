@@ -170,7 +170,7 @@ function OptionsSignalContent({
 /**
  * The card itself, exported so the two probes that cannot go through the
  * fetching wrapper can render it: the jsdom test drives the wrapper, while
- * `scripts/qa/options-signal-header-qa.mts` needs the real markup at a real
+ * `scripts/qa/options-signal-card-qa.mts` needs the real markup at a real
  * width in a real browser and has no endpoint to answer it.
  */
 export function SignalCard({ signal, breakdownEntitled, open, onOpenChange }: {
@@ -283,12 +283,24 @@ function EliteBody({ breakdown, summary, highlights, open, onOpenChange }: {
 
   return (
     <>
-      <dl className="mt-4 space-y-1.5" aria-label="คะแนนแต่ละปัจจัย">
-        {FACTOR_ORDER.map((id) => (
-          <FactorRow key={id} factor={diagnostics.factors[id]} />
-        ))}
-      </dl>
+      {/*
+        THE FACTOR SCORES ARE NOT ON THE CARD.
 
+        `Macro +12/20 · Trend +18/25 · Momentum +14/20 · Options Sentiment
+        +8/15 · Risk/Reward +12/20` used to sit here, directly under the state
+        line. It was the same mistake as the two headline scores one change
+        earlier, spread over five rows: a reader cannot do anything with +12 out
+        of 20 except compare it to another +12 out of 20, and the comparison is
+        not one the engine supports — the weights differ per factor and the sum
+        is signed, so the five numbers do not add up to anything a reader can
+        see either.
+
+        The dialog has carried the full table all along, with each factor's
+        label, its helper sentence explaining what it measures, its points and
+        its data state. Nothing was moved and nothing was added: this deletes a
+        second, abbreviated copy that stood where the card is supposed to say
+        one thing.
+      */}
       <dl className="mt-4 space-y-1.5 border-t border-white/10 pt-3 text-sm">
         <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1">
           <dt className="flex items-center gap-1.5 text-slate-300">
@@ -405,40 +417,6 @@ function Header({ timeframe }: { timeframe: string }) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="font-bold text-white">Options Signal Engine</h2>
       <span className="rounded-full border border-slate-700 px-2 py-1 font-mono text-[11px] text-slate-300">{timeframe}</span>
-    </div>
-  );
-}
-
-function FactorRow({ factor }: { factor: OptionsSignalFactorScore }) {
-  const copy = FACTOR_COPY[factor.id];
-  /*
-   * A factor that was struck from the divisor never prints a score.
-   *
-   * "0 / 10" is the shape of a measurement, and it read as one: Options
-   * Sentiment showed it while the sentence underneath said the percentile could
-   * not be computed at all. Whatever replaces it must not be able to be mistaken
-   * for a number that was weighed.
-   */
-  const notCounted = factor.measurement === 'fallback-neutral';
-  return (
-    <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
-      <dt className="flex items-center gap-1.5 text-slate-300">
-        {copy.label}
-        {factor.partial && !notCounted && <span className="text-[11px] text-amber-300">ข้อมูลบางส่วน</span>}
-      </dt>
-      <dd className="flex items-center gap-2">
-        {notCounted ? (
-          <span className="text-[11px] text-amber-300" data-testid={`options-signal-factor-not-counted-${factor.id}`}>
-            ไม่นับรวม · {factor.fallbackReason}
-          </span>
-        ) : (
-          <>
-            <span className="font-mono text-white">{signedPoints(factor.points)}</span>
-            <span className="font-mono text-xs text-slate-500">/ {factor.maxPoints}</span>
-          </>
-        )}
-        {!factor.available && <DataStatusBadge status="unavailable" />}
-      </dd>
     </div>
   );
 }

@@ -73,8 +73,12 @@ describe('InfoHint — accessible glossary popover', () => {
      * in every row it appeared in — measured at 1280, 380 and 320px on the
      * Options Signal header, where it put the Confidence label 15.1px and its
      * number 30.3px below the score's. jsdom has no cascade to see that with, so
-     * what is asserted here is the class that answers it; the pixels are
-     * `npm run qa:options-signal-header`.
+     * what is asserted here is the class that answers it.
+     *
+     * The browser probe that produced those pixels is gone: Phase 1 moved both
+     * scores into the dialog, the header stopped existing, and
+     * `qa:options-signal-header` went with it. This assertion is now the only
+     * thing holding the rule, which is why it stays.
      */
     expect(cls).toContain('min-h-0');
   });

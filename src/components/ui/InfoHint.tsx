@@ -165,8 +165,13 @@ export function InfoHint({
         rendering rather than a regression — but it is a VISIBLE change to the
         decision panel and it was not measured before it shipped.
 
-        `npm run qa:options-signal-header` is where the header numbers are kept
-        honest; the rows above have no probe of their own yet.
+        THE PROBE THAT MEASURED THIS IS GONE, and so is the header it measured.
+        `qa:options-signal-header` existed to keep two 18px scores in register
+        across the Options Signal card's header; Phase 1 moved both into the
+        dialog, so the script had no subject left and was deleted with it. The
+        rule this class enforces still stands — a 10px caption must not occupy
+        44px — but nothing measures it in a browser today.
+        `qa:options-signal-card` checks what the card says, not how it is set.
       */}
       <button
         ref={triggerRef}
