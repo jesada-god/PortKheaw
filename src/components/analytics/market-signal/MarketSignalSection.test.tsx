@@ -9,6 +9,7 @@ import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types
 import type { SubscriptionCapability } from '@/src/lib/subscription/capabilities';
 import { MARKET_SIGNAL_HISTORY, MARKET_SIGNAL_MEASURED } from '@/src/config/signal';
 import { MARKET_SIGNAL_STATUS, STATUS_PRESENTATION } from '@/src/lib/presentation/status';
+import { CARD_MUST_NOT_SAY } from '@/src/lib/presentation/banned-copy';
 import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIGNAL_PRESENTATION, MarketSignalSection, zoneLabelStyle, zoneLeaderStyle, zoneScaleFor } from './MarketSignalSection';
 
 /**
@@ -2245,11 +2246,6 @@ describe('MarketSignalSection', () => {
      * numbers block inside "ทำไม?" and says so in its own first paragraph. The
      * sweep is scoped to the card, which is where the ten-second read happens.
      */
-    const CARD_MUST_NOT_SAY = [
-      'โซน', 'ไซด์เวย์', 'เบรก', 'breakout', 'breakdown', 'sideways',
-      'หลุด', 'พลิกกลับ', 'ตกกลับ', 'โมเมนตัม', 'วอลุ่ม', 'โครงสร้าง',
-      'swing', 'ATR', 'divergence', 'ของกรอบ', 'เงื่อนไขยืนยัน',
-    ];
 
     it.each([
       ['sideways' as const, false, false],

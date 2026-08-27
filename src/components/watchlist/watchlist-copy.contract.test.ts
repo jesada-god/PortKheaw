@@ -45,7 +45,17 @@ describe('รายการติดตาม visible-copy contract', () => {
       resolve(process.cwd(), 'src/components/dashboard/DashboardClient.tsx'),
       'utf8',
     );
-    expect(dashboard).toContain("href: '/watchlist'");
+    /*
+     * `href="/watchlist"`, not `href: '/watchlist'`.
+     *
+     * The route used to appear twice on this page: once in the portfolio card's
+     * four-way quick-link row, as an object in an `actions` array, and once as
+     * the "ดูทั้งหมด" link in the watchlist section's own header. Phase 1
+     * condensed the portfolio block to a line and the quick-link row went with
+     * it, so the section's own link is the one that survives — which is the
+     * better of the two anyway: it sits beside the rows it expands.
+     */
+    expect(dashboard).toContain('href="/watchlist"');
     expect(dashboard).toContain("retrying.watchlist");
   });
 });
