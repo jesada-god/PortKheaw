@@ -156,6 +156,14 @@ pure function อ่านจาก payload ที่ `app/page.tsx` โหล�
 - **`src/components/dashboard/OverviewPortfolioGoalCard.tsx`** — ไม่มีหน้าไหน mount แล้ว (Overview ยุบเป็นบรรทัดเดียว) แต่ยังลบไม่ได้เพราะ `PortfolioGoalMascot.test.tsx` และ `PortfolioGoalSelector.test.tsx` ใช้เป็น fixture ของ mascot/selector รอตัดสินใจว่าจะย้าย fixture หรือลบ component
 - **`src/lib/analytics/decision-panel/**`** — dead code 17 ไฟล์ ไม่มีใคร import รอตัดสินใจว่าจะลบหรือใช้
 
+### 🐞 `sparkline: []` — data bug ไม่ใช่ข้อจำกัด Phase 1
+
+- **ผู้เติม field:** `loadPriceUncached()` ([service.ts:212](src/lib/overview/service.ts#L212)) และ `unavailablePrice()` ([:118](src/lib/overview/service.ts#L118)) hardcode `[]` — ทั้งคู่คือทางเดียวที่ `loadWatchlistPrices` / `loadPortfolioPrices` ใช้ผ่าน `loadOverviewPrice`
+- **สาเหตุที่ว่าง:** helper `sparkline()` ([:452](src/lib/overview/service.ts#L452)) ที่ดึง 5m candles ถูกต่อสายเข้า `loadMarketIndices()` ที่เดียว ([:535](src/lib/overview/service.ts#L535)) · path อื่นไม่เคยเรียกมันเลย และไม่มีคอมเมนต์อธิบายว่าตั้งใจ (น่าจะเลี่ยง 1 request/symbol เพราะ watchlist/portfolio ไม่จำกัดจำนวน แต่ไม่ได้เขียนไว้)
+- **ระยะเวลา:** ตั้งแต่ commit แรกที่สร้างไฟล์ — `dc245b0` (2026-07-31) helper กับ `[]` เกิดพร้อมกัน = **~27 วัน**
+- **กระทบ UI:** ตอนนี้ยัง**ไม่มีจอไหนพัง** — `MiniLine` ถูก render ที่เดียวคือ `MarketCard` ซึ่งได้ข้อมูลจริง · watchlist ไม่ได้วาด sparkline · `IndustryGroup.sparkline` ก็ `[]` แต่ไม่มีใคร render · `AssetCard.tsx` (ใช้ `<Sparkline>`) เป็น dead component ไม่มี call site · ผลจริงคือ **type โกหก** (`sparkline: number[]` ไม่ optional อ่านเหมือนมีข้อมูลเสมอ) และบล็อกการ derive อะไรจาก price series บน Overview (rule 1 ของ "สิ่งที่เปลี่ยนไป")
+- **ข้อเสนอ Phase 2:** เลือกทางเดียว — (ก) ต่อสาย `sparkline()` เข้า `loadPriceUncached` แบบ opt-in + cache (watchlist cap 6 ตัวอยู่แล้ว) หรือ (ข) ถ้าตั้งใจไม่เติมจริง ให้เปลี่ยน type เป็น `sparkline?: number[]` แล้วเขียนเหตุผลลงคอมเมนต์ ห้ามปล่อยให้ required field คืน `[]` เสมอ
+
 ---
 
 ## 5. สิ่งที่ต่างจากแผนเดิม (ทำจริงแล้ว)
