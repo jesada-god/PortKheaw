@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Activity, ArrowLeft, Bell, Share2, Star } from 'lucide-react';
+import { ArrowLeft, Bell, Share2, Star } from 'lucide-react';
 import { addWatchlistItemAction, removeWatchlistItemAction } from '@/app/watchlist/actions';
 import { BrandLockup } from '@/src/components/brand/BrandLockup';
 import { Tabs } from '@/src/components/ui/Tabs';
@@ -491,12 +491,19 @@ export function StockDetailClient({
    * whose destination tab does not exist for this instrument are dropped —
    * a crypto pair has no Financials tab to send anybody to.
    */
-  const summaryItems = buildStockSummary({
-    price: analyticalSpotPrice,
-    currency: sourceCurrency,
-    marketSignal,
-    earnings,
-  }).filter((item) => tabs.includes(item.target));
+  const summaryView = (() => {
+    const built = buildStockSummary({
+      price: analyticalSpotPrice,
+      currency: sourceCurrency,
+      marketSignal,
+      earnings,
+    });
+    return {
+      ...built,
+      statuses: built.statuses.filter((row) => tabs.includes(row.target)),
+      levels: built.levels.filter((item) => tabs.includes(item.target)),
+    };
+  })();
 
   const toggleWatch = () => {
     if (!isOnline) {
@@ -663,7 +670,7 @@ export function StockDetailClient({
         />
 
         <div className="stack-lead">
-          <StockSummaryCard items={summaryItems} onOpenSection={setTab} />
+          <StockSummaryCard view={summaryView} onOpenSection={setTab} />
         </div>
 
         <div className="bleed-mobile sticky top-16 z-30 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] px-[var(--page-gutter)] pt-3 backdrop-blur md:static md:border-0 md:bg-transparent md:px-0">
@@ -767,13 +774,6 @@ export function StockDetailClient({
                 acceptedPrice={analyticalSpotPrice}
                 underlyingLabel={dataLabel}
               />
-              <div className="flex items-start gap-3 rounded-[var(--radius-panel)] border border-[var(--warning-line)] bg-[var(--warning-soft)] p-4">
-                <Activity aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-[var(--warning)]" />
-                <div className="min-w-0">
-                <h2 className="text-sm font-bold text-[var(--text)]">การวิเคราะห์ด้วย AI — กำลังจะมา</h2>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">ส่วน Options ด้านบนเป็น analytics ตามสูตรจากข้อมูลตลาดจริง ไม่ใช่คำสั่งหรือการรับประกันผลลัพธ์</p>
-                </div>
-              </div>
             </div>
           )}
         </section>
