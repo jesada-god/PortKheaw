@@ -18,7 +18,7 @@ export default async function SearchPage() {
     : [];
 
   return <div>
-    <Header title="ค้นหา" subtitle="พิมพ์ชื่อบริษัทหรือ Symbol แล้วเปิดดูรายละเอียดหุ้น" />
+    <Header title="ค้นหา" subtitle="พิมพ์ชื่อบริษัทหรือ Symbol" />
     <SearchClient watchedSymbols={watchedSymbols} />
   </div>;
 }

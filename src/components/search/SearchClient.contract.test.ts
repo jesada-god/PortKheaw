@@ -41,4 +41,55 @@ describe('search result contract', () => {
     expect(client).toContain('/api/market/search?q=');
     expect(client).toContain('/api/market/quote/');
   });
+
+  /*
+   * The defect this replaces: the panel rendered `payload.error.message`, so a
+   * failing search printed the API's own sentence — an endpoint, a status line,
+   * occasionally a provider slug — into the results list.
+   *
+   * The message is still READ, because it is the most useful thing to put in the
+   * console, but the only place it goes is `reportDataError`.
+   */
+  it('never renders what the API said went wrong', () => {
+    expect(client).toContain("reportDataError('search', cause)");
+    expect(client).not.toMatch(/setError\(|\{error\}|error\.message\}/);
+    // The one read of the provider's text feeds an Error the catch block logs.
+    expect(client).toContain("throw new Error(payload.error?.message ?? 'search failed')");
+  });
+
+  it('has all four data states and holds them in one field', () => {
+    expect(client).toContain('<DataState');
+    for (const state of ["setState('loading')", "setState('error')", "'empty' : 'ready'"]) {
+      expect(client).toContain(state);
+    }
+    // A `loading` boolean beside an `error` string could hold two answers at
+    // once, and the abort path used to produce exactly that combination.
+    expect(client).not.toContain('setLoading(');
+  });
+
+  it('draws the loading state at the shape of the rows it will become', () => {
+    expect(client).toContain('skeleton={<ResultsSkeleton />}');
+    /*
+     * Comments stripped first: the block above `ResultsSkeleton` quotes the
+     * sentence it replaced, and a source-reading test that could not tell code
+     * from the note explaining it would forbid documenting the change.
+     */
+    const code = client.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toContain('กำลังค้นหา');
+  });
+
+  /*
+   * The panel was the last surface carrying the pre-token palette by hand —
+   * `#151B28`, `#D4FF00` and a dozen `slate-*` classes — which is why it did not
+   * follow a theme change and read as a different product in light mode.
+   */
+  it('carries no literal colour', () => {
+    expect(client).not.toMatch(/#[0-9A-Fa-f]{6}/);
+    expect(client).not.toMatch(/\b(slate|emerald|amber|sky|zinc|gray)-\d{3}\b/);
+  });
+
+  it('says delisted in the reader’s language', () => {
+    expect(client).toContain('เลิกซื้อขายแล้ว');
+    expect(client).not.toContain('DELISTED');
+  });
 });
