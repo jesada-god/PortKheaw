@@ -8,6 +8,7 @@ import type {
   MarketIndexCard,
   OverviewDashboardData,
 } from '@/src/lib/overview/types';
+import type { PortfolioSummary } from '@/src/lib/portfolio/types';
 
 /**
  * Covers the two interactions the overview grew: a market card that opens the
@@ -513,5 +514,83 @@ describe('market breadth data health', () => {
       render(data);
       for (const testId of ids) expect(panel(testId)).toBeNull();
     });
+  });
+});
+
+/**
+ * The portfolio card on Home.
+ *
+ * It collapsed the wrong figure: today's move — the one that is null whenever a
+ * single holding's quote arrives without a previous close — was kept, and the
+ * total return, which `/portfolio` had all along, was dropped. On a US market
+ * holiday the card read "ยังไม่มีข้อมูล (ยังไม่มีข้อมูล)" over a portfolio that
+ * was down 80%.
+ */
+describe('overview portfolio card', () => {
+  function summary(overrides: Partial<PortfolioSummary> = {}): PortfolioSummary {
+    return {
+      holdings: [],
+      cashBalance: 0,
+      marketValue: 184.44,
+      costBasis: 930.72,
+      realizedGain: 0,
+      unrealizedGain: -746.28,
+      totalValue: 184.44,
+      equityMarketValue: 184.44,
+      optionsMarketValue: 0,
+      optionRemainingCost: 0,
+      netDepositedCapital: 930.72,
+      netTransferredCapital: 0,
+      totalGain: -746.28,
+      totalGainPercent: -80.18,
+      todayChange: null,
+      todayChangePercent: null,
+      optionPositions: [],
+      hasMissingPrices: false,
+      ...overrides,
+    };
+  }
+
+  function card(overrides: Partial<PortfolioSummary> = {}): HTMLElement {
+    const data = dashboardData('ready');
+    render({
+      ...data,
+      portfolio: { ...data.portfolio, authenticated: true, summary: summary(overrides) },
+    });
+    return container.querySelector('[data-testid="overview-portfolio-summary"]')!;
+  }
+
+  it('shows the total return `/portfolio` shows, in the same format', () => {
+    const text = card().textContent ?? '';
+    expect(text).toContain('$184.44');
+    expect(text).not.toContain('US$');
+    expect(text).toContain('กำไร/ขาดทุนรวม');
+    expect(text).toContain('-$746.28 · -80.18%');
+  });
+
+  it('paints the total return with the product status vocabulary', () => {
+    const status = card().querySelector('[data-status]');
+    expect(status?.getAttribute('data-status')).toBe('bad');
+    expect(card({ totalGain: 12.5, totalGainPercent: 4.2 })
+      .querySelector('[data-status]')?.getAttribute('data-status')).toBe('good');
+  });
+
+  it("hides today's row entirely rather than saying it has no data, twice", () => {
+    const text = card().textContent ?? '';
+    expect(text).not.toContain('วันนี้');
+    expect(text).not.toContain('ยังไม่มีข้อมูล');
+  });
+
+  it("shows today's move beside the total once it can be computed", () => {
+    const text = card({ todayChange: -3.2, todayChangePercent: -1.7 }).textContent ?? '';
+    expect(text).toContain('วันนี้');
+    expect(text).toContain('-$3.20 · -1.70%');
+    expect(text).toContain('-$746.28 · -80.18%');
+  });
+
+  it('leaves the return row out when the ledger cannot produce one', () => {
+    const text = card({ totalGain: null, totalGainPercent: null }).textContent ?? '';
+    expect(text).not.toContain('กำไร/ขาดทุนรวม');
+    expect(text).not.toContain('ยังไม่มีข้อมูล');
   });
 });
