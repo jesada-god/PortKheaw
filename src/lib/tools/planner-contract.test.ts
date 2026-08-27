@@ -203,7 +203,13 @@ describe('the tools index', () => {
     expect(TOOL_CATEGORIES).toEqual(['วิเคราะห์หุ้น', 'วิเคราะห์ Options']);
     const planner = TOOL_CATALOG.find((tool) => tool.id === 'stock-planner')!;
     expect(planner.category).toBe('วิเคราะห์หุ้น');
-    expect(planner.description).toBe('กำหนดเป้าหมาย ระดับความเสี่ยง และดู Risk : Reward ของแผนก่อนตัดสินใจ');
+    /*
+     * The sentence now names the three boxes the reader fills in and the three
+     * figures they get back, because that is what the tool does. "กำหนด
+     * เป้าหมาย ระดับความเสี่ยง" described the same tool in the register of a
+     * feature list, which is the register the index stopped using.
+     */
+    expect(planner.description).toBe('กรอกจุดเข้า จุดตัดขาดทุน และราคาเป้าหมาย แล้วดูกำไรที่คาดหวัง ขาดทุนสูงสุด และ R:R');
   });
 
   /* The options tools keep the entitlements they already had. */

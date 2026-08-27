@@ -1,17 +1,10 @@
 'use client';
 import Header from '@/src/components/layout/Header';
-import { Shuffle, TrendingUp, Target, ChevronRight, Lock } from 'lucide-react';
+import { ChevronRight, Lock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEntitlement } from '@/src/components/subscription/EntitlementProvider';
-import { PLAN_DISPLAY_NAME, upgradeCopy } from '@/src/lib/subscription/upgrade-copy';
+import { PLAN_DISPLAY_NAME } from '@/src/lib/subscription/upgrade-copy';
 import { TOOL_ASSET_SCOPE_LABEL, TOOL_CATALOG, TOOL_CATEGORIES, toolRequiredTier, type ToolCatalogEntry } from '@/src/lib/tools/catalog';
-
-/** Presentation only — which tool wears which glyph. Never a tier. */
-const toolIcons: Record<string, typeof Shuffle> = {
-  'what-if': Shuffle,
-  'monte-carlo': TrendingUp,
-  'stock-planner': Target,
-};
 
 export default function ToolsPage() {
   const router = useRouter();
@@ -37,11 +30,20 @@ export default function ToolsPage() {
 
       <div className="w-full max-w-full min-w-0 space-y-8 p-4 md:p-8">
         {/*
-          Two small headings instead of a tab strip. The categories are the same
-          ones the catalog already declares, so nothing moved between groups —
-          but a reader now sees every tool at once, and sees which instrument
-          each group is about, without first choosing a filter. One less control
-          to operate before the page says anything.
+          ONE SHAPE PER TOOL: name, one line, button.
+
+          What each card used to carry, in order: a glyph plate, the name, a
+          plan badge, the instrument scope, the description, a line about who
+          the tool is for, and — while locked — a tinted "ปลดล็อกแล้วได้อะไร"
+          box holding three bulleted outcomes and a labelled ตัวอย่าง sentence,
+          then the lock line, then a footer repeating the category beside the
+          action. Nine blocks to say what one tool does.
+
+          All of it was written to sell a reader on opening the tool. A catalogue
+          of three items does not need to be sold; it needs to be read. What is
+          left is the name, the sentence that says what the tool does, the
+          instrument it works on, and the button — and the plan badge, which is
+          not copy but the answer to "can I open this".
         */}
         {TOOL_CATEGORIES.map((category) => {
           const tools = TOOL_CATALOG.filter((tool) => tool.category === category);
@@ -51,11 +53,9 @@ export default function ToolsPage() {
               <h2 className="section-eyebrow">{category}</h2>
               <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
                 {tools.map((tool) => {
-                  const Icon = toolIcons[tool.id] ?? Shuffle;
                   const tier = toolRequiredTier(tool);
                   const unlocked = can(tool.capability);
                   const planName = tier ? PLAN_DISPLAY_NAME[tier] : null;
-                  const copy = upgradeCopy(tool.capability);
                   return (
                     <button
                       key={tool.id}
@@ -67,31 +67,19 @@ export default function ToolsPage() {
                       data-locked={unlocked ? 'false' : 'true'}
                       aria-label={unlocked ? tool.title : `${tool.title} — ต้องใช้แพ็กเกจ ${planName ?? ''}`}
                       /*
-                        A tool, presented as a tool. What was here before was the
-                        archetypal SaaS feature card: a 48px tinted icon plate, a
-                        heavy shadow, and a decorative quarter-circle blob sliding
-                        under the corner on hover. The blob is gone — it carried no
-                        information and was the single most template-looking mark in
-                        the product — and the plate is now a small glyph sitting
-                        beside the name it belongs to, at the size an icon needs to
-                        be to identify something rather than to decorate it.
-
                         Border and surface only, no shadow: these are peers in a
                         catalogue, and elevation would claim one of them outranks
-                        the others.
+                        the others. The 36px tinted icon plate went with the rest
+                        of the furniture — three tools do not need to be told
+                        apart by picture.
                       */
-                      className="group relative flex min-w-0 flex-col justify-between rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] sm:p-5"
+                      className="group flex min-w-0 flex-col justify-between gap-4 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] sm:p-5"
                     >
                       <div className="min-w-0">
-                        <div className="mb-3 flex min-w-0 items-start gap-3">
-                          <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-control)] ${
-                            unlocked ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'bg-[var(--surface-elevated)] text-[var(--text-muted)]'
-                          }`}>
-                            <Icon size={18} />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <h3 className="break-words text-base font-bold leading-snug text-[var(--text)] transition-colors group-hover:text-[var(--accent)]">{tool.title}</h3>
-                          </span>
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <h3 className="min-w-0 break-words text-base font-bold leading-snug text-[var(--text)] transition-colors group-hover:text-[var(--accent)]">
+                            {tool.title}
+                          </h3>
                           {planName && (
                             <span className={`inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-mark)] px-2 py-1 text-[11px] font-bold ${
                               unlocked
@@ -103,63 +91,22 @@ export default function ToolsPage() {
                             </span>
                           )}
                         </div>
+                        <p className="mt-2 break-words text-sm leading-6 text-[var(--text-secondary)]">{tool.description}</p>
                         {/*
-                          Which instrument the tool is for, said before the reader
-                          opens it. Secondary weight on purpose: it must be readable at
-                          a glance without competing with the plan badge, and it adds
-                          one short line rather than a second block to the card.
+                          Which instrument the tool is for. It stays because it
+                          is the one thing a reader cannot infer from the name —
+                          somebody holding shares opening "ทดลองสถานการณ์" met a
+                          form asking for a strike.
                         */}
-                        <p data-testid={`tool-scope-${tool.id}`} className="mb-2 break-words text-xs font-semibold text-[var(--text-muted)]">
+                        <p data-testid={`tool-scope-${tool.id}`} className="mt-1.5 break-words text-xs text-[var(--text-muted)]">
                           {TOOL_ASSET_SCOPE_LABEL[tool.assetScope]}
                         </p>
-                        <p className="break-words text-sm leading-6 text-[var(--text-secondary)]">{tool.description}</p>
-                        {/*
-                          The third question every card now answers, after what it
-                          does and which plan it needs: whether the reader is the
-                          person it was built for. Static catalog copy.
-                        */}
-                        <p data-testid={`tool-audience-${tool.id}`} className="mt-2 break-words text-xs leading-5 text-[var(--text-muted)]">
-                          {tool.audience}
-                        </p>
-                        {!unlocked && (
-                          <>
-                            {/*
-                              A locked card used to say only which plan it needs, which
-                              tells a reader the price of something they still cannot
-                              picture. This is static educational copy from the catalog:
-                              no request is made, nothing is computed, and none of it is
-                              the paid tool's own output — the ตัวอย่าง line is labelled
-                              precisely so it cannot be read as a number about their own
-                              positions.
-                            */}
-                            <div className="inset mt-4 min-w-0 p-3">
-                              <p className="section-eyebrow">
-                                ปลดล็อกแล้วได้อะไร
-                              </p>
-                              <ul className="mt-2 min-w-0 space-y-1.5">
-                                {tool.valuePreview.map((item) => (
-                                  <li key={item} className="flex min-w-0 gap-2 text-xs leading-5 text-[var(--text-secondary)]">
-                                    <span aria-hidden="true" className="mt-2 size-1 shrink-0 rounded-full bg-[var(--accent)]" />
-                                    <span className="min-w-0 break-words">{item}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                              <p className="mt-2 min-w-0 break-words text-[11px] leading-5 text-[var(--text-muted)]">
-                                <span className="mr-1 rounded-[var(--radius-mark)] bg-[var(--surface-selected)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">ตัวอย่าง</span>
-                                {tool.sampleOutcome}
-                              </p>
-                            </div>
-                            <p className="mt-3 break-words text-xs text-[var(--text-muted)]">{copy.lockedLabel}</p>
-                          </>
-                        )}
                       </div>
 
-                      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-3.5">
-                        <span className="min-w-0 break-words text-[10px] uppercase tracking-widest text-[var(--text-muted)]">{tool.category}</span>
-                        <span className="flex shrink-0 items-center gap-1 text-sm font-bold text-[var(--accent)]">
-                          {unlocked ? 'ใช้งาน' : `อัปเกรดเป็น ${planName ?? ''}`} <ChevronRight size={16} />
-                        </span>
-                      </div>
+                      <span className="flex shrink-0 items-center gap-1 text-sm font-bold text-[var(--accent)]">
+                        {unlocked ? 'เปิดเครื่องมือ' : `อัปเกรดเป็น ${planName ?? ''}`}
+                        <ChevronRight aria-hidden="true" size={16} />
+                      </span>
                     </button>
                   );
                 })}
