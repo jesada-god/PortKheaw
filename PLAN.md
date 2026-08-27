@@ -150,11 +150,35 @@ pure function อ่านจาก payload ที่ `app/page.tsx` โหล�
 ## 4. ยกไป Phase 2 (ไม่ทำใน Phase 1)
 
 - **VIX / US10Y บนแถบตลาดวันนี้** — ต้องเพิ่ม proxy เข้า `MARKET_ASSETS` (`VIXY` / `IEF` / `^TNX`) แล้ว probe ว่า provider คืนค่าจริงไหม = แตะ data layer ซึ่งเกิน scope Phase 1
-- **แถวสถานะ มูลค่าหุ้น + ความเสี่ยง บน Stock Detail** — ต้องมี canonical service ตัดสินก่อน การตั้ง threshold "ค่อนข้างแพง" เองคือการเดาแล้วโชว์เป็นความจริง
+- **แถวสถานะ มูลค่าหุ้น + ความเสี่ยง + งบการเงิน บน Stock Detail** — ไม่มี service ไหนตัดสิน `analytics/fundamentals` มี **ตัวเลข** (P/E, market cap) แต่ไม่มี **คำตัดสิน** การตั้ง threshold "ค่อนข้างแพง" เองคือการเดาแล้วโชว์เป็นความจริงโดยยืมเครดิตของ service
+- **"สิ่งที่เปลี่ยนไป" rule 1 (แตะ/ทะลุแนวรับ–แนวต้าน)** — ต้องใช้ `nearestSupport` / `nearestResistance` จาก market-signal ซึ่งเป็น Elite-gated + คำนวณรายตัวบนหน้า Stock ไม่ได้อยู่ใน payload ของ Overview · watchlist rows มี `sparkline: []` (ว่างจริง ๆ ดู `loadWatchlistPrices`) จึงไม่มี series ให้ derive
+- **"สิ่งที่เปลี่ยนไป" rule 3 (label เปลี่ยนจากบาร์ก่อน)** — ต้องใช้ `readSignalHistory` = 1 admin query ต่อ symbol และมีแถวเฉพาะ symbol ที่เคยมีคนเปิดหน้า Stock · watchlist 10 ตัว = 10 query ต่อ render ส่วนใหญ่ได้ค่าว่าง
+- **`src/components/dashboard/OverviewPortfolioGoalCard.tsx`** — ไม่มีหน้าไหน mount แล้ว (Overview ยุบเป็นบรรทัดเดียว) แต่ยังลบไม่ได้เพราะ `PortfolioGoalMascot.test.tsx` และ `PortfolioGoalSelector.test.tsx` ใช้เป็น fixture ของ mascot/selector รอตัดสินใจว่าจะย้าย fixture หรือลบ component
 - **`src/lib/analytics/decision-panel/**`** — dead code 17 ไฟล์ ไม่มีใคร import รอตัดสินใจว่าจะลบหรือใช้
 
 ---
 
-## 5. ลำดับงาน
+## 5. สิ่งที่ต่างจากแผนเดิม (ทำจริงแล้ว)
 
-9 commits ตาม §1 → `npm run typecheck` + `npm run test` + `npm run lint` ผ่าน → ตรวจ 5 หน้าที่ 390px → สรุปท้ายงาน
+| เรื่อง | แผน | ทำจริง | เหตุผล |
+|---|---|---|---|
+| "สิ่งที่เปลี่ยนไป" | 3 rule | **1 rule** (%เปลี่ยน ≥ ±4%) | อีก 2 rule ต้องใช้ข้อมูลที่หน้า Overview ไม่ได้โหลด — ดู §4 |
+| แถวสถานะ Stock Detail | 5 แถว | **2 แถว** (แนวโน้ม · แรงส่ง) | อีก 3 ไม่มี service ที่ตัดสิน — ดู §4 |
+| ตลาดวันนี้ | แสดงเฉพาะ S&P + NASDAQ | **เรียง S&P + NASDAQ ขึ้นก่อน ไม่ลบตัวอื่น** | "เก็บทั้ง 6 ไม่ลบอะไร" · sort ไม่ใช่ filter |
+| `scripts/qa/options-signal-header-qa.mts` | ไม่ได้อยู่ในแผน | **ลบ** | ทั้ง 8 ข้อที่สคริปต์วัด วัดคู่ตัวเลขบนการ์ดที่ย้ายเข้า dialog แล้ว เหลือไว้ = สคริปต์ที่ fail ตั้งแต่บรรทัดแรก |
+| การ์ดพอร์ต Overview | สรุปบรรทัดเดียว | ทำแล้ว — ตัด goal card / scope selector / cash-equity-options strip / quick link 4 ปุ่ม | ทั้งหมดยังอยู่ที่ `/portfolio` |
+
+---
+
+## 6. ผลการตรวจ
+
+| gate | ผล |
+|---|---|
+| `npm run typecheck` | ผ่าน |
+| `npm run lint` | ผ่าน (รวม rule ใหม่ `portkheaw/no-banned-copy`) |
+| `npm test` | **6,511 ผ่าน / 561 ไฟล์** |
+| 5 หน้าที่ 390px | ไม่มี element ล้นจอ · ไม่มี `undefined` / `null` / `NaN` / `Infinity` หลุดออกหน้าจอ ทั้ง 5 หน้า |
+
+**ข้อจำกัดของการตรวจ 390px:** รันแบบ **ไม่ล็อกอิน** (ไม่สร้าง user ใน Supabase จริง) จึงยืนยันได้เฉพาะ layout / overflow / placeholder
+สิ่งที่ยังไม่ได้ตรวจสด: ลำดับเหนือ fold ของ **ผู้ใช้ที่ล็อกอินแล้ว** (ตลาดวันนี้ → การ์ดพอร์ต) และแถวสถานะ แนวโน้ม/แรงส่ง ซึ่งต้องมีสิทธิ์ Elite
+ถ้าต้องการตรวจครบ ใช้ `npm run qa:phase1-ux` ซึ่งสร้าง session จริง (แตะ Supabase ของจริง)
