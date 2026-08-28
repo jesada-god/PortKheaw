@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { MARKET_SIGNAL_GATE, MARKET_SIGNAL_RANGE_DIRECTION } from '@/src/config/signal';
 import type { DataFreshness } from '@/src/lib/market-data/types';
@@ -58,6 +58,27 @@ const withGateZones = (symbol: string) => {
   runs.set(symbol, result);
   return result;
 };
+
+/*
+ * WARMED ONCE, SO NO SINGLE CASE PAYS FOR THE FIXTURE.
+ *
+ * `withGateZones` is memoised across the file and each miss is three engine
+ * evaluations over a golden capture, so building all ten symbols costs about
+ * four seconds — and every one of those seconds was billed to whichever `it`
+ * happened to touch the map first, against Vitest's 5s default. On an idle
+ * machine that left 20% of headroom; under a full `vitest run` it did not, and
+ * "never publishes STRONG from inside a sideways frame" failed with "Test timed
+ * out in 5000ms" while passing on its own.
+ *
+ * The cost belongs to the fixture, not to the first assertion that needs it. So
+ * it is paid here, under a hook timeout sized for a loaded machine, and every
+ * case below then measures only its own work — which is a map lookup. This also
+ * makes the file independent of the order its cases run in, which is what made
+ * the failure move around.
+ */
+beforeAll(() => {
+  SYMBOLS.forEach(withGateZones);
+}, 120_000);
 
 const noConflict: readonly MarketSignalConflict[] = [];
 const conflicted: readonly MarketSignalConflict[] = ['ema_vs_momentum'];
