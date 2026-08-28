@@ -229,5 +229,17 @@ export interface OverviewDashboardData {
    * anyway; no section retry touches it, so it is not a retriable section.
    */
   upcoming?: import('@/src/lib/upcoming/types').UpcomingFeed;
+  /**
+   * The Market Status card's reading, or absent when `MARKET_STATUS_CARD` is off.
+   *
+   * Optional because the flag defaults to OFF and absent must mean "the card is
+   * not part of this page" — not "the card failed". The overview renders nothing
+   * for it when this is undefined, which is the shipped state.
+   */
+  marketStatus?: {
+    evaluation: import('@/src/lib/market-status/rules').MarketStatusEvaluation;
+    /** Completed trading date the readings are from, or null while the market is open. */
+    sessionDate: string | null;
+  };
   limitations: string[];
 }

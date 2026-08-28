@@ -47,6 +47,7 @@ import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/ch
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { formatPortfolioMoney, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { dayChangeCopy, dayChangeUnavailableCopy } from '@/src/lib/portfolio/day-change-label';
+import { MarketStatusCard } from './MarketStatusCard';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
@@ -1329,6 +1330,23 @@ export function DashboardClient({
             {orderedIndices.map((item) => <MarketCard key={item.symbol} item={item} />)}
           </div>
         </section>
+
+        {/*
+          Absent unless `MARKET_STATUS_CARD` is on, which is the shipped state.
+          The page renders exactly as it did before when this is undefined —
+          there is no placeholder and no gap, because the card is an addition
+          rather than a slot waiting to be filled.
+
+          Placed under the market cards it reads and above the portfolio: it
+          interprets the numbers immediately above it, and the reader's own money
+          stays the last thing on the way down.
+        */}
+        {view.marketStatus && (
+          <MarketStatusCard
+            evaluation={view.marketStatus.evaluation}
+            sessionDate={view.marketStatus.sessionDate}
+          />
+        )}
 
         <PortfolioSummaryLine data={view.portfolio} usdThbRate={view.usdThbRate} />
 

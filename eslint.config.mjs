@@ -42,6 +42,16 @@ export default defineConfig([
          * the sentences do not live in the components: they are composed in
          * `day-change-label.ts` and passed down as props, so a scope covering
          * only `src/components/portfolio` would still see none of them.
+         *
+         * `src/lib/market-status` and `src/config` joined for the same reason,
+         * found the same way: with a banned phrase planted in
+         * `src/lib/market-status/presentation.ts` and in
+         * `src/config/market-status.ts`, eslint reported nothing. A rule table
+         * is not usually copy — but this one carries `labelTh`, the Thai name
+         * printed beside every figure on the card, so it is. Config that holds
+         * reader-facing strings has to be scanned like any other copy, and
+         * scoping `src/config` whole means the next table to grow a label is
+         * covered before anybody remembers to ask.
          */
         files: [
             "app/page.tsx",
@@ -50,7 +60,8 @@ export default defineConfig([
             "app/stock/**/*.{ts,tsx}",
             "app/tools/**/*.{ts,tsx}",
             "src/components/{dashboard,portfolio,search,stock,tools,analytics,upcoming,watchlist,ui}/**/*.{ts,tsx}",
-            "src/lib/{overview,portfolio,stock-detail,tools,presentation}/**/*.ts",
+            "src/lib/{overview,portfolio,market-status,stock-detail,tools,presentation}/**/*.ts",
+            "src/config/**/*.ts",
         ],
         ignores: ["**/*.test.ts", "**/*.test.tsx", "**/banned-copy.ts"],
         plugins: {

@@ -58,6 +58,28 @@ describe('the banned copy lists', () => {
    * see a single sentence — which is precisely how a rule reports success over
    * copy it has never read.
    */
+  /*
+   * THE MARKET STATUS SURFACES, added the same way and for the same reason:
+   * with "ระบบประเมินว่า" planted in `src/lib/market-status/presentation.ts` and
+   * "เครื่องมือนี้จะช่วยให้คุณ" in `src/config/market-status.ts`, `npx eslint` on
+   * both files reported nothing and exited 0.
+   *
+   * `src/config` is scoped whole rather than by file. A rule table is not
+   * usually copy — but that one carries `labelTh`, the Thai name printed beside
+   * every figure on the card, so it is. Scoping the directory means the next
+   * config to grow a reader-facing string is covered before anyone thinks to
+   * ask, which is the failure mode this rule keeps re-encountering.
+   */
+  it('covers the market-status surfaces, including the rule table’s own labels', () => {
+    const config = read('eslint.config.mjs');
+    const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
+    const scope = before.slice(before.lastIndexOf('files: ['));
+    expect(scope, 'src/lib/market-status is outside the rule’s scope')
+      .toMatch(/src\/lib\/\{[^}]*market-status[^}]*\}/);
+    expect(scope, 'src/config, where the rule table’s Thai labels live, is outside the scope')
+      .toContain('src/config/');
+  });
+
   it('covers the portfolio surfaces, where the day figure’s copy is written', () => {
     const config = read('eslint.config.mjs');
     const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
