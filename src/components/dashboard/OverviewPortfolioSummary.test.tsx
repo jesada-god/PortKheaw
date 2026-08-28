@@ -238,6 +238,35 @@ describe('while the balances are hidden', () => {
   });
 });
 
+describe('a THB portfolio with no rate to convert with', () => {
+  /*
+   * HALF THE ROW IS KNOWN, AND THE ROW STAYS.
+   *
+   * `signedMoney` converts through `usdThbRate` and returns an em dash when
+   * there is no rate. The percentage needs no rate — it is a ratio of two USD
+   * figures and is just as true in either currency — so the amount is genuinely
+   * unknown while the return is genuinely known.
+   *
+   * Hiding the row would withhold a return the reader can act on because a
+   * conversion rate was missing, which is a worse answer than showing the half
+   * that survived and marking the half that did not. The mark still comes off
+   * the percentage, so it agrees with the half that is there.
+   */
+  it('prints the dash and keeps the percentage rather than hiding the row', () => {
+    const node = card({}, { baseCurrency: 'THB' });
+    expect(node.textContent).toContain('กำไร/ขาดทุนรวม');
+    expect(node.textContent).toContain('— · -80.18%');
+    expect(marks(node)).toEqual(['bad']);
+  });
+
+  it('keeps today’s row on the same terms', () => {
+    const node = card({ todayChange: 3.2, todayChangePercent: 1.7 }, { baseCurrency: 'THB' });
+    expect(node.textContent).toContain('วันนี้');
+    expect(node.textContent).toContain('— · +1.70%');
+    expect(marks(node)).toEqual(['bad', 'good']);
+  });
+});
+
 describe('when some holdings could not be priced', () => {
   it('says the total is only what could be verified, and how much that was', () => {
     const node = card({ hasMissingPrices: true }, {
