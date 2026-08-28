@@ -62,7 +62,7 @@ describe('push service worker contract', () => {
    */
   it('purges every cache but the current one, under a name that moved', () => {
     const worker = read('public/sw.js');
-    expect(worker).toContain("const CACHE_NAME = 'nexora-shell-v5'");
+    expect(worker).toMatch(/const CACHE_NAME = 'nexora-shell-v\d+'/);
     expect(worker).toContain('keys.filter((key) => key !== CACHE_NAME)');
     expect(worker).toContain('caches.delete(key)');
   });

@@ -160,8 +160,13 @@ describe('service worker caches only the shell', () => {
     expect(shell).not.toMatch(/'\/(portfolio|watchlist|stock|alerts|notifications|settings|profile|search)/);
   });
 
+  /*
+   * The GENERATION, not a generation number. Pinning the literal meant every
+   * legitimate bump — the thing this test exists to encourage — failed it, and
+   * the version then had to be edited in two files to stay green.
+   */
   it('evicts the previous cache generation on activate', () => {
-    expect(serviceWorker).toContain('nexora-shell-v4');
+    expect(serviceWorker).toMatch(/const CACHE_NAME = 'nexora-shell-v\d+'/);
     expect(serviceWorker).toContain('caches.delete');
     expect(serviceWorker).toContain('/manifest.webmanifest');
     expect(serviceWorkerCode).not.toContain('/manifest.json');
