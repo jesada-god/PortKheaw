@@ -33,6 +33,40 @@ describe('push service worker contract', () => {
     );
   });
 
+  /*
+   * The failure this pins down did not look like caching from any angle.
+   *
+   * `/_next/static/` was served cache-first with no revalidation. In production
+   * that is correct — a rebuild changes the filename — but `next dev` serves a
+   * component's chunk from a STABLE path, so the cache pinned the first version
+   * the browser ever saw. Navigation stayed network-first, so the page rendered
+   * live server data beside months-old JavaScript, and deleting `.next`,
+   * restarting the dev server and hard-refreshing all left it untouched: none of
+   * them clears Cache Storage, and a worker intercepts subresources whatever the
+   * reload does.
+   */
+  it('never serves build output from the cache on a development host', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toContain('IS_DEVELOPMENT_HOST');
+    expect(worker).toContain("self.location.hostname === 'localhost'");
+    expect(worker).toContain('isBuildOutput && IS_DEVELOPMENT_HOST');
+    // The guard has to come before the cache-first branch to mean anything.
+    expect(worker.indexOf('isBuildOutput && IS_DEVELOPMENT_HOST'))
+      .toBeLessThan(worker.indexOf('caches.match(request)'));
+  });
+
+  /*
+   * Evicting a poisoned cache depends entirely on the name changing: `activate`
+   * deletes every cache that is not the current one, and nothing else ever
+   * removes an entry.
+   */
+  it('purges every cache but the current one, under a name that moved', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toContain("const CACHE_NAME = 'nexora-shell-v5'");
+    expect(worker).toContain('keys.filter((key) => key !== CACHE_NAME)');
+    expect(worker).toContain('caches.delete(key)');
+  });
+
   it('keeps the private signing key out of every browser source', () => {
     const browserSources = [
       'src/components/settings/PushPreferences.tsx',
