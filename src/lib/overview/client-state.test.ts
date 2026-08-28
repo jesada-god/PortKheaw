@@ -15,6 +15,7 @@ const base = {
     targetValueUsd: null,
     targetDate: null,
     valuedAt: null,
+    todayExchangeDate: null,
     coverage: null,
     portfolios: [],
   },

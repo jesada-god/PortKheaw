@@ -34,6 +34,8 @@ import type {
   PortfolioTransactionType,
 } from '@/src/lib/portfolio/types';
 import type { FxResult } from '@/src/lib/market-data/fx/service';
+import type { MarketSession } from '@/src/lib/market-data/market-session';
+import { dayChangeCopy, dayChangeUnavailableCopy } from '@/src/lib/portfolio/day-change-label';
 import type { SupportedCurrency } from '@/src/lib/market-data/fx/types';
 import { fetchFxRate, formatFxRate } from '@/src/lib/market-data/fx/client';
 import {
@@ -139,6 +141,7 @@ export function PortfolioClient({
   fx,
   timezone,
   marketDate,
+  session,
   effectiveTier,
   assetTypes = {},
   companyNames = {},
@@ -159,6 +162,8 @@ export function PortfolioClient({
    * because the exchange's day — not the reader's — is when a contract expires.
    */
   marketDate: string;
+  /** Resolved on the server — see the prop's comment at the call site. */
+  session: MarketSession;
   effectiveTier: SubscriptionTier;
   /**
    * `asset_type` and display name straight off the instrument master, for the
@@ -213,9 +218,9 @@ export function PortfolioClient({
   const summaries = useMemo(
     () => Object.fromEntries(portfolios.map((item) => [
       item.id,
-      calculatePortfolio(item.transactions, prices, optionQuotes),
+      calculatePortfolio(item.transactions, prices, optionQuotes, undefined, session),
     ])),
-    [optionQuotes, portfolios, prices],
+    [optionQuotes, portfolios, prices, session],
   );
   const summary = summaries[portfolio.id];
   /*
@@ -225,9 +230,30 @@ export function PortfolioClient({
    */
   const writableStockId = useMemo(() => basicWritableStockPortfolioId(portfolios), [portfolios]);
   const writeBlock = portfolioWriteBlock(effectiveTier, portfolio, writableStockId);
+  /*
+   * ONE day word for every figure on this page.
+   *
+   * Every "วันนี้" on the tracker used to be a literal, which was true only
+   * while the market was open. The day figure now falls back to a completed
+   * session's close, so a Saturday reader would have been shown Friday's move
+   * under a label saying today — a false statement the old blank at least did
+   * not make. The word is therefore derived from the same attribution the
+   * number carries, once, and every surface below reads it rather than writing
+   * its own.
+   */
   const aggregateSummary = useMemo(
     () => aggregatePortfolioSummaries(portfolios.map((item) => summaries[item.id])),
     [portfolios, summaries],
+  );
+  const dayCopy = useMemo(
+    () => aggregateSummary.todayChange !== null && aggregateSummary.todayChangeSource !== null
+      ? dayChangeCopy({
+        source: aggregateSummary.todayChangeSource,
+        sessionDate: aggregateSummary.todayChangeAsOf,
+        todayExchangeDate: marketDate,
+      })
+      : dayChangeUnavailableCopy(),
+    [aggregateSummary.todayChange, aggregateSummary.todayChangeAsOf, aggregateSummary.todayChangeSource, marketDate],
   );
   const activePortfolios = useMemo(() => portfolios.filter((item) => item.archivedAt === null), [portfolios]);
 
@@ -531,6 +557,8 @@ export function PortfolioClient({
       value={money(target.totalValue)}
       updatedAtLabel={updatedAt ? transactionDate(updatedAt, timezone) : null}
       todayChange={target.todayChange}
+      todayChangeLabel={`กำไร/ขาดทุน${dayCopy.label}`}
+      todayChangeCaption={dayCopy.caption}
       todayChangeText={`${signed(target.todayChange)} · ${percent(target.todayChangePercent)}`}
       totalGain={target.totalGain}
       totalGainText={`${signed(target.totalGain)} · ${percent(target.totalGainPercent)}`}
@@ -681,7 +709,7 @@ export function PortfolioClient({
                 group={group}
                 showBalances={showBalances}
                 valueText={money(group.value)}
-                todayText={group.todayChange === null ? '— วันนี้' : `${signed(group.todayChange)} วันนี้`}
+                todayText={group.todayChange === null ? `— ${dayCopy.label}` : `${signed(group.todayChange)} ${dayCopy.label}`}
                 gainText={group.unrealizedGain === null ? null : signed(group.unrealizedGain)}
                 onOpen={() => { setScreen({ kind: 'category', key: group.key }); setExpandedKey(null); }}
               />)}
@@ -707,6 +735,7 @@ export function PortfolioClient({
                 summary={itemSummary}
                 assetCount={portfolioAssetCount(itemSummary)}
                 valueText={money(itemSummary.totalValue)}
+                todayLabel={dayCopy.label}
                 todayText={itemSummary.todayChange === null ? '—' : `${signed(itemSummary.todayChange)} · ${percent(itemSummary.todayChangePercent)}`}
                 totalGainText={`${signed(itemSummary.totalGain)} · ${percent(itemSummary.totalGainPercent)}`}
                 goalPercent={goalProgress.progressPercent}
@@ -781,6 +810,7 @@ export function PortfolioClient({
                       expanded={expandedKey === `${entry.portfolioId}-${entry.position.key}`}
                       showBalances={showBalances}
                       timezone={timezone}
+                      marketDate={marketDate}
                       money={money}
                       signed={signed}
                       onToggle={() => setExpandedKey((current) => current === `${entry.portfolioId}-${entry.position.key}` ? null : `${entry.portfolioId}-${entry.position.key}`)}
@@ -827,6 +857,7 @@ export function PortfolioClient({
                       portfolioLabel={entry.portfolioName}
                       expanded={expandedKey === `${entry.portfolioId}-${entry.holding.symbol}`}
                       showBalances={showBalances}
+                      dayLabel={dayCopy.label}
                       timezone={timezone}
                       portfolioId={entry.portfolioId}
                       canWrite={false}
@@ -961,6 +992,7 @@ export function PortfolioClient({
                   companyName={companyNames[holding.symbol]}
                   expanded={expandedKey === holding.symbol}
                   showBalances={showBalances}
+                  dayLabel={dayCopy.label}
                   timezone={timezone}
                   portfolioId={detailPortfolio.id}
                   assetType={assetCategoryForSymbol(holding.symbol, assetTypes)}

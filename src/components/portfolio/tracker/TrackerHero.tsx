@@ -33,6 +33,8 @@ export function TrackerHero({
   value,
   updatedAtLabel,
   todayChange,
+  todayChangeLabel,
+  todayChangeCaption,
   todayChangeText,
   totalGain,
   totalGainText,
@@ -55,6 +57,10 @@ export function TrackerHero({
   value: string;
   updatedAtLabel: string | null;
   todayChange: number | null;
+  /** "กำไร/ขาดทุนวันนี้", or the same phrase naming the day the close came from. */
+  todayChangeLabel: string;
+  /** One sentence saying where the figure came from. Always shown. */
+  todayChangeCaption: string;
   todayChangeText: string;
   totalGain: number | null;
   totalGainText: string;
@@ -122,7 +128,7 @@ export function TrackerHero({
       */}
       <dl className="mt-4 grid min-w-0 grid-cols-2 gap-3">
         <HeroFigure
-          label="กำไร/ขาดทุนวันนี้"
+          label={todayChangeLabel}
           value={todayChangeText}
           tone={portfolioReturnToneClass(showBalances ? todayChange : null, 'text-[var(--text-secondary)]')}
         />
@@ -132,6 +138,12 @@ export function TrackerHero({
           tone={portfolioReturnToneClass(showBalances ? totalGain : null, 'text-[var(--text-secondary)]')}
         />
       </dl>
+      {/*
+        The caption sits under BOTH figures rather than inside the day tile: it
+        is a sentence, and a sentence wrapped into a half-width tile on a handset
+        pushes the number it explains off its own line.
+      */}
+      <p className="mt-2 text-[11px] leading-4 text-[var(--text-muted)]">{todayChangeCaption}</p>
 
       {allocation.length > 0 && showBalances && <div className="mt-5">
         <div className="flex h-2 min-w-0 overflow-hidden rounded-full bg-[var(--surface-hover)]" aria-hidden="true">

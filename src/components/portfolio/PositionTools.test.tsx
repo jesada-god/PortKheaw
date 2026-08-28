@@ -79,6 +79,8 @@ function holding(symbol: string): HoldingSummary {
     priceAsOf: '2026-08-14T12:00:00.000Z',
     todayChange: 12,
     todayChangePercent: 0.5,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     lots: [],
     transactions: [],
   };
@@ -101,6 +103,7 @@ async function renderHolding(assetType: 'stock' | 'etf', symbol: string) {
       holding={holding(symbol)}
       expanded
       showBalances
+      dayLabel="วันนี้"
       timezone="Asia/Bangkok"
       portfolioId={PORTFOLIO_ID}
       assetType={assetType}

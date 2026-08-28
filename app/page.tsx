@@ -18,6 +18,9 @@ import {
   warmMarketBreadth,
 } from '@/src/lib/overview/market-breadth';
 import { buildOverviewPortfolio } from '@/src/lib/overview/portfolio-summary';
+import { marketSession } from '@/src/lib/market-data/market-session';
+import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
+import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
@@ -121,6 +124,18 @@ export default async function Home() {
       || item.type === 'initial_position')
     .map((item) => item.symbol)
     .filter((value): value is string => Boolean(value)))];
+  /*
+   * Contract symbols come off the ledger directly rather than out of the option
+   * preview, because the snapshots are loaded before the preview is replayed
+   * and a contract that is fully closed costs nothing to look up. This set only
+   * decides which snapshot rows to ask for; what is OPEN is still decided by
+   * the ledger replay below.
+   */
+  const portfolioContractSymbols = [...new Set(portfolios
+    .flatMap((portfolio) => portfolio.transactions)
+    .map((item) => item.contractSymbol)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.toUpperCase()))];
 
   const overviewNow = new Date(generatedAt);
   const industryResult = loadIndustryDashboardSnapshot(overviewNow);
@@ -143,6 +158,22 @@ export default async function Home() {
     ),
   ]);
 
+  /*
+   * The captured closes for everything this reader holds.
+   *
+   * Loaded unconditionally rather than only when the market is shut: the
+   * session governs which pair of prices the day figure USES, and asking for
+   * the snapshots only in some sessions would mean the fallback is missing on
+   * exactly the render where the session flips mid-request. One indexed read
+   * of at most a few dozen rows, and a failure degrades to the old live-only
+   * behaviour instead of failing the page.
+   */
+  const portfolioSession = marketSession(overviewNow);
+  const daySnapshots = client
+    ? await loadDailySnapshots(client, [...portfolioSymbols, ...portfolioContractSymbols], overviewNow)
+      .catch(() => new Map<string, DaySnapshotInput>())
+    : new Map<string, DaySnapshotInput>();
+
   const marketPrices = Object.fromEntries(
     [...portfolioPriceMap].flatMap(([symbol, loaded]) => {
       const price = loaded.display.price;
@@ -155,6 +186,7 @@ export default async function Home() {
         cached: loaded.display.status === 'saved',
         stale: loaded.display.freshness?.status === 'stale',
         asOf: loaded.display.asOf,
+        daySnapshot: daySnapshots.get(symbol) ?? null,
       }]];
     }),
   );
@@ -172,6 +204,20 @@ export default async function Home() {
         (await optionService!.getChain(underlying, expiration)).data
       : undefined,
   );
+  /*
+   * Snapshots joined onto the contract quotes by OCC symbol — see the same join
+   * on `/portfolio`, which does it for the detail rows. Without it a portfolio
+   * holding one open contract has a null options day figure outside the
+   * session, and a null there nulls the whole card's figure.
+   */
+  const contractSymbolByKey = new Map([...optionPreviews.values()]
+    .flatMap((preview) => preview.positions.map((item) => [item.key, item.contractSymbol] as const)));
+  for (const [key, quote] of Object.entries(optionQuotes)) {
+    if (!quote) continue;
+    const contractSymbol = contractSymbolByKey.get(key);
+    if (contractSymbol) quote.daySnapshot = daySnapshots.get(contractSymbol.toUpperCase()) ?? null;
+  }
+
   const portfolioOverview = buildOverviewPortfolio({
     authenticated: Boolean(user),
     portfolios,
@@ -179,6 +225,7 @@ export default async function Home() {
     marketPrices,
     optionQuotes,
     evaluatedAt: generatedAt,
+    session: portfolioSession,
   });
   /*
    * "สิ่งที่ควรรู้เร็ว ๆ นี้" — assembled from state this render already has.

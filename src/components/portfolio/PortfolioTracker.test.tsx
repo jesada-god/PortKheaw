@@ -142,6 +142,7 @@ async function render() {
       fx={{ quote: null, unavailable: true }}
       timezone="Asia/Bangkok"
       marketDate="2026-08-14"
+      session="OPEN"
       effectiveTier="elite"
       assetTypes={{ AAPL: 'Stock', VOO: 'ETF' }}
       companyNames={{ AAPL: 'Apple Inc.', VOO: 'Vanguard S&P 500 ETF' }}

@@ -58,6 +58,8 @@ const holding: HoldingSummary = {
   priceAsOf: '2026-08-11T03:00:00.000Z',
   todayChange: null,
   todayChangePercent: null,
+  todayChangeAsOf: null,
+  todayChangeSource: null,
   lots: [],
   transactions: [],
 };
@@ -80,6 +82,8 @@ function summaryFor({ empty }: { empty: boolean }): PortfolioSummary {
     totalGainPercent: empty ? null : 50,
     todayChange: null,
     todayChangePercent: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     optionPositions: [],
     hasMissingPrices: false,
   };

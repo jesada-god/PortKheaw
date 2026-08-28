@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "UNSCHEDULED US equity closures only — the days no rule can derive.",
+    "",
+    "The regular calendar (New Year's Day, MLK, Washington's Birthday, Good",
+    "Friday, Memorial Day, Juneteenth, Independence Day, Labor Day, Thanksgiving,",
+    "Christmas, plus the published half-days) is COMPUTED from the exchanges'",
+    "published rules in `us-market-calendar.ts` and must never be copied here.",
+    "Two lists of the same holidays drift, and the one nobody is testing wins.",
+    "",
+    "What belongs here is the residue: a closure the exchanges declared for a",
+    "reason a formula cannot know — a national day of mourning, a storm. Each",
+    "entry is a date the NYSE and Nasdaq were shut for the whole day.",
+    "",
+    "Dates are exchange-local YYYY-MM-DD in America/New_York.",
+    "Half-day closures do NOT belong here; a half day is still a trading day."
+  ],
+  "closures": [
+    { "date": "2025-01-09", "reason": "National Day of Mourning — President Jimmy Carter" },
+    { "date": "2018-12-05", "reason": "National Day of Mourning — President George H. W. Bush" },
+    { "date": "2012-10-30", "reason": "Hurricane Sandy" },
+    { "date": "2012-10-29", "reason": "Hurricane Sandy" },
+    { "date": "2007-01-02", "reason": "National Day of Mourning — President Gerald Ford" },
+    { "date": "2004-06-11", "reason": "National Day of Mourning — President Ronald Reagan" },
+    { "date": "2001-09-14", "reason": "September 11 attacks" },
+    { "date": "2001-09-13", "reason": "September 11 attacks" },
+    { "date": "2001-09-12", "reason": "September 11 attacks" },
+    { "date": "2001-09-11", "reason": "September 11 attacks" }
+  ]
+}

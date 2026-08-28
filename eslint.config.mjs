@@ -28,14 +28,29 @@ export default defineConfig([
          * Tests are excluded for the same reason the frame-word rule excludes
          * them: a test asserting that a phrase is absent has to name the phrase,
          * and holding the assertion to the rule would ban checking it.
+         *
+         * PORTFOLIO WAS OUTSIDE THIS LIST, and the gap was not theoretical: with
+         * "ระบบประเมินว่า" planted as a live string literal in
+         * `src/lib/portfolio/day-change-label.ts` and
+         * `tracker/OptionPositionCard.tsx`, eslint reported nothing. Every day
+         * figure caption a reader sees on `/portfolio` is written in those two
+         * folders, so the rule was passing over the copy rather than clearing
+         * it — the same shape of hole that let a Tools card ship the phrase
+         * above while one card two folders away was held to a vocabulary.
+         *
+         * `src/lib/portfolio` is included as well as the components, because
+         * the sentences do not live in the components: they are composed in
+         * `day-change-label.ts` and passed down as props, so a scope covering
+         * only `src/components/portfolio` would still see none of them.
          */
         files: [
             "app/page.tsx",
+            "app/portfolio/**/*.{ts,tsx}",
             "app/search/**/*.{ts,tsx}",
             "app/stock/**/*.{ts,tsx}",
             "app/tools/**/*.{ts,tsx}",
-            "src/components/{dashboard,search,stock,tools,analytics,upcoming,watchlist,ui}/**/*.{ts,tsx}",
-            "src/lib/{overview,stock-detail,tools,presentation}/**/*.ts",
+            "src/components/{dashboard,portfolio,search,stock,tools,analytics,upcoming,watchlist,ui}/**/*.{ts,tsx}",
+            "src/lib/{overview,portfolio,stock-detail,tools,presentation}/**/*.ts",
         ],
         ignores: ["**/*.test.ts", "**/*.test.tsx", "**/banned-copy.ts"],
         plugins: {

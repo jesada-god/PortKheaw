@@ -66,6 +66,8 @@ function summary(overrides: Partial<PortfolioSummary> = {}): PortfolioSummary {
     totalGainPercent: -80.18,
     todayChange: null,
     todayChangePercent: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     optionPositions: [],
     hasMissingPrices: false,
     ...overrides,
@@ -94,6 +96,7 @@ function data(
       targetValueUsd: null,
       targetDate: null,
       valuedAt: null,
+      todayExchangeDate: null,
       coverage: null,
       portfolios: [],
       ...extra,
@@ -148,11 +151,14 @@ describe('when a figure cannot be computed', () => {
    * survives, and it survives because it is gated on its OWN value rather than
    * on today's.
    */
-  it('shows the total return when today’s move is the missing one', () => {
+  it('shows the total return AND says why today’s move is missing', () => {
+    // The two figures fail independently, and the card no longer treats a
+    // missing day figure as a reason to say nothing about it.
     const node = card({ todayChange: null, todayChangePercent: null });
     expect(node.textContent).toContain('กำไร/ขาดทุนรวม');
     expect(node.textContent).toContain('-80.18%');
-    expect(node.textContent).not.toContain('วันนี้');
+    expect(node.textContent).toContain('วันนี้');
+    expect(node.textContent).toContain('ยังไม่ได้ราคาปิดของบางรายการ');
   });
 
   /*
@@ -160,14 +166,19 @@ describe('when a figure cannot be computed', () => {
    * card must still render its total and its link rather than throwing or
    * printing an empty row, and it must not invent a status for either figure.
    */
-  it('renders the card with neither row when both are missing', () => {
+  it('renders the card, with no return row and an explained day row, when both are missing', () => {
     const node = card({
       totalGain: null, totalGainPercent: null, todayChange: null, todayChangePercent: null,
     });
     expect(node).not.toBeNull();
     expect(node.textContent).toContain('มูลค่าพอร์ตรวม');
+    // The return row is still simply absent: a total return that cannot be
+    // computed has no session to explain it away, so there is nothing to say.
     expect(node.textContent).not.toContain('กำไร/ขาดทุนรวม');
-    expect(node.textContent).not.toContain('วันนี้');
+    // The day row stays and explains itself.
+    expect(node.textContent).toContain('วันนี้');
+    expect(node.textContent).toContain('ยังไม่ได้ราคาปิดของบางรายการ');
+    // No status mark for either: a colour is a reading, and there is none.
     expect(marks(node)).toEqual([]);
     for (const leak of ['undefined', 'null', 'NaN', 'ยังไม่มีข้อมูล']) {
       expect(node.textContent).not.toContain(leak);

@@ -20,6 +20,8 @@ function holding(symbol: string, todayChange: number | null): HoldingSummary {
     priceAsOf: null,
     todayChange,
     todayChangePercent: todayChange === null ? null : 1,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     lots: [],
     transactions: [],
   };
@@ -47,6 +49,8 @@ function position(overrides: Partial<OptionPositionSummary>): OptionPositionSumm
     marketValue: null,
     estimatedCloseValue: null,
     todayChange: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     unrealizedGain: null,
     unrealizedGainPercent: null,
     underlyingPrice: null,
@@ -82,6 +86,8 @@ function summary(overrides: Partial<PortfolioSummary> = {}): PortfolioSummary {
     totalGainPercent: 0,
     todayChange: null,
     todayChangePercent: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     optionPositions: [],
     hasMissingPrices: false,
     ...overrides,
@@ -94,6 +100,8 @@ describe('portfolio daily insight', () => {
       summary: summary({
         todayChange: 1_240,
         todayChangePercent: 1.8,
+        todayChangeAsOf: null,
+        todayChangeSource: null,
         holdings: [holding('AAPL', 820), holding('NVDA', -310), holding('MSFT', 120)],
       }),
     });
@@ -108,6 +116,8 @@ describe('portfolio daily insight', () => {
     const insight = buildPortfolioDailyInsight({
       summary: summary({
         todayChange: 300,
+        todayChangeAsOf: null,
+        todayChangeSource: null,
         holdings: [holding('AAPL', 100), holding('AAPL', 150), holding('NVDA', 120)],
       }),
     });
@@ -133,6 +143,8 @@ describe('portfolio daily insight', () => {
     const insight = buildPortfolioDailyInsight({
       summary: summary({
         todayChange: 700,
+        todayChangeAsOf: null,
+        todayChangeSource: null,
         holdings: [holding('AAPL', 400), holding('MSFT', 300), holding('XOM', 500)],
       }),
       // XOM has no classification, so it belongs to no group at all.

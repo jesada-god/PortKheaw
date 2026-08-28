@@ -18,6 +18,7 @@ export function PortfolioSummaryCard({
   summary,
   assetCount,
   valueText,
+  todayLabel,
   todayText,
   totalGainText,
   goalPercent,
@@ -29,6 +30,8 @@ export function PortfolioSummaryCard({
   summary: PortfolioSummary;
   assetCount: number;
   valueText: string;
+  /** The day the figure belongs to — see `HoldingCard`'s `dayLabel`. */
+  todayLabel: string;
   todayText: string;
   totalGainText: string;
   goalPercent: number | null;
@@ -63,7 +66,7 @@ export function PortfolioSummaryCard({
 
     <span className="grid min-w-0 grid-cols-2 gap-3">
       <span className="min-w-0">
-        <span className="figure-label">วันนี้</span>
+        <span className="figure-label">{todayLabel}</span>
         <span className={`figure-data mt-0.5 block break-all ${portfolioReturnToneClass(showBalances ? summary.todayChange : null, 'text-[var(--text-secondary)]')}`}>
           {todayText}
         </span>

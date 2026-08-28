@@ -43,6 +43,32 @@ describe('the banned copy lists', () => {
   });
 
   /*
+   * THE PORTFOLIO SURFACES, named individually because leaving them out is not a
+   * hypothetical failure — it was the state of this config until the day-figure
+   * captions were written.
+   *
+   * With "ระบบประเมินว่า" planted as a live string literal in
+   * `src/lib/portfolio/day-change-label.ts`, and "เครื่องมือนี้จะช่วยให้คุณ" in
+   * `tracker/OptionPositionCard.tsx`, `npx eslint` on both files reported
+   * nothing at all. The rule was not clearing that copy; it was never shown it.
+   *
+   * Both halves are asserted because covering one is not enough. The captions a
+   * reader sees are COMPOSED in `src/lib/portfolio` and passed into the tracker
+   * components as props, so a scope holding only the components would still not
+   * see a single sentence — which is precisely how a rule reports success over
+   * copy it has never read.
+   */
+  it('covers the portfolio surfaces, where the day figure’s copy is written', () => {
+    const config = read('eslint.config.mjs');
+    const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
+    const scope = before.slice(before.lastIndexOf('files: ['));
+    expect(scope, 'the tracker components are outside the rule’s scope').toContain('portfolio');
+    expect(scope, 'src/lib/portfolio, where the captions are composed, is outside the scope')
+      .toMatch(/src\/lib\/\{[^}]*portfolio[^}]*\}/);
+    expect(scope, 'the /portfolio page itself is outside the scope').toContain('app/portfolio/');
+  });
+
+  /*
    * The two lists forbid different things over different scopes, and merging
    * them would be a mistake in both directions: "ATR" is correct inside the
    * dialog that shows the arithmetic, and "AI วิเคราะห์ว่า" is wrong everywhere.

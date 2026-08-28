@@ -5,6 +5,9 @@ import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
 import { loadPortfolioPrices } from '@/src/lib/overview/service';
+import { marketSession } from '@/src/lib/market-data/market-session';
+import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
+import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
 import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations';
 import { OptionTargetRepository } from '@/src/lib/portfolio/options/target-repository';
@@ -95,6 +98,20 @@ export default async function PortfolioPage() {
     symbol,
     canonicalPrices.get(symbol)?.display.instrument.sector ?? null,
   ]));
+  /*
+   * The captured closes behind the day figure. Same read the overview does, for
+   * the same reason: outside the regular session a live quote no longer carries
+   * a previous close, and without these the tracker prints a dash beside every
+   * position all evening. Failure degrades to live-only rather than failing the
+   * page.
+   */
+  const portfolioSession = marketSession(new Date());
+  const daySnapshots = await loadDailySnapshots(
+    client,
+    [...stockSymbols, ...[...optionPreviews.values()].flatMap((preview) =>
+      preview.positions.filter((item) => item.status === 'open').map((item) => item.contractSymbol))],
+  ).catch(() => new Map<string, DaySnapshotInput>());
+
   const quotes = stockSymbols.map((symbol) => {
     const item = canonicalPrices.get(symbol)?.display;
     if (!item || item.price === null) return [symbol, null] as const;
@@ -105,6 +122,7 @@ export default async function PortfolioPage() {
       stale: item.freshness?.status === 'stale',
       source: 'canonical-market-snapshot',
       asOf: item.asOf,
+      daySnapshot: daySnapshots.get(symbol) ?? null,
     }] as const;
   });
 
@@ -116,6 +134,23 @@ export default async function PortfolioPage() {
       ? async (underlying, expiration) => (await optionService!.getChain(underlying, expiration)).data
       : undefined,
   );
+  /*
+   * The contract quotes are keyed by ledger position key; the snapshots are
+   * keyed by OCC contract symbol, because that is what identifies a contract to
+   * everything outside this ledger. The positions carry both, so the join is
+   * done here once rather than by teaching either side about the other's key.
+   *
+   * A contract quote is where the missing previous close was most visible: the
+   * options detail rows showed "—" with "ไม่มีราคาปิดวันก่อน" under them for
+   * most of every day.
+   */
+  const contractSymbolByKey = new Map([...optionPreviews.values()]
+    .flatMap((preview) => preview.positions.map((item) => [item.key, item.contractSymbol] as const)));
+  for (const [key, quote] of Object.entries(optionQuotes)) {
+    if (!quote) continue;
+    const contractSymbol = contractSymbolByKey.get(key);
+    if (contractSymbol) quote.daySnapshot = daySnapshots.get(contractSymbol.toUpperCase()) ?? null;
+  }
 
   await Promise.allSettled(targets.filter((target) => target.enabled && !target.triggeredAt).map(async (target) => {
     const position = optionPreviews.get(target.portfolioId)?.positions
@@ -145,6 +180,13 @@ export default async function PortfolioPage() {
           in the server HTML.
         */
         marketDate={optionMarketDate()}
+        /*
+          Resolved on the server for the same reason `marketDate` is: the session
+          decides whether the day figure is a live number or a named day's close,
+          and a client resolving it from the browser clock would caption the
+          hydrated render differently from the HTML it replaced.
+        */
+        session={portfolioSession}
         effectiveTier={effectiveTier}
         assetTypes={instrumentAssetTypes}
         companyNames={instrumentNames}

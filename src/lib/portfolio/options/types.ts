@@ -17,6 +17,8 @@ export interface OptionQuoteInput {
   source: string | null;
   asOf: string | null;
   freshness: OptionQuoteFreshness;
+  /** Most recent captured close for this CONTRACT. See `MarketPriceInput.daySnapshot`. */
+  daySnapshot?: import('../day-change').DaySnapshotInput | null;
 }
 
 export interface OptionPositionSummary {
@@ -40,6 +42,9 @@ export interface OptionPositionSummary {
   marketValue: number | null;
   estimatedCloseValue: number | null;
   todayChange: number | null;
+  /** See {@link import('../types').HoldingSummary.todayChangeAsOf}. */
+  todayChangeAsOf: string | null;
+  todayChangeSource: import('../day-change').DayChangeSource | null;
   unrealizedGain: number | null;
   unrealizedGainPercent: number | null;
   underlyingPrice: number | null;
@@ -63,6 +68,9 @@ export interface OptionLedgerSummary {
   marketValue: number | null;
   remainingCost: number;
   todayChange: number | null;
+  /** See {@link import('../types').HoldingSummary.todayChangeAsOf}. */
+  todayChangeAsOf: string | null;
+  todayChangeSource: import('../day-change').DayChangeSource | null;
   hasMissingPrices: boolean;
 }
 

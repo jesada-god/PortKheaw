@@ -152,6 +152,21 @@ export interface HoldingSummary {
   priceAsOf: string | null;
   todayChange: number | null;
   todayChangePercent: number | null;
+  /**
+   * WHERE the day figure came from, and which completed session it is about.
+   *
+   * `todayChangeSource` is `'live'` while the market is trading and `'snapshot'`
+   * once it is not; `todayChangeAsOf` carries the trading date of a snapshot
+   * basis and is null for a live one, because a live figure is about right now
+   * and dating it would be wrong rather than merely redundant. Both are null
+   * when the figure itself could not be computed.
+   *
+   * These exist so the UI can SAY which day it is showing. Without them a
+   * reader cannot tell Friday's close from a live Monday tick, and the card
+   * used to resolve that by deleting the row.
+   */
+  todayChangeAsOf: string | null;
+  todayChangeSource: import('./day-change').DayChangeSource | null;
   lots: HoldingLot[];
   transactions: PortfolioTransaction[];
 }
@@ -184,6 +199,9 @@ export interface PortfolioSummary {
   totalGainPercent: number | null;
   todayChange: number | null;
   todayChangePercent: number | null;
+  /** See {@link HoldingSummary.todayChangeAsOf}; reconciled across every position. */
+  todayChangeAsOf: string | null;
+  todayChangeSource: import('./day-change').DayChangeSource | null;
   optionPositions: import('./options/types').OptionPositionSummary[];
   hasMissingPrices: boolean;
 }
@@ -195,4 +213,12 @@ export interface MarketPriceInput {
   stale?: boolean;
   asOf?: string | null;
   source?: string | null;
+  /**
+   * The most recent captured close for this symbol, when one has been loaded.
+   *
+   * Optional, and absent is not an error: a caller that has no snapshot store
+   * (the transfer preview, a cash-only calculation) passes quotes exactly as it
+   * always did and gets the live behaviour it always got.
+   */
+  daySnapshot?: import('./day-change').DaySnapshotInput | null;
 }

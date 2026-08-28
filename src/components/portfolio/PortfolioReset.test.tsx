@@ -73,6 +73,7 @@ function summary(overrides: Partial<PortfolioSummary> = {}): PortfolioSummary {
     equityMarketValue: 5_000, optionsMarketValue: 0, optionRemainingCost: 0,
     netDepositedCapital: 5_000, netTransferredCapital: 0, totalGain: 1_000,
     totalGainPercent: 20, todayChange: 12, todayChangePercent: 0.2,
+    todayChangeAsOf: null, todayChangeSource: null,
     optionPositions: [], hasMissingPrices: false,
     ...overrides,
   };
