@@ -120,6 +120,7 @@ function dashboardData(
       targetValueUsd: null,
       targetDate: null,
       valuedAt: null,
+      todayExchangeDate: null,
       coverage: null,
       portfolios: [],
     },
@@ -545,6 +546,8 @@ describe('overview portfolio card', () => {
       totalGainPercent: -80.18,
       todayChange: null,
       todayChangePercent: null,
+      todayChangeAsOf: null,
+      todayChangeSource: null,
       optionPositions: [],
       hasMissingPrices: false,
       ...overrides,
@@ -575,9 +578,24 @@ describe('overview portfolio card', () => {
       .querySelector('[data-status]')?.getAttribute('data-status')).toBe('good');
   });
 
-  it("hides today's row entirely rather than saying it has no data, twice", () => {
+  /*
+   * THE ROW USED TO BE DELETED HERE, and this test used to assert that.
+   *
+   * Hiding it was the least-bad option while the figure was live-only: outside
+   * the regular session `todayChange` was null for nearly every portfolio, and
+   * a blank at least made no false claim. It also told the reader nothing, on
+   * the surface they open most often, at the hours they are actually awake.
+   *
+   * The figure now falls back to a captured close, so the row stays and says
+   * where its number came from — or, when there is genuinely none, says what is
+   * missing and that it will resolve. What has NOT come back is the placeholder:
+   * "ยังไม่มีข้อมูล" is still never printed, because it names an absence rather
+   * than explaining one.
+   */
+  it("explains today's figure instead of deleting the row when it cannot be computed", () => {
     const text = card().textContent ?? '';
-    expect(text).not.toContain('วันนี้');
+    expect(text).toContain('วันนี้');
+    expect(text).toContain('ยังไม่ได้ราคาปิดของบางรายการ');
     expect(text).not.toContain('ยังไม่มีข้อมูล');
   });
 

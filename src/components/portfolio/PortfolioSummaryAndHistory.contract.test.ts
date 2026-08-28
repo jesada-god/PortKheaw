@@ -20,7 +20,15 @@ describe('portfolio summary card', () => {
   it('labels profit and loss in Thai, with no mixed Thai/English wording', () => {
     // The headline figures live on the shared hero card now, which is the one
     // place either of them is named.
-    expect(hero).toContain('label="กำไร/ขาดทุนวันนี้"');
+    //
+    // The day figure's label is composed one level up and passed in, because it
+    // has to name the DAY the figure belongs to — "กำไร/ขาดทุนวันศุกร์" on a
+    // weekend reading Friday's close — and that day is a property of the
+    // reconciled portfolio, not of the card drawing it. The Thai wording is
+    // asserted where it is now written.
+    expect(hero).toContain('label={todayChangeLabel}');
+    expect(read('src/components/portfolio/PortfolioClient.tsx'))
+      .toContain('todayChangeLabel={`กำไร/ขาดทุน${dayCopy.label}`}');
     expect(hero).toContain("totalGainLabel = 'กำไร/ขาดทุนรวม'");
     expect(hero).not.toContain('label="P/L วันนี้"');
     expect(hero).not.toContain('label="P/L รวม"');

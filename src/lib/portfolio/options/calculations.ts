@@ -6,6 +6,12 @@ import {
   fixedToNumber,
   type Fixed,
 } from '../../money/fixed';
+import type { MarketSession } from '@/src/lib/market-data/market-session';
+import {
+  combineDayChangeSources,
+  resolveDayChangeBasis,
+  type DayChangeBasis,
+} from '../day-change';
 import type { OptionSide, PortfolioTransaction } from '../types';
 import type {
   OptionLedgerSummary,
@@ -107,6 +113,14 @@ export function calculateOptionLedger(
   transactions: PortfolioTransaction[],
   quotes: Record<string, OptionQuoteInput | null> = {},
   today = new Date().toISOString().slice(0, 10),
+  /*
+    Which prices the day figure is allowed to be the difference of. Defaults to
+    OPEN so every existing caller — the cash-balance readers, the transfer
+    preview, the purchase service — keeps the live behaviour it had before this
+    parameter existed and does not have to learn about sessions to ask for a
+    cash balance.
+  */
+  session: MarketSession = 'OPEN',
 ): OptionLedgerSummary {
   const states = new Map<string, OptionState>();
   let cashFlow = 0n;
@@ -209,6 +223,7 @@ export function calculateOptionLedger(
   let hasMissingPrices = false;
   let hasMissingToday = false;
   const positions: OptionPositionSummary[] = [];
+  const dayBases: (DayChangeBasis | null)[] = [];
 
   for (const state of states.values()) {
     const quantity = state.contracts;
@@ -232,12 +247,24 @@ export function calculateOptionLedger(
       : state.side === 'long'
         ? signedMarketValue - state.remainingCost
         : state.remainingCost + signedMarketValue;
-    const previousClose = quote?.previousClose == null ? null : fixed(quote.previousClose);
-    const todayChange = status === 'open' && valuationPrice !== null && previousClose !== null
-      ? (state.side === 'long' ? 1n : -1n) * fixedMultiply(units, valuationPrice - previousClose)
-      : status === 'open'
+    /*
+      A position that is closed or expired moved by zero today and has no basis
+      to name — there is nothing left to reprice. Only an OPEN position asks
+      where its two prices come from.
+    */
+    const dayBasis = status !== 'open' ? null : resolveDayChangeBasis({
+      session,
+      price: valuationPrice === null ? null : fixedToNumber(valuationPrice),
+      previousClose: quote?.previousClose ?? null,
+      snapshot: quote?.daySnapshot ?? null,
+    });
+    if (status === 'open') dayBases.push(dayBasis);
+    const todayChange = status !== 'open'
+      ? 0n
+      : dayBasis === null
         ? null
-        : 0n;
+        : (state.side === 'long' ? 1n : -1n)
+          * fixedMultiply(units, fixed(dayBasis.close) - fixed(dayBasis.prevClose));
     const averagePremium = quantity === 0n
       ? state.transactions
         .filter((item) => item.type === 'buy_to_open' || item.type === 'sell_to_open')
@@ -280,6 +307,8 @@ export function calculateOptionLedger(
       marketValue: signedMarketValue === null ? null : fixedToNumber(signedMarketValue),
       estimatedCloseValue,
       todayChange: todayChange === null ? null : fixedToNumber(todayChange),
+      todayChangeAsOf: dayBasis?.sessionDate ?? null,
+      todayChangeSource: dayBasis?.source ?? null,
       unrealizedGain: unrealized === null ? null : fixedToNumber(unrealized),
       unrealizedGainPercent: unrealized === null ? null : fixedToNumber(fixedPercent(unrealized, state.remainingCost)),
       underlyingPrice: quote?.underlyingPrice ?? null,
@@ -309,6 +338,13 @@ export function calculateOptionLedger(
     marketValue: hasMissingPrices ? null : fixedToNumber(totalMarketValue),
     remainingCost: fixedToNumber(remainingCost),
     todayChange: hasMissingToday ? null : fixedToNumber(totalToday),
+    ...(() => {
+      const combined = hasMissingToday ? null : combineDayChangeSources(dayBases);
+      return {
+        todayChangeAsOf: combined?.sessionDate ?? null,
+        todayChangeSource: combined?.source ?? null,
+      };
+    })(),
     hasMissingPrices,
   };
 }

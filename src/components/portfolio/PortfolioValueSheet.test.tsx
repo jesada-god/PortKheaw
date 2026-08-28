@@ -26,6 +26,8 @@ function summary(totalValue: number | null, cashBalance: number): PortfolioSumma
     totalGainPercent: 0,
     todayChange: null,
     todayChangePercent: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     optionPositions: [],
     hasMissingPrices: totalValue === null,
   };

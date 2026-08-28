@@ -145,6 +145,15 @@ export interface PortfolioOverview {
   targetValueUsd: number | null;
   targetDate: string | null;
   valuedAt: string | null;
+  /**
+   * The exchange-local date of the render instant, in America/New_York.
+   *
+   * Carried so the card can tell "the close that finished today" from "the close
+   * of some earlier day" without reading a clock in the browser — which would
+   * answer in the reader's zone and disagree with the server HTML it hydrates
+   * over. Null only when there is no summary to caption.
+   */
+  todayExchangeDate: string | null;
   coverage: {
     pricedAssets: number;
     totalAssets: number;

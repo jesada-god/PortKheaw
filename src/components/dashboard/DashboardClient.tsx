@@ -46,6 +46,7 @@ import { buildMarketSummary } from '@/src/lib/overview/market-summary';
 import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/changes';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { formatPortfolioMoney, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
+import { dayChangeCopy, dayChangeUnavailableCopy } from '@/src/lib/portfolio/day-change-label';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
@@ -528,18 +529,41 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
   /*
    * A row is rendered when its number exists and is left out when it does not
    * — never printed as "ยังไม่มีข้อมูล", and never twice.
-   *
-   * Today's move is the one that is usually absent: `todayChange` is null the
-   * moment ANY holding's quote arrives without a `previousClose`, so the honest
-   * reading of a blank is "this figure could not be computed", which is not the
-   * same claim as "the market is closed". The card does not know which it is,
-   * and the coverage line below already says when prices are missing.
    */
   const readable = (value: number | null): value is number =>
     value !== null && Number.isFinite(value);
   const totalGainLabel = readable(summary.totalGain)
     ? move(summary.totalGain, summary.totalGainPercent)
     : null;
+  /*
+   * TODAY'S MOVE NOW ALWAYS SAYS SOMETHING.
+   *
+   * It used to be the figure most often absent — `todayChange` went null the
+   * moment ANY holding's quote arrived without a `previousClose`, which outside
+   * the regular session is nearly always — and the card answered by deleting
+   * the row. A reader in Bangkok, whose evening is the middle of a New York
+   * night, therefore saw no day figure most of the time and no reason why.
+   *
+   * The figure now falls back to the captured close of a completed session, and
+   * the row states WHICH session in words. The two states it can be in are both
+   * informative and both are printed:
+   *
+   *  - a number, captioned with where it came from ("ตลาดปิดแล้ว ตัวเลขนี้คือ
+   *    ราคาปิดของวันศุกร์ที่ 29 ส.ค. 2025"); or
+   *  - no number, captioned with what is missing and that it will resolve.
+   *
+   * The old blank was neither. The caption is what makes keeping the row honest
+   * rather than merely tidy: without it a Friday close under a "วันนี้" label on
+   * a Sunday would be a false statement, which is why the label is derived from
+   * the summary's own attribution and not hardcoded.
+   */
+  const todayCopy = readable(summary.todayChange) && summary.todayChangeSource !== null
+    ? dayChangeCopy({
+      source: summary.todayChangeSource,
+      sessionDate: summary.todayChangeAsOf,
+      todayExchangeDate: data.todayExchangeDate,
+    })
+    : dayChangeUnavailableCopy();
   const todayLabel = readable(summary.todayChange)
     ? move(summary.todayChange, summary.todayChangePercent)
     : null;
@@ -568,16 +592,21 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
               />
             </div>
           )}
-          {todayLabel !== null && (
-            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-xs text-[var(--text-muted)]">วันนี้</span>
-              <StatusLabel
-                level={level(summary.todayChangePercent, summary.todayChange)}
-                label={todayLabel}
-                className="text-sm"
-              />
+          <div className="mt-1 min-w-0" data-testid="overview-portfolio-today">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-xs text-[var(--text-muted)]">{todayCopy.label}</span>
+              {todayLabel !== null && (
+                <StatusLabel
+                  level={level(summary.todayChangePercent, summary.todayChange)}
+                  label={todayLabel}
+                  className="text-sm"
+                />
+              )}
             </div>
-          )}
+            <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-muted)]">
+              {todayCopy.caption}
+            </p>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Link

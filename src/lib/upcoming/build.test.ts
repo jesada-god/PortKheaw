@@ -39,6 +39,8 @@ function position(key: string, dte: number, status: OptionPositionSummary['statu
     marketValue: null,
     estimatedCloseValue: null,
     todayChange: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     unrealizedGain: null,
     unrealizedGainPercent: null,
     underlyingPrice: null,

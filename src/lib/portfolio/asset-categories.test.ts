@@ -8,7 +8,7 @@ function holding(overrides: Partial<HoldingSummary> = {}): HoldingSummary {
     symbol: 'AAPL', quantity: 10, averageCost: 100, costBasis: 1_000,
     marketPrice: 120, marketValue: 1_200, realizedGain: 0, unrealizedGain: 200,
     allocation: 50, priceCached: false, priceStale: false, priceSource: 'test',
-    priceAsOf: null, todayChange: 15, todayChangePercent: 1.25, lots: [], transactions: [],
+    priceAsOf: null, todayChange: 15, todayChangePercent: 1.25, todayChangeAsOf: null, todayChangeSource: null, lots: [], transactions: [],
     ...overrides,
   };
 }
@@ -20,7 +20,7 @@ function position(overrides: Partial<OptionPositionSummary> = {}): OptionPositio
     expirationDate: '2026-01-16', contracts: 1, multiplier: 100, averagePremium: 2,
     remainingCost: 200, realizedGain: 0, bid: 3, ask: 3.2, mark: 3.1,
     estimatedClosePrice: 3, marketValue: 310, estimatedCloseValue: 300,
-    todayChange: 10, unrealizedGain: 110, unrealizedGainPercent: 55,
+    todayChange: 10, todayChangeAsOf: null, todayChangeSource: null, unrealizedGain: 110, unrealizedGainPercent: 55,
     underlyingPrice: 75, breakeven: 72, dte: 30, impliedVolatility: null,
     delta: null, theta: null, status: 'open', quoteSource: 'test',
     quoteAsOf: null, quoteFreshness: 'live', transactions: [],

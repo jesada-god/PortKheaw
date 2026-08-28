@@ -11,6 +11,7 @@ import {
 } from '@/src/lib/portfolio/options/presentation';
 import type { OptionPositionSummary } from '@/src/lib/portfolio/options/types';
 import { gainColor, signedPercent } from '@/src/lib/portfolio/presentation';
+import { dayChangeCopy, dayChangeUnavailableCopy } from '@/src/lib/portfolio/day-change-label';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 
 export function quoteNumber(value: number | null, digits?: number) {
@@ -47,6 +48,7 @@ export function OptionPositionCard({
   expanded,
   showBalances,
   timezone,
+  marketDate,
   portfolioLabel,
   money,
   signed,
@@ -57,6 +59,15 @@ export function OptionPositionCard({
   expanded: boolean;
   showBalances: boolean;
   timezone: string;
+  /**
+   * The exchange-local date, resolved on the server.
+   *
+   * Needed to tell "the close that finished today" from "an earlier day's
+   * close", which is the difference between captioning the day figure "วันนี้"
+   * and naming a weekday. Resolving it in the browser instead would answer in
+   * the reader's own zone and disagree with the server HTML it hydrates over.
+   */
+  marketDate: string;
   /** Set when the card is read outside a single portfolio, so it can say where it lives. */
   portfolioLabel?: string | null;
   money: (value: number | null) => string;
@@ -66,6 +77,20 @@ export function OptionPositionCard({
   children?: ReactNode;
 }) {
   const moneyness = optionPositionMoneyness(position);
+  /*
+    A closed or expired position moved by zero and has no basis to name, so it
+    gets the plain live copy rather than a caption claiming a session it did not
+    take part in.
+  */
+  const dayCopy = position.todayChange !== null && position.todayChangeSource !== null
+    ? dayChangeCopy({
+      source: position.todayChangeSource,
+      sessionDate: position.todayChangeAsOf,
+      todayExchangeDate: marketDate,
+    })
+    : position.todayChange !== null
+      ? { label: 'วันนี้', caption: 'สัญญานี้ปิดไปแล้ว จึงไม่มีการเปลี่ยนแปลงในวันนี้' }
+      : dayChangeUnavailableCopy();
   return <article className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]" data-testid="option-position-card">
     <button
       type="button"
@@ -103,11 +128,27 @@ export function OptionPositionCard({
       <OptionMetric label="จำนวน" value={showBalances ? `${position.contracts} สัญญา` : SENSITIVE_VALUE_MASK} />
       <OptionMetric label="Avg premium" value={`$${position.averagePremium.toFixed(2)}`} />
       <OptionMetric label="ต้นทุนคงเหลือ" value={money(position.remainingCost)} />
+      {/*
+        THIS TILE USED TO BE A DASH ALMOST ALWAYS.
+
+        The chain pipeline reports `previousClose: null` for every contract it
+        ever returns, so an option's day figure had no second price to subtract
+        and the tile read "—" in every session, including open ones. The helper
+        under it named the missing provider field, which was the wrong sentence
+        twice over: it was about our plumbing rather than the reader's money, and
+        it appeared even when the market was trading normally.
+
+        The figure now comes from the captured close of a completed session, and
+        the tile says which day in the label itself — "กำไร/ขาดทุนวันศุกร์" — so
+        the number and the day it belongs to cannot be read apart. English
+        trading shorthand is gone with it: this card is read by people who own
+        one contract, not by a desk.
+      */}
       <OptionMetric
-        label="Today P&L"
+        label={`กำไร/ขาดทุน${dayCopy.label}`}
         value={position.todayChange === null ? '—' : signed(position.todayChange)}
         tone={position.todayChange === null ? 'text-[var(--text-muted)]' : gainColor(position.todayChange)}
-        helper={position.todayChange === null ? 'ไม่มีราคาปิดวันก่อน' : undefined}
+        helper={dayCopy.caption}
       />
     </dl>
 

@@ -1,4 +1,5 @@
 import { fixed, fixedPercent, fixedToNumber, type Fixed } from '../money/fixed';
+import { combineDayChangeSources } from './day-change';
 import { portfolioTotalReturnPercent } from './total-return';
 import type { GoalProgress, PortfolioGoal, PortfolioSummary } from './types';
 
@@ -55,6 +56,28 @@ export function aggregatePortfolioSummaries(summaries: readonly PortfolioSummary
     todayChangePercent: todayChange === null || previousValue === null
       ? null
       : fixedToNumber(fixedPercent(fixed(todayChange), previousValue)),
+    /*
+     * The combined figure is attributed through the same reconciliation one
+     * portfolio uses on its own positions, so two portfolios resolved against
+     * different sessions — one holding only equities whose closes were captured,
+     * one holding a contract that is still quoting live — produce a caption that
+     * is true of BOTH halves rather than of whichever came first.
+     */
+    ...(() => {
+      const combined = todayChange === null ? null : combineDayChangeSources(
+        summaries.map((summary) => summary.todayChangeSource === null ? null : {
+          close: 0,
+          prevClose: 0,
+          sessionDate: summary.todayChangeAsOf,
+          source: summary.todayChangeSource,
+          provider: null,
+        }),
+      );
+      return {
+        todayChangeAsOf: combined?.sessionDate ?? null,
+        todayChangeSource: combined?.source ?? null,
+      };
+    })(),
     hasMissingPrices: summaries.some((summary) => summary.hasMissingPrices),
   };
 }

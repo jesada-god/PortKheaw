@@ -94,9 +94,19 @@ describe('portfolio responsive and accessibility contract', () => {
   it('exposes expanded state and complete option information on the card itself', () => {
     expect(holdingCard).toContain('aria-expanded={expanded}');
     expect(optionCard).toContain('aria-expanded={expanded}');
-    for (const label of ['Bid / Ask / Mark', 'Today P&L', 'Unrealized P&L', 'Breakeven', 'DTE', 'Delta', 'Theta', 'Strike', 'Underlying']) {
+    for (const label of ['Bid / Ask / Mark', 'Unrealized P&L', 'Breakeven', 'DTE', 'Delta', 'Theta', 'Strike', 'Underlying']) {
       expect(optionCard).toContain(label);
     }
+    /*
+     * The day figure's tile is named in Thai and carries the day it belongs to
+     * in the label itself, because the number is no longer necessarily today's
+     * — outside the session it is a completed close. "Today P&L" could not say
+     * which day it meant, and was English shorthand on a card read by people who
+     * own one contract.
+     */
+    expect(optionCard).toContain('label={`กำไร/ขาดทุน${dayCopy.label}`}');
+    expect(optionCard).not.toContain('Today P&L');
+    expect(optionCard).not.toContain('ไม่มีราคาปิดวันก่อน');
     // Status is never carried by colour alone.
     for (const word of ['position.side', 'position.status', 'moneyness']) {
       expect(optionCard).toContain(word);

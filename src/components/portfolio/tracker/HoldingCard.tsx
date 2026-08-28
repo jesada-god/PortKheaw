@@ -44,6 +44,7 @@ export function HoldingCard({
   portfolioLabel,
   expanded,
   showBalances,
+  dayLabel,
   timezone,
   portfolioId,
   assetType,
@@ -62,6 +63,16 @@ export function HoldingCard({
   portfolioLabel?: string | null;
   expanded: boolean;
   showBalances: boolean;
+  /**
+   * The word the day figure is labelled with — "วันนี้" while the market is
+   * trading, a weekday once the figure is a completed session's close.
+   *
+   * Passed in rather than written here because every figure on the tracker must
+   * carry the SAME word: the number itself is reconciled across the whole
+   * portfolio, so a row claiming a different day from the total beside it would
+   * be describing a session it did not come from.
+   */
+  dayLabel: string;
   timezone: string;
   portfolioId: string;
   /**
@@ -101,7 +112,7 @@ export function HoldingCard({
       <span className="min-w-0 shrink-0 text-right">
         <span className="figure block break-all text-base font-bold text-[var(--text)]">{money(holding.marketValue)}</span>
         <span className={`figure mt-0.5 block break-all text-xs font-semibold ${holding.todayChange === null ? 'text-[var(--text-muted)]' : gainColor(holding.todayChange)}`}>
-          {holding.todayChange === null ? '— วันนี้' : `${signed(holding.todayChange)} วันนี้`}
+          {holding.todayChange === null ? `— ${dayLabel}` : `${signed(holding.todayChange)} ${dayLabel}`}
         </span>
         <span className={`figure mt-0.5 block break-all text-[11px] ${holding.unrealizedGain === null ? 'text-[var(--text-muted)]' : gainColor(holding.unrealizedGain)}`}>
           รวม {signed(holding.unrealizedGain)}{percent === null ? '' : ` · ${signedPercent(percent, showBalances)}`}

@@ -9,6 +9,12 @@ import {
 import { portfolioTotalReturnPercent } from './total-return';
 import { calculateOptionLedger } from './options/calculations';
 import type { OptionQuoteInput } from './options/types';
+import type { MarketSession } from '@/src/lib/market-data/market-session';
+import {
+  combineDayChangeSources,
+  resolveDayChangeBasis,
+  type DayChangeBasis,
+} from './day-change';
 import type { HoldingLot, HoldingSummary, MarketPriceInput, PortfolioSummary, PortfolioTransaction } from './types';
 
 function ordered(transactions: PortfolioTransaction[]) {
@@ -134,6 +140,15 @@ export function calculatePortfolio(
   marketPrices: Record<string, number | string | MarketPriceInput> = {},
   optionQuotes: Record<string, OptionQuoteInput | null> = {},
   today?: string,
+  /*
+    Which prices the day figure is the difference of — see `./day-change`.
+
+    Defaults to OPEN so every caller that only wants a cash balance or a cost
+    basis keeps working untouched and unchanged. Only the surfaces that actually
+    PRINT a day figure resolve a real session and pass it: the overview card,
+    the tracker, and the options detail rows.
+  */
+  session: MarketSession = 'OPEN',
 ): PortfolioSummary {
   const states = new Map<string, HoldingState>();
   let cash = 0n;
@@ -260,7 +275,7 @@ export function calculatePortfolio(
     states.set(event.symbol, state);
   }
 
-  const optionLedger = calculateOptionLedger(transactions, optionQuotes, today);
+  const optionLedger = calculateOptionLedger(transactions, optionQuotes, today, session);
   cash += decimal(optionLedger.cashFlow);
 
   let totalMarketValue = 0n;
@@ -268,6 +283,7 @@ export function calculatePortfolio(
   let missingEquityPrice = false;
   let missingTodayPrice = false;
   const holdings: HoldingSummary[] = [];
+  const dayBases: (DayChangeBasis | null)[] = [];
   for (const [symbol, state] of states) {
     if (state.quantity === 0n) continue;
     const rawMarketPrice = marketPrices[symbol];
@@ -279,13 +295,28 @@ export function calculatePortfolio(
     // external numeric quotes through the fixed-point number boundary.
     const marketPrice = priceMissing ? null : decimal(parsedPrice);
     const marketValue = marketPrice === null ? null : multiply(state.quantity, marketPrice);
-    const parsedPreviousClose = quote?.previousClose == null ? Number.NaN : Number(quote.previousClose);
-    const previousClose = Number.isFinite(parsedPreviousClose) && parsedPreviousClose > 0
-      ? decimal(parsedPreviousClose)
-      : null;
-    const todayChange = marketPrice === null || previousClose === null
+    /*
+      The day figure is no longer "live price minus whatever previous close the
+      quote happened to carry". Outside the regular session the quote usually
+      carries none, and the old expression answered that by producing null —
+      which the card rendered as a missing row every evening and all weekend.
+      `resolveDayChangeBasis` picks the right PAIR of prices for the session and
+      says which day the pair belongs to.
+    */
+    const dayBasis = resolveDayChangeBasis({
+      session,
+      price: priceMissing ? null : parsedPrice,
+      previousClose: quote?.previousClose == null ? null : Number(quote.previousClose),
+      snapshot: quote?.daySnapshot ?? null,
+    });
+    dayBases.push(dayBasis);
+    // Both halves cross the fixed-point boundary the same way the market price
+    // does above, so a provider's binary tail cannot leak into a money figure.
+    const dayClose = dayBasis === null ? null : decimal(dayBasis.close);
+    const dayPrevClose = dayBasis === null ? null : decimal(dayBasis.prevClose);
+    const todayChange = dayClose === null || dayPrevClose === null
       ? null
-      : multiply(state.quantity, marketPrice - previousClose);
+      : multiply(state.quantity, dayClose - dayPrevClose);
     if (marketValue === null) missingEquityPrice = true;
     else totalMarketValue += marketValue;
     if (todayChange === null) missingTodayPrice = true;
@@ -317,9 +348,11 @@ export function calculatePortfolio(
       priceSource: quote?.source ?? null,
       priceAsOf: quote?.asOf ?? null,
       todayChange: todayChange === null ? null : number(todayChange),
-      todayChangePercent: todayChange === null || previousClose === null
+      todayChangePercent: dayClose === null || dayPrevClose === null
         ? null
-        : number(fixedPercent(marketPrice! - previousClose, previousClose)),
+        : number(fixedPercent(dayClose - dayPrevClose, dayPrevClose)),
+      todayChangeAsOf: dayBasis?.sessionDate ?? null,
+      todayChangeSource: dayBasis?.source ?? null,
       lots,
       transactions: state.transactions,
     });
@@ -342,6 +375,24 @@ export function calculatePortfolio(
   const totalToday = missingTodayPrice || optionLedger.todayChange === null
     ? null
     : totalTodayChange + decimal(optionLedger.todayChange);
+  /*
+    The base the PORTFOLIO's day percentage is measured against.
+
+    Worth knowing what this is once the day figure can come from a snapshot: the
+    total value is always built from the latest prices, while `totalToday` may be
+    the difference of two completed closes, so outside the session the base is
+    "latest value minus the last session's move" rather than the exact value at
+    that session's previous close. The two differ only by whatever moved in
+    extended trading, which for a closed market is usually nothing and never
+    much.
+
+    Left as it is deliberately. Computing an exact base would mean summing
+    quantity × prevClose across both ledgers, and the options ledger does not
+    expose its per-position basis — so the alternative is a wider refactor to
+    remove a discrepancy smaller than the rounding on the figure it feeds. The
+    per-HOLDING percentages above have no such issue: each is computed from its
+    own basis's two prices.
+  */
   const previousValue = totalValueFixed === null || totalToday === null ? null : totalValueFixed - totalToday;
   const unrealized = hasMissingPrices
     ? null
@@ -364,6 +415,31 @@ export function calculatePortfolio(
     totalGainPercent: portfolioTotalReturnPercent(totalGainFixed, netDeposited, netTransferred),
     todayChange: totalToday === null ? null : number(totalToday),
     todayChangePercent: totalToday === null || previousValue === null ? null : number(fixedPercent(totalToday, previousValue)),
+    /*
+      One attribution for the whole portfolio, reconciled from every position's
+      own basis — including the options ledger's already-reconciled one, folded
+      in as a single participant so a portfolio that is half snapshot and half
+      live cannot be captioned as though it were purely either.
+
+      Null when the figure itself is null: there is no session to name for a
+      number that does not exist.
+    */
+    ...(() => {
+      const combined = totalToday === null ? null : combineDayChangeSources([
+        ...dayBases,
+        optionLedger.todayChangeSource === null ? null : {
+          close: 0,
+          prevClose: 0,
+          sessionDate: optionLedger.todayChangeAsOf,
+          source: optionLedger.todayChangeSource,
+          provider: null,
+        },
+      ]);
+      return {
+        todayChangeAsOf: combined?.sessionDate ?? null,
+        todayChangeSource: combined?.source ?? null,
+      };
+    })(),
     optionPositions: optionLedger.positions,
     hasMissingPrices,
   };

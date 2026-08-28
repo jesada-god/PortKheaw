@@ -190,6 +190,7 @@ async function render(records: PortfolioRecord[] = portfolios) {
       fx={{ quote: null, unavailable: true }}
       timezone="Asia/Bangkok"
       marketDate="2026-08-14"
+      session="OPEN"
       effectiveTier="elite"
       assetTypes={{ AAPL: 'Stock', NVDA: 'Stock' }}
       companyNames={{ AAPL: 'Apple Inc.', NVDA: 'NVIDIA Corporation' }}

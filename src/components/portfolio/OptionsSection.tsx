@@ -395,6 +395,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
             expanded={expanded === position.key}
             showBalances={showBalances}
             timezone={timezone}
+            marketDate={marketDate}
             money={money}
             signed={signed}
             onToggle={() => setExpanded((current) => current === position.key ? null : position.key)}

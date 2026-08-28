@@ -96,6 +96,8 @@ function position(overrides: Partial<OptionPositionSummary> = {}): OptionPositio
     marketValue: 510,
     estimatedCloseValue: 500,
     todayChange: null,
+    todayChangeAsOf: null,
+    todayChangeSource: null,
     unrealizedGain: 85,
     unrealizedGainPercent: 20,
     underlyingPrice: 60.5,
