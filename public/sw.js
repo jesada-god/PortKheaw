@@ -54,16 +54,30 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => {
-        const oldCaches = keys.filter((key) => key !== CACHE_NAME);
+    (async () => {
+      /*
+       * ON A DEV HOST THE WORKER REMOVES ITSELF, whatever installed it.
+       *
+       * The guard in the fetch handler stops this worker pinning build output,
+       * but it cannot speak for a worker installed before that guard existed —
+       * and such a worker goes on controlling loaded tabs after its registration
+       * is gone, serving whatever it cached. So any worker reaching `activate`
+       * on a development host purges every cache and unregisters, which leaves
+       * nothing behind that could answer a request with stale JavaScript.
+       */
+      const keys = await caches.keys();
 
-        return Promise.all(
-          oldCaches.map((key) => caches.delete(key)),
-        );
-      })
-      .then(() => self.clients.claim()),
+      if (IS_DEVELOPMENT_HOST) {
+        await Promise.all(keys.map((key) => caches.delete(key)));
+        await self.registration.unregister();
+        return;
+      }
+
+      await Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)),
+      );
+      await self.clients.claim();
+    })(),
   );
 });
 

@@ -32,6 +32,38 @@ describe('push service worker contract', () => {
       .toBeLessThan(runtime.indexOf("serviceWorker.register('/sw.js'"));
   });
 
+  /*
+   * `unregister()` drops the registration immediately, but the ACTIVE worker
+   * keeps controlling already-loaded clients until they unload — so a tab can
+   * report zero registrations while every request it makes is still answered by
+   * that worker from its cache. Reloading a controlled client does not help,
+   * and skipping registration in development means no replacement worker ever
+   * arrives to displace it. Purging the caches and reloading once, with the
+   * registration gone, is what returns the tab to the dev server.
+   */
+  it('heals a tab that is still controlled by a worker it already removed', () => {
+    const runtime = read('src/components/layout/AppRuntime.tsx');
+    expect(runtime).toContain('navigator.serviceWorker.controller');
+    expect(runtime).toContain('caches.delete(key)');
+    expect(runtime).toContain('window.location.reload()');
+    // Exactly once per tab, so a re-registration cannot start a reload loop.
+    expect(runtime).toContain('DEV_WORKER_RESET');
+  });
+
+  /*
+   * The other half of the same guarantee, from inside the worker: one installed
+   * before the fetch guard existed still reaches `activate`, and that is the
+   * moment it can be made to remove itself.
+   */
+  it('makes any worker on a development host purge its caches and unregister', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toContain('await self.registration.unregister()');
+    expect(worker.indexOf('IS_DEVELOPMENT_HOST'))
+      .toBeLessThan(worker.indexOf('await self.registration.unregister()'));
+    // Production still claims clients rather than removing itself.
+    expect(worker).toContain('await self.clients.claim()');
+  });
+
   it('shows bounded push data with the existing PortKheaw assets', () => {
     const worker = read('public/sw.js');
     expect(worker).toContain("addEventListener('push'");

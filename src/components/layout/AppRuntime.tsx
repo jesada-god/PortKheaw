@@ -7,6 +7,9 @@ import { DEVICE_PREFERENCES_SYNC_EVENT } from '@/src/lib/privacy';
 
 const REFRESH_AFTER_MS = 2 * 60_000;
 
+/** One self-heal per tab, so a re-registration cannot start a reload loop. */
+const DEV_WORKER_RESET = 'portkheaw-dev-worker-reset';
+
 export function AppRuntime() {
   const pathname = usePathname();
   const router = useRouter();
@@ -50,11 +53,60 @@ export function AppRuntime() {
     if (!('serviceWorker' in navigator)) return;
 
     if (process.env.NODE_ENV !== 'production') {
-      void navigator.serviceWorker.getRegistrations()
-        .then((registrations) => Promise.all(
-          registrations.map((registration) => registration.unregister()),
-        ))
-        .catch(() => undefined);
+      /*
+       * UNREGISTERING IS NOT ENOUGH, and the gap is the whole bug.
+       *
+       * `unregister()` drops the registration from `getRegistrations()` at once,
+       * but the ACTIVE worker keeps controlling clients that are already loaded
+       * until they are unloaded. So a tab reports "0 registrations" while
+       * `navigator.serviceWorker.controller` is still set and that worker still
+       * answers every request the page makes — which is what a Network panel
+       * means when it lists a script's initiator as ServiceWorker after the
+       * registration is gone. Reloading does not help: a reload of a controlled
+       * client is served by the same worker.
+       *
+       * Nor could the replacement worker take over, because in development
+       * there is no longer a registration for the browser to update — skipping
+       * registration is what left the old one in place with nothing to displace
+       * it.
+       *
+       * So the tab heals itself: drop the registrations, delete every cache the
+       * old worker could still replay from, and reload ONCE. That navigation
+       * happens with no registration left to claim it, so it comes straight from
+       * `next dev` — uncontrolled, uncached, current. The session flag makes it
+       * exactly one reload even if something registers again.
+       */
+      const alreadyHealed = (() => {
+        try {
+          return window.sessionStorage.getItem(DEV_WORKER_RESET) === 'done';
+        } catch {
+          return false;
+        }
+      })();
+
+      if (!navigator.serviceWorker.controller || alreadyHealed) {
+        void navigator.serviceWorker.getRegistrations()
+          .then((registrations) => Promise.all(
+            registrations.map((registration) => registration.unregister()),
+          ))
+          .catch(() => undefined);
+        return;
+      }
+
+      void (async () => {
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((key) => caches.delete(key)));
+          }
+          window.sessionStorage.setItem(DEV_WORKER_RESET, 'done');
+        } catch {
+          // A reload with the registration gone is still the right next step.
+        }
+        window.location.reload();
+      })();
       return;
     }
 
