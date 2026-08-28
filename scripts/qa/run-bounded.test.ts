@@ -28,6 +28,25 @@ import { afterAll, describe, expect, it } from 'vitest';
  */
 const STARTUP_BUDGET_MS = 90_000;
 
+/*
+ * THE DEADLINE FOR CASES THAT ARE NOT ABOUT DEADLINES.
+ *
+ * Three of these five run a command that exits immediately — `exit 0`, `exit 7`
+ * — and assert the runner reports that exact code. They used the same 10s
+ * default as everything else, and 10s is not a safe budget for a `powershell.exe`
+ * cold start on a saturated machine: the runner did exactly its job, hit its own
+ * deadline before the command had finished starting, and returned 124. The case
+ * then read "expected 124 to be 7" and looked like a runner that ignored an
+ * exit code, when it was a runner that had been asked to allow one second fewer
+ * than the machine needed.
+ *
+ * A case that is not testing the timeout should never meet it, so it gets a
+ * deadline it cannot plausibly reach. The two cases that ARE about the timeout
+ * pass their own short values, and are the only ones that do.
+ */
+const NEVER_FIRES_SECONDS = 120;
+
+
 /** The wall the runner must not hit — its own deadline, plus room to start. */
 const budgetMs = (runnerTimeoutSeconds: number) =>
   runnerTimeoutSeconds * 1_000 + STARTUP_BUDGET_MS;
@@ -54,14 +73,14 @@ async function run(command: string, options: {
     '-ExecutionPolicy', 'Bypass',
     '-File', runner,
     '-Command', command,
-    '-TimeoutSeconds', String(options.timeoutSeconds ?? 10),
+    '-TimeoutSeconds', String(options.timeoutSeconds ?? NEVER_FIRES_SECONDS),
     '-LogDirectory', logRoot,
     '-RetryCount', String(options.retryCount ?? 0),
     '-Step', 'runner-smoke',
     '-RunId', runId,
   ];
   if (options.retryOnTimeout) args.push('-RetryOnTimeout');
-  const result = await spawnRunner(args, budgetMs(options.timeoutSeconds ?? 10));
+  const result = await spawnRunner(args, budgetMs(options.timeoutSeconds ?? NEVER_FIRES_SECONDS));
   /*
    * Said before any exit code is read, so a blown budget names itself instead of
    * arriving as "expected null to be 124" — the runner's exit code is `null`
@@ -164,13 +183,13 @@ describe.sequential('bounded PowerShell runner smoke tests', () => {
     expect(output(result)).toContain('exit=0');
     expect(readFileSync(join(logRoot, runId, 'stdout.attempt-1.log'), 'utf8')).toContain('runner-ok');
     expect(existsSync(join(logRoot, '.portkheaw-qa.lock.json'))).toBe(false);
-  }, caseTimeoutMs(10));
+  }, caseTimeoutMs(NEVER_FIRES_SECONDS));
 
   it('returns the real non-zero exit code without retrying an unlisted error', async () => {
     const { result } = await run('exit 7');
     expect(result.status, output(result)).toBe(7);
     expect(output(result)).toContain('no retry; exit 7');
-  }, caseTimeoutMs(10));
+  }, caseTimeoutMs(NEVER_FIRES_SECONDS));
 
   it('times out, reports the step, and returns 124', async () => {
     const { result } = await run('Start-Sleep -Seconds 30', { timeoutSeconds: 2 });
@@ -185,9 +204,9 @@ describe.sequential('bounded PowerShell runner smoke tests', () => {
     const runDirectory = join(logRoot, runId);
     const childPidPath = join(runDirectory, 'child.pid');
     const escapedPidPath = childPidPath.replaceAll("'", "''");
-    const command = `$child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 120') -WindowStyle Hidden -PassThru; Set-Content -LiteralPath '${escapedPidPath}' -Value $child.Id; Start-Sleep -Seconds 120`;
+    const command = `$child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 240') -WindowStyle Hidden -PassThru; Set-Content -LiteralPath '${escapedPidPath}' -Value $child.Id; Start-Sleep -Seconds 240`;
     /*
-     * 25s rather than 8s, and the sleeps are 120s rather than 30s.
+     * 45s rather than 8s, and the sleeps are 240s rather than 30s.
      *
      * This command's FIRST act is to cold-start a second `powershell.exe`, and
      * only then does it write the PID the assertions read. At an 8s deadline
@@ -197,7 +216,7 @@ describe.sequential('bounded PowerShell runner smoke tests', () => {
      * had misbehaved. The deadline still fires far short of the sleeps, so the
      * timeout under test is every bit as real as it was.
      */
-    const { result } = await run(command, { timeoutSeconds: 25, runId, logRoot });
+    const { result } = await run(command, { timeoutSeconds: 45, runId, logRoot });
     expect(result.status, output(result)).toBe(124);
     expect(
       existsSync(childPidPath),
@@ -206,7 +225,7 @@ describe.sequential('bounded PowerShell runner smoke tests', () => {
     const childPid = Number(readFileSync(childPidPath, 'utf8').trim());
     await waitForProcessExit(childPid);
     expect(processExists(childPid)).toBe(false);
-  }, caseTimeoutMs(25));
+  }, caseTimeoutMs(45));
 
   it('removes a lock only when its recorded owner is stale', async () => {
     const logRoot = join(suiteRoot, `stale-${randomUUID()}`);
@@ -221,5 +240,5 @@ describe.sequential('bounded PowerShell runner smoke tests', () => {
     expect(result.status, output(result)).toBe(0);
     expect(output(result)).toContain('STALE_LOCK_REMOVED');
     expect(existsSync(lockPath)).toBe(false);
-  }, caseTimeoutMs(10));
+  }, caseTimeoutMs(NEVER_FIRES_SECONDS));
 });
