@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
  * Guards the one property that makes a Supabase Custom Domain a configuration
@@ -37,9 +37,29 @@ const sourceFiles = tracked.filter((path) => (
 
 const read = (path: string) => readFileSync(resolve(path), 'utf8');
 
+/*
+ * READ ONCE. The sweep below opens every shipped source file, and doing that
+ * inside the case billed a whole-repository read to a single assertion about a
+ * hostname — which is what "Test timed out in 5000ms" meant here, on a case that
+ * passes in four seconds alone. The files cannot change while the suite runs, so
+ * the read happens once, in the hook, and the case matches strings in memory.
+ */
+let shipped: Array<{ path: string; text: string }> | null = null;
+
+const shippedSources = () => {
+  shipped ??= sourceFiles.map((path) => ({ path, text: read(path) }));
+  return shipped;
+};
+
+beforeAll(() => {
+  shippedSources();
+}, 120_000);
+
 describe('Supabase auth host stays env-driven', () => {
   it('hard-codes no Supabase project host anywhere in shipped source', () => {
-    const offenders = sourceFiles.filter((path) => /[a-z0-9]{8,}\.supabase\.(co|in)/i.test(read(path)));
+    const offenders = shippedSources()
+      .filter(({ text }) => /[a-z0-9]{8,}\.supabase\.(co|in)/i.test(text))
+      .map(({ path }) => path);
     expect(offenders).toEqual([]);
   });
 

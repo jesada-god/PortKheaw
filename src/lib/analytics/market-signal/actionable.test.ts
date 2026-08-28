@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { MARKET_SIGNAL_ACTIONABLE, MARKET_SIGNAL_ZONE } from '@/src/config/signal';
 import { atrWilder, ema } from '@/src/lib/analytics/technical/calculations';
@@ -37,7 +37,26 @@ const run = (symbol: string, features?: { gate?: boolean; zones?: boolean; actio
   });
 };
 
-const on = (symbol: string) => run(symbol, { gate: false, zones: true, actionable: true });
+/*
+ * Memoised and warmed, for the reason `zones.test.ts` documents: each call is
+ * several engine evaluations over a golden capture, the result is a pure
+ * function of the symbol, and the ten-symbol sweeps below re-ran the whole set
+ * per case. That put the first sweep at the edge of Vitest's 5s default with
+ * nothing but repeated work between it and the limit.
+ */
+const actionableRuns = new Map<string, ReturnType<typeof calculateMarketSignal>>();
+
+const on = (symbol: string) => {
+  const cached = actionableRuns.get(symbol);
+  if (cached) return cached;
+  const result = run(symbol, { gate: false, zones: true, actionable: true });
+  actionableRuns.set(symbol, result);
+  return result;
+};
+
+beforeAll(() => {
+  SYMBOLS.forEach(on);
+}, 120_000);
 
 const finalizedBars = (symbol: string): Bar[] => capture(symbol).candles
   .filter((candle) => candle.finalized)
