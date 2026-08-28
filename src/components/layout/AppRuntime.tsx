@@ -26,8 +26,38 @@ export function AppRuntime() {
     return () => window.removeEventListener('storage', syncDevicePreferences);
   }, []);
 
+  /*
+   * THE APP SHELL WORKER IS A PRODUCTION FEATURE, AND ONLY THERE.
+   *
+   * What it buys is an offline shell and push delivery for an installed PWA.
+   * Neither is worth anything while developing, and the cost turned out to be
+   * severe: a worker sitting between `next dev` and the browser serves
+   * `/_next/static/` from a URL that does not change when the file does, so it
+   * can pin a component's JavaScript to the first copy it ever saw. The page
+   * keeps rendering live server data beside stale code, and nothing a developer
+   * would reach for — deleting `.next`, restarting the server, hard-refreshing —
+   * touches Cache Storage or stops a worker intercepting subresources.
+   *
+   * That cost a full day on a card that had already been fixed and proved green
+   * in tests. The worker is fixed too (`public/sw.js` no longer caches build
+   * output on a dev host), but the durable answer is not to run it here at all.
+   *
+   * Existing registrations are actively REMOVED rather than merely skipped: a
+   * developer whose browser already carries one would otherwise keep it, and
+   * keep the failure, until they found the button by hand.
+   */
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
+
+    if (process.env.NODE_ENV !== 'production') {
+      void navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(
+          registrations.map((registration) => registration.unregister()),
+        ))
+        .catch(() => undefined);
+      return;
+    }
+
     const register = () => {
       void navigator.serviceWorker.register('/sw.js', { scope: '/' })
         .catch(() => undefined);

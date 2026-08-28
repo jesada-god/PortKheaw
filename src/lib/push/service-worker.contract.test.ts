@@ -15,6 +15,23 @@ describe('push service worker contract', () => {
     expect(settings).not.toContain('serviceWorker.register');
   });
 
+  /*
+   * A worker between `next dev` and the browser can pin a component's chunk to
+   * the first copy it saw, because a dev chunk URL does not change when the file
+   * does — and no amount of deleting `.next`, restarting the server or
+   * hard-refreshing dislodges it. It buys nothing while developing, so it does
+   * not run, and an existing one is removed rather than left to keep failing.
+   */
+  it('registers no worker in development, and removes one already installed', () => {
+    const runtime = read('src/components/layout/AppRuntime.tsx');
+    expect(runtime).toContain("process.env.NODE_ENV !== 'production'");
+    expect(runtime).toContain('getRegistrations');
+    expect(runtime).toContain('registration.unregister()');
+    // The dev branch must return before the registration below it can run.
+    expect(runtime.indexOf('registration.unregister()'))
+      .toBeLessThan(runtime.indexOf("serviceWorker.register('/sw.js'"));
+  });
+
   it('shows bounded push data with the existing PortKheaw assets', () => {
     const worker = read('public/sw.js');
     expect(worker).toContain("addEventListener('push'");
