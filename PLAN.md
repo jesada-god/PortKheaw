@@ -349,3 +349,23 @@ npm run account:reconcile          # preview เปล่า ต้องไม�
 npm run probe:trial-retention      # ต้องสะอาด
 ```
 แล้วรัน query ชุดที่ 1 ซ้ำ — `accounts_closed_and_unfinished` ควรเป็น 0 หรือเท่ากับจำนวนที่ตั้งใจปล่อยไว้
+
+---
+
+## 8. Worktree — ใครทำงานที่ไหน
+
+สองเซสชันเคยชน branch เดียวกัน และรอบล่าสุด full suite ตาย **2 รอบ** เพราะ branch ถูกสลับใน IDE ระหว่างที่เทสต์กำลังรัน — ผลที่ได้จึงเป็นผลของ tree ที่ไม่มีอยู่จริงแล้ว
+
+| ที่ | ของใคร | กฎ |
+|---|---|---|
+| `d:/university/jesada/BasFunds/PortKheaw` | **Bas** — repo หลัก เปิด IDE อยู่ | Claude Code **ห้าม `git checkout` / `git switch`** ที่นี่ |
+| `d:/university/jesada/BasFunds/PortKheaw-agent` | **Claude Code** | ทำงานทุกอย่างที่นี่ |
+
+สร้างด้วย `git worktree add ../PortKheaw-agent <branch>` · `node_modules` เป็น junction ชี้กลับ repo หลัก (`mklink /J`) และ `.env.local` ก็อปมา — ทั้งคู่ gitignore อยู่แล้ว ไม่เข้า commit
+
+**ก่อนเริ่มงานทุกครั้ง** ตรวจ `pwd` + `git branch --show-current` ให้ตรงกับที่ตั้งใจ · ไม่ตรง → **หยุด** ไม่ต้องเดา
+
+**เจอไฟล์ที่ไม่ใช่ของตัวเองถูกแก้** (เช่น Bas แก้ค้างไว้ใน tree) → **หยุด รายงาน ไม่ commit** เคยเกิดมาแล้วกับ `DashboardClient.tsx` ครั้งนั้นแยก stage เฉพาะไฟล์ของตัวเองไว้ทัน
+
+**branch ที่ checkout อยู่ใน repo หลัก จะ checkout ซ้ำใน worktree ไม่ได้** — ถ้าต้องรัน gate บน branch นั้น ใช้ `git checkout --detach <branch>` ใน worktree แล้ว push ด้วยชื่อ ref ตรง ๆ (`git push origin <branch>`) ซึ่งไม่ต้องยึด working copy
+
