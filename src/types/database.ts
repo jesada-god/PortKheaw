@@ -958,6 +958,36 @@ export interface Database {
        * `authenticated` read and write nothing. The entitlement deciding who
        * may see any of this lives in `loadEntitledMarketSignal`, not here.
        */
+      /**
+       * Official regular-session closes, one row per symbol per trading date.
+       *
+       * The source the day figure ("วันนี้") falls back to whenever the market
+       * is not open, which is most of the hours a Thai reader is awake. Written
+       * only after a session has finished — see `captureDailyCloses`, which
+       * refuses to write during one.
+       *
+       * Service-role only: RLS is on with no policy, so `anon` and
+       * `authenticated` read and write nothing. Closes are licensed data and a
+       * client-readable table here would republish a provider's end-of-day file.
+       */
+      daily_snapshot: {
+        Row: {
+          symbol: string; date: string;
+          close: number;
+          // Null when the session before `date` has no verified close — a new
+          // listing, or a gap. Never coalesced to zero downstream: "did not
+          // move" is a different claim from "cannot be computed".
+          prev_close: number | null;
+          source: string; captured_at: string;
+        };
+        Insert: {
+          symbol: string; date: string;
+          close: number; prev_close?: number | null;
+          source: string; captured_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daily_snapshot']['Insert']>;
+        Relationships: [];
+      };
       market_signal_history: {
         Row: {
           symbol: string; as_of: string;
