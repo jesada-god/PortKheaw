@@ -112,6 +112,12 @@ function Complete-RedirectedProcess {
   $StderrStream.Flush()
 }
 
+function Test-ProcessGone {
+  param([Parameter(Mandatory = $true)][int]$CandidateProcessId)
+
+  return -not (Get-Process -Id $CandidateProcessId -ErrorAction SilentlyContinue)
+}
+
 function Stop-OwnedProcessTree {
   param([Parameter(Mandatory = $true)][int]$RootProcessId)
 
@@ -120,11 +126,45 @@ function Stop-OwnedProcessTree {
     return "PID $RootProcessId already exited"
   }
 
+  <#
+    A SUCCESSFUL STEP USED TO BE ABLE TO EXIT 70 HERE.
+
+    taskkill prints one line per process in the tree, and a child that exited on
+    its own between the tree walk and the kill produces an ERROR line on stderr:
+    "The process with PID x (child process of PID y) could not be terminated."
+    Under $ErrorActionPreference = 'Stop', `2>&1` on a native command wraps each
+    stderr line in an ErrorRecord and makes it a TERMINATING error AT THE CALL —
+    so the $LASTEXITCODE check that used to sit below never ran, whatever
+    taskkill actually returned. The throw reached the runner's outer catch, which
+    reports 70.
+
+    Verified directly: a native command that exits 0 and writes a single stderr
+    line still throws under 'Stop', carrying that line as its message — which is
+    exactly the shape of the failure seen, "ERROR: ERROR: The process with PID
+    ... could not be terminated". So a QA step whose command exited 0 was
+    reported as a runner failure because Windows had not finished reaping a
+    child that was being killed anyway. A loaded machine widens that window,
+    which is why it surfaced under a full test run and never alone.
+
+    Two changes. Stderr is collected as OUTPUT, so the exit code is reachable
+    again. And the verdict is the POSTCONDITION this function promises rather
+    than taskkill's opinion of it: the owned root is gone. A child that could not
+    be terminated because it had already terminated satisfies that. A root still
+    running does not, and still throws — the guarantee is unchanged, only the
+    thing being measured is now the thing that matters.
+  #>
+  # Function-scoped: this reverts to the caller's preference on return.
+  $ErrorActionPreference = 'Continue'
   $output = @(& taskkill.exe /PID $RootProcessId /T /F 2>&1)
   $taskkillExit = $LASTEXITCODE
   $summary = ($output | ForEach-Object { [string]$_ }) -join ' | '
-  if ($taskkillExit -ne 0) {
-    throw "taskkill failed for owned PID $RootProcessId (exit $taskkillExit): $summary"
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  while (-not (Test-ProcessGone -CandidateProcessId $RootProcessId) -and [DateTime]::UtcNow -lt $deadline) {
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not (Test-ProcessGone -CandidateProcessId $RootProcessId)) {
+    throw "taskkill left owned PID $RootProcessId running (exit $taskkillExit): $summary"
   }
   return $summary
 }

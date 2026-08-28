@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { MARKET_SIGNAL_MEASURED, MARKET_SIGNAL_ZONE } from '@/src/config/signal';
 import { confirmedSwingPivots } from '@/src/lib/analytics/support-resistance/calculations';
@@ -52,6 +52,22 @@ const run = (symbol: string, zones: boolean) => {
 };
 
 const SYMBOLS = ['IREN', 'SPY', 'QQQ', 'DIA', 'IWM', 'REMX', 'GC-F', 'SI-F', 'CL-F', 'BTC-USD'];
+
+/*
+ * The memo above is warmed here so no single case pays to fill it.
+ *
+ * Building all ten symbols is seconds of engine work, and whichever case touched
+ * the map first was billed every one of them against Vitest's 5s default while
+ * the rest paid nothing — a fixture cost charged to an assertion, and charged to
+ * a different assertion whenever the order changed. Under load that bill went
+ * over the limit. It belongs to the fixture, so it is paid by the fixture.
+ */
+beforeAll(() => {
+  SYMBOLS.forEach((symbol) => {
+    run(symbol, true);
+    run(symbol, false);
+  });
+}, 120_000);
 
 /** Bars with an explicit range, so a wick can be placed independently of the close. */
 function bars(closes: readonly number[], options: { volume?: (index: number) => number; halfRange?: number } = {}) {

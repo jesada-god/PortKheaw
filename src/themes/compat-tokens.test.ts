@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
  * The app shell and controls use semantic tokens directly, but most feature
@@ -36,6 +36,27 @@ function appSources(): string[] {
   return [...sourceFiles('app'), ...sourceFiles('src')];
 }
 
+/*
+ * READ ONCE, FOR ALL OF IT.
+ *
+ * Two cases below each called `collectClasses`, and each call walked `app/` and
+ * `src/` and read every `.ts`/`.tsx` file in them from disk — the whole tree,
+ * twice, against Vitest's 5s default. Under a full run both timed out, and a
+ * timeout is what a scan of the entire source tree looks like when it is billed
+ * to an assertion about a stylesheet.
+ *
+ * The files cannot change while the suite runs, so they are read once and the
+ * cases match against strings already in memory. The cost also moves into
+ * `beforeAll`, where it belongs: it is the fixture, not the assertion, and no
+ * case should fail because it was the one that happened to need it first.
+ */
+let sourceTexts: string[] | null = null;
+
+function appSourceTexts(): string[] {
+  sourceTexts ??= appSources().map((file) => readFileSync(resolve(file), 'utf8'));
+  return sourceTexts;
+}
+
 /** Light 100-300 status shades: chosen for a near-black surface, illegible on light. */
 const STATUS_TEXT_PATTERN = new RegExp(
   String.raw`(?:^|["'\s\`])(text-(?:rose|sky|emerald|red|amber|blue|purple|violet|green`
@@ -45,8 +66,8 @@ const STATUS_TEXT_PATTERN = new RegExp(
 
 function collectClasses(pattern: RegExp): Set<string> {
   const found = new Set<string>();
-  for (const file of appSources()) {
-    for (const match of readFileSync(resolve(file), 'utf8').matchAll(pattern)) found.add(match[1]);
+  for (const text of appSourceTexts()) {
+    for (const match of text.matchAll(pattern)) found.add(match[1]);
   }
   return found;
 }
@@ -55,6 +76,10 @@ function mapped(css: string, token: string): boolean {
   return css.includes(`"${token}"`)
     || new RegExp(String.raw`\.${token.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}[\s,{]`).test(css);
 }
+
+beforeAll(() => {
+  appSourceTexts();
+}, 120_000);
 
 describe('PortKheaw palette compatibility map', () => {
   it('maps every hardcoded palette class the app still ships', () => {

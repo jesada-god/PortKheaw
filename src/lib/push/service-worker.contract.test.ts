@@ -15,6 +15,55 @@ describe('push service worker contract', () => {
     expect(settings).not.toContain('serviceWorker.register');
   });
 
+  /*
+   * A worker between `next dev` and the browser can pin a component's chunk to
+   * the first copy it saw, because a dev chunk URL does not change when the file
+   * does — and no amount of deleting `.next`, restarting the server or
+   * hard-refreshing dislodges it. It buys nothing while developing, so it does
+   * not run, and an existing one is removed rather than left to keep failing.
+   */
+  it('registers no worker in development, and removes one already installed', () => {
+    const runtime = read('src/components/layout/AppRuntime.tsx');
+    expect(runtime).toContain("process.env.NODE_ENV !== 'production'");
+    expect(runtime).toContain('getRegistrations');
+    expect(runtime).toContain('registration.unregister()');
+    // The dev branch must return before the registration below it can run.
+    expect(runtime.indexOf('registration.unregister()'))
+      .toBeLessThan(runtime.indexOf("serviceWorker.register('/sw.js'"));
+  });
+
+  /*
+   * `unregister()` drops the registration immediately, but the ACTIVE worker
+   * keeps controlling already-loaded clients until they unload — so a tab can
+   * report zero registrations while every request it makes is still answered by
+   * that worker from its cache. Reloading a controlled client does not help,
+   * and skipping registration in development means no replacement worker ever
+   * arrives to displace it. Purging the caches and reloading once, with the
+   * registration gone, is what returns the tab to the dev server.
+   */
+  it('heals a tab that is still controlled by a worker it already removed', () => {
+    const runtime = read('src/components/layout/AppRuntime.tsx');
+    expect(runtime).toContain('navigator.serviceWorker.controller');
+    expect(runtime).toContain('caches.delete(key)');
+    expect(runtime).toContain('window.location.reload()');
+    // Exactly once per tab, so a re-registration cannot start a reload loop.
+    expect(runtime).toContain('DEV_WORKER_RESET');
+  });
+
+  /*
+   * The other half of the same guarantee, from inside the worker: one installed
+   * before the fetch guard existed still reaches `activate`, and that is the
+   * moment it can be made to remove itself.
+   */
+  it('makes any worker on a development host purge its caches and unregister', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toContain('await self.registration.unregister()');
+    expect(worker.indexOf('IS_DEVELOPMENT_HOST'))
+      .toBeLessThan(worker.indexOf('await self.registration.unregister()'));
+    // Production still claims clients rather than removing itself.
+    expect(worker).toContain('await self.clients.claim()');
+  });
+
   it('shows bounded push data with the existing PortKheaw assets', () => {
     const worker = read('public/sw.js');
     expect(worker).toContain("addEventListener('push'");
@@ -31,6 +80,40 @@ describe('push service worker contract', () => {
     expect(worker.indexOf('existingClient.focus()')).toBeLessThan(
       worker.lastIndexOf('self.clients.openWindow(targetUrl)'),
     );
+  });
+
+  /*
+   * The failure this pins down did not look like caching from any angle.
+   *
+   * `/_next/static/` was served cache-first with no revalidation. In production
+   * that is correct — a rebuild changes the filename — but `next dev` serves a
+   * component's chunk from a STABLE path, so the cache pinned the first version
+   * the browser ever saw. Navigation stayed network-first, so the page rendered
+   * live server data beside months-old JavaScript, and deleting `.next`,
+   * restarting the dev server and hard-refreshing all left it untouched: none of
+   * them clears Cache Storage, and a worker intercepts subresources whatever the
+   * reload does.
+   */
+  it('never serves build output from the cache on a development host', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toContain('IS_DEVELOPMENT_HOST');
+    expect(worker).toContain("self.location.hostname === 'localhost'");
+    expect(worker).toContain('isBuildOutput && IS_DEVELOPMENT_HOST');
+    // The guard has to come before the cache-first branch to mean anything.
+    expect(worker.indexOf('isBuildOutput && IS_DEVELOPMENT_HOST'))
+      .toBeLessThan(worker.indexOf('caches.match(request)'));
+  });
+
+  /*
+   * Evicting a poisoned cache depends entirely on the name changing: `activate`
+   * deletes every cache that is not the current one, and nothing else ever
+   * removes an entry.
+   */
+  it('purges every cache but the current one, under a name that moved', () => {
+    const worker = read('public/sw.js');
+    expect(worker).toMatch(/const CACHE_NAME = 'nexora-shell-v\d+'/);
+    expect(worker).toContain('keys.filter((key) => key !== CACHE_NAME)');
+    expect(worker).toContain('caches.delete(key)');
   });
 
   it('keeps the private signing key out of every browser source', () => {

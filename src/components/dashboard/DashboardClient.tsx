@@ -40,11 +40,12 @@ import { OnboardingCard } from '@/src/components/onboarding/OnboardingCard';
 import { UpcomingSection } from '@/src/components/upcoming/UpcomingSection';
 import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
-import { statusFromChangePercent, type StatusLevel } from '@/src/lib/presentation/status';
+import { statusFromSignedValue, type StatusLevel } from '@/src/lib/presentation/status';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import { buildMarketSummary } from '@/src/lib/overview/market-summary';
 import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/changes';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
+import { formatPortfolioMoney, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
@@ -62,16 +63,6 @@ const NewsFeed = dynamic(
     ),
   },
 );
-
-function formatMoney(value: number | null, currency: string): string {
-  if (value === null || !Number.isFinite(value)) return 'ข้อมูลมูลค่ายังไม่ครบ';
-  return new Intl.NumberFormat('th-TH', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 function formatNumber(value: number | null, digits = 2): string {
   if (value === null || !Number.isFinite(value)) return 'ยังไม่มีข้อมูล';
@@ -445,8 +436,15 @@ function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] 
  * the market was mentioned.
  *
  * Every one of those still exists, on `/portfolio`, which is a whole page built
- * for exactly that reading. What the overview is for is the glance: is my money
- * up or down today, and by how much. So this answers that and links to the rest.
+ * for exactly that reading. What the overview is for is the glance: what is my
+ * money worth, and am I up or down on it. So this answers that and links to the
+ * rest.
+ *
+ * IT LEADS WITH THE TOTAL RETURN, not with today's move. The first version had
+ * that the other way round, and today's move is the figure most often missing —
+ * so the card spent most of its life printing "ยังไม่มีข้อมูล" beside a total
+ * while the number the reader came for, the one `/portfolio` shows, was not on
+ * the card at all.
  *
  * WHAT IT KEEPS, and neither is decoration:
  *  - the privacy mask, because a balance a reader has chosen to hide must stay
@@ -461,9 +459,6 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
   const { visible, toggleVisibility } = usePortfolioPrivacy();
   const summary = data.summary;
   const baseCurrency = data.baseCurrency;
-  const rate = baseCurrency === 'THB' ? Number(usdThbRate) : 1;
-  const convert = (value: number | null) =>
-    value === null || !Number.isFinite(rate) || rate <= 0 ? null : value * rate;
 
   if (!data.authenticated || !summary) {
     return (
@@ -491,7 +486,63 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
    * mark is a colour, and a green one beside a masked total tells anybody
    * looking over the reader's shoulder the very thing the mask is for.
    */
-  const level = visible ? statusFromChangePercent(summary.todayChangePercent) : 'unknown';
+  /*
+   * The percentage decides the mark, and the AMOUNT decides it when there is no
+   * percentage to ask.
+   *
+   * `portfolioTotalReturnPercent` returns null whenever the invested basis is
+   * zero or below — a portfolio funded entirely by transfers — while `totalGain`
+   * stays a real, signed number. Asking only about the percentage drew
+   * "-$746.28" beside ⚪: a loss on the screen, and a mark beside it saying
+   * there was no reading. Both routes go through the same mapper, so the
+   * fallback is coarser, never different.
+   */
+  const level = (percent: number | null, amount: number | null = null) =>
+    visible ? statusFromSignedValue(percent ?? amount) : 'unknown';
+  /*
+   * "-$746.28 · -80.18%", the same sentence `/portfolio` prints for the same
+   * number, through the same two formatters. The card used to compose its own
+   * with a local `Intl.NumberFormat` that omitted `currencyDisplay`, so the
+   * overview said "US$184.44" over a portfolio page saying "$184.44".
+   */
+  /*
+   * ON A THB PORTFOLIO WITH NO FX RATE, this reads "— · -80.18%", and that is
+   * deliberate.
+   *
+   * `signedMoney` converts through `usdThbRate` and returns an em dash when
+   * there is no rate to convert with. The percentage needs no rate — it is a
+   * ratio of two USD figures and is just as true in either currency — so half
+   * the row is genuinely known and half genuinely is not.
+   *
+   * The row therefore stays. Hiding it would withhold a return the reader can
+   * act on because a conversion rate was missing, which is a worse answer than
+   * showing the half that survived and marking the half that did not.
+   */
+  const move = (amount: number, percent: number | null) => {
+    if (!visible) return SENSITIVE_VALUE_MASK;
+    const money = signedMoney(amount, baseCurrency, usdThbRate);
+    return percent === null || !Number.isFinite(percent)
+      ? money
+      : `${money} · ${signedPercent(percent)}`;
+  };
+  /*
+   * A row is rendered when its number exists and is left out when it does not
+   * — never printed as "ยังไม่มีข้อมูล", and never twice.
+   *
+   * Today's move is the one that is usually absent: `todayChange` is null the
+   * moment ANY holding's quote arrives without a `previousClose`, so the honest
+   * reading of a blank is "this figure could not be computed", which is not the
+   * same claim as "the market is closed". The card does not know which it is,
+   * and the coverage line below already says when prices are missing.
+   */
+  const readable = (value: number | null): value is number =>
+    value !== null && Number.isFinite(value);
+  const totalGainLabel = readable(summary.totalGain)
+    ? move(summary.totalGain, summary.totalGainPercent)
+    : null;
+  const todayLabel = readable(summary.todayChange)
+    ? move(summary.todayChange, summary.todayChangePercent)
+    : null;
 
   return (
     <section className="panel min-w-0 p-4" data-testid="overview-portfolio-summary">
@@ -501,18 +552,32 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
             {summary.hasMissingPrices ? 'มูลค่าที่ยืนยันได้' : 'มูลค่าพอร์ตรวม'}
           </p>
           <p className="figure-hero mt-1 break-all">
-            {visible ? formatMoney(convert(total), baseCurrency) : SENSITIVE_VALUE_MASK}
+            {!visible
+              ? SENSITIVE_VALUE_MASK
+              : total === null
+                ? 'ข้อมูลมูลค่ายังไม่ครบ'
+                : formatPortfolioMoney(total, baseCurrency, usdThbRate)}
           </p>
-          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="text-xs text-[var(--text-muted)]">วันนี้</span>
-            <StatusLabel
-              level={level}
-              label={visible
-                ? `${signed(convert(summary.todayChange))} (${signed(summary.todayChangePercent, '%')})`
-                : SENSITIVE_VALUE_MASK}
-              className="text-sm"
-            />
-          </div>
+          {totalGainLabel !== null && (
+            <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-xs text-[var(--text-muted)]">กำไร/ขาดทุนรวม</span>
+              <StatusLabel
+                level={level(summary.totalGainPercent, summary.totalGain)}
+                label={totalGainLabel}
+                className="text-sm"
+              />
+            </div>
+          )}
+          {todayLabel !== null && (
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-xs text-[var(--text-muted)]">วันนี้</span>
+              <StatusLabel
+                level={level(summary.todayChangePercent, summary.todayChange)}
+                label={todayLabel}
+                className="text-sm"
+              />
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Link

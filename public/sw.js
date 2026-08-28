@@ -2,10 +2,36 @@
  * Account, authentication, market data, and API responses are never cached here.
  */
 
-/* Bumped to v4 with the manifest move: the `activate` handler below deletes
- * every cache that is not the current name, which is what evicts the old
- * `/manifest.json` entry from installs made before the change. */
-const CACHE_NAME = 'nexora-shell-v4';
+/* Bumped to v5 to evict build output cached under v4: `/_next/static/` was
+ * served cache-first with no revalidation, so a chunk that landed in the cache
+ * stayed served forever. The `activate` handler below deletes every cache that
+ * is not the current name, which is what clears those entries from installs
+ * made before the change. (v4 was the manifest move, on the same mechanism.) */
+const CACHE_NAME = 'nexora-shell-v5';
+
+/*
+ * A DEVELOPMENT HOST NEVER SERVES BUILD OUTPUT FROM THE CACHE.
+ *
+ * In production `/_next/static/` is content-addressed — a rebuild changes the
+ * filename, so cache-first is both safe and the point of it. In development it
+ * is not: `next dev` serves chunks from stable paths, so the URL for a component
+ * is the SAME file before and after an edit. Cache-first therefore pins the
+ * first version the browser ever saw and re-serves it indefinitely.
+ *
+ * That is invisible in the ways anyone would look for it. The navigation is
+ * network-first, so the server render and its data are always current — the page
+ * shows live numbers while running the old JavaScript beside them. Deleting
+ * `.next`, restarting the dev server and hard-refreshing all leave it in place,
+ * because none of them touches Cache Storage and a service worker intercepts
+ * subresource requests regardless of a reload's cache mode.
+ *
+ * It cost a full day of chasing a portfolio card that had already been fixed,
+ * committed and proved green in tests: the browser was running the JavaScript
+ * from before the fix and nothing on disk disagreed.
+ */
+const IS_DEVELOPMENT_HOST = self.location.hostname === 'localhost'
+  || self.location.hostname === '127.0.0.1'
+  || self.location.hostname === '[::1]';
 
 const SHELL = [
   '/offline',
@@ -28,16 +54,30 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => {
-        const oldCaches = keys.filter((key) => key !== CACHE_NAME);
+    (async () => {
+      /*
+       * ON A DEV HOST THE WORKER REMOVES ITSELF, whatever installed it.
+       *
+       * The guard in the fetch handler stops this worker pinning build output,
+       * but it cannot speak for a worker installed before that guard existed —
+       * and such a worker goes on controlling loaded tabs after its registration
+       * is gone, serving whatever it cached. So any worker reaching `activate`
+       * on a development host purges every cache and unregisters, which leaves
+       * nothing behind that could answer a request with stale JavaScript.
+       */
+      const keys = await caches.keys();
 
-        return Promise.all(
-          oldCaches.map((key) => caches.delete(key)),
-        );
-      })
-      .then(() => self.clients.claim()),
+      if (IS_DEVELOPMENT_HOST) {
+        await Promise.all(keys.map((key) => caches.delete(key)));
+        await self.registration.unregister();
+        return;
+      }
+
+      await Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)),
+      );
+      await self.clients.claim();
+    })(),
   );
 });
 
@@ -88,13 +128,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const isBuildOutput = url.pathname.startsWith('/_next/static/');
+
   const isStaticAsset =
-    url.pathname.startsWith('/_next/static/') ||
+    isBuildOutput ||
     url.pathname.startsWith('/icons/') ||
     url.pathname === '/icon.svg' ||
     url.pathname === '/manifest.webmanifest';
 
   if (!isStaticAsset) {
+    return;
+  }
+
+  // Build output on a dev host goes to the network every time. See above.
+  if (isBuildOutput && IS_DEVELOPMENT_HOST) {
     return;
   }
 
