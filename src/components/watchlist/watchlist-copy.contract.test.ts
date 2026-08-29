@@ -46,16 +46,26 @@ describe('รายการติดตาม visible-copy contract', () => {
       'utf8',
     );
     /*
-     * `href="/watchlist"`, not `href: '/watchlist'`.
+     * The section keeps its OWN link to the route, rather than the route
+     * reappearing as an object in some quick-link `actions` array.
      *
      * The route used to appear twice on this page: once in the portfolio card's
-     * four-way quick-link row, as an object in an `actions` array, and once as
-     * the "ดูทั้งหมด" link in the watchlist section's own header. Phase 1
-     * condensed the portfolio block to a line and the quick-link row went with
-     * it, so the section's own link is the one that survives — which is the
-     * better of the two anyway: it sits beside the rows it expands.
+     * four-way quick-link row, and once as the "ดูทั้งหมด" link in the watchlist
+     * section's own header. Phase 1 condensed the portfolio block to a line and
+     * the quick-link row went with it, so the section's own link is the one that
+     * survives — which is the better of the two anyway: it sits beside the rows
+     * it expands.
+     *
+     * The assertion was `href="/watchlist"` until the preview card learned to
+     * link at a SPECIFIC list, which made the href an expression rather than a
+     * literal attribute. What is being guarded is unchanged and is still
+     * guarded: the route appears in this file, in a `href`, and not as a
+     * `href: '/watchlist'` property. Both forms are checked so the string
+     * cannot quietly move back into an actions array.
      */
-    expect(dashboard).toContain('href="/watchlist"');
+    // `.` never crosses a line break in a JS regex, so this cannot match across rows.
+    expect(dashboard).toMatch(/href=.*\/watchlist/);
+    expect(dashboard).not.toContain("href: '/watchlist'");
     expect(dashboard).toContain("retrying.watchlist");
   });
 });
