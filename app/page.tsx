@@ -1,6 +1,12 @@
 import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
+import {
+  overviewPreview,
+  previewHasMore,
+  resolveOverviewWatchlist,
+} from '@/src/lib/watchlist/overview-preview';
+import type { WatchlistSummary } from '@/src/lib/watchlist/types';
 import { calculateOptionLedger } from '@/src/lib/portfolio/options/calculations';
 import { loadPortfolioOptionQuotes } from '@/src/lib/portfolio/options/quote-pipeline';
 import { getOptionsMarketDataService } from '@/src/lib/market-data/options';
@@ -22,7 +28,7 @@ import { marketSession } from '@/src/lib/market-data/market-session';
 import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
 import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
-import { marketStatusCardEnabled } from '@/src/config/features';
+import { marketStatusCardEnabled, watchlistV2Enabled } from '@/src/config/features';
 import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
@@ -56,6 +62,17 @@ export default async function Home() {
   let portfolios: PortfolioRecord[] = [];
   let aggregateGoal: PortfolioGoal = { targetValueUsd: null, targetDate: null };
   let watchlistSymbols: string[] = [];
+  /*
+   * What the preview card needs to explain itself: every list the reader owns,
+   * which one it is drawing from, and whether the "ดูทั้งหมด" link has more
+   * behind it. Null while `WATCHLIST_V2` is off, which is what keeps the
+   * existing card byte-identical.
+   */
+  let watchlistPreview: {
+    lists: WatchlistSummary[];
+    selectedId: string;
+    hasMore: boolean;
+  } | null = null;
   let onboarding: OnboardingView = { kind: 'none' };
 
   if (client && user) {
@@ -82,6 +99,31 @@ export default async function Home() {
     watchlistSymbols = watchlistResult.status === 'fulfilled'
       ? watchlistResult.value.items.map((item) => item.symbol)
       : [];
+
+    /*
+     * The preview, when the flag is on.
+     *
+     * `getDefault()` above already resolved the same list the database would —
+     * `get_or_create_default_watchlist` returns the chosen one, or the oldest —
+     * so this re-resolves only to hand the client the id it is showing and the
+     * list of alternatives. The five symbols are chosen by `overviewPreview`,
+     * whose order is stated: pinned first, then oldest, ties by symbol.
+     *
+     * The cut happens HERE, on the data, before a price is fetched. Rows six
+     * and beyond are not loaded, not rendered and not in the payload — a wide
+     * screen shows the same five as a phone.
+     */
+    if (watchlistV2Enabled() && watchlistResult.status === 'fulfilled') {
+      const selected = watchlistResult.value;
+      const lists = await new WatchlistRepository(client).listAll().catch(() => []);
+      const preview = overviewPreview(selected.items);
+      watchlistSymbols = preview.map((item) => item.symbol);
+      watchlistPreview = {
+        lists,
+        selectedId: resolveOverviewWatchlist(lists, selected.id)?.id ?? selected.id,
+        hasMore: previewHasMore(selected.items.length),
+      };
+    }
 
     /*
      * A read that FAILED and a row that does not exist are deliberately
@@ -325,6 +367,7 @@ export default async function Home() {
         indices,
         industries: industryResult.industries,
         watchlist,
+        watchlistPreview,
         breadth,
         industryData: {
           state: industryResult.state,

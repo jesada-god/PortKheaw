@@ -209,6 +209,17 @@ export interface OverviewDashboardData {
   indices: MarketIndexCard[];
   industries: IndustryGroup[];
   watchlist: OverviewPrice[];
+  /**
+   * What the preview card needs to explain which five rows it is showing:
+   * every list the reader owns, the one it drew from, and whether there is more
+   * behind the link. Null while `WATCHLIST_V2` is off — the card then renders
+   * exactly as it did before.
+   */
+  watchlistPreview?: {
+    lists: { id: string; name: string; createdAt: string; itemCount: number }[];
+    selectedId: string;
+    hasMore: boolean;
+  } | null;
   breadth: MarketBreadth | null;
   industryData: {
     state: 'ready' | 'refreshing' | 'unavailable';

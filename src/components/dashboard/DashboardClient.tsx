@@ -16,7 +16,9 @@ import {
   Star,
   TrendingUp,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { chooseOverviewWatchlistAction } from '@/app/watchlist/actions';
 import Header from '@/src/components/layout/Header';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { KheawLoadingBoundary } from '@/src/components/ui/KheawLoadingBoundary';
@@ -929,27 +931,98 @@ function IndustryRanking({
 
 function WatchlistSection({
   items,
+  preview,
   retrying,
   onRetry,
 }: {
   items: OverviewPrice[];
+  /**
+   * Present only while `WATCHLIST_V2` is on. It carries the lists the reader
+   * owns so the card can say WHICH one it is showing and let them switch, and
+   * whether the link has more behind it.
+   *
+   * The five-row cut is NOT done here. `overviewPreview` applied it on the
+   * server, before any price was fetched, so rows six and beyond are not in
+   * `items` at all — this component could not render a sixth if it tried, which
+   * is the point: how many are shown is a property of the product, not of the
+   * viewport.
+   */
+  preview?: OverviewDashboardData['watchlistPreview'];
   retrying: boolean;
   onRetry: (section: RetriableOverviewSection) => void;
 }) {
   const [filter, setFilter] = useState<'all' | 'up' | 'down'>('all');
   const visible = items.filter((item) =>
     filter === 'all' || (filter === 'up' ? (item.changePercent ?? 0) > 0 : (item.changePercent ?? 0) < 0));
+  const selected = preview?.lists.find((list) => list.id === preview.selectedId) ?? null;
+  const router = useRouter();
+  const [, startChoosing] = useTransition();
+  const chooseList = useCallback((id: string) => {
+    startChoosing(async () => {
+      /*
+        A failed write leaves the card on the list it was already showing, which
+        is the honest outcome: nothing changed. It is deliberately not reported
+        as an error toast — the reader's watchlists are all still there, and the
+        next tap is the retry.
+      */
+      const result = await chooseOverviewWatchlistAction(id);
+      if (result.ok) router.refresh();
+    });
+  }, [router]);
   return (
     <section className="panel-quiet min-w-0">
       <SectionTitle
         title="หุ้นที่ติดตาม"
         action={(
           <span className="flex items-center gap-1">
-            <Link href="/watchlist" className="text-xs font-semibold text-[var(--accent)]">ดูทั้งหมด</Link>
+            <Link
+              href={preview ? `/watchlist?list=${encodeURIComponent(preview.selectedId)}` : '/watchlist'}
+              className="text-xs font-semibold text-[var(--accent)]"
+            >
+              ดูทั้งหมด
+            </Link>
             <RetryButton section="watchlist" loading={retrying} onRetry={onRetry} />
           </span>
         )}
       />
+      {/*
+        Which list this is, and how to change it. Rendered only when the reader
+        has more than one — a selector with a single option is a control that
+        cannot do anything, and it would appear for every account that has never
+        made a second list.
+
+        The choice is SAVED, not held in a query string. A reader who picks a
+        list here is saying which one their overview is about, and that has to
+        survive them closing the tab — `set_overview_watchlist` writes it to the
+        preference row, and `get_or_create_default_watchlist` reads it back, so
+        this page and `/watchlist` resolve the same list from the same answer.
+      */}
+      {preview && preview.lists.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-[var(--text-muted)]">แสดงจาก</span>
+          {preview.lists.map((list) => (
+            <button
+              key={list.id}
+              type="button"
+              onClick={() => chooseList(list.id)}
+              data-testid={`overview-watchlist-${list.id}`}
+              aria-pressed={list.id === preview.selectedId}
+              className={`min-h-11 rounded-full px-3 text-[11px] font-semibold ${
+                list.id === preview.selectedId
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                  : 'text-[var(--text-muted)]'
+              }`}
+            >
+              {list.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {preview?.hasMore && selected && (
+        <p className="mb-2 text-[11px] text-[var(--text-muted)]" data-testid="overview-watchlist-more">
+          แสดง {items.length} จาก {selected.itemCount} ตัวใน “{selected.name}”
+        </p>
+      )}
       <div className="mb-3 flex gap-2">
         {([
           ['all', 'ทั้งหมด'],
@@ -1352,6 +1425,7 @@ export function DashboardClient({
 
         <WatchlistSection
           items={view.watchlist}
+          preview={view.watchlistPreview}
           retrying={Boolean(retrying.watchlist)}
           onRetry={retry}
         />

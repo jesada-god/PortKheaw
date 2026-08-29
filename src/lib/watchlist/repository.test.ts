@@ -19,18 +19,24 @@ describe('WatchlistRepository', () => {
   it('creates/loads the default watchlist and its persisted items', async () => {
     const watchlistQuery = {
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'watchlist-1', name: 'รายการโปรด' }, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: { id: 'watchlist-1', name: 'รายการโปรด', created_at: '2026-07-18T00:00:00.000Z' },
+        error: null,
+      }),
     };
     const itemQuery = {
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
-      order: vi.fn().mockResolvedValue({ data: [{ id: 'item-1', symbol: 'AAPL', created_at: '2026-07-18T00:00:00.000Z' }], error: null }),
+      order: vi.fn().mockResolvedValue({
+        data: [{ id: 'item-1', symbol: 'AAPL', created_at: '2026-07-18T00:00:00.000Z', pinned: false }],
+        error: null,
+      }),
     };
     const from = vi.fn((table: string) => table === 'watchlists' ? watchlistQuery : itemQuery);
     const repo = new WatchlistRepository(clientWith(from));
 
     await expect(repo.getDefault()).resolves.toEqual({
-      id: 'watchlist-1', name: 'รายการโปรด',
-      items: [{ id: 'item-1', symbol: 'AAPL', createdAt: '2026-07-18T00:00:00.000Z' }],
+      id: 'watchlist-1', name: 'รายการโปรด', createdAt: '2026-07-18T00:00:00.000Z',
+      items: [{ id: 'item-1', symbol: 'AAPL', createdAt: '2026-07-18T00:00:00.000Z', pinned: false }],
     });
   });
 
@@ -38,7 +44,7 @@ describe('WatchlistRepository', () => {
     const insertQuery = {
       insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
       single: vi.fn()
-        .mockResolvedValueOnce({ data: { id: 'item-1', symbol: 'AAPL', created_at: '2026-07-18T00:00:00.000Z' }, error: null })
+        .mockResolvedValueOnce({ data: { id: 'item-1', symbol: 'AAPL', created_at: '2026-07-18T00:00:00.000Z', pinned: false }, error: null })
         .mockResolvedValueOnce({ data: null, error: { code: '23505', message: 'duplicate key' } }),
     };
     const repo = new WatchlistRepository(clientWith(vi.fn(() => insertQuery)));
@@ -47,30 +53,50 @@ describe('WatchlistRepository', () => {
     expect(insertQuery.insert).toHaveBeenCalledWith({ watchlist_id: 'watchlist-1', symbol: 'AAPL' });
   });
 
-  it('scopes update and delete operations to the caller default watchlist', async () => {
+  it('scopes item removal to the caller default watchlist', async () => {
     const deleteQuery = {
       delete: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
       select: vi.fn().mockResolvedValue({ data: [{ id: 'item-1' }], error: null }),
     };
-    const updateQuery = {
-      update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }),
-    };
-    const watchlistDeleteQuery = {
-      delete: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ error: null }),
-    };
-    const from = vi.fn()
-      .mockReturnValueOnce(deleteQuery)
-      .mockReturnValueOnce(updateQuery)
-      .mockReturnValueOnce(watchlistDeleteQuery);
-    const repo = new WatchlistRepository(clientWith(from));
+    const repo = new WatchlistRepository(clientWith(vi.fn(() => deleteQuery)));
 
     await expect(repo.remove('AAPL')).resolves.toBe(true);
-    await expect(repo.rename('ติดตาม')).resolves.toBeUndefined();
-    await expect(repo.delete()).resolves.toBeUndefined();
     expect(deleteQuery.eq).toHaveBeenNthCalledWith(1, 'watchlist_id', 'watchlist-1');
     expect(deleteQuery.eq).toHaveBeenNthCalledWith(2, 'symbol', 'AAPL');
-    expect(updateQuery.eq).toHaveBeenCalledWith('id', 'watchlist-1');
-    expect(watchlistDeleteQuery.eq).toHaveBeenCalledWith('id', 'watchlist-1');
+  });
+
+  /*
+   * Renaming and deleting a LIST no longer touch the tables from here. Both
+   * rules they have to respect — names unique per account, and never delete the
+   * last one — are enforced inside `security definer` functions that lock and
+   * count, so the repository's whole job is to pass the id through. Asserting
+   * the RPC name and arguments is asserting exactly that.
+   */
+  it('routes list rename and delete through the guarded functions', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+    const repo = new WatchlistRepository({
+      rpc, from: vi.fn(),
+    } as unknown as SupabaseClient<Database>);
+
+    await expect(repo.rename('watchlist-2', 'ติดตาม')).resolves.toBeUndefined();
+    await expect(repo.delete('watchlist-2')).resolves.toBeUndefined();
+
+    expect(rpc).toHaveBeenNthCalledWith(1, 'rename_watchlist', {
+      target_watchlist_id: 'watchlist-2', input_name: 'ติดตาม',
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, 'delete_watchlist', {
+      target_watchlist_id: 'watchlist-2',
+    });
+  });
+
+  it('surfaces the last-list refusal instead of swallowing it', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: null, error: { code: '23514', message: 'Cannot delete the only watchlist' },
+    });
+    const repo = new WatchlistRepository({
+      rpc, from: vi.fn(),
+    } as unknown as SupabaseClient<Database>);
+    await expect(repo.delete('watchlist-1')).rejects.toMatchObject({ code: '23514' });
   });
 
   it('does not hide an RLS authorization failure', async () => {
