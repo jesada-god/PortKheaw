@@ -24,7 +24,30 @@ describe('the banned copy lists', () => {
     expect(new Set(inRule)).toEqual(new Set(NEVER_SAY));
   });
 
-  it('is wired over the five pages Phase 1 covers', () => {
+  /*
+   * ===========================================================================
+   * THE SCOPE IS AN INVERSION NOW, AND THIS IS WHAT HOLDS IT THAT WAY
+   * ===========================================================================
+   * Three separate times a folder turned out to be outside the rule and the fix
+   * was to add it: portfolio components, then `src/lib/portfolio`, then
+   * `src/lib/market-status` and `src/config`. Each patch was correct and each
+   * left the next gap open, because an allow-list of folders is a list of what
+   * somebody remembered.
+   *
+   * An audit ended it. A banned phrase was planted as a live string literal in
+   * 29 real files across `app/`, `src/components/` and `src/lib/`, and eslint
+   * reported nothing on ALL 29 — settings, pricing, support, sign-in, admin,
+   * alerts, notifications, watchlist, upcoming, not-found, the error boundary,
+   * subscription, auth, news, layout, billing reminders, notification copy, the
+   * alert engine, the market-signal engine, the security lockdown. The scope is
+   * now "everything that can hand a reader a string", so a folder created
+   * tomorrow is covered without anybody thinking about it.
+   *
+   * These assertions are deliberately about the SHAPE of the scope rather than
+   * a list of blessed directories. A test naming directories would have passed
+   * happily through all three of those gaps.
+   */
+  it('scans every app route and everything under src, not a list of folders', () => {
     const config = read('eslint.config.mjs');
     expect(config).toContain('"portkheaw/no-banned-copy": "error"');
     /*
@@ -34,60 +57,88 @@ describe('the banned copy lists', () => {
      */
     const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
     const scope = before.slice(before.lastIndexOf('files: ['));
-    for (const page of ['app/page.tsx', 'app/search/', 'app/stock/', 'app/tools/']) {
-      expect(scope, `${page} is outside the rule's scope`).toContain(page);
+
+    expect(scope, 'app routes are not scanned wholesale').toContain('app/**/*.{ts,tsx}');
+    expect(scope, 'src is not scanned wholesale').toContain('src/**/*.{ts,tsx}');
+    expect(scope, 'middleware composes the lockdown and maintenance copy a reader sees')
+      .toContain('middleware.ts');
+
+    /*
+     * And NOT a narrowed list. A brace-expansion over hand-picked folders is the
+     * exact shape that failed three times, so its return is a failure here even
+     * though the rule would still "pass" on whatever it happened to cover.
+     */
+    expect(scope, 'the scope narrowed back to a hand-picked folder list')
+      .not.toMatch(/src\/components\/\{/);
+    expect(scope, 'the scope narrowed back to a hand-picked folder list')
+      .not.toMatch(/src\/lib\/\{/);
+  });
+
+  /*
+   * Every path the audit probed, asserted as data.
+   *
+   * This is the half that fails loudly if somebody re-narrows the scope: each of
+   * these is a real file that was proven unscanned, and the glob shape above is
+   * what covers them. Listing them keeps the evidence in the tree rather than
+   * only in a commit message.
+   */
+  it('covers every path the audit proved was unscanned', () => {
+    const config = read('eslint.config.mjs');
+    const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
+    const scope = before.slice(before.lastIndexOf('files: ['));
+    const covered = (path: string) =>
+      (path.startsWith('app/') && scope.includes('app/**/*.{ts,tsx}'))
+      || (path.startsWith('src/') && scope.includes('src/**/*.{ts,tsx}'))
+      || (path === 'middleware.ts' && scope.includes('middleware.ts'));
+
+    for (const path of [
+      'app/settings/page.tsx',
+      'app/pricing/page.tsx',
+      'app/support/page.tsx',
+      'app/auth/sign-in/page.tsx',
+      'app/admin/page.tsx',
+      'app/not-found.tsx',
+      'app/error.tsx',
+      'src/components/subscription/SubscriptionFaq.tsx',
+      'src/components/auth/LiveMemberCount.tsx',
+      'src/components/layout/Header.tsx',
+      'src/components/support/SupportFaq.tsx',
+      'src/lib/billing/promptpay-reminders.ts',
+      'src/lib/notifications/account-events.ts',
+      'src/lib/alerts/background.ts',
+      'src/lib/analytics/market-signal/calculations.ts',
+      'src/lib/analytics/glossary/terms.ts',
+      'src/lib/security/lockdown.ts',
+      'middleware.ts',
+    ]) {
+      expect(covered(path), `${path} is outside the rule's scope`).toBe(true);
     }
-    // And the components the five pages are assembled from, or a page would be
-    // covered while every block on it was not.
-    expect(scope).toContain('src/components/');
   });
 
   /*
-   * THE PORTFOLIO SURFACES, named individually because leaving them out is not a
-   * hypothetical failure — it was the state of this config until the day-figure
-   * captions were written.
+   * THE FRAME-WORD RULE is scoped narrowly ON PURPOSE, and that is a different
+   * decision from the one above rather than an oversight.
    *
-   * With "ระบบประเมินว่า" planted as a live string literal in
-   * `src/lib/portfolio/day-change-label.ts`, and "เครื่องมือนี้จะช่วยให้คุณ" in
-   * `tracker/OptionPositionCard.tsx`, `npx eslint` on both files reported
-   * nothing at all. The rule was not clearing that copy; it was never shown it.
+   * `FRAME_WORD` matches as a substring, and "กรอบ" is a substring of ordinary
+   * Thai words with nothing to do with a price frame — "ทุกรอบ", "อีกรอบ",
+   * "หลายรอบ" — which appear across the subscription copy, the support FAQ and
+   * the options simulator. Widening it would produce false positives silenceable
+   * only by allow-listing unrelated sentences, turning the allow list from a
+   * record of frame provenance into noise.
    *
-   * Both halves are asserted because covering one is not enough. The captions a
-   * reader sees are COMPOSED in `src/lib/portfolio` and passed into the tracker
-   * components as props, so a scope holding only the components would still not
-   * see a single sentence — which is precisely how a rule reports success over
-   * copy it has never read.
+   * What it DID have to gain is the engine that writes the card's reason and
+   * note copy: the audit planted "กรอบ" in `src/lib/analytics/market-signal/`
+   * and eslint reported nothing, even though two strings in `calculations.ts`
+   * already say it.
    */
-  /*
-   * THE MARKET STATUS SURFACES, added the same way and for the same reason:
-   * with "ระบบประเมินว่า" planted in `src/lib/market-status/presentation.ts` and
-   * "เครื่องมือนี้จะช่วยให้คุณ" in `src/config/market-status.ts`, `npx eslint` on
-   * both files reported nothing and exited 0.
-   *
-   * `src/config` is scoped whole rather than by file. A rule table is not
-   * usually copy — but that one carries `labelTh`, the Thai name printed beside
-   * every figure on the card, so it is. Scoping the directory means the next
-   * config to grow a reader-facing string is covered before anyone thinks to
-   * ask, which is the failure mode this rule keeps re-encountering.
-   */
-  it('covers the market-status surfaces, including the rule table’s own labels', () => {
+  it('holds the frame word over the engine that writes the card copy, not just the component', () => {
     const config = read('eslint.config.mjs');
-    const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
+    const before = config.slice(0, config.indexOf('"market-signal/no-unsourced-frame-word"'));
     const scope = before.slice(before.lastIndexOf('files: ['));
-    expect(scope, 'src/lib/market-status is outside the rule’s scope')
-      .toMatch(/src\/lib\/\{[^}]*market-status[^}]*\}/);
-    expect(scope, 'src/config, where the rule table’s Thai labels live, is outside the scope')
-      .toContain('src/config/');
-  });
-
-  it('covers the portfolio surfaces, where the day figure’s copy is written', () => {
-    const config = read('eslint.config.mjs');
-    const before = config.slice(0, config.indexOf('"portkheaw/no-banned-copy"'));
-    const scope = before.slice(before.lastIndexOf('files: ['));
-    expect(scope, 'the tracker components are outside the rule’s scope').toContain('portfolio');
-    expect(scope, 'src/lib/portfolio, where the captions are composed, is outside the scope')
-      .toMatch(/src\/lib\/\{[^}]*portfolio[^}]*\}/);
-    expect(scope, 'the /portfolio page itself is outside the scope').toContain('app/portfolio/');
+    expect(scope, 'the card component is outside the frame rule')
+      .toContain('src/components/analytics/market-signal/');
+    expect(scope, 'the engine that composes the reason copy is outside the frame rule')
+      .toContain('src/lib/analytics/market-signal/');
   });
 
   /*

@@ -14,54 +14,55 @@ export default defineConfig([
     },
     {
         /*
-         * THE PRODUCT'S COPY, over the five pages a reader actually spends time
-         * on plus the components those pages are assembled from.
+         * =====================================================================
+         * EVERY FILE THAT CAN HAND A READER A STRING. Not a list of folders.
+         * =====================================================================
          *
          * The phrases and the reasoning are in
-         * `src/lib/presentation/banned-copy.ts`. What matters here is the
-         * SCOPE, because the previous scope is the whole reason the rule
-         * exists: the list lived inside `MarketSignalSection.test.tsx`, so one
-         * component in the product was held to it while a Tools card shipped
-         * "เครื่องมือนี้จะช่วยให้คุณ" and the stock page grew a banner reading
-         * "การวิเคราะห์ด้วย AI — กำลังจะมา".
+         * `src/lib/presentation/banned-copy.ts`. What matters here is the SCOPE,
+         * and the scope is now an inversion of what it was, because the shape of
+         * the old one was itself the recurring bug.
          *
-         * Tests are excluded for the same reason the frame-word rule excludes
-         * them: a test asserting that a phrase is absent has to name the phrase,
-         * and holding the assertion to the rule would ban checking it.
+         * It began as an allow-list of "the five pages a reader spends time on
+         * plus the components those pages are assembled from", and every few
+         * weeks something turned out to be outside it. Portfolio was, so every
+         * day-figure caption on `/portfolio` went unscanned. `src/lib/portfolio`
+         * was, because the sentences are composed there and passed down as
+         * props. `src/config` was, because a rule table is not usually copy —
+         * except the one that carries `labelTh` for every figure on the Market
+         * Status card. Each was found the same way, patched the same way, and
+         * the next gap was already open.
          *
-         * PORTFOLIO WAS OUTSIDE THIS LIST, and the gap was not theoretical: with
-         * "ระบบประเมินว่า" planted as a live string literal in
-         * `src/lib/portfolio/day-change-label.ts` and
-         * `tracker/OptionPositionCard.tsx`, eslint reported nothing. Every day
-         * figure caption a reader sees on `/portfolio` is written in those two
-         * folders, so the rule was passing over the copy rather than clearing
-         * it — the same shape of hole that let a Tools card ship the phrase
-         * above while one card two folders away was held to a vocabulary.
+         * An audit settled it. A banned phrase was planted as a live string
+         * literal in 29 files spread across `app/`, `src/components/` and
+         * `src/lib/` — settings, pricing, support, sign-in, admin, alerts,
+         * notifications, watchlist, upcoming, not-found, the error boundary,
+         * subscription, auth, news, layout, the billing reminders, the
+         * notification copy, the alert engine, the market-signal engine, the
+         * security lockdown — and eslint reported nothing on ALL 29. The rule
+         * was not clearing the product's copy. It was reading a corner of it.
          *
-         * `src/lib/portfolio` is included as well as the components, because
-         * the sentences do not live in the components: they are composed in
-         * `day-change-label.ts` and passed down as props, so a scope covering
-         * only `src/components/portfolio` would still see none of them.
+         * So the question the scope answers is no longer "which folders have we
+         * remembered" but "what can reach a reader", and the answer is: the app
+         * routes, everything under `src`, the middleware (which composes the
+         * lockdown and maintenance responses a reader actually sees), and the
+         * gateway service. A new folder is covered the day it is created, which
+         * is the only version of this that stops needing an audit.
          *
-         * `src/lib/market-status` and `src/config` joined for the same reason,
-         * found the same way: with a banned phrase planted in
-         * `src/lib/market-status/presentation.ts` and in
-         * `src/config/market-status.ts`, eslint reported nothing. A rule table
-         * is not usually copy — but this one carries `labelTh`, the Thai name
-         * printed beside every figure on the card, so it is. Config that holds
-         * reader-facing strings has to be scanned like any other copy, and
-         * scoping `src/config` whole means the next table to grow a label is
-         * covered before anybody remembers to ask.
+         * WHAT IS DELIBERATELY OUT:
+         *   * tests — a test asserting a phrase is absent has to name it, and
+         *     holding the assertion to the rule would ban checking it;
+         *   * `banned-copy.ts` — the list itself, for the same reason;
+         *   * `scripts/` — developer tooling whose output goes to a terminal,
+         *     never to a reader. If a script ever grows reader-facing copy it
+         *     is in the wrong place, and that is the bug to fix rather than the
+         *     scope.
          */
         files: [
-            "app/page.tsx",
-            "app/portfolio/**/*.{ts,tsx}",
-            "app/search/**/*.{ts,tsx}",
-            "app/stock/**/*.{ts,tsx}",
-            "app/tools/**/*.{ts,tsx}",
-            "src/components/{dashboard,portfolio,search,stock,tools,analytics,upcoming,watchlist,ui}/**/*.{ts,tsx}",
-            "src/lib/{overview,portfolio,market-status,stock-detail,tools,presentation}/**/*.ts",
-            "src/config/**/*.ts",
+            "app/**/*.{ts,tsx}",
+            "src/**/*.{ts,tsx}",
+            "middleware.ts",
+            "services/**/*.ts",
         ],
         ignores: ["**/*.test.ts", "**/*.test.tsx", "**/banned-copy.ts"],
         plugins: {
@@ -81,8 +82,29 @@ export default defineConfig([
          * component, in a plain-string table the reason-scoped rule could not
          * see. Tests are excluded: they assert the copy, they are not copy, and
          * holding them to the rule would mean maintaining the allow list twice.
+         *
+         * `src/lib/analytics/market-signal` JOINS THE SCOPE. The audit planted
+         * "กรอบ" in `calculations.ts` and eslint reported nothing — and that file
+         * is not incidental to this rule, it is where the engine composes the
+         * reason and note copy the bar prints. Two of its strings already say
+         * "กรอบ" (the ATR-band notes at ~1675 and ~1683). They pass, because the
+         * code around them reads `zones`, which is exactly the proof the rule
+         * asks for; the point is that until now nothing had checked.
+         *
+         * WHY THIS ONE IS NOT WIDENED PRODUCT-WIDE, unlike the banned-copy rule
+         * above. `FRAME_WORD` is matched as a SUBSTRING, and "กรอบ" is a
+         * substring of ordinary Thai words that have nothing to do with a price
+         * frame — "ทุกรอบ" (every cycle), "อีกรอบ" (again), "หลายรอบ". Those
+         * appear across the subscription copy, the support FAQ and the options
+         * simulator, and scoping the rule to them would produce false positives
+         * that could only be silenced by allow-listing unrelated sentences —
+         * which would turn the allow list from a record of frame provenance into
+         * noise, and destroy the one thing that makes it worth reading.
          */
-        files: ["src/components/analytics/market-signal/**/*.{ts,tsx}"],
+        files: [
+            "src/components/analytics/market-signal/**/*.{ts,tsx}",
+            "src/lib/analytics/market-signal/**/*.ts",
+        ],
         ignores: ["**/*.test.ts", "**/*.test.tsx"],
         plugins: {
             "market-signal": { rules: { "no-unsourced-frame-word": noUnsourcedFrameWord } },

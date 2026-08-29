@@ -145,7 +145,15 @@ export const GLOSSARY = {
   reliability: {
     label: 'ความน่าเชื่อถือ',
     helper: 'ระดับความหนักแน่นของสัญญาณ',
-    what: 'ระดับที่ระบบประเมินว่าจุดนี้มีน้ำหนักแค่ไหน (เช่น สูง/กลาง/ต่ำ) จากข้อมูลที่ใช้',
+    /*
+      "ระบบประเมินว่า" was here, and it shipped — a reader tapping the ⓘ beside
+      "ความน่าเชื่อถือ" was told a system had formed a judgement, which is the
+      exact claim `NEVER_SAY` exists to forbid: there is no narrator behind this
+      figure to attribute anything to. The value arrives on the level itself
+      (`reference.reliability`), so the sentence now names where it came from and
+      states what it is, and claims nothing about who decided it.
+    */
+    what: 'ระดับความหนักแน่นของจุดนี้ (เช่น สูง/กลาง/ต่ำ) ตามที่แหล่งข้อมูลซึ่งคำนวณจุดนั้นระบุมาพร้อมกับตัวจุดเอง',
     why: 'ช่วยจัดลำดับความสำคัญของแต่ละจุด ไม่ใช่ค่าความแม่นยำที่รับประกันผล',
     when: 'ดูเพื่อเปรียบเทียบว่าจุดไหนน่าจับตามากกว่ากัน',
   },
