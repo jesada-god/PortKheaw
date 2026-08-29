@@ -189,6 +189,51 @@ async function main(): Promise<void> {
   const stillThere = await alice!.from('watchlists').select('id');
   record('alice still has exactly one list afterwards',
     (stillThere.data?.length ?? 0) === 1, `${stillThere.data?.length ?? 0} lists`);
+
+  /*
+    THE POSITIVE PATH, and it is not padding.
+
+    Every cross-account check above passes if the function simply raises for
+    everybody — a `set_overview_watchlist` that refused all input would look
+    identical to one that checks ownership. These are what tell the two apart:
+    the same calls, by the owner, on their own rows, must SUCCEED.
+  */
+  const pinOwn = await alice!.rpc('set_watchlist_item_pinned', {
+    target_watchlist_id: aliceListId, input_symbol: 'AAPL', input_pinned: true,
+  });
+  record('alice can pin her own row', !pinOwn.error, pinOwn.error?.message ?? 'pinned');
+
+  const pinned = await alice!.from('watchlist_items')
+    .select('symbol, pinned').eq('watchlist_id', aliceListId).eq('symbol', 'AAPL').maybeSingle();
+  record('the pin is actually stored', pinned.data?.pinned === true,
+    `pinned=${String(pinned.data?.pinned)}`);
+
+  const chooseOwn = await alice!.rpc('set_overview_watchlist', {
+    target_watchlist_id: aliceListId,
+  });
+  record('alice can point her overview at her own list', !chooseOwn.error,
+    chooseOwn.error?.message ?? 'selected');
+
+  const settings = await alice!.from('user_settings').select('overview_watchlist_id').maybeSingle();
+  record('the overview selection is actually stored',
+    settings.data?.overview_watchlist_id === aliceListId,
+    String(settings.data?.overview_watchlist_id));
+
+  const clearChoice = await alice!.rpc('set_overview_watchlist', { target_watchlist_id: null });
+  record('the overview selection can be cleared', !clearChoice.error,
+    clearChoice.error?.message ?? 'cleared');
+
+  /*
+    The unique index is per ACCOUNT, not global. Both starter lists are called
+    'รายการโปรด', so two readers sharing a name must already work — asserted
+    rather than assumed, because a unique index accidentally written without
+    `user_id` would still pass every other check in this file.
+  */
+  const bobNamesItTheSame = await bob!.rpc('create_watchlist', { input_name: 'ระยะยาว' });
+  const aliceNamesItTheSame = await alice!.rpc('create_watchlist', { input_name: 'ระยะยาว' });
+  record('two accounts may use the same list name',
+    !bobNamesItTheSame.error && !aliceNamesItTheSame.error,
+    bobNamesItTheSame.error?.message ?? aliceNamesItTheSame.error?.message ?? 'both created');
 }
 
 main()
