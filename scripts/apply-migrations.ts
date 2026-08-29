@@ -86,6 +86,84 @@ try {
   process.exit(1);
 }
 
+/**
+ * The connection strings worth trying, in order, all naming the same project.
+ *
+ * `db.<ref>.supabase.co` — the direct host — DOES NOT EXIST for projects
+ * created recently: Supabase stopped handing out a public IPv4 direct endpoint,
+ * and the name does not resolve at all. The dashboard still shows a connection
+ * string in that shape under some tabs, so it is the one people paste, and the
+ * failure it produces (`ENOTFOUND`) looks like a network problem rather than a
+ * configuration one.
+ *
+ * The working endpoint is the SESSION-mode pooler on port 5432. Session mode,
+ * not transaction mode on 6543: transaction pooling does not keep a connection
+ * bound across statements, which breaks advisory locks and makes multi-statement
+ * DDL unsafe — and this script's whole job is multi-statement DDL.
+ *
+ * The regional prefix (`aws-0` / `aws-1`) is not derivable from the project
+ * ref, so both are tried and the first that authenticates wins. That is a
+ * lookup, not a guess: a wrong prefix fails to authenticate rather than
+ * connecting to somebody else's database, and every candidate is built from the
+ * SAME ref and password the guard already approved.
+ */
+function connectionCandidates(configured: string): { label: string; value: string }[] {
+  const source = new URL(configured);
+  const candidates = [{ label: 'SUPABASE_DB_URL as configured', value: configured }];
+
+  const ref = projectRefOfConnectionString(configured)!;
+  const password = source.password;
+  const database = source.pathname.replace(/^\//, '') || 'postgres';
+  // Only worth deriving when the configured url is the direct host.
+  if (source.hostname.startsWith('db.')) {
+    for (const region of ['aws-0', 'aws-1']) {
+      for (const zone of ['ap-northeast-2', 'ap-southeast-1', 'us-east-1', 'eu-central-1']) {
+        candidates.push({
+          label: `session pooler ${region}-${zone}`,
+          value: `postgresql://postgres.${ref}:${password}@${region}-${zone}.pooler.supabase.com:5432/${database}`,
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Connect, trying each candidate until one authenticates.
+ *
+ * The guard is re-applied to whatever is actually used. A derived string is
+ * still a string this script chose, and "we built it from an approved one" is
+ * the reasoning that lets a bug become a production write.
+ */
+async function connect(configured: string): Promise<Client> {
+  const failures: string[] = [];
+  for (const candidate of connectionCandidates(configured)) {
+    assertNotProductionDatabaseUrl(candidate.value, 'npm run db:apply');
+    const client = new Client({
+      connectionString: candidate.value,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15_000,
+    });
+    try {
+      await client.connect();
+      console.log(`Connected via ${candidate.label}`);
+      console.log('');
+      return client;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`  ${candidate.label}: ${message}`);
+      try { await client.end(); } catch { /* already down */ }
+      /*
+        An authentication failure means the endpoint is real and the password is
+        wrong, so no other candidate will do better — stop rather than spraying
+        the same bad password at every region.
+      */
+      if (/password|authentication|Tenant or user not found/i.test(message)) break;
+    }
+  }
+  throw new Error(['Could not connect to the development database.', ...failures].join('\n'));
+}
+
 const MIGRATIONS_DIR = 'supabase/migrations';
 
 function migrationFiles(): string[] {
@@ -105,8 +183,7 @@ async function main(): Promise<void> {
   console.log(`Target: project ${projectRef} (development)`);
   console.log(`${dryRun ? 'DRY RUN — nothing will be written' : 'Applying'}\n`);
 
-  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
-  await client.connect();
+  const client = await connect(connectionString);
   try {
     await client.query(LEDGER);
     const applied = new Set(
