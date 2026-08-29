@@ -28,6 +28,7 @@
     "gateway": "node --import=tsx --env-file-if-exists=.env.local services/market-gateway/server.ts",
     "audit:csp": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/audit-bundle-csp.ts",
     "clean": "next clean",
+    "probe:watchlist-rls": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-watchlist-rls.ts",
     "probe:account-deletion": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-account-deletion-release.ts",
     "trial:backfill-identities": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-trial-identities.ts",
     "probe:trial-retention": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-trial-retention.ts",
