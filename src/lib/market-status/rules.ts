@@ -11,6 +11,7 @@ import {
   type MarketStatusLabel,
 } from '@/src/config/market-status';
 import { heldLabel, rawRunLength } from '@/src/lib/analytics/persistence-hold';
+import { intervalVerdict, scoreInterval } from '@/src/lib/analytics/bounded-score';
 
 /**
  * The rule table, evaluated. Pure, deterministic, and the only place a reading
@@ -170,19 +171,27 @@ function percentChange(reading: MarketStatusReading): number | null {
 export function scoreBounds(
   evaluated: readonly EvaluatedInput[],
 ): { worst: number; best: number } | null {
-  const total = evaluated.reduce((sum, item) => sum + item.input.weight, 0);
-  if (total <= 0) return null;
-  const known = evaluated.reduce((sum, item) => sum + (item.contribution ?? 0), 0);
-  const missingWeight = evaluated
-    .filter((item) => item.contribution === null)
-    .reduce((sum, item) => sum + item.input.weight, 0);
-  return { worst: (known - missingWeight) / total, best: (known + missingWeight) / total };
+  /*
+    The arithmetic moved to `@/src/lib/analytics/bounded-score` when a second
+    caller needed the same guarantee. This is the table's own shape adapted to
+    it, not a reimplementation: the interval, the full-weight denominator and
+    the null-is-not-zero rule are all over there now, in one place, for the same
+    reason the hold rule is.
+  */
+  return scoreInterval(evaluated.map((item) => ({
+    weight: item.input.weight,
+    contribution: item.contribution,
+  })));
 }
 
 /** A definite label only when the entire interval supports it. */
 function labelForBounds(bounds: { worst: number; best: number }): MarketStatusLabel {
-  if (bounds.worst >= MARKET_STATUS_BANDS.uptrendAbove) return 'UPTREND';
-  if (bounds.best <= MARKET_STATUS_BANDS.weakBelow) return 'WEAK';
+  const verdict = intervalVerdict(bounds, {
+    above: MARKET_STATUS_BANDS.uptrendAbove,
+    below: MARKET_STATUS_BANDS.weakBelow,
+  });
+  if (verdict === 'above') return 'UPTREND';
+  if (verdict === 'below') return 'WEAK';
   return 'SIDEWAYS';
 }
 
@@ -201,8 +210,12 @@ function regimeOf(evaluated: readonly EvaluatedInput[]): MarketRegime | null {
   if (!required.every((key) => readable.has(key))) return null;
   const bounds = scoreBounds(evaluated.filter((item) => item.input.group === 'risk'));
   if (bounds === null) return null;
-  if (bounds.worst >= MARKET_STATUS_REGIME_BANDS.riskOnAbove) return 'RISK_ON';
-  if (bounds.best <= MARKET_STATUS_REGIME_BANDS.riskOffBelow) return 'RISK_OFF';
+  const verdict = intervalVerdict(bounds, {
+    above: MARKET_STATUS_REGIME_BANDS.riskOnAbove,
+    below: MARKET_STATUS_REGIME_BANDS.riskOffBelow,
+  });
+  if (verdict === 'above') return 'RISK_ON';
+  if (verdict === 'below') return 'RISK_OFF';
   return 'NEUTRAL';
 }
 
