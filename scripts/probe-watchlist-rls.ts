@@ -25,25 +25,31 @@
  * delete checks fail because the functions do not exist — which is a true
  * result about that database and a confusing one to read.
  *
- * Point it at a development project. It writes.
+ * It resolves its target through `src/lib/dev/db-target.ts`, which reads
+ * `.env.test` and REFUSES to run against production. There is no override.
  *
  *   npm run probe:watchlist-rls
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { ProductionTargetError, resolveDevSupabaseTarget } from '../src/lib/dev/db-target';
 
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    console.error(`Missing ${name}`);
-    process.exit(1);
-  }
-  return value;
+/*
+  The target is resolved and CHECKED before anything is constructed. There is no
+  `createClient` above this line, and no url read straight from the environment
+  — a guarded script that also keeps an unguarded connection is an unguarded
+  script. `db-target.test.ts` asserts that shape by reading this file.
+*/
+let target;
+try {
+  target = resolveDevSupabaseTarget('npm run probe:watchlist-rls');
+} catch (error) {
+  console.error(error instanceof ProductionTargetError ? error.message : error);
+  process.exit(1);
 }
 
-const url = required('NEXT_PUBLIC_SUPABASE_URL');
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  ?? required('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-const serviceKey = required('SUPABASE_SERVICE_ROLE_KEY');
+const { url, anonKey, serviceKey, projectRef } = target;
+console.log(`Target: ${url} (project ${projectRef})`);
+console.log('');
 
 const admin = createClient(url, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
