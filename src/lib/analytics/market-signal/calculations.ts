@@ -1,3 +1,4 @@
+import { heldLabel, rawRunLength } from '@/src/lib/analytics/persistence-hold';
 import { calculateSupportResistance, confirmedSwingPivots } from '@/src/lib/analytics/support-resistance/calculations';
 import { atrWilder, calculateTechnicalAnalysis } from '@/src/lib/analytics/technical/calculations';
 import type { AdxPoint, BollingerPoint, IndicatorPoint, KeltnerPoint, MacdPoint } from '@/src/lib/analytics/technical/types';
@@ -1758,18 +1759,17 @@ export function calculateMarketSignal(
    * would need the whole history to answer for today, and this needs
    * `lookbackBars` bars.
    */
-  const heldState = ((): MarketSignalState => {
-    if (isReplay || exemption !== null) return state;
-    const required = MARKET_SIGNAL_PERSISTENCE.minDurationBars;
-    for (let offset = 0; offset + required - 1 < rawSequence.length; offset += 1) {
-      let run = 1;
-      while (run < required && rawSequence[offset + run] === rawSequence[offset]) run += 1;
-      if (run >= required) return rawSequence[offset];
-    }
-    return state;
-  })();
-  let rawRunBars = 1;
-  while (rawRunBars < rawSequence.length && rawSequence[rawRunBars] === state) rawRunBars += 1;
+  const heldState = heldLabel(rawSequence, state, {
+    minDurationBars: MARKET_SIGNAL_PERSISTENCE.minDurationBars,
+    /*
+      A replay is answering "what would this engine have said on that bar" — it
+      is the INPUT to the hold rule and must not itself be subject to it, or the
+      rule would be reading its own output. The exemption is the spike case
+      documented on `MARKET_SIGNAL_PERSISTENCE.exceptionAtrMultiple`.
+    */
+    exempt: isReplay || exemption !== null,
+  });
+  const rawRunBars = rawRunLength(rawSequence, state);
   const persistence: MarketSignalPersistence = {
     rawState: state,
     rawBias: effectiveBias,

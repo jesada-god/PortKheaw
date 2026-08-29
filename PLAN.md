@@ -130,7 +130,7 @@
 |---|---|---|
 | Q0 | repo ค้าง merge | commit merge ตามปกติ (`Merge branch 'fix/billing-period-status-atomicity'`) แล้วแตก branch จาก main · ห้าม abort / squash · ห้ามเอาไฟล์ billing ปนเข้า Phase 1 |
 | Q1 | ลำดับบล็อก Overview | เก็บครบ 6 บล็อก ไม่ลบอะไร — เรียงใหม่: ตลาดวันนี้ → การ์ดพอร์ต (สรุปบรรทัดเดียว) → Watchlist → สิ่งที่เปลี่ยนไป → ข่าว → insights |
-| Q2 | VIX / US10Y | **ตัดออกจาก Phase 1** — แสดงเฉพาะที่มีจริง (S&P 500 + NASDAQ) + สรุปสถานะตลาด 1 บรรทัด |
+| Q2 | VIX / US10Y | **ตัดออกจาก Phase 1** — แสดงเฉพาะที่มีจริง (S&P 500 + NASDAQ) + สรุปสถานะตลาด 1 บรรทัด · **ปิดคำถามแล้ว → ดู §3.2** |
 | Q3 | "สิ่งที่เปลี่ยนไป" | derive จากข้อมูลที่หน้า Overview โหลดอยู่แล้ว 3 rule เท่านั้น (ดู §3.1) · ไม่เรียก API เพิ่ม · ไม่มีอะไรเข้าเงื่อนไข = ซ่อนทั้งบล็อก |
 | Q4 | score / confidence | การ์ด = status ล้วน · dialog เก็บตัวเลข + breakdown ไว้ · "ความสอดคล้องของหลักฐาน" อยู่ใน dialog เช่นกัน |
 | Q5 | 5 แถวสถานะ | ทำเท่าที่มี service จริง — แนวโน้ม / แรงส่ง (Elite, non-Elite **ซ่อนแถว** ไม่ใช่โชว์ "ล็อก") + งบการเงิน · **ไม่ทำ มูลค่าหุ้น / ความเสี่ยง** · แถวไม่มีข้อมูล = ตัดทิ้ง ห้าม "—" / "N/A" |
@@ -145,11 +145,43 @@ pure function อ่านจาก payload ที่ `app/page.tsx` โหล�
 
 ไม่มีอะไรเข้าเงื่อนไข → **ซ่อนบล็อกทั้งอัน** ห้ามโชว์ "ไม่มีการเปลี่ยนแปลง"
 
+### 3.2 ✅ ปิดคำถาม Q2 — probe VIX / US10Y / DXY แล้ว
+
+คำถามที่ §4 ค้างไว้คือ **"provider คืนค่าจริงไหม"** ซึ่งไม่เคยมีใครรัน ตอนนี้รันแล้วด้วย
+`npm run probe:market-status-inputs` (`scripts/probe-market-status-inputs.ts`) ผ่าน pipeline
+จริง (`getYahooChartProvider().getQuote`) ไม่ mock อะไรเลย
+
+ผลรัน **2026-08-28 17:04 ET** (session = AFTER_HOURS, last completed = 2026-08-28):
+
+| input | symbol | ผล | ค่าที่ได้ | prevClose | ช่วงที่สมเหตุสมผล |
+|---|---|---|---|---|---|
+| VIX | `^VIX` | **PASS** | 14.43 | 14.51 | 5–100 ✅ |
+| US10Y | `^TNX` | **PASS** | 4.72 | 4.672 | 0.3–12 ✅ |
+| DXY | `DX-Y.NYB` | **PASS** | 99.688 | 99.16 | 70–130 ✅ |
+
+ทุกตัว `currency: USD`, `latestTradingDay: 2026-08-28`, มี `previousClose` / `change` /
+`changePercent` ครบ ไม่มี field หาย · control group (SPY/QQQ/DIA) PASS ทั้งหมด
+
+**ข้อสรุป:** ไม่ต้องใช้ ETF proxy สำหรับสามตัวนี้ — `toProviderSymbol` ปล่อยสัญลักษณ์ที่ไม่
+รู้จักผ่านไป Yahoo ตรง ๆ อยู่แล้ว จึงใช้ **ตัวจริง** ทั้งสาม ซึ่งสำคัญกว่าที่คิด เพราะ proxy
+สองในสามตัวไม่ได้แค่ต่างสเกล แต่**ต่างความหมาย**:
+
+- `VIXY` ถือ VIX **futures** ไม่ใช่ตัวดัชนี — มี contango decay ไม่ track ระดับ `^VIX`
+- `IEF` เป็นกองทุน**พันธบัตร** ราคาขยับ**สวนทาง** yield → ถ้าสลับไปใช้ต้อง**พลิก polarity**
+  จาก −1 เป็น +1 มีเทสต์ล็อกไว้ที่ `rules.test.ts` ("documents that the yield input quotes
+  the YIELD, not a bond price")
+
+ส่วน SPX/NDX/DJI **ยังเป็น proxy ตามเดิม** (`SPY`/`QQQ`/`DIA`) และการ์ดติดป้าย "กองทุนอ้างอิง"
+ทุกแถว — `MarketStatusCard.test.tsx` บังคับว่า proxy ต้องมีป้าย และตัวจริงต้องไม่มี
+
 ---
 
 ## 4. ยกไป Phase 2 (ไม่ทำใน Phase 1)
 
-- **VIX / US10Y บนแถบตลาดวันนี้** — ต้องเพิ่ม proxy เข้า `MARKET_ASSETS` (`VIXY` / `IEF` / `^TNX`) แล้ว probe ว่า provider คืนค่าจริงไหม = แตะ data layer ซึ่งเกิน scope Phase 1
+- ~~**VIX / US10Y บนแถบตลาดวันนี้**~~ — ✅ **ปิดแล้ว ดู §3.2** probe ผ่านทั้ง `^VIX` / `^TNX` /
+  `DX-Y.NYB` ใช้ตัวจริงไม่ต้องพึ่ง proxy · ใช้งานอยู่ใน Market Status card หลัง flag
+  `MARKET_STATUS_CARD` (default OFF) · ยังไม่ได้เพิ่มเข้า `MARKET_ASSETS` เพราะการ์ดนี้อ่านเอง
+  ตาม rule table ไม่ได้ผ่านแถบ "ตลาดวันนี้"
 - **แถวสถานะ มูลค่าหุ้น + ความเสี่ยง + งบการเงิน บน Stock Detail** — ไม่มี service ไหนตัดสิน `analytics/fundamentals` มี **ตัวเลข** (P/E, market cap) แต่ไม่มี **คำตัดสิน** การตั้ง threshold "ค่อนข้างแพง" เองคือการเดาแล้วโชว์เป็นความจริงโดยยืมเครดิตของ service
 - **"สิ่งที่เปลี่ยนไป" rule 1 (แตะ/ทะลุแนวรับ–แนวต้าน)** — ต้องใช้ `nearestSupport` / `nearestResistance` จาก market-signal ซึ่งเป็น Elite-gated + คำนวณรายตัวบนหน้า Stock ไม่ได้อยู่ใน payload ของ Overview · watchlist rows มี `sparkline: []` (ว่างจริง ๆ ดู `loadWatchlistPrices`) จึงไม่มี series ให้ derive
 - **"สิ่งที่เปลี่ยนไป" rule 3 (label เปลี่ยนจากบาร์ก่อน)** — ต้องใช้ `readSignalHistory` = 1 admin query ต่อ symbol และมีแถวเฉพาะ symbol ที่เคยมีคนเปิดหน้า Stock · watchlist 10 ตัว = 10 query ต่อ render ส่วนใหญ่ได้ค่าว่าง

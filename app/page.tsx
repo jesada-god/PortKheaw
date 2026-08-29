@@ -22,6 +22,8 @@ import { marketSession } from '@/src/lib/market-data/market-session';
 import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
 import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
+import { marketStatusCardEnabled } from '@/src/config/features';
+import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
@@ -283,6 +285,35 @@ export default async function Home() {
       ? ['ข้อมูลราคายังไม่เพียงพอสำหรับจัดอันดับอุตสาหกรรม']
       : [];
 
+  /*
+   * The Market Status card, behind `MARKET_STATUS_CARD` and OFF by default.
+   *
+   * Loaded only when the flag is on, so a reader with the flag unset pays for
+   * none of the six provider calls — the flag is a shipping switch, not a render
+   * switch. A failure degrades to `undefined`, which the overview renders as no
+   * card at all: this is an addition to the page and must never be able to take
+   * the rest of it down.
+   *
+   * No history is passed yet, so the hold rule publishes today's reading
+   * immediately. That is the correct behaviour for a first render rather than a
+   * degraded one — persisting the sequence is its own change, with its own
+   * table, and the rule is already written to accept it.
+   */
+  const marketStatus = marketStatusCardEnabled()
+    ? await (client
+      /*
+        With a client, the hold rule gets its memory: previous raw labels are
+        read back and today's reading is recorded. Without one — a signed-out
+        visitor, or Supabase not configured — the card falls back to the
+        un-persisted path, which publishes immediately. That is the same
+        first-render behaviour the rule already defines, not a degraded mode.
+      */
+      ? loadMarketStatusWithHistory(client, overviewNow)
+      : loadMarketStatus(overviewNow))
+      .then((result) => ({ evaluation: result.evaluation, sessionDate: result.sessionDate }))
+      .catch(() => undefined)
+    : undefined;
+
   return (
     <DashboardClient
       onboarding={onboarding}
@@ -305,6 +336,7 @@ export default async function Home() {
         },
         newsContext: { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
         upcoming,
+        marketStatus,
         limitations,
       }}
     />
