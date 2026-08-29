@@ -1,6 +1,14 @@
 import 'server-only';
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/src/types/database';
 import { getYahooChartProvider } from '@/src/lib/market-data/candles';
+import { US_EQUITY_TIMEZONE, exchangeSessionDate } from '@/src/lib/market-data/session';
+import {
+  MARKET_STATUS_KEY,
+  loadLabelHistory,
+  recordLabel,
+} from '@/src/lib/analytics/label-history';
 import {
   lastCompletedSessionDate,
   marketSession,
@@ -9,6 +17,16 @@ import {
 import { resolveDayChangeBasis } from '@/src/lib/portfolio/day-change';
 import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
 import { evaluateMarketStatus, type MarketStatusEvaluation, type MarketStatusReading } from './rules';
+import type { MarketStatusLabel } from '@/src/config/market-status';
+
+type Client = SupabaseClient<Database>;
+
+const MARKET_STATUS_LABELS: readonly string[] = ['UPTREND', 'WEAK', 'SIDEWAYS'];
+
+/** A stored label this card can actually read. See the filter at the call site. */
+function isMarketStatusLabel(value: string): value is MarketStatusLabel {
+  return MARKET_STATUS_LABELS.includes(value);
+}
 
 /**
  * Loading the six readings the card is built from.
@@ -62,6 +80,18 @@ async function readInput(symbol: string): Promise<{ price: number | null; previo
   }
 }
 
+/**
+ * The trading date an evaluation is filed under.
+ *
+ * The last completed session while the market is shut, and today's exchange date
+ * while it is open — so a reading taken at 11:00 ET is Tuesday's, not Monday's.
+ * Filing an open-market reading under the previous session would overwrite a
+ * finished day with an unfinished one.
+ */
+function historyDateFor(now: Date, sessionDate: string | null): string | null {
+  return sessionDate ?? exchangeSessionDate(now.toISOString(), US_EQUITY_TIMEZONE);
+}
+
 export async function loadMarketStatus(
   now: Date = new Date(),
   history: Parameters<typeof evaluateMarketStatus>[1] = [],
@@ -101,4 +131,56 @@ export async function loadMarketStatus(
     sessionDate,
     evaluatedAt: now.toISOString(),
   };
+}
+
+/**
+ * {@link loadMarketStatus} with the hold rule's memory attached.
+ *
+ * Read the previous raw labels, evaluate against them, record what was
+ * published. Without this the card passes `[]` on every render and
+ * `minDurationBars: 2` does nothing at all.
+ *
+ * Every persistence step degrades to the un-persisted behaviour rather than
+ * failing the card:
+ *
+ *   * a failed READ becomes an empty history, which is the first-render case
+ *     the rule already handles by publishing immediately;
+ *   * a failed WRITE loses tomorrow's hold, which is strictly better than
+ *     failing the render in front of a reader now;
+ *   * an INSUFFICIENT evaluation is not recorded at all, because "we could not
+ *     read the market" is not a label and writing one would put a reading into
+ *     the sequence that was never published.
+ */
+export async function loadMarketStatusWithHistory(
+  client: Client,
+  now: Date = new Date(),
+): Promise<MarketStatusResult> {
+  const session = marketSession(now);
+  const sessionDate = session === 'OPEN' ? null : lastCompletedSessionDate(now);
+  const date = historyDateFor(now, sessionDate);
+  if (date === null) return loadMarketStatus(now, []);
+
+  const history = await loadLabelHistory(client, 'market-status', MARKET_STATUS_KEY, date)
+    .catch(() => [] as string[]);
+
+  /*
+    The stored labels are validated against this card's own vocabulary before
+    they reach the rule. `label_history` deliberately does not constrain the
+    label to an enum — two engines with different vocabularies share the table —
+    so the reader is what keeps a `market-signal` value, or a label from a
+    vocabulary this card has since changed, out of the sequence.
+  */
+  const result = await loadMarketStatus(now, history.filter(isMarketStatusLabel));
+
+  if (result.evaluation.status === 'available' && result.evaluation.rawLabel && result.evaluation.label) {
+    await recordLabel(client, {
+      scope: 'market-status',
+      key: MARKET_STATUS_KEY,
+      date,
+      rawLabel: result.evaluation.rawLabel,
+      heldLabel: result.evaluation.label,
+    }).catch(() => false);
+  }
+
+  return result;
 }

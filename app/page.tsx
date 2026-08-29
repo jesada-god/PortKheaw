@@ -23,7 +23,7 @@ import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
 import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
 import { marketStatusCardEnabled } from '@/src/config/features';
-import { loadMarketStatus } from '@/src/lib/market-status/service';
+import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
@@ -300,7 +300,16 @@ export default async function Home() {
    * table, and the rule is already written to accept it.
    */
   const marketStatus = marketStatusCardEnabled()
-    ? await loadMarketStatus(overviewNow)
+    ? await (client
+      /*
+        With a client, the hold rule gets its memory: previous raw labels are
+        read back and today's reading is recorded. Without one — a signed-out
+        visitor, or Supabase not configured — the card falls back to the
+        un-persisted path, which publishes immediately. That is the same
+        first-render behaviour the rule already defines, not a degraded mode.
+      */
+      ? loadMarketStatusWithHistory(client, overviewNow)
+      : loadMarketStatus(overviewNow))
       .then((result) => ({ evaluation: result.evaluation, sessionDate: result.sessionDate }))
       .catch(() => undefined)
     : undefined;

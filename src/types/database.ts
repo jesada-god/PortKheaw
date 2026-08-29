@@ -970,6 +970,34 @@ export interface Database {
        * `authenticated` read and write nothing. Closes are licensed data and a
        * client-readable table here would republish a provider's end-of-day file.
        */
+      /**
+       * What each engine PUBLISHED, one row per scope per key per trading date.
+       *
+       * Feeds the shared hold rule (`persistence-hold.ts`) so a label that flips
+       * for a single day is absorbed rather than published. `raw_label` is the
+       * reading BEFORE the hold and is what the rule reads back; `held_label` is
+       * what the reader actually saw and is the only thing here that cannot be
+       * recomputed.
+       *
+       * Service-role only: RLS is on with no policy. The Market Signal label is
+       * Elite-gated, and a client-readable table here would hand over the
+       * history of the product's paid output.
+       *
+       * Any age derived from this table must be counted over `raw_label` — see
+       * docs/signal-handover.md 6.8.
+       */
+      label_history: {
+        Row: {
+          scope: string; key: string; date: string;
+          raw_label: string; held_label: string; captured_at: string;
+        };
+        Insert: {
+          scope: string; key: string; date: string;
+          raw_label: string; held_label: string; captured_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['label_history']['Insert']>;
+        Relationships: [];
+      };
       daily_snapshot: {
         Row: {
           symbol: string; date: string;
