@@ -123,6 +123,12 @@ export interface Database {
           aggregate_target_value_usd: string | null;
           aggregate_target_date: string | null;
           /**
+           * Which watchlist the Overview preview draws from; null means the
+           * reader has not chosen, which resolves to their oldest list. Written
+           * only through `set_overview_watchlist`, which checks ownership.
+           */
+          overview_watchlist_id: string | null;
+          /**
            * Progressive onboarding, kept on the preference row rather than in a
            * table of its own. A null path means "not asked yet", which is the
            * only state a new account — or one that predates the feature — can be
@@ -151,6 +157,7 @@ export interface Database {
           timezone?: string;
           aggregate_target_value_usd?: string | null;
           aggregate_target_date?: string | null;
+          overview_watchlist_id?: string | null;
           onboarding_path?: string | null;
           onboarding_chosen_at?: string | null;
           onboarding_dismissed_at?: string | null;
@@ -173,6 +180,7 @@ export interface Database {
           timezone?: string;
           aggregate_target_value_usd?: string | null;
           aggregate_target_date?: string | null;
+          overview_watchlist_id?: string | null;
           onboarding_path?: string | null;
           onboarding_chosen_at?: string | null;
           onboarding_dismissed_at?: string | null;
@@ -188,9 +196,14 @@ export interface Database {
         Relationships: [];
       };
       watchlist_items: {
-        Row: { id: string; watchlist_id: string; symbol: string; created_at: string };
-        Insert: { id?: string; watchlist_id: string; symbol: string; created_at?: string };
-        Update: { symbol?: string };
+        /**
+         * `pinned` is the reader's choice of which rows the Overview preview
+         * shows. Added by `202608290003` with `default false`, so every row that
+         * predates it is unpinned and every account keeps the preview it had.
+         */
+        Row: { id: string; watchlist_id: string; symbol: string; created_at: string; pinned: boolean };
+        Insert: { id?: string; watchlist_id: string; symbol: string; created_at?: string; pinned?: boolean };
+        Update: { symbol?: string; pinned?: boolean };
         Relationships: [];
       };
       portfolios: {
@@ -1082,6 +1095,33 @@ export interface Database {
           canary_retention_days?: number;
         };
         Returns: Array<{ due: number; deleted: number; canary_due: number; canary_deleted: number }>;
+      };
+      /**
+       * The reader's chosen list if they chose one and still own it, otherwise
+       * their oldest. Creates one when the account has none. See
+       * `202608290003_multi_watchlists.sql`.
+       */
+      create_watchlist: {
+        Args: { input_name: string };
+        Returns: string;
+      };
+      rename_watchlist: {
+        Args: { target_watchlist_id: string; input_name: string };
+        Returns: undefined;
+      };
+      /** Raises 23514 when the target is the reader's only list. */
+      delete_watchlist: {
+        Args: { target_watchlist_id: string };
+        Returns: undefined;
+      };
+      /** Null clears the choice. Checks ownership of a non-null id. */
+      set_overview_watchlist: {
+        Args: { target_watchlist_id: string | null };
+        Returns: undefined;
+      };
+      set_watchlist_item_pinned: {
+        Args: { target_watchlist_id: string; input_symbol: string; input_pinned: boolean };
+        Returns: undefined;
       };
       get_or_create_default_watchlist: {
         Args: Record<PropertyKey, never>;
