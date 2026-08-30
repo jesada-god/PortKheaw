@@ -70,6 +70,48 @@ export function whatChangedCardEnabled() {
   return featureFlagEnabled(process.env.WHAT_CHANGED_CARD);
 }
 
+/**
+ * The macro events calendar — the month grid on the overview and the feed at
+ * `/market-events`.
+ *
+ * DEFAULT OFF, for the reason the three flags above give: an unset variable is
+ * OFF, so this ships without changing what a reader sees, and releasing stays a
+ * separate human act. It gates BOTH surfaces from one switch on purpose — a
+ * card that links to a page the flag has turned off is a dead end, and two
+ * flags is two ways to build one.
+ *
+ * It costs no provider call either way. The calendar is a static JSON file in
+ * the bundle, so the flag is deciding pixels and a route, not spend.
+ */
+export function marketEventsCardEnabled() {
+  return featureFlagEnabled(process.env.MARKET_EVENTS_CARD);
+}
+
+/**
+ * The scope filter over the overview news feed — ทั้งหมด / พอร์ต / Watchlist / ตลาด.
+ *
+ * DEFAULT OFF. With it off the feed is the market-wide one that shipped, byte
+ * for byte; with it on the same page asks for the reader's own symbols instead,
+ * which is a different request to the SAME endpoint rather than an additional
+ * one.
+ */
+export function newsFilterEnabled() {
+  return featureFlagEnabled(process.env.NEWS_FILTER);
+}
+
+/**
+ * The overview's reading order.
+ *
+ * DEFAULT OFF, and it reorders sections that already exist — it adds no card,
+ * loads nothing new, and every section it moves is one the page was already
+ * rendering. The flag is the rollback for a judgement about sequence, which is
+ * exactly the kind of change that wants one: nothing about it fails loudly, so
+ * turning it off has to be as cheap as turning it on.
+ */
+export function overviewV2Enabled() {
+  return featureFlagEnabled(process.env.OVERVIEW_V2);
+}
+
 export function keyStatisticsEnabled() { return featureFlagEnabled(process.env.FEATURE_KEY_STATISTICS); }
 export function optionsStatisticsEnabled() { return featureFlagEnabled(process.env.FEATURE_OPTIONS_STATISTICS); }
 export function analystConsensusEnabled() {

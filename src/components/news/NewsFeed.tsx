@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Newspaper } from 'lucide-react';
 import { Skeleton } from '@/src/components/ui/Skeleton';
 import {
@@ -9,6 +9,14 @@ import {
   visibleNewsCount,
 } from '@/src/lib/news/feed';
 import { MARKET_WIDE_NEWS_LIMIT } from '@/src/lib/news/market-wide';
+import {
+  canExpandScopedNews,
+  NEWS_SCOPE_LABEL_TH,
+  NEWS_SCOPES,
+  selectScopedNews,
+  visibleScopedCount,
+  type NewsScope,
+} from '@/src/lib/news/scope';
 import type { NewsSummaryPayload } from '@/src/lib/news/summary-types';
 import type { NewsArticle, NewsPage } from '@/src/lib/news/types';
 import { newsErrorMessage, newsViewState } from './news-policy';
@@ -24,6 +32,7 @@ type ApiResponse = { data: NewsPage | null; error: ApiError | null; meta: { time
 const pending = new Map<string, Promise<ApiResponse>>(); const pages = new Map<string, { value: ApiResponse; savedAt: number }>();
 const CACHE_MS = 5 * 60_000;
 const EMPTY_TOPICS: string[] = [];
+const EMPTY_ARTICLES: NewsArticle[] = [];
 function load(url: string, force = false) {
   const cached = pages.get(url); if (!force && cached && Date.now() - cached.savedAt < CACHE_MS) return Promise.resolve(cached.value);
   const existing = pending.get(url); if (existing) return existing;
@@ -96,12 +105,25 @@ export function NewsFeed({
   watchlistSymbols = EMPTY_TOPICS,
   industryNames = EMPTY_TOPICS,
   marketWide = false,
+  withScopeFilter = false,
 }: {
   symbol?: string;
   portfolioSymbols?: string[];
   watchlistSymbols?: string[];
   industryNames?: string[];
   marketWide?: boolean;
+  /**
+   * Show the ทั้งหมด / พอร์ต / Watchlist / ตลาด tabs over this feed.
+   *
+   * Off everywhere by default, so the symbol tab on Stock Detail and the
+   * market feed both render exactly as they did. When it is on, the feed is
+   * the PERSONALIZED one — the same request `portfolioSymbols` and
+   * `watchlistSymbols` already produce — because those are the parameters that
+   * make the tagger attach the reader's own symbols to an article. Filtering a
+   * market-wide payload instead would leave the พอร์ต and Watchlist tabs
+   * permanently empty, since market-wide stories carry no symbols by design.
+   */
+  withScopeFilter?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -116,7 +138,21 @@ export function NewsFeed({
   const feedKey = symbol ?? (marketWide ? 'market-wide' : (personalizedKey || 'market'));
   const [feed, setFeed] = useState<{ key: string; articles: NewsArticle[] }>({ key: '', articles: [] });
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
-  const items = feed.key === feedKey ? feed.articles : [];
+  /*
+   * The selected tab, carried with the feed it belongs to for the same reason
+   * the expansion is: switching feed must not leave the previous feed's tab
+   * selected over a list that no longer has anything in it.
+   */
+  const [scopeFor, setScopeFor] = useState<{ key: string; scope: NewsScope }>({ key: '', scope: 'all' });
+  /*
+    Memoised because the fallback is a fresh `[]` on every render, which would
+    make the scoped-selection memo below recompute the filter and the
+    de-duplication on every keystroke of unrelated state.
+  */
+  const items = useMemo(
+    () => (feed.key === feedKey ? feed.articles : EMPTY_ARTICLES),
+    [feed, feedKey],
+  );
   const expanded = expandedFor === feedKey;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -184,7 +220,25 @@ export function NewsFeed({
 
   const cooldown = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const state = newsViewState(items.length, loading || !ready, error?.code);
-  const visibleItems = items.slice(0, visibleNewsCount(items.length, expanded));
+  const scope = scopeFor.key === feedKey ? scopeFor.scope : 'all';
+  const scopeContext = useMemo(
+    () => ({ portfolioSymbols, watchlistSymbols }),
+    [portfolioSymbols, watchlistSymbols],
+  );
+  /*
+   * The scoped list, or the plain one. `selectScopedNews` re-runs the feed's
+   * own de-duplication after filtering, so a story republished by a second
+   * outlet cannot take two of the eight rows a tab has.
+   */
+  const scopedItems = useMemo(
+    () => (withScopeFilter
+      ? selectScopedNews(items, scope, scopeContext, items.length)
+      : items),
+    [withScopeFilter, items, scope, scopeContext],
+  );
+  const visibleItems = withScopeFilter
+    ? scopedItems.slice(0, visibleScopedCount(scopedItems.length, expanded))
+    : items.slice(0, visibleNewsCount(items.length, expanded));
   const marketSummary = useMarketNewsSummary(marketWide && ready && visible && isOnline);
 
   let content: React.ReactNode;
@@ -204,6 +258,20 @@ export function NewsFeed({
     content = <div className="rounded-xl border border-slate-800 p-6 text-center text-sm text-slate-400">
       {marketWide ? 'ยังไม่มีข่าวที่ผ่านเกณฑ์ผลกระทบต่อตลาดโดยรวม' : 'ยังไม่มีข่าวในขณะนี้'}
     </div>;
+  } else if (withScopeFilter && scopedItems.length === 0) {
+    /*
+      The feed loaded and this TAB is empty — a different fact from "there is no
+      news", and it says so. Without this the reader would see the market-wide
+      empty copy under a Watchlist tab and conclude the whole feed had failed.
+    */
+    content = (
+      <div
+        className="rounded-xl border border-slate-800 p-6 text-center text-sm text-slate-400"
+        data-testid="news-scope-empty"
+      >
+        {`ยังไม่มีข่าวในหมวด${NEWS_SCOPE_LABEL_TH[scope]}`}
+      </div>
+    );
   } else {
     content = (
       <div className="space-y-3">
@@ -231,7 +299,7 @@ export function NewsFeed({
             </div>
           </a>
         ))}
-        {canExpandNews(items.length) && (
+        {(withScopeFilter ? canExpandScopedNews(scopedItems.length) : canExpandNews(items.length)) && (
           <button
             type="button"
             aria-expanded={expanded}
@@ -255,5 +323,51 @@ export function NewsFeed({
     ? <NewsSummaryCard summary={marketSummary.summary} stale={marketSummary.stale} title="สรุปภาพรวมข่าว" />
     : null;
 
-  return <div ref={root} className={card ? 'space-y-4' : undefined}>{card}{content}</div>;
+  /*
+   * THE TABS, ABOVE EVERYTHING THE FEED DRAWS.
+   *
+   * Rendered whenever the filter is on and the feed is not in an error or
+   * loading state — including when the SELECTED tab is empty, because the tabs
+   * are how a reader gets back out of an empty tab. Hiding them there would
+   * trap somebody on a Watchlist filter with no visible way to return to
+   * ทั้งหมด.
+   *
+   * `aria-pressed` rather than a tablist: these filter one list in place, they
+   * do not switch between panels, and announcing them as tabs would promise a
+   * reader a panel change that never happens.
+   */
+  const tabs = withScopeFilter && (state === 'ready' || state === 'empty')
+    ? (
+      <div className="flex flex-wrap gap-2" role="group" aria-label="กรองข่าว" data-testid="news-scope-filter">
+        {NEWS_SCOPES.map((option) => {
+          const active = option === scope;
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setScopeFor({ key: feedKey, scope: option })}
+              data-testid={`news-scope-${option}`}
+              className={[
+                'min-h-9 rounded-full border px-3 py-1.5 text-xs transition-colors',
+                active
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
+                  : 'border-slate-700 text-slate-300 hover:border-slate-600',
+              ].join(' ')}
+            >
+              {NEWS_SCOPE_LABEL_TH[option]}
+            </button>
+          );
+        })}
+      </div>
+    )
+    : null;
+
+  return (
+    <div ref={root} className={card || tabs ? 'space-y-4' : undefined}>
+      {tabs}
+      {card}
+      {content}
+    </div>
+  );
 }

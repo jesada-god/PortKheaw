@@ -1,3 +1,4 @@
+import type { MarketEventsCardView } from '@/src/lib/market-events/card-view';
 import type { PortfolioSummary } from '@/src/lib/portfolio/types';
 import type { DataFreshness } from '@/src/lib/market-data/types';
 
@@ -234,6 +235,21 @@ export interface OverviewDashboardData {
     watchlistSymbols: string[];
     industryNames: string[];
   };
+  /**
+   * The macro calendar card's finished view, or null when `MARKET_EVENTS_CARD`
+   * is off. Built on the server so the calendar file and the Intl formatters
+   * stay out of the client bundle, and so "today" is decided once — see
+   * `src/lib/market-events/card-view.ts`.
+   */
+  marketEvents: MarketEventsCardView | null;
+  /**
+   * Whether the overview uses the V2 reading order.
+   *
+   * Carried in the PAYLOAD rather than read from `process.env` in the client:
+   * a client component reading an env var reads the value baked in at build
+   * time, which is a different question from what this deployment is set to.
+   */
+  overviewV2: boolean;
   /**
    * Earnings, expiries and alert proximity, already ordered and truncated to
    * what the Home card shows. Built on the server from state the page loaded

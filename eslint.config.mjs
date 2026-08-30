@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import noUnsourcedFrameWord from "./eslint-rules/no-unsourced-frame-word.mjs";
 import noBannedCopy from "./eslint-rules/no-banned-copy.mjs";
+import noHostLocalTime from "./eslint-rules/no-host-local-time.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +71,36 @@ export default defineConfig([
         },
         rules: {
             "portkheaw/no-banned-copy": "error",
+        },
+    },
+    {
+        /*
+         * =====================================================================
+         * THE CALENDAR'S TIME DISCIPLINE, MADE UNBREAKABLE
+         * =====================================================================
+         *
+         * Every instant in the market-events feature is resolved to Bangkok in
+         * one module, through `Intl` with an explicit time zone. The reasoning
+         * is in `src/lib/market-events/time.ts`; the rule's own header explains
+         * why a reviewer cannot be the enforcement here.
+         *
+         * The scope is the whole feature — the lib AND the components — because
+         * the failure is just as available in a cell renderer reaching for
+         * `new Date(event.at).getDate()` as it is in the grid builder. Tests are
+         * excluded on the same principle the other two rules use: the fixture
+         * tests deliberately construct host-zone dates to PROVE the conversion
+         * survives them, and holding the proof to the rule would ban checking it.
+         */
+        files: [
+            "src/lib/market-events/**/*.ts",
+            "src/components/market-events/**/*.{ts,tsx}",
+        ],
+        ignores: ["**/*.test.ts", "**/*.test.tsx"],
+        plugins: {
+            "portkheaw-time": { rules: { "no-host-local-time": noHostLocalTime } },
+        },
+        rules: {
+            "portkheaw-time/no-host-local-time": "error",
         },
     },
     {
