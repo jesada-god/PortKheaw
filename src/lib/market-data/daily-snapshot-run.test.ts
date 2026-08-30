@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 /**
  * THE WRITER GUARD ON THE DAILY CAPTURE.
@@ -19,8 +19,8 @@ import { describe, expect, it, vi } from 'vitest';
  * exact minute of the cron stops being a correctness question.
  *
  * `docs/operations/daily-snapshot-verification.md` makes that claim on this
- * function's behalf while reporting that the scheduler was never wired up. This
- * file is what entitles it to.
+ * function's behalf when it explains why a fixed UTC cron drifting an hour
+ * across the DST boundary is acceptable. This file is what entitles it to.
  *
  * ===========================================================================
  * THE CLIENT IS A THROWING PROXY, ON PURPOSE
@@ -92,41 +92,67 @@ describe('the daily snapshot capture refuses before it writes', () => {
   });
 });
 
-describe('the capture is scheduled nowhere in this repository', () => {
+describe('the capture is scheduled, and the schedule is the checked one', () => {
   /*
-   * A regression test for the FINDING, not for the code.
+   * REPLACES the "no scheduler exists" reminder that stood here while the
+   * endpoint was orphaned. That test failed the moment `vercel.json` appeared,
+   * which is what sent whoever added it back to the verification doc — this is
+   * the note it was pointing at, now that there is something to assert.
    *
-   * The route's header documents a 16:10 ET slot that nothing implements: there
-   * is no `vercel.json` (it was deleted in dcbfa99 when notifications moved to
-   * Supabase pg_cron) and no migration schedules this endpoint. That is recorded
-   * in docs/operations/daily-snapshot-verification.md.
+   * What is pinned is the SCHEDULE, because the value is not arbitrary and the
+   * reason it is not arbitrary lives three files away. Vercel cron expressions
+   * are UTC with no zone to set, so one schedule has to be past the closing
+   * bell under both offsets:
    *
-   * This test does not demand a scheduler — choosing the mechanism is a decision
-   * that has not been made. It fails when one APPEARS, so that whoever adds it
-   * is sent to the document to update the finding and record which DST
-   * behaviour they chose, rather than leaving a doc that says "never scheduled"
-   * next to a live cron.
+   *     20:10 UTC → 15:10 ET in winter — market OPEN, refused for four months
+   *     21:10 UTC → 16:10 ET in winter, 17:10 ET in summer — after the close
+   *
+   * `daily-snapshot-capture.test.ts` proves both halves of that against the
+   * real session functions. This asserts the deployed file still says what
+   * those tests were written about.
    */
-  it('still has no scheduler, and this test is the reminder to update the doc when one is added', async () => {
-    const { readdirSync, readFileSync, existsSync } = await import('node:fs');
-    const root = new URL('../../../', import.meta.url);
+  it('schedules /api/cron/daily-snapshot at 21:10 UTC, Monday to Friday', async () => {
+    const { readFileSync } = await import('node:fs');
+    const config = JSON.parse(
+      readFileSync(new URL('../../../vercel.json', import.meta.url), 'utf8'),
+    ) as { crons?: Array<{ path: string; schedule: string }> };
 
-    expect(
-      existsSync(new URL('vercel.json', root)),
-      'A vercel.json appeared — if it schedules /api/cron/daily-snapshot, update '
-      + 'docs/operations/daily-snapshot-verification.md and delete this test.',
-    ).toBe(false);
+    const capture = config.crons?.find((job) => job.path === '/api/cron/daily-snapshot');
+    expect(capture, 'the capture must be scheduled in vercel.json').toBeDefined();
+    expect(capture!.schedule).toBe('10 21 * * 1-5');
+  });
 
-    const migrations = new URL('supabase/migrations/', root);
+  /*
+   * `/api/cron/alerts` must NOT come back here. It runs from Supabase pg_cron
+   * (`portkheaw-background-notifications`, every 15 minutes), and a Vercel cron
+   * beside it would double-fire the notification pass — two schedulers for one
+   * endpoint, each invisible from the other's dashboard.
+   *
+   * This is the specific mistake this file exists to prevent, because the
+   * obvious way to "restore" vercel.json is to put back what was deleted.
+   */
+  it('does not re-add the alerts cron, which lives in Supabase pg_cron', async () => {
+    const { readFileSync } = await import('node:fs');
+    const config = JSON.parse(
+      readFileSync(new URL('../../../vercel.json', import.meta.url), 'utf8'),
+    ) as { crons?: Array<{ path: string }> };
+    expect(config.crons?.map((job) => job.path)).toEqual(['/api/cron/daily-snapshot']);
+  });
+
+  /*
+   * And no migration schedules the capture either. Two schedulers for one
+   * endpoint is the same defect in the other direction, and it is reachable by
+   * somebody following the pg_cron pattern the alerts job set.
+   */
+  it('is not also scheduled from a migration', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const migrations = new URL('../../../supabase/migrations/', import.meta.url);
     const scheduled = readdirSync(migrations)
       .filter((file) => file.endsWith('.sql'))
       .filter((file) => {
         const sql = readFileSync(new URL(file, migrations), 'utf8');
         return sql.includes('cron.schedule') && sql.includes('daily-snapshot');
       });
-    expect(
-      scheduled,
-      'A migration now schedules the daily snapshot — update the verification doc.',
-    ).toEqual([]);
+    expect(scheduled).toEqual([]);
   });
 });
