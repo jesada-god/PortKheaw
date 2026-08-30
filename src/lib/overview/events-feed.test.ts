@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildOverviewEvents, OVERVIEW_EVENTS_LIMIT } from './events-feed';
-import type { OvEventWindow, OvMarketEvent } from '@/src/lib/market-overview/events';
+import type { OvEventCalendar, OvMarketEvent } from '@/src/lib/market-overview/events';
 import type { UpcomingFeed } from '@/src/lib/upcoming/types';
 
 /**
@@ -18,11 +18,10 @@ function macro(id: string, startsAtUtc: string, importance: OvMarketEvent['impor
   return { id, code: 'CPI', titleTh: `เงินเฟ้อ ${id}`, importance, startsAtUtc };
 }
 
-function windowOf(events: OvMarketEvent[], extra: Partial<OvEventWindow> = {}): OvEventWindow {
+function windowOf(events: OvMarketEvent[], extra: Partial<OvEventCalendar> = {}): OvEventCalendar {
   return {
     events,
     fromDayKey: '2026-09-11',
-    toDayKey: '2027-09-11',
     coversThrough: true,
     lastDayKey: events.length ? '2026-12-31' : null,
     ...extra,

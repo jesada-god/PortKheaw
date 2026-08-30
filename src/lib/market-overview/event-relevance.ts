@@ -4,7 +4,7 @@
  * ===========================================================================
  * COMPUTED AT READ TIME, NEVER STORED
  * ===========================================================================
- * No symbol goes into `src/data/market-events-2026.json`. The file is a
+ * No symbol goes into `src/data/market-events.json`. The file is a
  * transcription of four agencies' published schedules and must stay one: the
  * moment a symbol list is written next to a release, it is a claim that ages
  * silently — the reader sells the stock, the file still says the release

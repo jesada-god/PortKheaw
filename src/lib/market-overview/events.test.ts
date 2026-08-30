@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  OV_EVENT_WINDOW_MONTHS,
   OV_MARKET_EVENTS,
   ovBangkokDayKey,
   ovEventCountdownDays,
   ovEventDayLabel,
+  ovEventCalendar,
   ovEventWindow,
   type OvMarketEvent,
 } from './events';
@@ -60,69 +60,111 @@ describe('ovEventCountdownDays', () => {
   });
 });
 
-describe('ovEventWindow', () => {
+describe('ovEventCalendar', () => {
   const now = '2026-09-11T00:00:00.000Z';
 
-  it('opens on today and closes twelve months later', () => {
-    const window = ovEventWindow({ now, events: [] });
-    expect(window!.fromDayKey).toBe('2026-09-11');
-    expect(window!.toDayKey).toBe('2027-09-11');
-    expect(OV_EVENT_WINDOW_MONTHS).toBe(12);
+  /**
+   * The requirement this block exists for: ADDING A ROW IS EDITING THE FILE.
+   *
+   * `fixture` is a stand-in for `market-events.json`. Every case below hands it
+   * to the calendar unchanged — no horizon, no cap, no constant — so a case that
+   * appends a row is doing exactly what an editor of the JSON does.
+   */
+  const fixture = [
+    event('sep', '2026-09-15T12:30:00.000Z'),
+    event('dec', '2026-12-31T13:30:00.000Z'),
+  ];
+
+  it('opens on today', () => {
+    const calendar = ovEventCalendar({ now, events: [] });
+    expect(calendar!.fromDayKey).toBe('2026-09-11');
   });
 
-  it('keeps an event happening later today and drops yesterday\'s', () => {
-    const window = ovEventWindow({
+  it('keeps an event happening later today and drops the one before it', () => {
+    const calendar = ovEventCalendar({
       now,
       events: [
         event('yesterday', '2026-09-10T12:30:00.000Z'),
         event('tonight', '2026-09-11T12:30:00.000Z'),
       ],
     });
-    expect(window!.events.map((item) => item.id)).toEqual(['tonight']);
+    expect(calendar!.events.map((item) => item.id)).toEqual(['tonight']);
   });
 
-  it('drops an event past the far edge', () => {
-    const window = ovEventWindow({
+  it('has no far edge — a row years out is still in the list', () => {
+    /*
+      The twelve-month window used to cut this, which meant the calendar had a
+      ceiling written in TypeScript. A date is either in the file or it is not.
+    */
+    const calendar = ovEventCalendar({
       now,
       events: [
-        event('inside', '2027-09-10T12:30:00.000Z'),
-        event('outside', '2027-09-12T12:30:00.000Z'),
+        event('soon', '2026-10-01T12:30:00.000Z'),
+        event('far', '2030-01-15T13:30:00.000Z'),
       ],
     });
-    expect(window!.events.map((item) => item.id)).toEqual(['inside']);
+    expect(calendar!.events.map((item) => item.id)).toEqual(['soon', 'far']);
   });
 
-  it('reports that the calendar stops short, and names the date it reaches', () => {
+  it('shows a row added for January 2027 without a code change', () => {
+    // The whole requirement, as one case: append to the fixture, and the row is
+    // in the output. Nothing else moved.
+    const before = ovEventCalendar({ now, events: fixture });
+    expect(before!.events.map((item) => item.id)).toEqual(['sep', 'dec']);
+
+    const extended = [...fixture, event('jan-2027', '2027-01-14T13:30:00.000Z')];
+    const after = ovEventCalendar({ now, events: extended });
+    expect(after!.events.map((item) => item.id)).toEqual(['sep', 'dec', 'jan-2027']);
+  });
+
+  it('moves coversThrough and lastDayKey with the file, not with a constant', () => {
     /*
-      FALSE is the common case and must be rendered. A run of empty months is
-      perfectly drawable and tells a reader nothing is scheduled, which is the
-      opposite of what is true.
+      Read from a day AFTER the fixture runs out. The calendar is then exhausted
+      and says so; appending one January row makes it cover again, and the last
+      day it names is that row's own day.
     */
-    const window = ovEventWindow({
-      now,
-      events: [event('last', '2026-12-31T13:30:00.000Z')],
-    });
-    expect(window!.coversThrough).toBe(false);
-    expect(window!.lastDayKey).toBe('2026-12-31');
+    const later = '2027-01-05T00:00:00.000Z';
+    const exhausted = ovEventCalendar({ now: later, events: fixture });
+    expect(exhausted!.coversThrough).toBe(false);
+    expect(exhausted!.lastDayKey).toBe('2026-12-31');
+    expect(exhausted!.events).toEqual([]);
+
+    const extended = [...fixture, event('jan-2027', '2027-01-14T13:30:00.000Z')];
+    const covered = ovEventCalendar({ now: later, events: extended });
+    expect(covered!.coversThrough).toBe(true);
+    expect(covered!.lastDayKey).toBe('2027-01-14');
+    expect(covered!.events.map((item) => item.id)).toEqual(['jan-2027']);
   });
 
-  it('reports full coverage when the file reaches the far edge', () => {
-    const window = ovEventWindow({
-      now,
-      events: [event('a', '2026-10-01T12:30:00.000Z'), event('b', '2027-10-01T12:30:00.000Z')],
+  it('names the last day the file reaches even when it is already past', () => {
+    const calendar = ovEventCalendar({
+      now: '2027-06-01T00:00:00.000Z',
+      events: fixture,
     });
-    expect(window!.coversThrough).toBe(true);
+    expect(calendar!.lastDayKey).toBe('2026-12-31');
+    expect(calendar!.coversThrough).toBe(false);
+  });
+
+  it('finds the last day without trusting the input to be sorted', () => {
+    const calendar = ovEventCalendar({
+      now,
+      events: [
+        event('later', '2026-12-31T13:30:00.000Z'),
+        event('earlier', '2026-09-15T12:30:00.000Z'),
+      ],
+    });
+    expect(calendar!.lastDayKey).toBe('2026-12-31');
   });
 
   it('says the calendar is empty rather than pretending it is quiet', () => {
-    const window = ovEventWindow({ now, events: [] });
-    expect(window!.events).toEqual([]);
-    expect(window!.lastDayKey).toBeNull();
-    expect(window!.coversThrough).toBe(false);
+    const calendar = ovEventCalendar({ now, events: [] });
+    expect(calendar!.events).toEqual([]);
+    expect(calendar!.lastDayKey).toBeNull();
+    expect(calendar!.coversThrough).toBe(false);
   });
 
   it('sorts soonest first', () => {
-    const window = ovEventWindow({
+    const calendar = ovEventCalendar({
       now,
       events: [
         event('a', '2026-09-15T12:30:00.000Z'),
@@ -130,18 +172,17 @@ describe('ovEventWindow', () => {
         event('c', '2026-10-15T12:30:00.000Z'),
       ],
     });
-    expect(window!.events.map((item) => item.id)).toEqual(['a', 'c', 'b']);
-  });
-
-  it('clamps the far edge onto a shorter month', () => {
-    // 31 August plus twelve months is 31 August, but the clamp matters on the
-    // months that are short — 31 March + 11 must not roll into 1 March.
-    const window = ovEventWindow({ now: '2026-03-31T00:00:00.000Z', months: 11, events: [] });
-    expect(window!.toDayKey).toBe('2027-02-28');
+    expect(calendar!.events.map((item) => item.id)).toEqual(['a', 'c', 'b']);
   });
 
   it('is null when the clock itself is unreadable', () => {
-    expect(ovEventWindow({ now: 'nonsense', events: [] })).toBeNull();
+    expect(ovEventCalendar({ now: 'nonsense', events: [] })).toBeNull();
+  });
+
+  it('still answers to the old name, so the page keeps compiling', () => {
+    // `app/page.tsx` imports `ovEventWindow`. The alias is the whole of what is
+    // left of the window.
+    expect(ovEventWindow).toBe(ovEventCalendar);
   });
 });
 

@@ -1,4 +1,4 @@
-import calendarFile from '@/src/data/market-events-2026.json';
+import calendarFile from '@/src/data/market-events.json';
 import { bangkokDayKey } from './time';
 import { marketEventFileSchema, type MarketEvent, type MarketEventImportance } from './types';
 

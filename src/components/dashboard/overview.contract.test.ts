@@ -186,7 +186,7 @@ describe('Overview dashboard contracts', () => {
    * principle.
    *
    * The calendar card is the one addition, and it is a STATIC FILE: the view is
-   * built from `market-events-2026.json`, which is imported into the bundle. So
+   * built from `market-events.json`, which is imported into the bundle. So
    * `MARKET_EVENTS_CARD` decides pixels only — unlike `MARKET_STATUS_CARD`,
    * which also gates six provider calls, and that difference is the thing this
    * test pins.
@@ -217,7 +217,7 @@ describe('Overview dashboard contracts', () => {
     expect(cardView).not.toContain('await ');
 
     const calendar = code('src/lib/market-events/calendar.ts');
-    expect(calendar).toContain("import calendarFile from '@/src/data/market-events-2026.json'");
+    expect(calendar).toContain("import calendarFile from '@/src/data/market-events.json'");
     expect(calendar).not.toContain('fetch(');
 
     const page = read('app/page.tsx');

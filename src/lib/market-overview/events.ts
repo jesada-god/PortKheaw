@@ -1,22 +1,31 @@
 /**
- * THE MACRO CALENDAR, AS A TWELVE-MONTH WINDOW.
+ * THE MACRO CALENDAR — EVERY ROW THE FILE HAS, AND NOTHING ELSE.
  *
  * ===========================================================================
- * NO NEW DATA FILE, AND NO INVENTED DATES
+ * THE FILE IS THE CALENDAR. THE CODE HAS NO OPINION ABOUT HOW FAR IT REACHES.
  * ===========================================================================
- * The rows come from `src/data/market-events-2026.json`, which already ships
- * with the product and was transcribed from four agencies' published schedules.
- * Nothing here adds a row. A twelve-month window over a file that currently
- * holds four months' worth is honest and reports itself as such
- * ({@link OvEventWindow.coversThrough}); a twelve-month window filled in by
- * guessing when the next CPI print lands would be neither, and a wrong release
- * date on a calendar is worse than a missing one because a reader plans around
- * it.
+ * Adding an event is editing `src/data/market-events.json` and nothing else.
+ * No constant to bump, no window to widen, no release to make: a row dated
+ * January 2027 appears the moment it is in the file, and so does one dated
+ * 2030.
+ *
+ * This module used to cut the list at a twelve-month horizon, which meant the
+ * calendar had a ceiling written in TypeScript — a number that would have had
+ * to be found and raised by somebody who only wanted to add a date. The
+ * horizon is gone. What is left is one filter that is about the reader rather
+ * than about the data: a release that already happened is not something coming
+ * up, so the list starts at today.
+ *
+ * Nothing here adds a row, and nothing extrapolates one. A wrong release date
+ * on a calendar is worse than a missing one, because a reader plans around it —
+ * so where the file stops, the list stops, and {@link OvEventCalendar.lastDayKey}
+ * says where that is.
  *
  * The file is read, not imported through `src/lib/market-events` — this module
  * owns `OvMarketEvent`, validates the rows against its own schema, and shares
  * no type with the existing calendar. See the header of `types.ts` for why
- * `MarketEvent` in particular could not be reused under its own name.
+ * `MarketEvent` in particular could not be reused under its own name. Both
+ * modules read the SAME file, so one edit feeds both surfaces.
  *
  * ===========================================================================
  * THE INSTANT IS THE VALUE; EVERY THAI STRING GOES THROUGH datetime.ts
@@ -37,7 +46,7 @@
  */
 
 import { z } from 'zod';
-import calendarFile from '@/src/data/market-events-2026.json';
+import calendarFile from '@/src/data/market-events.json';
 import {
   BANGKOK_TIME_ZONE,
   formatBangkokDateTime,
@@ -200,93 +209,101 @@ function utcMidnight(dayKey: string): number | null {
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
-/** How many months forward the window reaches. */
-export const OV_EVENT_WINDOW_MONTHS = 12;
-
-export interface OvEventWindow {
-  /** Events inside the window, soonest first. Empty is a legitimate answer. */
-  events: OvMarketEvent[];
-  /** Bangkok day the window opens on — today. */
-  fromDayKey: string;
-  /** Bangkok day the window closes on. */
-  toDayKey: string;
+export interface OvEventCalendar {
   /**
-   * Whether the shipped calendar actually reaches the end of the window.
+   * Every row in the file dated today or later, soonest first.
    *
-   * FALSE IS THE COMMON CASE and must be rendered, not swallowed. Past the last
-   * row the window is still perfectly drawable — a run of empty months — and a
-   * reader would take that to mean nothing is scheduled, which is the opposite
-   * of what is true. `lastDayKey` names the date the file actually reaches so
-   * the sentence a card prints is checkable.
+   * NOT cut to a horizon. The file decides how far this reaches, so a row added
+   * for 2027 or 2030 shows up with no code change — that is the whole point of
+   * this module and the reason the twelve-month window was removed.
+   *
+   * Empty is a legitimate answer and means the file has run out, which
+   * {@link lastDayKey} then explains.
+   */
+  events: OvMarketEvent[];
+  /** Bangkok day the list opens on — today. */
+  fromDayKey: string;
+  /**
+   * The last Bangkok day the FILE reaches, whether or not it is in the future.
+   *
+   * Read off the data, never a constant: it is the last row's own day. A file
+   * extended by one line moves this by itself.
+   *
+   * Null only when the file holds no readable row at all.
+   */
+  lastDayKey: string | null;
+  /**
+   * Whether the calendar still has anything to say.
+   *
+   * FALSE means the file has run out — every row it holds is in the past — and
+   * it must be rendered, not swallowed. An empty list is perfectly drawable and
+   * reads as "nothing is scheduled", which is the opposite of what is true.
+   *
+   * Derived from {@link lastDayKey} against today. There is no horizon in this
+   * comparison and no number to keep in step with the data.
    */
   coversThrough: boolean;
-  /** Bangkok day of the last row in the file. Null when the file is empty. */
-  lastDayKey: string | null;
 }
 
 /**
- * The next twelve months of the calendar.
+ * The calendar, from today forward.
  *
  * Filters on the Bangkok DAY KEY rather than on the instant, so an event
  * happening late tonight Bangkok time is inside "today" and not excluded by a
  * comparison against the current clock. `YYYY-MM-DD` sorts lexicographically
- * exactly as it sorts chronologically, which is what makes the comparison
- * below both correct and cheap.
+ * exactly as it sorts chronologically, which is what makes the comparison both
+ * correct and cheap.
+ *
+ * `events` is accepted so a test can hand in its own rows. Every caller in the
+ * product uses the default, which is the shipped file.
  */
-export function ovEventWindow({
+export function ovEventCalendar({
   now = new Date(),
-  months = OV_EVENT_WINDOW_MONTHS,
   events = OV_MARKET_EVENTS,
 }: {
   now?: string | Date;
-  months?: number;
   events?: readonly OvMarketEvent[];
-} = {}): OvEventWindow | null {
+} = {}): OvEventCalendar | null {
   const fromDayKey = ovBangkokDayKey(now);
   if (fromDayKey === null) return null;
-  const toDayKey = addMonths(fromDayKey, months);
 
-  const inWindow = events.filter((event) => {
+  const dated = events.flatMap((event) => {
     const dayKey = ovBangkokDayKey(event.startsAtUtc);
-    return dayKey !== null && dayKey >= fromDayKey && dayKey <= toDayKey;
+    return dayKey === null ? [] : [{ event, dayKey }];
   });
 
-  const lastDayKey = events.length === 0
-    ? null
-    : ovBangkokDayKey(events[events.length - 1]!.startsAtUtc);
+  /*
+    The last day the FILE reaches, taken by scanning rather than by trusting the
+    input to be sorted. `OV_MARKET_EVENTS` is sorted at load, but a test — or a
+    future caller assembling rows from two places — is under no such obligation,
+    and a `lastDayKey` that silently depended on input order would be wrong in
+    exactly the case somebody is debugging.
+  */
+  const lastDayKey = dated.reduce<string | null>(
+    (latest, item) => (latest === null || item.dayKey > latest ? item.dayKey : latest),
+    null,
+  );
 
   return {
-    events: [...inWindow].sort(compareOvEvents),
+    events: dated
+      .filter((item) => item.dayKey >= fromDayKey)
+      .map((item) => item.event)
+      .sort(compareOvEvents),
     fromDayKey,
-    toDayKey,
-    coversThrough: lastDayKey !== null && lastDayKey >= toDayKey,
     lastDayKey,
+    coversThrough: lastDayKey !== null && lastDayKey >= fromDayKey,
   };
 }
 
 /**
- * The same day-of-month `months` later, clamped to the end of a shorter month.
- *
- * 31 January plus one month is 28 February, not 3 March. `Date.UTC` would roll
- * the overflow forward, which for a window boundary means silently including
- * two or three extra days once a year.
+ * @deprecated Use {@link ovEventCalendar}. Kept because `app/page.tsx` names it
+ * and this change is not allowed to touch that file; the behaviour is the new
+ * one, so the only thing left of the "window" is the word.
  */
-function addMonths(dayKey: string, months: number): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey);
-  if (!match) return dayKey;
-  const year = Number(match[1]);
-  const month = Number(match[2]) - 1 + months;
-  const day = Number(match[3]);
-  const targetYear = year + Math.floor(month / 12);
-  const targetMonth = ((month % 12) + 12) % 12;
-  const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-  const clamped = Math.min(day, lastDay);
-  return `${targetYear}-${pad(targetMonth + 1)}-${pad(clamped)}`;
-}
+export const ovEventWindow = ovEventCalendar;
 
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
+/** @deprecated Use {@link OvEventCalendar}. */
+export type OvEventWindow = OvEventCalendar;
 
 /**
  * The Thai date a card prints for one event, from the shared formatter.
