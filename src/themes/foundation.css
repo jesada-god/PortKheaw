@@ -309,6 +309,56 @@ html {
     .data-strip--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
 
+  /*
+   * Six across, for a band that states one market in one row.
+   *
+   * It does NOT fall back to the two-column base on a handset. Six readings are
+   * one object with six facets, and stacking them into three rows of two turns
+   * a band into a block and loses the "one row, one market" reading the strip
+   * is for. Instead each cell keeps a floor width and the strip is scrolled
+   * sideways by its own wrapper — see `.data-strip-scroll` below.
+   *
+   * The floor is 7.5rem because the widest cell holds a five-figure index level
+   * and a signed percentage under a Thai label; below that the label wraps to
+   * three lines and the column stops being scannable.
+   */
+  .data-strip--6 {
+    grid-template-columns: repeat(6, minmax(7.5rem, 1fr));
+  }
+
+  /*
+   * A strip whose cell COUNT is data rather than layout.
+   *
+   * The overview's asset band holds however many instruments the catalogue
+   * lists, so a fixed column count would be a number in the stylesheet that has
+   * to be kept in step with an array. Auto-flow gives every cell the same floor
+   * width and lets the row grow; the scroller below handles the overflow.
+   *
+   * `grid-template-columns: none` is required, not tidiness: the base
+   * `.data-strip` sets two explicit columns, and auto-flow only takes over once
+   * those are cleared.
+   */
+  .data-strip--flow {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(7.5rem, 1fr);
+  }
+
+  /*
+   * The sideways scroller a wide strip lives in.
+   *
+   * On a handset the strip overflows and this scrolls it; from `sm` the strip
+   * fits and this is inert, so there is one element at every width rather than
+   * two layouts that can disagree. `overscroll-behavior-x: contain` stops a
+   * horizontal flick at the end of the strip from turning into a browser
+   * back-gesture, which is the failure that makes a scroller feel broken.
+   */
+  .data-strip-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* One column at every width, for a strip that has a single fact to state. */
   .data-strip--1 { grid-template-columns: minmax(0, 1fr); }
 
