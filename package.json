@@ -60,7 +60,8 @@
     "signal:iv-horizon": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-iv-horizon-probe.ts",
     "signal:sideways-pressure": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sideways-pressure-probe.ts",
     "signal:trend-agreement": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-agreement-probe.ts",
-    "signal:trend-diagnosis": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-diagnosis-probe.ts"
+    "signal:trend-diagnosis": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-diagnosis-probe.ts",
+    "inspect:daily-snapshot": "node --import=tsx --env-file-if-exists=.env.test scripts/inspect-daily-snapshot.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
