@@ -401,3 +401,88 @@ npm run probe:trial-retention      # ต้องสะอาด
 
 **branch ที่ checkout อยู่ใน repo หลัก จะ checkout ซ้ำใน worktree ไม่ได้** — ถ้าต้องรัน gate บน branch นั้น ใช้ `git checkout --detach <branch>` ใน worktree แล้ว push ด้วยชื่อ ref ตรง ๆ (`git push origin <branch>`) ซึ่งไม่ต้องยึด working copy
 
+
+---
+
+## 9. งานค้าง (Phase 2 verify · 30 ส.ค. 2026)
+
+รวมของที่ "รู้แล้วแต่ยังไม่ทำ" ไว้ที่เดียว พร้อมเหตุผลว่าทำไมยังไม่ทำ — ไม่ใช่เพราะลืม
+
+ทุกข้อยืนยันจากโค้ดจริงแล้ว ไม่ใช่จากความจำ
+
+### 9.1 ลำดับ migration `202608240001` / `202608240003` — พังถ้า replay จากศูนย์
+
+**ยืนยันแล้ว และหนักกว่าที่จดไว้เดิม**
+
+- `202608240003` เป็นคน **สร้าง** constraint `user_subscriptions_granting_status_period_check` แบบ `not valid`
+- `202608240001` เป็นคน **validate** constraint ตัวนั้น
+- แต่ `supabase db push` และ `scripts/apply-migrations.ts` รันตาม **ชื่อไฟล์** → `240001` มาก่อน `240003`
+
+ผลคือบน database ที่ replay ทั้งชุดจากศูนย์ `240001` จะสั่ง `validate constraint` กับ constraint ที่ยังไม่มี → **error 42704 `constraint does not exist`** แล้ว replay ทั้งชุดหยุด
+
+ไม่ใช่แค่ปัญหาที่ขึ้นกับข้อมูล — เป็นความพังแน่นอน 100% บน database เปล่า
+
+คอมเมนต์หัวไฟล์ `240001` เขียนว่า *"Renumbered from 202608230002 to 202608240001 so filename order matches deployment order"* — **ข้อความนี้ผิด** การ renumber แก้ความสัมพันธ์กับ `202608230003` ได้จริง แต่ dependency ตัวจริงคือ `202608240003` ซึ่งยังเรียงทีหลังอยู่เหมือนเดิม
+
+Production ไม่พัง เพราะตอน deploy ทำมือตามลำดับที่ header บอกไว้ (240003 → backfill → 240001) — **ตัว database ปกติ ประวัติที่ replay ได้ต่างหากที่พัง**
+
+**ทำไมยังไม่แก้:** ทางแก้ที่ตรงที่สุดคือ renumber `240001` ให้ไปอยู่หลัง `240003` (เช่น `202608240004`) แต่ migration ทั้งสามถูก apply บน production ไปแล้ว การเปลี่ยนชื่อไฟล์ที่ apply แล้วทำให้ ledger ของ `supabase_migrations.schema_migrations` ไม่ตรงกับไฟล์ ซึ่งต้องแก้แถวใน ledger ตามไปด้วย — เป็นงานที่ต้องทำพร้อม drill การ restore จริง ไม่ใช่แก้ชื่อไฟล์เฉย ๆ
+
+**ต้องแก้ก่อน** ทำ restore drill ครั้งถัดไป (`docs/operations/backup-and-restore.md`) เพราะ drill นั้นคือสถานการณ์ที่บั๊กนี้จะโผล่
+
+### 9.2 `daily_snapshot` cron ไม่เคยถูก schedule
+
+route มีอยู่และ deploy แล้ว แต่ไม่มีอะไรเรียกมันเลย — ไม่มี `vercel.json` (ถูกลบใน `dcbfa99` ตอนย้าย notification ไป Supabase pg_cron) และไม่มี migration ไหน `cron.schedule` endpoint นี้
+
+รายละเอียดเต็ม + SQL สำหรับตรวจบน production: [`docs/operations/daily-snapshot-verification.md`](docs/operations/daily-snapshot-verification.md)
+
+**ทำไมยังไม่ทำ:** ต้องเลือกกลไกก่อน (`vercel.json` กับ pg_cron job ตัวที่สอง) และต้องตัดสินเรื่อง DST ไปพร้อมกัน — 16:10 ET คือ 20:10 UTC ตอน EDT และ 21:10 UTC ตอน EST cron UTC ตัวเดียวจะเลื่อนไปหนึ่งชั่วโมงข้ามเส้น DST เป็นการตัดสินใจ ไม่ใช่การพิมพ์โค้ด
+
+`runDailySnapshotCapture` guard ยังทำงานถูก (ปฏิเสธตอนตลาดเปิด / ไม่มี session ที่จบแล้ว) — มีเทสต์แล้วใน `daily-snapshot-run.test.ts` ดังนั้นยิงเร็วไปหรือยิงวันหยุดไม่เสียหาย
+
+### 9.3 SPY / QQQ / DIA ถูกดึงสองรอบต่อ render เมื่อ `MARKET_STATUS_CARD` เปิด
+
+- การ์ดตลาดดึงผ่าน `loadOverviewPrice` → `priceCache` (key `overview-price:<symbol>`)
+- Market Status ดึงผ่าน `getYahooChartProvider().getQuote()` ตรง ๆ **ไม่มี cache**
+
+ทับกันสามตัว → เปลืองประมาณ **3 provider call ต่อการ render หน้า Home หนึ่งครั้ง**
+
+**ทำไมยังไม่รวม:** สอง pipeline นี้คนละเส้นทางกัน (`loadOverviewPrice` ผ่าน gateway + canonical snapshot, `getQuote` ไม่ผ่าน) ตัวเลขที่ได้อาจไม่เท่ากันเป๊ะ และ Market Status มี correctness contract ที่เขียนไว้ละเอียด (monotonicity, day-change basis, availability gate) การสลับ pipeline อาจเปลี่ยนตัวเลขที่การ์ดประกาศออกไปโดยไม่มีใครเห็น
+
+ต้องทำเป็นงานแยกที่มี verification ของตัวเอง ไม่ใช่แถมมากับงานอื่น · จะคุ้มก็ต่อเมื่อ `MARKET_STATUS_CARD` เปิดจริง ตอนนี้ปิดอยู่ ยังไม่เสีย call
+
+### 9.4 earnings เพดาน 8 symbol ต่อ render
+
+`UPCOMING_EARNINGS_SYMBOL_LIMIT = 8` · `upcomingEarningsSymbols()` เอา held ก่อนแล้วต่อด้วย watched, dedupe, แล้ว `.slice(0, 8)`
+
+คนที่ถือ + ติดตามรวมเกิน 8 ตัว ตัวที่ 9 ขึ้นไป **ไม่มีแถว earnings** — ไม่ใช่แสดงผิด แต่คือไม่แสดง
+
+**ทำไมยังไม่แก้:** เพดานนี้ตั้งใจ ปฏิทิน earnings เป็น provider call ต่อ symbol (หลัง cache 12 ชม.) คนที่ติดตาม 40 ตัวจะกลายเป็น 40 request ต่อการเปิดหน้าหนึ่งครั้ง
+
+ทางแก้ที่ถูกไม่ใช่ขยายเพดาน แต่คือ**บอกผู้อ่าน**ว่ารายการถูกตัด หรือหมุน symbol ที่ถามข้ามวัน ทั้งสองทางเป็นงานออกแบบ ไม่ใช่เปลี่ยนตัวเลข — และตอนนี้ยังไม่มีใครรายงานว่าเจอปัญหาจริง
+
+### 9.5 `label_history` ยังไม่เคยถูกเขียนบน production — **ไม่ใช่บั๊ก**
+
+ตรวจแล้ว: `recordLabel` มีคนเรียกที่เดียวคือ `loadMarketStatusWithHistory` ซึ่งรันเฉพาะตอน `MARKET_STATUS_CARD` เปิด
+
+flag ปิดอยู่ → ตารางว่างคือ**ผลลัพธ์ที่ถูกต้อง** ไม่ใช่ writer พัง
+
+ไม่ต้องทำอะไร นอกจากคาดหวังว่าแถวจะเริ่มมีตอนเปิด flag ขั้นที่ 6 ใน [`docs/phase2-rollout.md`](docs/phase2-rollout.md) — และใช้ "มีแถวโผล่" เป็นตัวยืนยันว่าขั้นนั้นสำเร็จ
+
+(dev ตรวจแล้วเช่นกัน: `daily_snapshot`, `label_history`, `market_signal_history` = 0 แถวทั้งสามตาราง ตารางมีครบ migration ลงแล้ว)
+
+### 9.6 ปฏิทิน macro หมดอายุ 31 ธ.ค. 2026
+
+`src/data/market-events-2026.json` มีถึง 2026-12-31 · ตั้งแต่ 1 ม.ค. 2027 การ์ดจะขึ้นข้อความว่าปฏิทินไม่ครอบคลุมช่วงนี้ ซึ่งถูกต้องแล้ว ไม่ใช่บั๊ก
+
+**ทำไมยังไม่ทำ:** ต้องคัดวันจากตารางประกาศจริงของ BLS / BEA / Federal Reserve ปี 2027 ซึ่งบางส่วนยังไม่ประกาศ · ห้ามเดาวัน (ดูเหตุผลใน `_knownGaps` ของไฟล์นั้น)
+
+**เดดไลน์จริง:** ต้องทำก่อนเปิด `MARKET_EVENTS_CARD` ค้างข้ามปี หรือก่อน ธ.ค. 2026 อย่างใดอย่างหนึ่งถึงก่อน
+
+### 9.7 `SIGNAL_HISTORY` — อย่าเพิ่งเปิดเพื่อแก้จำนวน detector
+
+ดู [`docs/signal-history-proposal.md`](docs/signal-history-proposal.md) ฉบับเต็ม
+
+สรุป: เปิดแล้ว**ไม่ได้**ทำให้ทุกคนได้ detector ครบ 6 ตัว — คนที่ไม่ได้ซื้อ Technical Outlook ไม่มีการรันเอนจิน จึงไม่มีแถว history ตลอดกาล และยังมีปัญหาประโยค "แนวโน้มเปลี่ยน" ที่เทียบกับค่าเก่าได้ถึง 29 วันโดยไม่บอกว่าเก่าแค่ไหน
+
+ต้อง land recency bound ใน `previousTrendLevelOf` ก่อน
