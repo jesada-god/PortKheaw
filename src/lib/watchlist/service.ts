@@ -73,6 +73,15 @@ export interface WatchlistViewInput {
   watchlist: WatchlistRecord;
   tier: SubscriptionTier;
   now?: Date;
+  /**
+   * How many "มีอะไรเปลี่ยน" items to keep. Defaults to `WHAT_CHANGED_LIMIT`.
+   *
+   * Passed through untouched to `loadWhatChanged`, whose own note explains why
+   * the cap is a per-surface number rather than a second constant. It changes
+   * nothing about what is DETECTED — only how many of the detected items
+   * survive the total order.
+   */
+  whatChangedLimit?: number;
 }
 
 export interface WatchlistView {
@@ -204,7 +213,13 @@ export async function loadWatchlistView(input: WatchlistViewInput): Promise<Watc
     a cache hit rather than a second fan-out.
   */
   const whatChanged = whatChangedCardEnabled()
-    ? await loadWhatChanged({ rows, signals: signalBySymbol, session, now })
+    ? await loadWhatChanged({
+      rows,
+      signals: signalBySymbol,
+      session,
+      now,
+      limit: input.whatChangedLimit,
+    })
     : null;
 
   return { rows, session, renderedAt: now.toISOString(), whatChanged };
