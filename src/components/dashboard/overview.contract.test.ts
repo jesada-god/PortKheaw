@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  OVERVIEW_ORDER_V1,
+  OVERVIEW_ORDER_V2,
+} from '@/src/lib/overview/section-order';
 
 const read = (relative: string) => readFileSync(
   new URL(`../../../${relative}`, import.meta.url),
@@ -80,17 +84,29 @@ describe('Overview dashboard contracts', () => {
   it('renders Home sections from the ordered list, with the market block leading', () => {
     const dashboard = read('src/components/dashboard/DashboardClient.tsx');
     const body = dashboard.slice(dashboard.indexOf('<main className="mx-auto w-full max-w-[1440px]'));
-    const market = body.indexOf('id="market-overview"');
     const run = body.indexOf('{sections.map((key) => (');
-    expect(market).toBeGreaterThan(-1);
-    expect(run).toBeGreaterThan(market);
+    expect(run).toBeGreaterThan(-1);
     expect(dashboard).toContain('orderedOverviewSections({');
+    /*
+      "The market block leads" used to be a claim about where a fixed
+      `<section>` sat in this file, because that block was rendered above the
+      run and outside it — which also made it the one section the ordering flag
+      could not move. It is a key now, so the claim moved to the data: both
+      orders open with it, `section-order.test.ts` holds that across every
+      subset, and what is left here is the structural half — it reaches the page
+      through the map like everything else.
+    */
+    expect(OVERVIEW_ORDER_V1[0]).toBe('marketToday');
+    expect(OVERVIEW_ORDER_V2[0]).toBe('marketToday');
     // Every managed section reaches the page through the map, not beside it.
     for (const marker of [
+      'id="market-overview"',
       '<PortfolioSummaryLine',
       '<WatchlistSection',
       '<ChangesSection',
+      '<ChangesList',
       '<UpcomingSection',
+      '<EventsList',
       '<NewsSection',
       '<MarketStatusCard',
       '<MarketEventsCard',

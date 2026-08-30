@@ -32,8 +32,26 @@ import {
   marketEventsCardEnabled,
   marketStatusCardEnabled,
   newsFilterEnabled,
+  phase2EventsEnabled,
+  phase2MarketSnapshotEnabled,
+  phase2WhatChangedEnabled,
   watchlistV2Enabled,
 } from '@/src/config/features';
+import {
+  loadOvMarketSnapshot,
+  ovMarketSnapshotView,
+  warmOvMarketSnapshot,
+} from '@/src/lib/market-overview/indices';
+import { ovChanges } from '@/src/lib/market-overview/what-changed';
+import { ovEventWindow } from '@/src/lib/market-overview/events';
+import { buildOverviewEvents } from '@/src/lib/overview/events-feed';
+import {
+  loadOverviewWatchlistView,
+  warmOverviewWatchlistView,
+} from '@/src/lib/overview/watchlist-view-cache';
+import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
+import type { WatchlistRecord } from '@/src/lib/watchlist/types';
+import type { WatchlistView } from '@/src/lib/watchlist/service';
 import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
@@ -80,6 +98,14 @@ export default async function Home() {
     selectedId: string;
     hasMore: boolean;
   } | null = null;
+  /*
+   * The list the page is actually about, kept whole.
+   *
+   * `watchlistSymbols` above is the five-symbol preview and is what the quote
+   * loaders take. The trend column and the change detectors need the RECORD —
+   * its id, so the view can be cached per list, and its items with their pins.
+   */
+  let selectedWatchlist: WatchlistRecord | null = null;
   let onboarding: OnboardingView = { kind: 'none' };
 
   if (client && user) {
@@ -106,6 +132,7 @@ export default async function Home() {
     watchlistSymbols = watchlistResult.status === 'fulfilled'
       ? watchlistResult.value.items.map((item) => item.symbol)
       : [];
+    selectedWatchlist = watchlistResult.status === 'fulfilled' ? watchlistResult.value : null;
 
     /*
      * The preview, when the flag is on.
@@ -319,6 +346,99 @@ export default async function Home() {
     limit: UPCOMING_CARD_LIMIT,
   });
 
+  /*
+   * ===========================================================================
+   * THE PHASE 2 LOADS
+   * ===========================================================================
+   * Every one is behind a flag that is OFF, and every flag is read BEFORE the
+   * promise is built rather than around a promise that was already constructed.
+   * `await x ? a() : b()` and `x ? await a() : b()` look alike and only the
+   * second one declines to pay.
+   */
+
+  /*
+   * The capped watchlist view — the trend column AND the change detectors, from
+   * ONE call. Asking twice would run the signal engine twice for one page.
+   *
+   * `loadOverviewWatchlistView` caps the list at twenty symbols, caches the
+   * result per reader per trading date, and gives up after its own deadline; a
+   * null answer costs the trend column and the change list, never the page.
+   *
+   * `whatChangedLimit: 8` is this surface's cap. The watchlist card shows five
+   * because it sits directly above the rows it describes; the overview section
+   * is one of six blocks and has room for eight.
+   */
+  const needsWatchlistView = Boolean(client && user && selectedWatchlist)
+    && (watchlistV2Enabled() || phase2WhatChangedEnabled());
+  const watchlistView: WatchlistView | null = needsWatchlistView
+    ? await loadOverviewWatchlistView({
+      client: client!,
+      userId: user!.id,
+      watchlist: selectedWatchlist!,
+      tier: (await resolvePageEntitlement()).effectiveAccessTier,
+      now: overviewNow,
+      whatChangedLimit: 8,
+    }).catch(() => null)
+    : null;
+
+  /*
+   * The six-instrument snapshot.
+   *
+   * Bounded like the FX read above it: the last good snapshot is returned
+   * immediately when there is one, and a cold start waits no longer than two
+   * seconds before the section falls back to the nine asset cards — which is
+   * the block that shipped, so the fallback is never an empty section.
+   */
+  const marketToday = phase2MarketSnapshotEnabled()
+    ? await settleWithin(
+      loadOvMarketSnapshot(overviewNow).catch(() => null),
+      2_000,
+      ovMarketSnapshotView(overviewNow),
+    )
+    : null;
+
+  /*
+   * The rename, not a second detection. `ovChanges` maps the detector ids the
+   * watchlist already produced onto the six kinds and dedupes the two that
+   * describe one move. Null when the reader does not have the section, which is
+   * a different fact from an empty list — see `OverviewDashboardData.changes`.
+   */
+  const changes = phase2WhatChangedEnabled() && watchlistView?.whatChanged
+    ? ovChanges(watchlistView.whatChanged.items)
+    : null;
+
+  /*
+   * Macro releases and everything the Upcoming card carried, in one list.
+   *
+   * Costs nothing: the calendar is a static import and `upcoming` was built
+   * above from state this render already held.
+   */
+  const events = phase2EventsEnabled()
+    ? buildOverviewEvents({
+      window: ovEventWindow({ now: overviewNow }),
+      upcoming,
+      portfolioSymbols,
+      watchlistSymbols,
+      now: overviewNow,
+    })
+    : null;
+
+  after(async () => {
+    await Promise.allSettled([
+      phase2MarketSnapshotEnabled() ? warmOvMarketSnapshot(overviewNow) : null,
+      needsWatchlistView
+        ? warmOverviewWatchlistView({
+          client: client!,
+          userId: user!.id,
+          watchlist: selectedWatchlist!,
+          tier: (await resolvePageEntitlement()).effectiveAccessTier,
+          now: overviewNow,
+          whatChangedLimit: 8,
+        })
+        : null,
+    ]);
+  });
+
   const serviceStatus = buildServiceStatus({
     checkedAt: generatedAt,
     indices,
@@ -420,6 +540,23 @@ export default async function Home() {
           ? buildMarketEventsCardView({ now: generatedAt })
           : null,
         overviewV2: overviewV2Enabled(),
+        marketToday,
+        changes,
+        /*
+          The richer rows, only while `WATCHLIST_V2` is on. With it off the
+          section keeps drawing `watchlist` above, which is the quote-only
+          rendering that shipped.
+        */
+        watchlistRows: watchlistV2Enabled() ? watchlistView?.rows ?? null : null,
+        events,
+        /*
+          `alertCountBySymbol` is deliberately NOT set. `overview_alert_rules`
+          has not been applied in any deployment, so the count is unreadable
+          rather than zero — and the row draws no alert element at all for an
+          unreadable count. Passing an empty object here would claim every
+          symbol has none.
+        */
+        newsDefaultScope: newsFilterEnabled() ? 'portfolio' : undefined,
         limitations,
       }}
     />

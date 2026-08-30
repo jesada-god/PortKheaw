@@ -8,10 +8,19 @@ import {
 } from './section-order';
 
 const KEYS: readonly OverviewSectionKey[] = [
-  'marketStatus', 'portfolio', 'watchlist', 'whatChanged', 'marketEvents', 'upcoming', 'news',
+  'marketToday', 'marketStatus', 'portfolio', 'watchlist', 'whatChanged',
+  'marketEvents', 'events', 'upcoming', 'news',
 ];
 
-/** All 2^7 on/off combinations of the seven sections. */
+/**
+ * All 2^9 on/off combinations of the nine keys.
+ *
+ * Nine keys, and NEITHER ORDER LISTS ALL OF THEM. `marketStatus`, `upcoming`
+ * and `marketEvents` are V1's; `events` is V2's. A key that is present but not
+ * in the order being used must produce nothing at all, which is a property this
+ * sweep now checks for free — it was not checkable while every order held every
+ * key.
+ */
 function everySubset(): OverviewSectionPresence[] {
   const subsets: OverviewSectionPresence[] = [];
   for (let mask = 0; mask < (1 << KEYS.length); mask += 1) {
@@ -37,20 +46,26 @@ function isSubsequenceOf(
 }
 
 describe('the overview reading order', () => {
-  it('covers every on/off combination of the seven sections', () => {
-    expect(SUBSETS).toHaveLength(128);
+  it('covers every on/off combination of the nine keys', () => {
+    expect(SUBSETS).toHaveLength(512);
   });
 
-  it('lists each section exactly once in both orders', () => {
+  it('lists no section twice, and names only keys that exist', () => {
     for (const order of [OVERVIEW_ORDER_V1, OVERVIEW_ORDER_V2]) {
-      expect([...order].sort()).toEqual([...KEYS].sort());
       expect(new Set(order).size).toBe(order.length);
+      for (const key of order) expect(KEYS).toContain(key);
     }
+  });
+
+  it('gives every key a home in at least one order', () => {
+    // A key in neither order is dead: nothing can ever render it.
+    const placed = new Set([...OVERVIEW_ORDER_V1, ...OVERVIEW_ORDER_V2]);
+    expect([...placed].sort()).toEqual([...KEYS].sort());
   });
 
   it('puts the requested sections in the requested order under V2', () => {
     const requested: OverviewSectionKey[] = [
-      'marketStatus', 'whatChanged', 'watchlist', 'marketEvents', 'news',
+      'marketToday', 'portfolio', 'whatChanged', 'watchlist', 'events', 'news',
     ];
     const positions = requested.map((key) => OVERVIEW_ORDER_V2.indexOf(key));
     expect(positions.every((index) => index > -1)).toBe(true);
@@ -58,16 +73,34 @@ describe('the overview reading order', () => {
   });
 
   /*
-   * The market block leads and the portfolio line is second, in BOTH orders.
-   * Everything below the market is read against it, and a reader is here for
-   * their own money before anybody else's — neither argument is weakened by the
-   * reordering, so neither position moves.
+   * The two sections that never move.
+   *
+   * ตลาดวันนี้ leads in BOTH orders — everything below it is read against it,
+   * and it leads in V1 because it replaced a fixed section that was rendered
+   * above the ordered run. The portfolio line is the first thing after the
+   * market readings, because a reader is here for their own money before
+   * anybody else's. In V1 that is behind `marketStatus`, which is a second
+   * market reading rather than somebody else's money; in V2 there is no second
+   * reading, so it is immediately after.
    */
-  it('keeps the portfolio line second in both orders', () => {
+  it('leads with the market and puts the portfolio right after it', () => {
     for (const order of [OVERVIEW_ORDER_V1, OVERVIEW_ORDER_V2]) {
-      expect(order[0]).toBe('marketStatus');
-      expect(order[1]).toBe('portfolio');
+      expect(order[0]).toBe('marketToday');
+      const marketKeys = order.filter((key) => key === 'marketToday' || key === 'marketStatus');
+      expect(order.indexOf('portfolio')).toBe(marketKeys.length);
+      for (const below of ['watchlist', 'whatChanged', 'news'] as const) {
+        expect(order.indexOf('portfolio')).toBeLessThan(order.indexOf(below));
+      }
     }
+  });
+
+  it('never shows two readings of the same market on one page', () => {
+    // `marketToday` publishes the same six instruments and the same regime the
+    // Market Status card does, so V2 carries one of them and not both.
+    expect(OVERVIEW_ORDER_V2).not.toContain('marketStatus');
+    // And V2's merged list replaces the two blocks it carries the rows of.
+    expect(OVERVIEW_ORDER_V2).not.toContain('upcoming');
+    expect(OVERVIEW_ORDER_V2).not.toContain('marketEvents');
   });
 
   it('puts the summary above the rows it is derived from, under V2 only', () => {
@@ -109,7 +142,7 @@ describe('the overview reading order', () => {
     it(`leaves no gap for an absent section in ${name}`, () => {
       for (const present of SUBSETS) {
         const ordered = orderedOverviewSections(present, useV2);
-        const expected = KEYS.filter((key) => present[key]);
+        const expected = full.filter((key) => present[key]);
         expect(ordered).toHaveLength(expected.length);
         expect([...ordered].sort()).toEqual([...expected].sort());
         expect(ordered.every(Boolean)).toBe(true);
