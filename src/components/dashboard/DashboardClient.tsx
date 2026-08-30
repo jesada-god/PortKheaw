@@ -645,6 +645,35 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
  * and carries none, and a reader who meets it three mornings running stops
  * looking at the block on the fourth.
  */
+/**
+ * The news block, with or without its scope filter.
+ *
+ * `NEWS_FILTER` reaches this component as DATA rather than as a flag read: the
+ * server puts the reader's symbols in `newsContext` when the flag is on and
+ * leaves them empty when it is off, so this decides what to render from what it
+ * was given. A client component reading `process.env` would be reading the
+ * BUILD's value, which is not the same question.
+ *
+ * With no symbols it is the market-wide feed that shipped, unchanged.
+ */
+function NewsSection({ context }: { context: OverviewDashboardData['newsContext'] }) {
+  const filtered = context.portfolioSymbols.length > 0 || context.watchlistSymbols.length > 0;
+  return (
+    <section className="panel-quiet min-w-0" data-testid="overview-news">
+      <SectionTitle title="ข่าวสำคัญต่อตลาดหุ้น" />
+      {filtered
+        ? (
+          <NewsFeed
+            withScopeFilter
+            portfolioSymbols={context.portfolioSymbols}
+            watchlistSymbols={context.watchlistSymbols}
+          />
+        )
+        : <NewsFeed marketWide />}
+    </section>
+  );
+}
+
 function ChangesSection({ changes }: { changes: readonly OverviewChange[] }) {
   if (changes.length === 0) return null;
   return (
@@ -1434,10 +1463,7 @@ export function DashboardClient({
 
         {view.upcoming && <UpcomingSection feed={view.upcoming} />}
 
-        <section className="panel-quiet min-w-0">
-          <SectionTitle title="ข่าวสำคัญต่อตลาดหุ้น" />
-          <NewsFeed marketWide />
-        </section>
+        <NewsSection context={view.newsContext} />
 
         <details className="panel group min-w-0">
           <summary className="grid min-h-14 cursor-pointer list-none gap-1 px-4 py-3 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">

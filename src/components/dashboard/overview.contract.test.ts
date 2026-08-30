@@ -71,7 +71,7 @@ describe('Overview dashboard contracts', () => {
       '<WatchlistSection',
       '<ChangesSection',
       '<UpcomingSection',
-      'title="ข่าวสำคัญต่อตลาดหุ้น"',
+      '<NewsSection',
     ].map((marker) => body.indexOf(marker));
     expect(order.every((index) => index > -1)).toBe(true);
     expect([...order].sort((left, right) => left - right)).toEqual(order);

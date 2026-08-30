@@ -28,7 +28,12 @@ import { marketSession } from '@/src/lib/market-data/market-session';
 import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
 import type { DaySnapshotInput } from '@/src/lib/portfolio/day-change';
 import { DashboardClient } from '@/src/components/dashboard/DashboardClient';
-import { marketStatusCardEnabled, watchlistV2Enabled } from '@/src/config/features';
+import {
+  marketEventsCardEnabled,
+  marketStatusCardEnabled,
+  newsFilterEnabled,
+  watchlistV2Enabled,
+} from '@/src/config/features';
 import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
@@ -377,7 +382,24 @@ export default async function Home() {
           completedCount: industryResult.completedCount,
           deadlineReached: industryResult.deadlineReached,
         },
-        newsContext: { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
+        /*
+         * THE READER'S OWN SYMBOLS, AND ONLY WHEN THE FILTER IS ON.
+         *
+         * With `NEWS_FILTER` off these stay empty and the overview renders the
+         * market-wide feed exactly as it shipped — one request, no tabs. With
+         * it on the same component asks for the PERSONALIZED feed instead,
+         * which is a different request to the same endpoint rather than an
+         * additional one, and is what makes the tagger attach these symbols to
+         * an article. Filtering a market-wide payload would leave พอร์ต and
+         * Watchlist permanently empty, because market-wide stories carry no
+         * symbols by design.
+         *
+         * Both lists were computed above for the quote loads. Passing them
+         * here costs nothing new.
+         */
+        newsContext: newsFilterEnabled()
+          ? { portfolioSymbols, watchlistSymbols, industryNames: [] }
+          : { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
         upcoming,
         marketStatus,
         limitations,
