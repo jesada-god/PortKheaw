@@ -1,6 +1,7 @@
 import Header from '@/src/components/layout/Header';
 import { WatchlistClient } from '@/src/components/watchlist/WatchlistClient';
 import { WatchlistV2Client } from '@/src/components/watchlist/WatchlistV2Client';
+import { WhatChangedCard } from '@/src/components/watchlist/WhatChangedCard';
 import { createClient } from '@/src/lib/supabase/server';
 import { WatchlistRepository } from '@/src/lib/watchlist/repository';
 import type { WatchlistQuote } from '@/src/lib/watchlist/types';
@@ -9,6 +10,7 @@ import { loadOverviewPrice, mapWithConcurrency } from '@/src/lib/overview/servic
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
 import { recordBetaFunnelEvent } from '@/src/lib/beta/beta-server';
 import { watchlistV2Enabled } from '@/src/config/features';
+import { WHAT_CHANGED_LIMIT } from '@/src/lib/watchlist/what-changed';
 import { resolvePageEntitlement } from '@/src/lib/subscription/page-entitlement';
 import { loadWatchlistView } from '@/src/lib/watchlist/service';
 
@@ -48,7 +50,21 @@ export default async function WatchlistPage({
     return (
       <div className="min-w-0">
         <Header title="รายการติดตาม" subtitle="ติดตามหุ้นที่คุณสนใจ พร้อมราคาและแนวโน้มล่าสุด" />
-        <div className="mx-auto w-full max-w-5xl p-4 md:p-8">
+        <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-8">
+          {/*
+            Above the rows, and absent entirely when there is nothing to say.
+            `view.whatChanged` is null when the flag is off and carries an empty
+            list on a quiet day; the card renders nothing for either, so this
+            page has no "nothing changed" state to lay out.
+          */}
+          {view.whatChanged && (
+            <WhatChangedCard
+              items={view.whatChanged.items}
+              session={view.whatChanged.session}
+              sessionDate={view.whatChanged.sessionDate}
+              limit={WHAT_CHANGED_LIMIT}
+            />
+          )}
           <WatchlistV2Client
             watchlist={{ id: watchlist.id, name: watchlist.name }}
             lists={lists}

@@ -52,6 +52,24 @@ export function watchlistV2Enabled() {
   return featureFlagEnabled(process.env.WATCHLIST_V2);
 }
 
+/**
+ * The "มีอะไรเปลี่ยน" section on the watchlist.
+ *
+ * DEFAULT OFF, for the third time and for the same reason `marketStatusCardEnabled`
+ * and `watchlistV2Enabled` give: an unset variable is OFF, so the detectors can
+ * be merged and deployed while a reader sees the watchlist exactly as it was.
+ * Releasing stays a separate, human act from shipping, and the flag is the
+ * rollback.
+ *
+ * It gates the COST as well as the pixels. The section reads daily bars for
+ * every symbol that has a signal, and that load lives behind this check in
+ * `loadWatchlistView` — so a reader with the card off does not pay for history
+ * nothing is going to render.
+ */
+export function whatChangedCardEnabled() {
+  return featureFlagEnabled(process.env.WHAT_CHANGED_CARD);
+}
+
 export function keyStatisticsEnabled() { return featureFlagEnabled(process.env.FEATURE_KEY_STATISTICS); }
 export function optionsStatisticsEnabled() { return featureFlagEnabled(process.env.FEATURE_OPTIONS_STATISTICS); }
 export function analystConsensusEnabled() {
