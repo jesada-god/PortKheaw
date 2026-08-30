@@ -430,15 +430,28 @@ Production ไม่พัง เพราะตอน deploy ทำมือต
 
 **ต้องแก้ก่อน** ทำ restore drill ครั้งถัดไป (`docs/operations/backup-and-restore.md`) เพราะ drill นั้นคือสถานการณ์ที่บั๊กนี้จะโผล่
 
-### 9.2 `daily_snapshot` cron ไม่เคยถูก schedule
+### 9.2 ~~`daily_snapshot` cron ไม่เคยถูก schedule~~ — ✅ ปิดแล้ว 30 ส.ค. 2026
 
-route มีอยู่และ deploy แล้ว แต่ไม่มีอะไรเรียกมันเลย — ไม่มี `vercel.json` (ถูกลบใน `dcbfa99` ตอนย้าย notification ไป Supabase pg_cron) และไม่มี migration ไหน `cron.schedule` endpoint นี้
+`vercel.json` สร้างใหม่แล้ว ยิง `/api/cron/daily-snapshot` ที่ `10 21 * * 1-5`
 
-รายละเอียดเต็ม + SQL สำหรับตรวจบน production: [`docs/operations/daily-snapshot-verification.md`](docs/operations/daily-snapshot-verification.md)
+**เลือก 21:10 UTC ไม่ใช่ 20:10** เพราะ Vercel cron เป็น UTC ล้วน ตั้ง timezone ไม่ได้ ต้องเลือกเวลาเดียวที่พ้นระฆังปิดทั้งสองฤดู:
 
-**ทำไมยังไม่ทำ:** ต้องเลือกกลไกก่อน (`vercel.json` กับ pg_cron job ตัวที่สอง) และต้องตัดสินเรื่อง DST ไปพร้อมกัน — 16:10 ET คือ 20:10 UTC ตอน EDT และ 21:10 UTC ตอน EST cron UTC ตัวเดียวจะเลื่อนไปหนึ่งชั่วโมงข้ามเส้น DST เป็นการตัดสินใจ ไม่ใช่การพิมพ์โค้ด
+| UTC | EDT (ฤดูร้อน) | EST (ฤดูหนาว) | ผล |
+|---|---|---|---|
+| `20:10` | 16:10 ET พ้นปิดแล้ว | **15:10 ET ตลาดยังเปิด** | guard ปฏิเสธ **ทั้งหน้าหนาว** ตารางว่างเหมือนเดิม |
+| `21:10` | 17:10 ET after-hours | 16:10 ET พ้นปิดแล้ว | เขียนได้ทั้งสองฤดู |
 
-`runDailySnapshotCapture` guard ยังทำงานถูก (ปฏิเสธตอนตลาดเปิด / ไม่มี session ที่จบแล้ว) — มีเทสต์แล้วใน `daily-snapshot-run.test.ts` ดังนั้นยิงเร็วไปหรือยิงวันหยุดไม่เสียหาย
+การเลื่อน 1 ชม. ตอน DST **ยอมรับแล้ว ไม่ใช่ลืม** — หน้าร้อนรันช้ากว่าตั้งใจ 1 ชม. แต่ยังอยู่ใน after-hours และยังเป็น trading date เดิม แถวที่เขียนเหมือนกันทุกประการ
+
+เป็น Mon–Fri เพราะเรื่องค่าใช้จ่าย ไม่ใช่ความปลอดภัย — เสาร์อาทิตย์ session เป็น `CLOSED` (ไม่ใช่ `OPEN`) guard จึงปล่อยผ่าน แล้ว `lastCompletedSessionDate` ตอบวันศุกร์ → จะไปเขียนทับข้อมูลศุกร์ซ้ำโดยไม่ได้ข้อมูลใหม่
+
+auth ใช้ `CRON_SECRET` **ตัวเดิมที่ `/api/cron/alerts` ใช้อยู่** ไม่มี env var ใหม่ · ถ้า alerts ทำงานอยู่แล้วบน production แปลว่าตั้งไว้แล้ว ไม่ต้องเพิ่มอะไร
+
+route มี structured log ทุกรอบแล้ว (`daily_snapshot_written` / `_refused` / `_rejected` / `_failed`) — เดิมแยกไม่ออกว่า "ปฏิเสธ" กับ "ไม่เคยยิง" ต่างกันยังไงเพราะตารางว่างเหมือนกัน
+
+รายละเอียด + SQL ตรวจ production: [`docs/operations/daily-snapshot-verification.md`](docs/operations/daily-snapshot-verification.md)
+
+**ยังเหลือ:** ยังไม่ได้ verify บน production จริง — ต้องรอรอบแรกของวันธรรมดาหลัง deploy แล้วเช็ค log กับ query ที่ 2 ในเอกสารนั้น
 
 ### 9.3 SPY / QQQ / DIA ถูกดึงสองรอบต่อ render เมื่อ `MARKET_STATUS_CARD` เปิด
 

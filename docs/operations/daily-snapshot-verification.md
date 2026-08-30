@@ -1,10 +1,13 @@
 # Verifying the daily snapshot capture
 
-> **Finding, 30 August 2026: the capture has never been scheduled.**
-> The route exists and is deployed. Nothing calls it. See
-> [The scheduler gap](#the-scheduler-gap) below — the queries in this document
-> will return zero rows on production until that is fixed, and that result is
-> *expected*, not a second bug.
+> **Status: scheduled since 30 August 2026.** `vercel.json` fires
+> `/api/cron/daily-snapshot` at `10 21 * * 1-5`. Before that the route was
+> deployed and nothing called it, so `daily_snapshot` was empty from the day the
+> table was created — see [History](#history).
+>
+> **Nothing has been verified in production yet.** The first row should appear
+> after the first weekday run following deploy. Use
+> [Checking production](#checking-production) then.
 
 ## What the capture is
 
@@ -14,37 +17,95 @@ regular-session close, captured after the bell and never revised by a live tick.
 Every page that shows a "today" figure outside market hours reads it.
 
 Without it, those pages fall back to the live-only path they had before the
-table existed. **That is the whole difficulty of verifying this**: nothing
-breaks visibly. The product looks correct, the table stays valid and empty, and
-the history it is supposed to be accumulating simply does not exist.
+table existed. **That is what made this so hard to notice**: nothing breaks
+visibly. The product looks correct, the table stays valid and empty, and the
+history it should be accumulating simply does not exist.
 
-## The scheduler gap
+## The schedule, and why 21:10 UTC
 
-There is no scheduler entry for this route anywhere in the repository.
+Vercel cron expressions are evaluated in **UTC** and there is no time zone to
+set. So a schedule written as a New York wall clock has to be chosen for both
+halves of the year, and the obvious reading of the route's intended "16:10 ET"
+is wrong for four months:
 
-- **No `vercel.json`.** It existed once, carrying a `crons` entry for
-  `/api/cron/alerts` every 15 minutes, and was deleted in `dcbfa99`
-  ("fix: schedule notifications from Supabase", 2 Aug 2026) when notifications
-  moved to Supabase `pg_cron`. Nothing has re-created it.
-- **No `cron.schedule` for this route in any migration.** The only scheduled job
-  is `portkheaw-background-notifications`, created by
-  `202608020003_supabase_notification_cron.sql`, and
-  `configure_notification_cron_service` *hard-rejects* any url other than
-  `https://portkheaw.app/api/cron/alerts` — so it cannot be reused for this
-  endpoint without a new migration.
-- **`202608290001_daily_snapshot.sql` states it schedules nothing**, and it is
-  right to: the table migration is not the place to start an unattended job.
+| UTC | in EDT (summer) | in EST (winter) | Result |
+|---|---|---|---|
+| `20:10` | 16:10 ET — after close | **15:10 ET — market OPEN** | Guard refuses **all winter**; table stays empty |
+| `21:10` | 17:10 ET — after-hours | 16:10 ET — after close | Captures in both |
 
-So the intended 16:10 ET slot is documented in the route's own header and
-implemented nowhere. Fixing it is a decision between two mechanisms (a
-re-created `vercel.json`, or a second `pg_cron` job following the notification
-pattern), which is why this document reports the gap rather than picking one.
+`21:10 UTC` is the earliest single time past the closing bell under both
+offsets. **The hour of drift across the DST boundary is accepted, not
+overlooked**: in summer the job runs at 17:10 ET instead of 16:10, still inside
+the after-hours window and still the same trading date, so the row it writes is
+identical. Both cases are asserted against the real session functions in
+[`daily-snapshot-capture.test.ts`](../../src/lib/market-data/daily-snapshot-capture.test.ts),
+including the one that shows `20:10` would refuse.
 
-**The writer guard is intact and was verified**: `runDailySnapshotCapture`
-refuses while the market is `OPEN`, refuses again when there is no completed
-session date, and returns 200 with a reason either way — so a scheduler that
-fires early or on a holiday is harmless. That half is ready; only the trigger is
-missing.
+**Monday–Friday, not daily**, and that is about cost rather than safety. On a
+Saturday the session is `CLOSED` (not `OPEN`), so the guard lets the run through
+and `lastCompletedSessionDate` answers *Friday* — a weekend run would re-capture
+Friday's closes for no new data. The upsert makes it harmless and the provider
+calls make it wasteful. A market holiday still costs one redundant re-capture
+(Christmas re-captures 24 December), which is a handful of days a year and not
+worth a holiday calendar to avoid.
+
+### Why this is a Vercel cron and not a `pg_cron` job
+
+The three existing scheduled jobs live in Supabase:
+
+| Job | Runs |
+|---|---|
+| `portkheaw-background-notifications` | HTTP GET → `/api/cron/alerts`, every 15 min |
+| `portkheaw-trial-retention` | in-database SQL function |
+| `portkheaw-portfolio-purge` | in-database SQL function |
+
+So this splits scheduling across two mechanisms, which is a real cost. It was
+chosen anyway because adding a second HTTP job to `pg_cron` needs a new
+migration —`configure_notification_cron_service` hard-rejects any URL other than
+the alerts endpoint — plus a vault secret and a manual configure call, to
+schedule something Vercel schedules with four lines of JSON.
+
+**`/api/cron/alerts` must not be added to `vercel.json`.** It already runs from
+`pg_cron`, and a Vercel cron beside it would double-fire the notification pass,
+with each scheduler invisible from the other's dashboard. A test asserts
+`vercel.json` schedules the capture and nothing else.
+
+## Authorization
+
+`CRON_SECRET`, the **same variable `/api/cron/alerts` already uses** — no new
+environment variable is introduced. Vercel sends
+`Authorization: Bearer $CRON_SECRET` on scheduled invocations whenever that
+variable is set on the project, so the platform's mechanism and the route's
+check are the same secret.
+
+**If alerts currently work in production, `CRON_SECRET` is already set and
+nothing needs adding.** If it is unset, every caller is rejected including
+Vercel — deliberately, because an endpoint that writes market data must not be
+open because a variable was forgotten.
+
+## Reading the logs
+
+Every run emits one structured line, which is what distinguishes a refusal from
+a run that never fired — the two used to leave identical empty tables.
+
+| Line | Level | Meaning |
+|---|---|---|
+| `daily_snapshot_written` | info | Ran and wrote. Carries `date`, `written`, `skipped`, `symbols`, `contracts`, `unpriced` |
+| `daily_snapshot_refused` | info | Nothing to capture. Carries `refused` (`market-open` / `not-a-trading-day` / `no-completed-session`) and `date` |
+| `daily_snapshot_rejected` | warn | Bad or missing secret |
+| `daily_snapshot_failed` | warn | `not_configured` (no Supabase admin client) or `capture_threw` |
+
+Counts only — no symbol, account, price or error message reaches a log line.
+
+A healthy weekday looks like:
+
+```json
+{"event":"daily_snapshot_written","date":"2026-12-09","written":12,"skipped":0,"symbols":10,"contracts":2,"unpriced":0}
+```
+
+`written: 0` with `refused: null` is a **different** state from a refusal: the
+job ran and found no held symbols. Expect exactly that until somebody holds
+something.
 
 ## Checking dev
 
@@ -56,15 +117,14 @@ Read-only, and it resolves its target through
 [`src/lib/dev/db-target.ts`](../../src/lib/dev/db-target.ts), which reads
 `.env.test` and throws on a production project ref. There is no override flag.
 
-Result on dev, 30 August 2026: **0 rows** — the table exists (so the migration is
-applied) and nothing has ever written to it. Expected, since dev has no
-scheduler either and no reader generating held symbols.
+Dev has **no scheduler and no readers**, so 0 rows there is expected
+indefinitely. `vercel.json` schedules production deployments only.
 
 ## Checking production
 
 The script deliberately offers no production path. Run these on the Supabase
-dashboard SQL editor instead, where they execute under a human's eyes and leave
-an audit trail a laptop run does not. **All four are read-only.**
+dashboard SQL editor, where they execute under a human's eyes and leave an audit
+trail a laptop run does not. **All four are read-only.**
 
 ### 1. Volume and range
 
@@ -90,8 +150,7 @@ limit 30;
 ### 3. Weekdays in range with no rows at all
 
 Gaps, without claiming they are missed runs — US market holidays are not
-modelled here, so check anything this returns against the calendar before
-concluding anything.
+modelled here, so check anything this returns against the calendar first.
 
 ```sql
 with bounds as (
@@ -127,25 +186,35 @@ order by scope;
 
 | What you see | What it means |
 |---|---|
-| **0 rows**, table exists | The capture has never completed. Expected right now — nothing schedules it. |
-| `relation does not exist` | The migration was not applied to this project. Different problem; apply it first. |
 | `last_date` is the most recent completed trading day | Working. |
-| `last_date` is 2+ trading days old | The scheduler stopped, or every run is refusing. Check the route's response — a refusal returns 200 with a reason, so a green dashboard is not evidence it wrote anything. |
-| Rows exist but `symbols` is far below the number of symbols readers actually hold | The capture ran but the held-symbol query returned little. Look at `heldSymbols`, not the scheduler. |
+| **0 rows** shortly after deploy | Expected until the first weekday 21:10 UTC run. Check the logs for a `daily_snapshot_written` line before assuming a fault. |
+| **0 rows** after a weekday has passed | Check the Vercel cron ran at all, then the log line. `daily_snapshot_rejected` means `CRON_SECRET` is unset or mismatched. |
+| `relation does not exist` | The migration was not applied to this project. Different problem; apply it first. |
+| `last_date` is 2+ trading days old | The scheduler stopped, or every run is refusing. A refusal returns 200, so a green Vercel dashboard is **not** evidence it wrote anything — read the log line. |
+| Rows exist but `symbols` is far below what readers hold | The capture ran but `heldSymbols` returned little. Look there, not at the scheduler. |
 | Gaps only on US market holidays | Correct. The run refuses on non-trading dates by design. |
 | Gaps on ordinary weekdays | Real missed runs. Worth investigating. |
 | `date` ahead of the last completed session | Should be impossible — `lastCompletedSessionDate` gates it. Treat as a bug in the session logic, not the scheduler. |
+| Two rows for one `(symbol, date)` | Impossible — that pair is the primary key and the write is an upsert against it. If you see it, the table was written by something other than this job. |
 
-## After a scheduler is added
+## First verification after deploy
 
-Verify with the 16:10 ET slot in mind:
+1. Confirm the cron is registered: Vercel project → **Settings → Cron Jobs**.
+   It should list `/api/cron/daily-snapshot` at `10 21 * * 1-5`.
+2. Confirm `CRON_SECRET` is set on the project (Production environment).
+3. Wait for the first weekday run, then read the function log for a
+   `daily_snapshot_written` line.
+4. Run query 2 above and expect a row group for that trading date.
 
-1. Confirm the job exists in whichever mechanism was chosen (`vercel.json`
-   `crons`, or `select * from cron.job`).
-2. Confirm the schedule is in **UTC** and lands on 16:10 ET for both halves of
-   the year — that is `20:10` UTC during EDT and `21:10` UTC during EST. A single
-   fixed UTC cron will drift by an hour across the DST boundary; either accept
-   that it fires at 15:10 ET in winter (still after the close, still fine) or
-   schedule it late enough to be safe in both, and write down which was chosen.
-3. Wait one trading day, then run query 2 above and expect a row group for that
-   date.
+## History
+
+`vercel.json` existed once, carrying a `crons` entry for `/api/cron/alerts`, and
+was deleted in `dcbfa99` ("fix: schedule notifications from Supabase",
+2 Aug 2026) when notifications moved to `pg_cron`. The daily snapshot route was
+added later (`202608290001_daily_snapshot.sql`, 29 Aug 2026) and its 16:10 ET
+slot was documented in the route header but never implemented anywhere — the
+file that would have carried it no longer existed. It was found and fixed on
+30 August 2026, with the table still holding zero rows.
+
+`202608290001_daily_snapshot.sql` states that it schedules nothing, and that is
+still correct: a table migration is not where an unattended job should start.
