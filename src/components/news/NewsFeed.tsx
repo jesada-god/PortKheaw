@@ -106,12 +106,28 @@ export function NewsFeed({
   industryNames = EMPTY_TOPICS,
   marketWide = false,
   withScopeFilter = false,
+  defaultScope = 'all',
 }: {
   symbol?: string;
   portfolioSymbols?: string[];
   watchlistSymbols?: string[];
   industryNames?: string[];
   marketWide?: boolean;
+  /**
+   * Which tab opens first, when the tabs are shown at all.
+   *
+   * `'all'` everywhere it is not passed, so every existing surface is
+   * unchanged. The overview passes `'portfolio'`: a reader who owns something
+   * opens the app asking about what they own, and making them tap once to get
+   * there on every visit is a tap the product can spend for them.
+   *
+   * A reader with nothing in their portfolio lands on an empty tab, and that is
+   * the intended behaviour rather than an oversight — the tabs stay drawn in
+   * the empty state precisely so they are the way back out of one, and a
+   * default that silently moved would leave two readers looking at differently
+   * scoped feeds with the same tab lit.
+   */
+  defaultScope?: NewsScope;
   /**
    * Show the ทั้งหมด / พอร์ต / Watchlist / ตลาด tabs over this feed.
    *
@@ -143,7 +159,7 @@ export function NewsFeed({
    * the expansion is: switching feed must not leave the previous feed's tab
    * selected over a list that no longer has anything in it.
    */
-  const [scopeFor, setScopeFor] = useState<{ key: string; scope: NewsScope }>({ key: '', scope: 'all' });
+  const [scopeFor, setScopeFor] = useState<{ key: string; scope: NewsScope }>({ key: '', scope: defaultScope });
   /*
     Memoised because the fallback is a fresh `[]` on every render, which would
     make the scoped-selection memo below recompute the filter and the
@@ -220,7 +236,7 @@ export function NewsFeed({
 
   const cooldown = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const state = newsViewState(items.length, loading || !ready, error?.code);
-  const scope = scopeFor.key === feedKey ? scopeFor.scope : 'all';
+  const scope = scopeFor.key === feedKey ? scopeFor.scope : defaultScope;
   const scopeContext = useMemo(
     () => ({ portfolioSymbols, watchlistSymbols }),
     [portfolioSymbols, watchlistSymbols],
