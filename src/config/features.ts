@@ -117,3 +117,65 @@ export function optionsStatisticsEnabled() { return featureFlagEnabled(process.e
 export function analystConsensusEnabled() {
   return featureFlagEnabled(process.env.FEATURE_ANALYST_CONSENSUS, true);
 }
+
+/**
+ * THE PHASE 2 FOUNDATION FLAGS — four surfaces, four switches, all default OFF.
+ *
+ * Same contract as the six above, and `featureFlagEnabled` is called without a
+ * default for the same reason: an unset variable is OFF, so every module under
+ * `src/lib/market-overview` can be merged and deployed while a reader sees the
+ * product exactly as it was. Releasing stays a separate, human act from
+ * shipping, and turning one off again IS the rollback.
+ *
+ * One flag per surface rather than a single `PHASE2` switch, because the four
+ * cost different things and would be released on different days. Only the first
+ * of them buys anything at all.
+ */
+
+/**
+ * The six-instrument market snapshot, the status word and the regime reasons.
+ *
+ * THE ONLY ONE OF THE FOUR THAT SPENDS. On, it reads six quotes — the same six
+ * `MARKET_STATUS_CARD` reads, through the same endpoint, but behind a shared
+ * sixty-second cache and a last-good snapshot, so a burst of readers costs one
+ * round rather than one round each. Read before any promise is constructed in
+ * all three entry points of `src/lib/market-overview/indices.ts`.
+ */
+export function phase2MarketSnapshotEnabled() {
+  return featureFlagEnabled(process.env.PHASE2_MARKET_SNAPSHOT);
+}
+
+/**
+ * The Phase 2 change feed.
+ *
+ * Costs NOTHING new. It renames items the watchlist detectors already produced
+ * behind `WHAT_CHANGED_CARD` — a pure mapping with a dedupe, no request, no
+ * clock, no history read. This flag decides whether the renamed feed is shown,
+ * never whether the detectors run.
+ */
+export function phase2WhatChangedEnabled() {
+  return featureFlagEnabled(process.env.PHASE2_WHAT_CHANGED);
+}
+
+/**
+ * The twelve-month macro calendar and its relevance join.
+ *
+ * Costs NOTHING. The calendar is a static JSON file already in the bundle and
+ * the symbol join is one array pass over lists the page already holds, so this
+ * is a render switch rather than a spending one.
+ */
+export function phase2EventsEnabled() {
+  return featureFlagEnabled(process.env.PHASE2_EVENTS);
+}
+
+/**
+ * Read-time alert rules.
+ *
+ * Costs one indexed row read per render when on, and nothing when off. It never
+ * schedules, never writes and never notifies — the scheduled system behind
+ * `/api/cron/alerts` is separate and is not affected by this flag in either
+ * position.
+ */
+export function phase2AlertsEnabled() {
+  return featureFlagEnabled(process.env.PHASE2_ALERTS);
+}
