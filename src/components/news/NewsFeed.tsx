@@ -32,6 +32,7 @@ type ApiResponse = { data: NewsPage | null; error: ApiError | null; meta: { time
 const pending = new Map<string, Promise<ApiResponse>>(); const pages = new Map<string, { value: ApiResponse; savedAt: number }>();
 const CACHE_MS = 5 * 60_000;
 const EMPTY_TOPICS: string[] = [];
+const EMPTY_ARTICLES: NewsArticle[] = [];
 function load(url: string, force = false) {
   const cached = pages.get(url); if (!force && cached && Date.now() - cached.savedAt < CACHE_MS) return Promise.resolve(cached.value);
   const existing = pending.get(url); if (existing) return existing;
@@ -143,7 +144,15 @@ export function NewsFeed({
    * selected over a list that no longer has anything in it.
    */
   const [scopeFor, setScopeFor] = useState<{ key: string; scope: NewsScope }>({ key: '', scope: 'all' });
-  const items = feed.key === feedKey ? feed.articles : [];
+  /*
+    Memoised because the fallback is a fresh `[]` on every render, which would
+    make the scoped-selection memo below recompute the filter and the
+    de-duplication on every keystroke of unrelated state.
+  */
+  const items = useMemo(
+    () => (feed.key === feedKey ? feed.articles : EMPTY_ARTICLES),
+    [feed, feedKey],
+  );
   const expanded = expandedFor === feedKey;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError>();

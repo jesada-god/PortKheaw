@@ -40,6 +40,8 @@ import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from 
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
 import { resolveOnboardingView, type OnboardingView } from '@/src/lib/onboarding/onboarding';
 import type { PortfolioGoal, PortfolioRecord } from '@/src/lib/portfolio/types';
+import { buildMarketEventsCardView } from '@/src/lib/market-events/card-view';
+import { overviewV2Enabled } from '@/src/config/features';
 import { after } from 'next/server';
 
 async function settleWithin<T>(
@@ -402,6 +404,22 @@ export default async function Home() {
           : { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
         upcoming,
         marketStatus,
+        /*
+         * The calendar card, behind `MARKET_EVENTS_CARD` and OFF by default.
+         *
+         * Costs NO provider call in either state — the calendar is a static
+         * JSON file in the bundle — so this is a pure render switch, unlike
+         * `marketStatus` above where the flag is also a spending switch.
+         *
+         * Built here rather than in the client so the file and the Intl
+         * formatters stay server-side, and so "today" is resolved once, from
+         * the same `generatedAt` every other figure on this page is built
+         * against.
+         */
+        marketEvents: marketEventsCardEnabled()
+          ? buildMarketEventsCardView({ now: generatedAt })
+          : null,
+        overviewV2: overviewV2Enabled(),
         limitations,
       }}
     />

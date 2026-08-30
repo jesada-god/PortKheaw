@@ -16,7 +16,7 @@ import {
   Star,
   TrendingUp,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { chooseOverviewWatchlistAction } from '@/app/watchlist/actions';
 import Header from '@/src/components/layout/Header';
@@ -50,6 +50,11 @@ import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
 import { formatPortfolioMoney, signedMoney, signedPercent } from '@/src/lib/portfolio/presentation';
 import { dayChangeCopy, dayChangeUnavailableCopy } from '@/src/lib/portfolio/day-change-label';
 import { MarketStatusCard } from './MarketStatusCard';
+import { MarketEventsCard } from '@/src/components/market-events/MarketEventsCard';
+import {
+  orderedOverviewSections,
+  type OverviewSectionKey,
+} from '@/src/lib/overview/section-order';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
@@ -466,7 +471,7 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
 
   if (!data.authenticated || !summary) {
     return (
-      <section className="panel min-w-0 p-4">
+      <section className="panel min-w-0 p-4" data-testid="overview-portfolio-line">
         <h2 className="font-bold text-[var(--text)]">
           {data.authenticated ? 'เริ่มบันทึกพอร์ตแรกของคุณ' : 'ติดตามพอร์ตได้ในที่เดียว'}
         </h2>
@@ -572,7 +577,11 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
     : null;
 
   return (
-    <section className="panel min-w-0 p-4" data-testid="overview-portfolio-summary">
+    <section
+      className="panel min-w-0 p-4"
+      data-testid="overview-portfolio-summary"
+      data-section="overview-portfolio-line"
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <p className="figure-label">
@@ -999,7 +1008,7 @@ function WatchlistSection({
     });
   }, [router]);
   return (
-    <section className="panel-quiet min-w-0">
+    <section className="panel-quiet min-w-0" data-testid="overview-watchlist">
       <SectionTitle
         title="หุ้นที่ติดตาม"
         action={(
@@ -1374,6 +1383,57 @@ export function DashboardClient({
     return [...view.indices].sort((left, right) => rank(left.symbol) - rank(right.symbol));
   }, [view.indices]);
 
+  /*
+   * WHICH SECTIONS EXIST AT ALL, this render.
+   *
+   * "Present" means the section will draw something. A flag that is off, a
+   * payload that did not load, and a detector that found nothing today are all
+   * the same answer here — there is nothing to show — and collapsing them is
+   * deliberate: the page has no way to render "this card is off" that is not
+   * just a gap.
+   *
+   * `watchlist` and `news` are always present because both own their empty
+   * states: the watchlist explains how to add a symbol, and the feed says when
+   * there is no news. Those are contentful, not blank.
+   */
+  const sections = useMemo(() => orderedOverviewSections({
+    marketStatus: Boolean(view.marketStatus),
+    portfolio: true,
+    watchlist: true,
+    whatChanged: changes.length > 0,
+    marketEvents: Boolean(view.marketEvents),
+    upcoming: Boolean(view.upcoming),
+    news: true,
+  }, view.overviewV2), [
+    view.marketStatus,
+    view.marketEvents,
+    view.upcoming,
+    view.overviewV2,
+    changes.length,
+  ]);
+
+  const sectionNodes: Record<OverviewSectionKey, React.ReactNode> = {
+    marketStatus: view.marketStatus && (
+      <MarketStatusCard
+        evaluation={view.marketStatus.evaluation}
+        sessionDate={view.marketStatus.sessionDate}
+      />
+    ),
+    portfolio: <PortfolioSummaryLine data={view.portfolio} usdThbRate={view.usdThbRate} />,
+    watchlist: (
+      <WatchlistSection
+        items={view.watchlist}
+        preview={view.watchlistPreview}
+        retrying={Boolean(retrying.watchlist)}
+        onRetry={retry}
+      />
+    ),
+    whatChanged: <ChangesSection changes={changes} />,
+    marketEvents: view.marketEvents && <MarketEventsCard view={view.marketEvents} />,
+    upcoming: view.upcoming && <UpcomingSection feed={view.upcoming} />,
+    news: <NewsSection context={view.newsContext} />,
+  };
+
   return (
     <div className="min-w-0">
       <Header title="ภาพรวม" subtitle="พอร์ต ตลาด อุตสาหกรรม และข่าวสำคัญ" />
@@ -1434,36 +1494,29 @@ export function DashboardClient({
         </section>
 
         {/*
-          Absent unless `MARKET_STATUS_CARD` is on, which is the shipped state.
-          The page renders exactly as it did before when this is undefined —
-          there is no placeholder and no gap, because the card is an addition
-          rather than a slot waiting to be filled.
+          ==================================================================
+          THE ORDERED RUN. One list, rendered in the order `section-order.ts`
+          gives, with absent sections GONE rather than rendered empty.
+          ==================================================================
 
-          Placed under the market cards it reads and above the portfolio: it
-          interprets the numbers immediately above it, and the reader's own money
-          stays the last thing on the way down.
+          Written as a sequence of `{x && <X/>}` this was seven conditionals,
+          and the failure mode was silent: a section that renders null inside a
+          wrapper leaves the wrapper's margin behind, so the page grows a gap
+          where a card used to be and the gap reads as a load that never
+          finished. Here a section that is not present is not in the list, so
+          there is nothing to leave behind.
+
+          `sectionNodes` is only consulted for keys that survived the filter,
+          which is why every entry can assume its own data is there.
+
+          The order is the same list on every screen. Nothing below reorders
+          itself at a breakpoint — a reader who learns the page on a phone finds
+          it in the same sequence on a desktop, and the mobile layout is a
+          matter of how each card draws itself, not of where it sits.
         */}
-        {view.marketStatus && (
-          <MarketStatusCard
-            evaluation={view.marketStatus.evaluation}
-            sessionDate={view.marketStatus.sessionDate}
-          />
-        )}
-
-        <PortfolioSummaryLine data={view.portfolio} usdThbRate={view.usdThbRate} />
-
-        <WatchlistSection
-          items={view.watchlist}
-          preview={view.watchlistPreview}
-          retrying={Boolean(retrying.watchlist)}
-          onRetry={retry}
-        />
-
-        <ChangesSection changes={changes} />
-
-        {view.upcoming && <UpcomingSection feed={view.upcoming} />}
-
-        <NewsSection context={view.newsContext} />
+        {sections.map((key) => (
+          <Fragment key={key}>{sectionNodes[key]}</Fragment>
+        ))}
 
         <details className="panel group min-w-0">
           <summary className="grid min-h-14 cursor-pointer list-none gap-1 px-4 py-3 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">

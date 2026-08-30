@@ -115,6 +115,8 @@ function data(
       deadlineReached: false,
     },
     newsContext: { portfolioSymbols: [], watchlistSymbols: [], industryNames: [] },
+    marketEvents: null,
+    overviewV2: false,
     limitations: [],
   };
 }
