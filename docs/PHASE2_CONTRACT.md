@@ -886,3 +886,121 @@ migration ห้าไฟล์ล่าสุดยังมีหัวข้�
     ถ้าแทน การ์ด breadth เดิมจะเสีย provenance (`coveragePercent`, `staleCount`,
     `universeDescription`, ปุ่ม retry, `breadth-data-health`)
     **คำถาม**: อันไหน
+
+---
+
+# §5 บันทึกการตัดสินใจระหว่าง implement
+
+ทุกข้อในนี้คือจุดที่ §2 กับคำสั่ง override ไม่ตรงกัน หรือโค้ดจริงบังคับให้เลือก
+กฎที่ใช้ตัดสินทุกครั้งคือ **reuse ของเดิม + ไม่เพิ่ม provider call ใหม่**
+เขียนไว้ที่นี่เพราะสัญญาที่ implement แล้วต่างจากสัญญาที่เขียนไว้ ต้องอ่านออกจากไฟล์เดียวกัน
+
+## 5.1 ชื่อและที่อยู่ไฟล์
+
+| §2 เขียนไว้ | ที่ทำจริง | เพราะ |
+|---|---|---|
+| `MarketSnapshot` / `MarketStatus` / `MarketRegime` / `BreadthSnapshot` / `ChangeEvent` / `MarketEvent` / `AlertRule` / `AlertHit` | `OvMarketSnapshot` / `OvMarketStatus` / `OvRegime` / `OvBreadthSnapshot` / `OvChangeEvent` / `OvMarketEvent` / `OvAlertRule` / `OvAlertHit` | override ข้อ 1 — prefix `Ov` ทุกตัว |
+| `ChangeEvent` อยู่ใน `change-event.ts` | อยู่ใน `what-changed.ts` | ขอบเขตไฟล์ที่สั่งมาไม่มี `change-event.ts` ไฟล์ที่สั่งคือ `what-changed.ts` |
+| `MarketSnapshot` มีเฉพาะ 6 reading + status | เพิ่ม `availability: 'available' \| 'insufficient'` แยกจาก `status` | "อ่านตลาดไม่ได้" กับ `unclear` เป็นคนละข้อเท็จจริง ถ้าใช้ field เดียวการ์ดจะวาดสองอย่างนี้เหมือนกัน |
+| `MarketEvent.affectedSymbols` เป็น field ของ event | ไม่มีใน `OvMarketEvent` — อยู่ใน `OvEventRelevance` ที่ `event-relevance.ts` | override ข้อ 3 — mapping เป็น read-time ห้ามลง JSON |
+| `AlertHit.notificationId` | **ตัดออก** | override ข้อ 4 — ไม่ persist ไม่ notify จึงไม่มีแถว notification ให้อ้างถึง field ที่ null ตลอดไปเป็น noise |
+
+ไม่ได้สร้าง `src/lib/market-overview/index.ts` (barrel) เพราะไม่อยู่ในขอบเขตไฟล์ที่สั่ง
+ทุก import ชี้โมดูลตรง ๆ
+
+## 5.2 การชนกับของเดิม (override ข้อ 1)
+
+- `types.ts` **ไม่ import ทั้งสี่ตัวที่ห้าม** และไม่มี mapper สองทางไปหาของเดิมเลย
+- สิ่งที่ import จากของเดิมคือ **ค่า** และ type ที่ไม่ได้อยู่ในรายการห้าม:
+  `MARKET_STATUS_INPUTS`, `MARKET_STATUS_BANDS`, `MARKET_STATUS_REGIME_BANDS`,
+  `MARKET_STATUS_AVAILABILITY`, `MarketStatusInputKey`, `contributionOf`,
+  `scoreInterval` / `intervalVerdict`, `resolveDayChangeBasis`, `marketSession`,
+  `StatusLevel`, `statusFromSignedValue`, `signedPercent`, `SharedRequestCache`,
+  `LastGoodSnapshotCoordinator`, `WhatChangedItem` / `WHAT_CHANGED_DETECTORS`,
+  `MarketBreadth`
+- **ไม่มีไฟล์เดิมไฟล์ไหนถูกแก้เพื่อเลี่ยงการชน** — ไฟล์เดิมที่แตะมีไฟล์เดียวคือ
+  `src/config/features.ts` และแตะเพื่อเพิ่มธง ไม่ใช่เพื่อเลี่ยงชื่อชน
+- `OvIndexKey` ถูก **pin กับ `MarketStatusInputKey` ตอน compile** ใน `indices.ts`
+  (`_IndexKeysArePinned`) — ถ้ามีการเพิ่มหรือเปลี่ยนชื่ออินพุตที่ config build จะพัง
+
+## 5.3 Breadth (override ข้อ 2)
+
+- `pctAboveMA50` / `pctAboveMA200` ประกาศเป็น type `null` ตรง ๆ ไม่ใช่ `number | null`
+  — "ตัดทิ้ง" กับ "null ถาวร" ตีความรวมกันแบบนี้: field ยังอยู่ให้ช่องว่างมองเห็นได้จาก type
+  แต่ไม่มีใครใส่ตัวเลขลงไปได้แม้จะเผลอ
+- ไม่มีการยิง historical bars เพิ่มแม้แต่คำขอเดียว — `breadth.ts` ไม่ import provider
+  ไม่มี `fetch` ไม่มี `await` รับ `MarketBreadth` ที่ overview โหลดอยู่แล้วเข้ามาอย่างเดียว
+- **ไม่ตั้ง floor ซ้ำ** — `MIN_USABLE_BREADTH = 800` ใน `market-breadth.ts` ไม่ได้ export
+  และการประกาศเลขเดียวกันซ้ำคือความเสี่ยงดริฟต์ที่ §3 เตือนไว้เอง `ovBreadth` จึงคืน `null`
+  เฉพาะเมื่อ `validCount <= 0` และปล่อยให้ `status: 'ready' | 'partial' | 'stale'`
+  ของเดิมเป็นคนตัดสินว่ากลุ่มตัวอย่างบางเกินไปหรือยัง
+
+## 5.4 Events (override ข้อ 3)
+
+- **"ปฏิทิน 12 เดือน" ทำเป็นหน้าต่าง ไม่ใช่ข้อมูล** — `src/data/market-events-2026.json`
+  ที่ ship อยู่มี 40 แถว ครอบคลุม ก.ย.–ธ.ค. 2026 เท่านั้น การเติมอีก 8 เดือนคือการเดา
+  วันประกาศตัวเลขเศรษฐกิจ ซึ่งผิดกฎ "ห้ามเดา" และวันที่ผิดบนปฏิทินแย่กว่าวันที่ที่หายไป
+  `ovEventWindow()` จึงคืน `coversThrough: false` + `lastDayKey` ให้การ์ดพูดความจริงได้
+- `events.ts` **ไม่ import อะไรจาก `src/lib/market-events/`** เลย — parse ไฟล์ JSON เดิม
+  ด้วย zod schema ของตัวเอง แล้ว map `kind → code`, `at → startsAtUtc` ทำให้ไม่มี type
+  crossing และไม่มีไฟล์ข้อมูลใหม่
+- **ICT ผ่าน `datetime.ts`**: `formatThaiDateOnly` / `formatBangkokDateTime` ใช้ตรง ๆ
+  ส่วน day key `YYYY-MM-DD` ที่ `datetime.ts` ไม่มีให้ ถูกสร้างจาก `BANGKOK_TIME_ZONE`
+  ที่ import มาจากไฟล์นั้น — สตริง `'Asia/Bangkok'` ไม่เคยถูกเขียนซ้ำในโมดูลนี้
+  ทางเลือกอื่นคือแก้ `datetime.ts` เพิ่ม util ซึ่งเป็นการแตะไฟล์เดิมโดยไม่จำเป็น
+- `countdown` นับเป็น **วันปฏิทินกรุงเทพ** ไม่ใช่ชั่วโมงที่ผ่านไป — ข่าว 19:30 คืนนี้กับ
+  07:00 พรุ่งนี้ห่างกัน 11 ชั่วโมงครึ่งแต่เป็น "วันนี้" กับ "พรุ่งนี้"
+- `OV_EVENT_SCOPE` ระบุว่าทั้ง 7 code เป็น `market-wide` — เป็นข้อเท็จจริงว่าตัวเลขพวกนี้
+  วัดทั้งเศรษฐกิจ ไม่ใช่การอ้างว่ามันจะทำให้หุ้นตัวไหนขยับ `affectedSymbols` จึงเป็น
+  "หุ้นของผู้อ่านเอง" เรียงตามตัวอักษร cap 8 ตัว พร้อม `total` — ไม่มี ranking ไม่มี sector map
+
+## 5.5 Alerts (override ข้อ 4)
+
+- **ไม่ reuse `conditionMatches` / `describeCondition`** จาก `src/lib/alerts/logic.ts`
+  เพราะการเรียกมันต้องแปลง `OvAlertKind` → `AlertCondition` ซึ่งคือ crossing กับ
+  `AlertRule` ของเดิมที่ override ข้อ 1 ห้ามไว้ตรง ๆ การเปรียบเทียบทั้งสี่แบบจึงเขียนเอง
+  4 บรรทัดใน `evaluate.ts` — นี่เป็นจุดเดียวในงานทั้งชุดที่กติกา "ห้ามชน" ชนะกติกา "reuse"
+  และเลือกตามข้อที่ระบุเจาะจงกว่า
+- **ไม่มี cooldown** เพราะ cooldown คือความจำ ความจำคือการเขียน และการเขียนตอน GET
+  คือสิ่งที่ override ข้อ 4 ห้าม กฎที่เข้าเงื่อนไขสองเรนเดอร์ติดกันก็รายงานสองครั้ง
+  เหมือนราคาที่อยู่เหนือแนวต้านสองวันติดก็อยู่เหนือทั้งสองวัน
+- `threshold` **เป็นบวกเสมอ** รวมถึง `percent_down` — ทิศทางอยู่ใน `kind` ไม่ใช่ในเครื่องหมาย
+  (ทั้งใน type และใน check constraint ของ migration)
+- **`alerts/repository.ts` รับ fetcher ไม่ใช่ `SupabaseClient`** เพราะ migration ยังไม่ถูก apply
+  → `overview_alert_rules` ยังไม่อยู่ใน `src/types/database.ts` → `client.from('overview_alert_rules')`
+  ไม่ผ่าน typecheck ทางเลือกอีกทางคือ cast ผ่าน `unknown` ซึ่งจะ compile ต่อไปตลอดกาล
+  และอยู่ยืนยาวกว่าเหตุผลที่ใส่มันเข้าไป โมดูลนี้จึงถือ **รูปร่าง** (ชื่อตาราง คอลัมน์
+  การ validate) และให้ call site ถือ round trip
+- migration `202608300001_overview_alerts.sql` **เขียนแล้ว ไม่ได้รัน** ตามที่สั่ง ดู §5.7
+
+## 5.6 Indices และธง
+
+- `indices.ts` อ่าน 6 quote ผ่าน `getYahooChartProvider().getQuote` — **endpoint เดียวกับ
+  ที่ `src/lib/market-status/service.ts` อ่านอยู่แล้ว** ไม่ใช่ provider ใหม่ ไม่ใช่สัญญาใหม่
+  สิ่งที่เพิ่มคือ **cache** ซึ่งเส้นทางเดิมไม่มีเลย (`readInput` ยิงสดทุกเรนเดอร์ของทุกผู้อ่าน):
+  ที่นี่มี `SharedRequestCache` 60 วินาที + `LastGoodSnapshotCoordinator` แบบเดียวกับ
+  `market-breadth.ts` ผลคือเปิดธงแล้ว **จ่ายน้อยกว่า** การ์ดที่มีอยู่ ไม่ใช่มากกว่า
+- `ovMarketStatus()` (pure) อยู่ใน `indices.ts` ไม่แยกไฟล์ เพราะขอบเขตไฟล์ที่สั่งไม่มี
+  `status.ts` — แลกกับการที่มันอยู่ในโมดูล `server-only` จึงไม่มี unit test แยก
+  (และไม่อยู่ในห้าตัวที่สั่งให้เทสต์)
+- ธง 4 ตัว **default OFF ทั้งหมด** ต่อท้าย `src/config/features.ts`:
+  `PHASE2_MARKET_SNAPSHOT` · `PHASE2_WHAT_CHANGED` · `PHASE2_EVENTS` · `PHASE2_ALERTS`
+  หนึ่งตัวต่อหนึ่ง surface เพราะทั้งสี่มีต้นทุนต่างกันและจะเปิดคนละวัน
+  มีตัวเดียวที่ใช้เงินคือ `PHASE2_MARKET_SNAPSHOT` และถูกอ่าน **ก่อน** สร้าง promise
+  ทั้งสามทางเข้า · `src/config/phase2-flags.test.ts` ไม่กระทบ เพราะตรวจเฉพาะหกธงเดิมที่ระบุชื่อ
+
+## 5.7 สิ่งที่ยังไม่ได้ทำ และทำไม
+
+| ไม่ได้ทำ | เพราะ |
+|---|---|
+| ต่อสายเข้า `app/page.tsx` หรือหน้าไหนก็ตาม | สั่งห้ามแตะ `app/(pages)` — ทุกโมดูลจึงยังไม่มี caller |
+| รัน migration | สั่งห้ามรันเอง · ต้อง apply `202608180001`, `202608210001`, `202608290001`, `202608290002`, `202608290003` ก่อนตามลำดับชื่อไฟล์ แล้วจึง `202608300001` จากนั้น regen `src/types/database.ts` แล้ว `alerts/repository.ts` จึงรับ client ตรง ๆ ได้ |
+| แตะ `vercel.json` | สั่งห้าม และไม่มีอะไรต้องตั้งเวลา |
+| detector สำหรับ `news` | ยังไม่มีเกณฑ์ที่วัดได้ (§4 ข้อ 7) — kind อยู่ใน union แต่ไม่มีอะไรผลิตมัน และ `what-changed.test.ts` pin ข้อนี้ไว้ |
+| MA50 / MA200 | §4 ข้อ 1 ยังไม่มีคำตอบ และ override ข้อ 2 สั่งตัดทิ้งใน Phase 2 |
+
+## 5.8 สถานะการตรวจ
+
+`npx tsc --noEmit` ผ่าน · `npx eslint src/lib/market-overview src/config/features.ts` ผ่าน ·
+`npx vitest run` ผ่านทั้งชุด **600 ไฟล์ / 7,207 เทสต์** (รวม 66 เทสต์ใหม่ใน 5 ไฟล์:
+`regime` 12 · `breadth` 10 · `what-changed` 12 · `event-relevance` 12 · `events` 20)
