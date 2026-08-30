@@ -13,7 +13,9 @@ import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcomin
 import { loadDailySnapshots } from '@/src/lib/market-data/daily-snapshot';
 import { US_EQUITY_TIMEZONE, exchangeSessionDate } from '@/src/lib/market-data/session';
 import { marketSession } from '@/src/lib/market-data/market-session';
+import { whatChangedCardEnabled } from '@/src/config/features';
 import { watchlistDayChange } from './day-change';
+import { loadWhatChanged, type WhatChangedSection } from './what-changed-service';
 import { buildWatchlistRow, type WatchlistRow } from './rows';
 import type { WatchlistRecord } from './types';
 
@@ -78,6 +80,15 @@ export interface WatchlistView {
   /** Which of the four session states the rows were read in. Drives the page caption. */
   session: ReturnType<typeof marketSession>;
   renderedAt: string;
+  /**
+   * What changed today, or null when the section is switched off.
+   *
+   * Null and an empty `items` are different facts and are kept apart: null is
+   * "this reader does not have the section", an empty list is "they have it and
+   * nothing happened". Both render nothing, and collapsing them would leave no
+   * way to tell a quiet day from a disabled feature when one of them is wrong.
+   */
+  whatChanged: WhatChangedSection | null;
 }
 
 /**
@@ -185,5 +196,16 @@ export async function loadWatchlistView(input: WatchlistViewInput): Promise<Watc
     });
   });
 
-  return { rows, session, renderedAt: now.toISOString() };
+  /*
+    Last, and after the rows, because it reads what they already resolved — the
+    day figure, the trend, support and resistance, the report date — and adds
+    only the daily bars. Behind the flag so a reader with the section off pays
+    for none of that load. See `what-changed-service.ts` for why the bar read is
+    a cache hit rather than a second fan-out.
+  */
+  const whatChanged = whatChangedCardEnabled()
+    ? await loadWhatChanged({ rows, signals: signalBySymbol, session, now })
+    : null;
+
+  return { rows, session, renderedAt: now.toISOString(), whatChanged };
 }
