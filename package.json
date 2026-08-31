@@ -30,6 +30,7 @@
     "clean": "next clean",
     "db:apply": "node --import=tsx --env-file-if-exists=.env.test scripts/apply-migrations.ts",
     "db:schema-diff": "node --import=tsx --env-file-if-exists=.env.test scripts/schema-diff.ts",
+    "verify:ov-alert-sweep": "node --import=tsx --env-file-if-exists=.env.test scripts/verify-overview-alert-sweep.ts",
     "probe:watchlist-rls": "node --import=tsx --env-file-if-exists=.env.test scripts/probe-watchlist-rls.ts",
     "probe:account-deletion": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-account-deletion-release.ts",
     "trial:backfill-identities": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-trial-identities.ts",
