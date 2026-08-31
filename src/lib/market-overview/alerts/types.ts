@@ -26,6 +26,7 @@
  */
 
 import type { StatusLevel } from '@/src/lib/presentation/status';
+import type { OverviewAlertKind } from '@/src/types/database';
 
 /**
  * The five comparisons a reader may ask for.
@@ -55,6 +56,40 @@ export const OV_ALERT_KINDS: readonly OvAlertKind[] = [
   'percent_down',
   'earnings',
 ];
+
+/**
+ * THE FIVE KINDS ARE WRITTEN DOWN IN FOUR PLACES. THESE TWO LINES PIN TWO OF
+ * THEM TOGETHER.
+ *
+ * The four:
+ *
+ *   1. `overview_alert_rules_kind_check`                      — the column
+ *   2. `overview_alert_hits.kind`'s check                     — the column
+ *   3. `create_overview_alert_rule`                           — the writer
+ *   4. {@link OvAlertKind} here, and `OverviewAlertKind` in `database.ts`
+ *
+ * They have drifted once already and it cost the feature a whole kind:
+ * `202608310001` widened (1) and (2) to admit `earnings` and left (3) on four,
+ * so an `earnings` rule could be stored, evaluated, cooled down and recorded as
+ * a hit — and could not be created by anybody. `202608310003` repairs it.
+ *
+ * Nothing detected that, so each pair is now held together by something that
+ * fails rather than by care:
+ *
+ *   * (1)(2)(3) against each other — `service-path.contract.test.ts` reads all
+ *     three lists out of the SQL and compares them.
+ *   * (4) against the schema's copy — the two assignments below, which are
+ *     mutually exclusive unless the unions are identical. Adding a kind to one
+ *     and not the other makes one of them `never` and the build stops.
+ *
+ * A `Record<OvAlertKind, …>` already forces `OV_ALERT_COOLDOWN_HOURS`,
+ * {@link OV_ALERT_UNIT} and {@link OV_ALERT_WORD} to stay exhaustive, so those
+ * three need nothing here.
+ */
+const SCHEMA_KIND_COVERS_DOMAIN: OverviewAlertKind = null as unknown as OvAlertKind;
+const DOMAIN_KIND_COVERS_SCHEMA: OvAlertKind = null as unknown as OverviewAlertKind;
+void SCHEMA_KIND_COVERS_DOMAIN;
+void DOMAIN_KIND_COVERS_SCHEMA;
 
 /**
  * What `threshold` is measured in, so a reader is never shown a price as a

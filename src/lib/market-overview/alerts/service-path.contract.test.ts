@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { OV_ALERT_KINDS } from './types';
 
 /**
  * THE SERVICE PATH, ASSERTED AGAINST THE SQL RATHER THAN AGAINST A DOUBLE.
@@ -140,7 +141,140 @@ describe('the migration order', () => {
     expect(SERVICE > READER).toBe(true);
   });
 
-  it('is still unapplied, and says so', () => {
-    expect(migration(SERVICE)).toContain('NOT YET APPLIED');
+  /*
+   * This asserted `toContain('NOT YET APPLIED')` and went red the day the
+   * migration was applied and the header said so — the same shape as the
+   * vacuity check in `supabase/migration-order.test.ts`: an assertion that fails
+   * when the repository becomes correct, and therefore pushes back towards the
+   * stale claim.
+   *
+   * What is worth pinning is not WHICH status the file carries but that it
+   * carries one at all, in the machine-readable form. The grammar, the date and
+   * the cross-file consistency are enforced in `migration-order.test.ts`; this
+   * only refuses a header that has gone back to prose.
+   */
+  it('carries a machine-readable status header', () => {
+    expect(migration(SERVICE)).toMatch(/^-- STATUS: (APPLIED|NOT YET APPLIED)$/m);
+    expect(migration(SERVICE)).toMatch(/^-- VERIFIED: \d{4}-\d{2}-\d{2}, by .+\.$/m);
+  });
+});
+
+/**
+ * THE FIVE KINDS, READ OUT OF THE SQL AND COMPARED.
+ *
+ * `202608310001` widened `overview_alert_rules_kind_check` and
+ * `overview_alert_hits.kind` to admit `earnings` and left
+ * `create_overview_alert_rule` refusing it. The result was a kind that could be
+ * stored, evaluated, cooled down and recorded — and created by nobody.
+ *
+ * Every layer above the database was already exhaustive over `OvAlertKind`:
+ * `OV_ALERT_COOLDOWN_HOURS`, `OV_ALERT_UNIT` and `OV_ALERT_WORD` are all
+ * `Record<OvAlertKind, …>` and would not compile if a kind were missing. That is
+ * why nothing caught this — TypeScript cannot see a `plpgsql` list, and the
+ * three SQL lists are only equal by somebody remembering.
+ *
+ * So they are compared here, out of the migration text, against the domain
+ * union that the compiler does enforce.
+ */
+describe('the kinds a rule may have', () => {
+  const RULES = '202608300001_overview_alerts.sql';
+  const PARITY = '202608310003_overview_alert_rule_kind_parity.sql';
+
+  /**
+   * Every quoted value inside the first parenthesised list of a fragment.
+   *
+   * Each caller slices the file at the phrase that introduces its own list —
+   * `kind text not null`, `add constraint …`, `input_kind not in` — so this only
+   * has to read the group that follows. Written that way because the three
+   * spellings differ (`kind in (…)` against `input_kind not in (…)`) and a
+   * single regex over all of them was the first thing to get this wrong.
+   */
+  function kindsIn(fragment: string, label: string): string[] {
+    const match = /\(([^)]*)\)/.exec(fragment);
+    expect(match, `${label} must list its kinds`).not.toBeNull();
+    const found = [...match![1].matchAll(/'([a-z_]+)'/g)].map((entry) => entry[1]);
+    expect(found.length, `${label} must list at least one kind`).toBeGreaterThan(0);
+    return found.sort();
+  }
+
+  const EXPECTED = [...OV_ALERT_KINDS].sort();
+
+  /*
+   * EACH SET IS READ FROM THE FILE THAT LAST DEFINED IT, NOT FROM THE FILE THAT
+   * INTRODUCED IT.
+   *
+   * `202608300001` created the rules column with four kinds and `202608310001`
+   * replaced that constraint with five; `202608300001` defined the writer with
+   * four and `202608310003` replaces it with five. Reading either from the
+   * earlier file asserts against a definition the database no longer has — true
+   * of the text, false of the schema, which is the same mistake in miniature
+   * that produced the drift this whole block is about.
+   */
+  const rulesColumn = () => kindsIn(
+    code(migration(READER)).split('add constraint overview_alert_rules_kind_check')[1] ?? '',
+    'overview_alert_rules.kind (as widened by 202608310001)',
+  );
+  const hitsColumn = () => kindsIn(
+    code(migration(READER)).split('kind text not null')[1] ?? '',
+    'overview_alert_hits.kind',
+  );
+  const writer = () => kindsIn(
+    code(bodyOf(migration(PARITY), 'create_overview_alert_rule')).split('input_kind not in')[1] ?? '',
+    'create_overview_alert_rule',
+  );
+
+  it('is the same set in the rules column, the hits column and the writer', () => {
+    expect(rulesColumn()).toEqual(EXPECTED);
+    expect(hitsColumn()).toEqual(EXPECTED);
+    expect(writer()).toEqual(EXPECTED);
+  });
+
+  it('was four in the two places 202608300001 wrote it, which is the drift', () => {
+    /*
+     * The history, asserted so the two later migrations cannot be read as
+     * gratuitous. `202608300001` is consistent WITH ITSELF at four; what broke
+     * was that `202608310001` widened one of its two copies and not the other.
+     */
+    const original = code(migration(RULES));
+    expect(kindsIn(original.split('kind text not null')[1] ?? '', 'the original column'))
+      .toEqual(['percent_down', 'percent_up', 'price_above', 'price_below']);
+    expect(kindsIn(
+      code(bodyOf(original, 'create_overview_alert_rule')).split('input_kind not in')[1] ?? '',
+      'the original writer',
+    )).toEqual(['percent_down', 'percent_up', 'price_above', 'price_below']);
+  });
+
+  it('is widened on the rules column by the migration that widened the hits one', () => {
+    // `202608310001` alters `overview_alert_rules_kind_check` as well as
+    // creating the hits table. Dropping that alter would leave the column on
+    // four while the writer accepts five — the same defect, mirrored.
+    expect(code(migration(READER))).toContain('overview_alert_rules_kind_check');
+    expect(rulesColumn()).toEqual(EXPECTED);
+  });
+
+  it('leaves the writer able to create every kind the feature defines', () => {
+    /*
+     * The claim in product terms, stated separately from the set comparison
+     * above so a failure says which kind was lost rather than printing two
+     * sorted arrays.
+     */
+    const kinds = writer();
+    for (const kind of OV_ALERT_KINDS) {
+      expect(kinds, `${kind} must be creatable`).toContain(kind);
+    }
+  });
+
+  it('keeps the cap and the lock that only live inside the writer', () => {
+    // `create or replace` is a whole-body replacement, so a step dropped in
+    // `202608310003` is a step dropped in production. RLS permits a direct
+    // insert, so neither of these is enforced anywhere else.
+    const writer = code(bodyOf(migration(PARITY), 'create_overview_alert_rule'));
+    expect(writer).toContain('pg_advisory_xact_lock');
+    expect(writer).toContain('existing_count >= 50');
+    expect(writer).toContain("errcode = '54000'");
+    expect(writer).toContain('auth.uid()');
+    // The owner comes from the session, never from an argument.
+    expect(writer).toContain('values (requesting_user');
+    expect(writer).not.toContain('on conflict');
   });
 });
