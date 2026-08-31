@@ -42,6 +42,7 @@
     "qa:stock-planner-mobile": "node --env-file-if-exists=.env.local scripts/qa/stock-planner-mobile-qa.mjs",
     "qa:phase1-ux": "node --env-file-if-exists=.env.local scripts/qa/phase1-ux-qa.mjs",
     "qa:phase2-ops": "node --env-file-if-exists=.env.local scripts/qa/phase2-ops-qa.mjs",
+    "qa:overview-phase2": "node --env-file-if-exists=.env.local scripts/qa/overview-phase2-qa.mjs",
     "qa:admin-overview": "node --env-file-if-exists=.env.local scripts/qa/admin-overview-qa.mjs",
     "qa:ui-redesign": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-responsive-qa.mjs",
     "qa:ui-redesign-auth": "node --env-file-if-exists=.env.local scripts/qa/ui-redesign-authenticated-qa.mjs",
