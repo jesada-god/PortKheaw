@@ -231,8 +231,9 @@ Market Today ที่สั่งคือ 6 ตัว = ชุดเดีย�
 เพราะห้ามแก้ logic ข้างใน
 
 ### Q5 · จำนวน alert ต่อแถว — **ข้อมูลที่โมดูลยังให้ไม่ได้**
-`overview_alert_rules` **ยัง apply ไม่ได้** (migration `202608300001` อยู่ท้ายคิว 5 ไฟล์ที่ยัง
-`NOT YET APPLIED`) และ `alerts/repository.ts` รับ fetcher ที่ call site ต้องเขียน ซึ่งเขียนไม่ได้
+`overview_alert_rules` **ยังไม่ได้ apply** (migration `202608300001` เป็นไฟล์แรกของคิวสามไฟล์ที่ยังค้าง
+— ห้าไฟล์ที่เคยอยู่หน้ามัน apply ไปแล้ว ยืนยัน 2026-08-31) และ `alerts/repository.ts` รับ fetcher ที่
+call site ต้องเขียน ซึ่งเขียนไม่ได้
 จนกว่าตารางจะอยู่ใน `src/types/database.ts`
 → (ก) เว้นคอลัมน์นี้ไว้ก่อน ค่อยเติมรอบหน้า · (ข) หยุดรอ migration · (ค) นับจาก `price_alerts`
 เดิมแทน — ทำได้ทันที (`AlertsRepository.list()` ถูกเรียกบน `app/page.tsx` อยู่แล้ว) แต่เป็นคนละระบบ

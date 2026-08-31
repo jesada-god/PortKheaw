@@ -4,9 +4,18 @@ begin;
 -- Recording an overview alert hit from a scheduler
 -- ===========================================================================
 --
--- NOT YET APPLIED. Eighth in a queue of unapplied migrations, and it depends on
--- `202608310001` for the table and the column it writes. Apply them in filename
--- order or not at all.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence, and it is weaker than the other two files': this one creates only a
+-- function, and PostgREST reports relations and columns, never functions. What
+-- the endpoint does publish is an RPC PATH — `/rpc/record_overview_alert_hit_service`
+-- is in its OpenAPI definition, which it is not for a function that does not
+-- exist. That establishes the function is there; it establishes nothing about
+-- the body being the one below. See `docs/operations/migration-state.md`.
+--
+-- Applied last of the three, after `202608310001` for the table and the column
+-- it writes.
 --
 -- ---------------------------------------------------------------------------
 -- WHY A SECOND FUNCTION AND NOT AN EDIT

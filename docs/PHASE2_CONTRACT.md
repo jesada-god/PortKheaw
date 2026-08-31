@@ -481,13 +481,15 @@ RPC ที่เกี่ยวข้อง (จาก database.ts): `get_or_cre
 
 ### Migration
 
-- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202608290003_multi_watchlists.sql`
-- migration ที่ยังมีหัวข้อ **`NOT YET APPLIED`** อยู่ในไฟล์:
-  - `202608180001_market_signal_history.sql`
-  - `202608210001_market_signal_history_raw_state.sql`
-  - `202608290001_daily_snapshot.sql`
-  - `202608290002_label_history.sql`
-  - `202608290003_multi_watchlists.sql`
+- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202608310002_overview_alert_hit_service.sql`
+- ห้าไฟล์ที่เคยเขียนว่า `NOT YET APPLIED` — `202608180001`, `202608210001`, `202608290001`,
+  `202608290002`, `202608290003` — **apply ไปแล้วทั้งหมด** ยืนยัน 2026-08-31 ด้วย PostgREST probe
+  หัวไฟล์แก้เป็น `-- STATUS: APPLIED` แล้ว
+- migration ที่ยัง **ค้างจริง** เหลือสามไฟล์ ต้อง apply ตามลำดับนี้เท่านั้น:
+  - `202608300001_overview_alerts.sql`
+  - `202608310001_overview_alert_hits.sql`
+  - `202608310002_overview_alert_hit_service.sql`
+- อะไรยืนยันได้และอะไรยืนยันไม่ได้: `docs/operations/migration-state.md`
 - เครื่องมือ: `npm run db:apply` (scripts/apply-migrations.ts) · `npm run db:schema-diff`
 - คำเตือนที่เขียนอยู่ใน `202608290003`: การถอนต้องทำ **หลัง** ยืนยันว่าไม่มีบัญชีไหนมี
   watchlist เกินหนึ่ง และต้องกู้ `get_or_create_default_watchlist` / `handle_new_user`
@@ -802,8 +804,9 @@ Phase 2 มีธงอยู่แล้ว 6 ตัวและมี rollout 
 
 **7. migration**
 
-migration ห้าไฟล์ล่าสุดยังมีหัวข้อ `NOT YET APPLIED` — ถ้า Phase 2 เพิ่มตาราง ต้องรู้ก่อนว่า
-ห้าไฟล์นั้นจะถูก apply เมื่อไร ไม่งั้นลำดับ migration บนเครื่องกับบน production ต่างกัน
+ห้าไฟล์ที่เคยค้าง apply ไปแล้ว (ยืนยัน 2026-08-31) ที่ยังค้างคือสามไฟล์ที่เขียนในโปรเจกต์นี้เอง —
+`202608300001`, `202608310001`, `202608310002` — ถ้า Phase 2 เพิ่มตาราง ต้องต่อท้ายสามไฟล์นั้น
+และต้องรู้ก่อนว่าสามไฟล์นั้นจะถูก apply เมื่อไร ไม่งั้นลำดับ migration บนเครื่องกับบน production ต่างกัน
 
 ---
 
@@ -859,9 +862,10 @@ migration ห้าไฟล์ล่าสุดยังมีหัวข้�
 
 ### โครงสร้าง / operations
 
-8. **migration ห้าไฟล์ที่ยังเป็น `NOT YET APPLIED` จะ apply เมื่อไร และใครเป็นคน apply**
-   (`202608180001`, `202608210001`, `202608290001`, `202608290002`, `202608290003`)
-   Phase 2 ที่ต้องเพิ่มตารางจะต่อท้ายไฟล์ไหน
+8. **migration สามไฟล์ที่ยังค้างจะ apply เมื่อไร และใครเป็นคน apply**
+   (`202608300001`, `202608310001`, `202608310002` — ต้อง apply ตามลำดับนี้)
+   ห้าไฟล์ที่คำถามข้อนี้เคยถามถึงถูก apply ไปแล้ว ยืนยัน 2026-08-31
+   Phase 2 ที่ต้องเพิ่มตารางจะต่อท้าย `202608310002`
 
 9. **Redis มีจริงบน production หรือยัง**
    โค้ดรองรับกรณีไม่มี (`getNewsCacheClient()` คืน `null`) จึงบอกจากโค้ดไม่ได้ว่าตั้งค่าแล้ว

@@ -4,11 +4,19 @@ begin;
 -- Overview alert rules — the reader's own thresholds, checked on a page read
 -- ===========================================================================
 --
--- NOT YET APPLIED. Written and reviewed before it is run, and it is SIXTH in a
--- queue of unapplied migrations — `202608180001`, `202608210001`, `202608290001`,
--- `202608290002` and `202608290003` all carry the same header. Apply them in
--- filename order or not at all; this one depends on none of them, but a schema
--- assembled out of order is a schema nobody can reproduce.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `overview_alert_rules` resolves `id`, `user_id`, `symbol`, `kind`,
+-- `threshold`, `enabled`, `created_at`, `updated_at` — read from the endpoint's
+-- own OpenAPI definition, which reports the live column set rather than this
+-- file's text. NOT covered: `overview_alert_rules_owner_symbol_kind_key`, the
+-- partial index, the four RLS policies, the CHECK constraints, and
+-- `create_overview_alert_rule` — PostgREST reports relations and columns and
+-- nothing else. See `docs/operations/migration-state.md`.
+--
+-- Applied together with `202608310001` and `202608310002`, in that order. The
+-- queue this file used to head is empty; there are no unapplied migrations.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THIS IS NOT A SECOND `price_alerts`

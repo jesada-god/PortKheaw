@@ -4,8 +4,22 @@ begin;
 -- More than one watchlist per user
 -- ===========================================================================
 --
--- NOT YET APPLIED. Written and reviewed before it is run; read the reversal
--- section at the bottom before applying it anywhere.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `watchlist_items.pinned` and `user_settings.overview_watchlist_id`
+-- both resolve and both answer 200.
+--
+-- This is the file where what the probe CANNOT see matters most, so it is worth
+-- naming: whether `watchlists_one_per_user` is actually gone, and whether the
+-- seven functions below are the versions written here, are both invisible to
+-- PostgREST — it reports relations and columns and nothing else. The only
+-- read-only check of the constraint is whether an account can hold a second
+-- list, and that was not performed. See `docs/operations/migration-state.md`.
+--
+-- The header this replaces claimed the file had never been run. It said so while
+-- the columns were live. Read the reversal section at the bottom before changing
+-- anything here.
 --
 -- ---------------------------------------------------------------------------
 -- WHAT THIS DOES NOT HAVE TO DO

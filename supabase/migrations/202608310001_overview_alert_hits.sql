@@ -4,11 +4,17 @@ begin;
 -- Overview alert hits — what fired, when, and the reading that fired it
 -- ===========================================================================
 --
--- NOT YET APPLIED. Seventh in a queue of unapplied migrations —
--- `202608180001`, `202608210001`, `202608290001`, `202608290002`,
--- `202608290003` and `202608300001` all carry the same header. Apply them in
--- filename order or not at all; this one depends on `202608300001` and on
--- nothing else.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `overview_alert_hits` resolves all eleven columns, and
+-- `overview_alert_rules.last_fired_at` — the column this file adds to the table
+-- `202608300001` created — resolves on that table. NOT covered: the widened
+-- `overview_alert_rules_kind_check`, both indexes, the two RLS policies, and
+-- `record_overview_alert_hit`. See `docs/operations/migration-state.md`.
+--
+-- Applied after `202608300001` and before `202608310002`, which is the order it
+-- required.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THE FEATURE GREW A TABLE IT DID NOT HAVE
