@@ -58,48 +58,12 @@ import {
  */
 
 /**
- * True while `overview_alert_rules` is absent from the generated types.
- *
- * When the migrations are applied and `src/types/database.ts` is regenerated,
- * the conditional resolves to `never` and this assignment stops compiling — the
- * signal to delete the casts below and call `client.from` / `client.rpc`
- * directly.
- */
-export const OV_ALERT_SERVICE_IS_UNTYPED:
-  'overview_alert_rules' extends keyof Database['public']['Tables'] ? never : true = true;
-
-/** The narrow slice of the query builder this store uses. Nothing more. */
-interface UntypedRuleTable {
-  select(columns: string): {
-    eq(column: string, value: boolean): PromiseLike<{ data: unknown; error: unknown }>;
-  };
-}
-
-interface UntypedRpc {
-  (name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }>;
-}
-
-/**
- * The admin client, widened only where the generated types cannot follow.
- *
- * The builder SHAPE is still declared, so a typo in a column list or a missing
- * `.eq` is still a compile error. This is not `any` with extra steps.
- */
-function untyped(client: SupabaseClient<Database>) {
-  void OV_ALERT_SERVICE_IS_UNTYPED;
-  return client as unknown as {
-    from(name: string): UntypedRuleTable;
-    rpc: UntypedRpc;
-  };
-}
-
-/**
  * The store the sweep runs on.
  *
  * `client` must be a SERVICE-ROLE client — `createAdminClient()`. See the header.
  */
 export function createOvAlertServiceStore(client: SupabaseClient<Database>): OvAlertStore {
-  const admin = untyped(client);
+  const admin = client;
   return {
     listRules: async () => {
       /*

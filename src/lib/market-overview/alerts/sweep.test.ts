@@ -55,7 +55,10 @@ function loaderFor(map: ReadonlyMap<string, OvAlertQuote>): OvAlertQuoteLoader {
 }
 
 /** A store with a Map behind it. Nothing is faked away — every method is one call. */
-function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {}) {
+function fakeStore(
+  rules: OvAlertRule[],
+  options: { failWrites?: boolean; cap?: number } = {},
+) {
   const rows = new Map(rules.map((item) => [item.id, { ...item }]));
   const written: OvAlertHitRecord[] = [];
   let sequence = 0;
@@ -70,7 +73,21 @@ function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {})
       enabled: item.enabled,
       last_fired_at: item.lastFiredAt,
     })),
+    /*
+      Models `create_overview_alert_rule` followed by the read-back, which is
+      what the real adapter now does — not a direct insert, which is what it used
+      to do and which could never have worked.
+
+      Three properties of the function are modelled because the code above
+      depends on all three: it always creates the rule ENABLED (the draft has no
+      say, so the double takes none), it raises 23505 on a duplicate, and it
+      raises 54000 at the fifty-rule cap. `limit` is a reachable answer now, so
+      it has to be reachable here.
+    */
     createRule: async (draft: OvAlertRuleDraft) => {
+      if (rows.size >= (options.cap ?? Number.POSITIVE_INFINITY)) {
+        throw Object.assign(new Error('Alert limit reached'), { code: '54000' });
+      }
       const id = `rule-${++sequence + rules.length}`;
       const created: OvAlertRule = {
         id,
@@ -78,7 +95,7 @@ function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {})
         symbol: draft.symbol,
         kind: draft.kind,
         threshold: draft.threshold,
-        enabled: draft.enabled ?? true,
+        enabled: true,
         lastFiredAt: null,
       };
       for (const existing of rows.values()) {
@@ -458,6 +475,37 @@ describe('the rule repository', () => {
     }
   });
 
+  it('creates every kind the feature defines, earnings included', async () => {
+    /*
+      Creation goes through `create_overview_alert_rule`, whose kind list was one short
+      of the column's until `202608310003`. This walks all five so a writer that
+      refuses one again fails here as well as in the SQL contract test.
+    */
+    for (const kind of OV_ALERT_KINDS) {
+      const { store } = fakeStore([]);
+      const created = await createOvAlertRule(store, { symbol: 'NVDA', kind, threshold: 7 });
+      expect(created, kind).toMatchObject({ ok: true, rule: { kind } });
+    }
+  });
+
+  it('creates a rule switched on, because the draft has no say in it', async () => {
+    // `create_overview_alert_rule` inserts four columns and leaves `enabled` to the
+    // column default, so there is no draft field for it to contradict.
+    const { store } = fakeStore([]);
+    const created = await createOvAlertRule(store, { symbol: 'NVDA', kind: 'earnings', threshold: 7 });
+    expect(created).toMatchObject({ ok: true, rule: { enabled: true } });
+  });
+
+  it('reports the fifty-rule cap as limit rather than as a database failure', async () => {
+    /*
+      Reachable only since creation started going through the function that
+      holds the cap. Reporting 54000 as `database` would tell a reader the product
+      is broken when it is enforcing a documented limit.
+    */
+    const { store } = fakeStore([rule()], { cap: 1 });
+    const result = await createOvAlertRule(store, { symbol: 'AAPL', kind: 'price_above', threshold: 150 });
+    expect(result).toEqual({ ok: false, code: 'limit' });
+  });
   it('reports a duplicate as a duplicate rather than swallowing it', async () => {
     const { store } = fakeStore([rule()]);
     const again = await createOvAlertRule(store, { symbol: 'NVDA', kind: 'price_above', threshold: 200 });

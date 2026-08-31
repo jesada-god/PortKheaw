@@ -2,99 +2,60 @@ import 'server-only';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/src/types/database';
-import { parseOvAlertRules, type OvAlertStore } from './repository';
+import {
+  OV_ALERT_CREATE_RULE_RPC,
+  OV_ALERT_RULES_TABLE,
+  parseOvAlertRules,
+  type OvAlertStore,
+} from './repository';
 import type { OvAlertRule } from './types';
 
 /**
- * THE SUPABASE ADAPTER FOR A TABLE THE GENERATED TYPES DO NOT KNOW YET.
+ * THE SUPABASE ADAPTER, OVER A READER'S OWN SESSION.
  *
  * ===========================================================================
- * WHY THERE IS A CAST HERE AT ALL
+ * THE CAST THAT USED TO BE HERE, AND WHAT REMOVED IT
  * ===========================================================================
- * `overview_alert_rules` is created by `202608300001_overview_alerts.sql`, which
- * has not been applied — it sits behind five older migrations in the same state.
- * Until it runs, the table is not in `src/types/database.ts` and
- * `client.from('overview_alert_rules')` is a compile error against
- * `SupabaseClient<Database>`.
+ * `overview_alert_rules` was created by a migration that had not been applied,
+ * so the table was absent from `src/types/database.ts` and
+ * `client.from('overview_alert_rules')` did not compile. This file worked around
+ * that with `as unknown as`, guarded by a type-level constant
+ * (`OV_ALERT_TABLES_ARE_UNTYPED`) asserting the table was STILL unknown — so
+ * that regenerating the types would break the build rather than let the
+ * workaround outlive its reason.
  *
- * `repository.ts` avoided the problem by taking a port. This file is the other
- * half: something has to actually talk to Postgres, and it cannot do that
- * through types that have never heard of the table.
+ * It did exactly that. `202608300001` and `202608310001` are applied, the types
+ * carry both tables, the constant resolved to `never`, the build failed, and the
+ * cast is gone. What remains is an ordinary typed client: a wrong column name in
+ * the select string is a compile error against the real schema now, not against
+ * a hand-written interface describing the builder.
  *
- * ===========================================================================
- * WHY THE CAST CANNOT OUTLIVE ITS REASON
- * ===========================================================================
- * The objection to `as unknown as` — recorded in `docs/PHASE2_CONTRACT.md` §5.5
- * — is that it compiles today and keeps compiling forever, silently surviving
- * the thing it was working around. {@link OV_ALERT_TABLES_ARE_UNTYPED} removes
- * that property: it is a type-level assertion that the table is STILL unknown,
- * so the day the migration is applied and the types are regenerated, this file
- * stops compiling and whoever regenerated them is told to delete the cast.
- *
- * A comment saying "remove this later" is a wish. This is a build failure.
+ * This paragraph is kept rather than deleted because the mechanism is the point.
+ * A comment saying "remove this later" is a wish; a constant that stops
+ * compiling is the thing that got it removed.
  *
  * ===========================================================================
- * A MISSING TABLE IS A NORMAL ANSWER
+ * AN UNREADABLE TABLE IS STILL A NORMAL ANSWER
  * ===========================================================================
- * Every deployment today is in the "table does not exist" state, and the
- * Overview must render identically in both. PostgREST answers an unknown
- * relation with an error rather than an empty result, so
- * {@link loadOvAlertCountsBySymbol} distinguishes three outcomes and the caller
- * can too:
+ * The table exists now, so "no such relation" is no longer the expected case —
+ * but a revoked grant, a dropped connection or a paused project still are, and
+ * {@link loadOvAlertCountsBySymbol} keeps distinguishing three outcomes:
  *
- *   null        — could not read: no table, no permission, no network
+ *   null        — could not read: no permission, no network
  *   {}          — read fine, this reader has no rules
  *   { NVDA: 2 } — read fine, and here they are
  *
  * `null` and `{}` must not be collapsed. A card that draws "0 alerts" because
- * the table is missing is telling a reader something false about their own
- * settings.
+ * the read failed is telling a reader something false about their own settings.
  */
 
 /**
- * True while `overview_alert_rules` is absent from the generated types.
+ * Exactly the columns this store reads.
  *
- * When the migration is applied and `src/types/database.ts` is regenerated, the
- * conditional below resolves to `never` and this assignment fails to compile.
- * That is the intended signal: delete the `asUntyped` cast, use
- * `client.from('overview_alert_rules')` directly, and delete this constant.
+ * Narrower than the sweep's list in `repository.ts` on purpose: RLS scopes every
+ * one of these queries to one reader, so `user_id` would be a column whose value
+ * is already known and which nothing here consults.
  */
-export const OV_ALERT_TABLES_ARE_UNTYPED:
-  'overview_alert_rules' extends keyof Database['public']['Tables'] ? never : true = true;
-
-/** The narrow slice of the query builder this adapter uses. Nothing more. */
-interface UntypedTable {
-  select(columns: string): PromiseLike<{ data: unknown; error: unknown }>;
-  insert(values: Record<string, unknown>): {
-    select(columns: string): {
-      single(): PromiseLike<{ data: unknown; error: unknown }>;
-    };
-  };
-  update(values: Record<string, unknown>): {
-    eq(column: string, value: string): {
-      select(columns: string): {
-        maybeSingle(): PromiseLike<{ data: unknown; error: unknown }>;
-      };
-    };
-  };
-  delete(): {
-    eq(column: string, value: string): PromiseLike<{ data: unknown; error: unknown }>;
-  };
-}
-
-/**
- * The one cast, in one place, guarded by the constant above.
- *
- * Widening only the TABLE NAME — the builder shape is still declared, so a typo
- * in a column list or a missing `.eq` is still a compile error. This is not
- * `any` with extra steps.
- */
-function asUntyped(client: SupabaseClient<Database>, table: string): UntypedTable {
-  void OV_ALERT_TABLES_ARE_UNTYPED;
-  return (client as unknown as { from(name: string): UntypedTable }).from(table);
-}
-
-const RULES_TABLE = 'overview_alert_rules';
 const RULE_COLUMNS = 'id, symbol, kind, threshold, enabled, last_fired_at';
 
 /**
@@ -107,28 +68,57 @@ const RULE_COLUMNS = 'id, symbol, kind, threshold, enabled, last_fired_at';
  * reader's rules to whoever asked.
  */
 export function createOvAlertStore(client: SupabaseClient<Database>): OvAlertStore {
-  const table = () => asUntyped(client, RULES_TABLE);
+  const table = () => client.from(OV_ALERT_RULES_TABLE);
   return {
     listRules: async () => {
       const { data, error } = await table().select(RULE_COLUMNS);
       if (error) throw error;
       return data;
     },
+    /*
+     * TWO ROUND TRIPS, AND BOTH ARE NECESSARY.
+     *
+     * This was a direct `insert` and could never have worked: `user_id` is
+     * `not null` with no default and no trigger, so every call would have raised
+     * 23502. Nothing reached it — there is no CRUD surface yet and the only
+     * caller was a test against an in-memory double, which does not enforce
+     * `not null`. Regenerating the types is what turned it into a compile error.
+     *
+     * The fix is not to add `user_id` to the insert. The function is the
+     * creation path (see `OV_ALERT_CREATE_RULE_RPC`): it takes the owner from
+     * `auth.uid()`, and it holds the fifty-rule cap under an advisory lock.
+     * Inserting directly would satisfy the compiler and still walk past the cap.
+     *
+     * The function returns an id, so the row is read back rather than
+     * reconstructed from the draft. That second trip is the point: `numeric`
+     * rounds the threshold, the function upper-cases and trims the symbol, and
+     * `enabled` comes from the column default. A row assembled here would agree
+     * with the database only until one of those three changed.
+     */
     createRule: async (draft) => {
-      const { data, error } = await table()
-        .insert({
-          symbol: draft.symbol,
-          kind: draft.kind,
-          threshold: draft.threshold,
-          enabled: draft.enabled ?? true,
-        })
-        .select(RULE_COLUMNS)
-        .single();
+      const { data: id, error } = await client.rpc(OV_ALERT_CREATE_RULE_RPC, {
+        input_symbol: draft.symbol,
+        input_kind: draft.kind,
+        input_threshold: draft.threshold,
+      });
       if (error) throw error;
+      /*
+        The function either returns an id or raises. A null with no error is a
+        contract this code does not know how to be right about, so it refuses
+        rather than reporting a creation it cannot point at a row for.
+      */
+      if (!id) throw new Error(`${OV_ALERT_CREATE_RULE_RPC} returned no id`);
+      const { data, error: readBack } = await table()
+        .select(RULE_COLUMNS)
+        .eq('id', id)
+        .single();
+      if (readBack) throw readBack;
       return data;
     },
     updateRule: async (id, patch) => {
-      const values: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      const values: Database['public']['Tables']['overview_alert_rules']['Update'] = {
+        updated_at: new Date().toISOString(),
+      };
       if (patch.threshold !== undefined) values.threshold = patch.threshold;
       if (patch.enabled !== undefined) values.enabled = patch.enabled;
       const { data, error } = await table()
@@ -149,11 +139,10 @@ export function createOvAlertStore(client: SupabaseClient<Database>): OvAlertSto
 
         Recording a hit is the SWEEP's job, and a sweep runs from a cron with an
         admin client where `auth.uid()` is null — which is exactly what
-        `record_overview_alert_hit` refuses. Wiring it needs a `_service` variant
-        of that function, in the shape `trigger_price_alert_service` already
-        uses. Throwing here is what stops somebody wiring the sweep to this
-        store and discovering the mismatch in production instead of at the call
-        site.
+        `record_overview_alert_hit` refuses. The service path is
+        `createOvAlertServiceStore`, over `record_overview_alert_hit_service`.
+        Throwing here is what stops somebody wiring the sweep to this store and
+        discovering the mismatch in production instead of at the call site.
       */
       throw new Error('record_overview_alert_hit requires a service-role path; see alerts/run.ts');
     },
@@ -181,8 +170,8 @@ export async function loadOvAlertCountsBySymbol(
   } catch {
     /*
       Every failure lands here and produces the same answer, on purpose: a
-      missing table, a revoked grant and a dropped connection are all "we do not
-      know", and a caller that treated one of them as zero would be guessing.
+      revoked grant and a dropped connection are both "we do not know", and a
+      caller that treated either as zero would be guessing.
     */
     return null;
   }

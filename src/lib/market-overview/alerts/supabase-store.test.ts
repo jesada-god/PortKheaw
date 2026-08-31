@@ -9,13 +9,12 @@ import {
 import type { OvAlertRule } from './types';
 
 /**
- * THE TWO STATES THIS HAS TO SURVIVE.
+ * THE DISTINCTION THE WHOLE FILE TURNS ON.
  *
- * `overview_alert_rules` is created by a migration that has not been applied, so
- * every deployment today is in the "table does not exist" state and the Overview
- * has to render identically in both. The distinction the whole file turns on is
- * that an UNREADABLE count is not a count of zero: a row that drew "0 alerts"
- * because the table is missing would be telling a reader something false about
+ * An UNREADABLE count is not a count of zero. `overview_alert_rules` is applied
+ * now, so a missing relation is no longer the everyday case — but a revoked
+ * grant and a dropped connection still are, and a row that drew "0 alerts"
+ * because one of those happened would be telling a reader something false about
  * their own settings.
  */
 
@@ -86,11 +85,11 @@ describe('loadOvAlertCountsBySymbol', () => {
     expect(await loadOvAlertCountsBySymbol(client)).toEqual({ NVDA: 2 });
   });
 
-  it('answers null when the table does not exist', async () => {
+  it('answers null when the table cannot be read', async () => {
     /*
-      The state every deployment is in today. PostgREST answers an unknown
-      relation with an error rather than an empty result, and `null` is what
-      carries "we do not know" all the way to the row, which then draws nothing.
+      PostgREST answers an unreadable relation with an error rather than an empty
+      result, and `null` is what carries "we do not know" all the way to the row,
+      which then draws nothing. 42P01 stands in for the whole class here.
     */
     const client = clientReturning({
       data: null,
@@ -150,5 +149,126 @@ describe('the reader-scoped store', () => {
       observedAt: '2026-09-11T00:00:00.000Z',
       valueText: 'x',
     })).rejects.toThrow(/service-role/);
+  });
+});
+
+/**
+ * CREATION GOES THROUGH THE FUNCTION, AND THE ROW COMES BACK FROM THE DATABASE.
+ *
+ * The adapter used to `insert` directly. That could never have worked —
+ * `user_id` is `not null` with no default and no trigger, so every call would
+ * have raised 23502 — and nothing noticed, because there is no CRUD surface yet
+ * and the only exercise was `sweep.test.ts` against a Map, which does not
+ * enforce `not null`.
+ *
+ * Two properties are asserted here and neither is visible to the in-memory
+ * double, because both are about which calls the adapter makes:
+ *
+ *   1. it calls `create_overview_alert_rule` rather than inserting, so the
+ *      fifty-rule cap and the advisory lock inside that function apply; and
+ *   2. it returns the row it READ BACK, not the draft it sent. The function
+ *      normalizes the symbol, `numeric` rounds the threshold and `enabled` comes
+ *      from the column default, so a row echoed from the draft would agree with
+ *      the database only by luck.
+ */
+describe('creating a rule', () => {
+  /** A client that records the RPC it was given and answers the read-back. */
+  function creatingClient(options: {
+    id?: unknown;
+    rpcError?: unknown;
+    row?: unknown;
+    rowError?: unknown;
+  }) {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const selected: unknown[] = [];
+    const client = {
+      rpc: async (name: string, args: unknown) => {
+        calls.push({ name, args });
+        return { data: options.id ?? null, error: options.rpcError ?? null };
+      },
+      from: () => ({
+        select: () => ({
+          eq: (_column: string, value: unknown) => {
+            selected.push(value);
+            return {
+              single: async () => ({
+                data: options.row ?? null,
+                error: options.rowError ?? null,
+              }),
+            };
+          },
+        }),
+      }),
+    } as unknown as SupabaseClient<Database>;
+    return { client, calls, selected };
+  }
+
+  const storedRow = {
+    id: 'rule-9',
+    symbol: 'NVDA',
+    kind: 'earnings',
+    threshold: '7',
+    enabled: true,
+    last_fired_at: null,
+  };
+
+  it('calls the function rather than inserting, and passes the three arguments', async () => {
+    const { client, calls } = creatingClient({ id: 'rule-9', row: storedRow });
+    await createOvAlertStore(client).createRule({
+      symbol: 'NVDA', kind: 'earnings', threshold: 7,
+    });
+    expect(calls).toEqual([{
+      name: 'create_overview_alert_rule',
+      args: { input_symbol: 'NVDA', input_kind: 'earnings', input_threshold: 7 },
+    }]);
+  });
+
+  it('reads the created row back by the id the function returned', async () => {
+    const { client, selected } = creatingClient({ id: 'rule-9', row: storedRow });
+    await createOvAlertStore(client).createRule({
+      symbol: 'NVDA', kind: 'earnings', threshold: 7,
+    });
+    expect(selected).toEqual(['rule-9']);
+  });
+
+  it('returns the stored row, not the draft that was sent', async () => {
+    /*
+      The draft says 7.4 and the column stored 7. A caller shown 7.4 would be
+      told a rule exists that does not.
+    */
+    const { client } = creatingClient({
+      id: 'rule-9',
+      row: { ...storedRow, threshold: '7', symbol: 'NVDA' },
+    });
+    const created = await createOvAlertStore(client).createRule({
+      symbol: 'nvda', kind: 'earnings', threshold: 7.4,
+    });
+    expect(created).toMatchObject({ threshold: '7', symbol: 'NVDA' });
+  });
+
+  it('propagates the function’s error instead of reporting a creation', async () => {
+    // 23505 and 54000 both arrive this way, and `repository.ts` maps them onto
+    // `duplicate` and `limit`. Swallowing either here would lose both.
+    const { client } = creatingClient({ rpcError: { code: '54000', message: 'Alert limit reached' } });
+    await expect(createOvAlertStore(client).createRule({
+      symbol: 'NVDA', kind: 'price_above', threshold: 150,
+    })).rejects.toMatchObject({ code: '54000' });
+  });
+
+  it('refuses a null id rather than reporting a row it cannot point at', async () => {
+    const { client } = creatingClient({ id: null });
+    await expect(createOvAlertStore(client).createRule({
+      symbol: 'NVDA', kind: 'price_above', threshold: 150,
+    })).rejects.toThrow(/returned no id/);
+  });
+
+  it('propagates a failed read-back rather than inventing the row', async () => {
+    const { client } = creatingClient({
+      id: 'rule-9',
+      rowError: { code: 'PGRST116', message: 'no rows' },
+    });
+    await expect(createOvAlertStore(client).createRule({
+      symbol: 'NVDA', kind: 'price_above', threshold: 150,
+    })).rejects.toMatchObject({ code: 'PGRST116' });
   });
 });

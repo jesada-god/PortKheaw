@@ -1,26 +1,20 @@
 /**
- * THE RULE STORE, AS A PORT — AND WHY IT IS A PORT.
+ * THE RULE STORE, AS A PORT — AND WHY IT IS STILL A PORT.
  *
  * ===========================================================================
- * THE TABLES ARE WRITTEN AND NOT APPLIED
+ * WHAT THE PORT WAS FOR, AND WHAT IT IS FOR NOW
  * ===========================================================================
- * `202608300001_overview_alerts.sql` and `202608310001_overview_alert_hits.sql`
- * are both in the repository and neither has been run — they sit behind five
- * older migrations in the same state. Until they are applied,
- * `overview_alert_rules` is not in `src/types/database.ts`, so
- * `client.from('overview_alert_rules')` does not typecheck against
- * `SupabaseClient<Database>`.
+ * It was originally a way around unapplied migrations: `overview_alert_rules`
+ * was absent from `src/types/database.ts`, so `client.from(...)` did not
+ * typecheck, and declaring the operations as an interface was the honest
+ * alternative to casting the client through `unknown`.
  *
- * There are two ways past that and only one of them is honest. Casting the
- * client through `unknown` compiles today and keeps compiling forever, silently
- * outliving the reason it was added. Declaring the operations as an interface
- * does not: the adapter is written once the generated types know the tables, and
- * nothing here has to be unpicked.
- *
- * So this module owns the SHAPE — the table names, the columns, the RPC name and
- * its arguments, the validation and the normalization — and the caller owns the
- * round trip. That split is also what makes the sweep testable without a
- * database.
+ * Those migrations are applied and the types know both tables, so that reason is
+ * gone. The port stays for the reason that outlived it: this module owns the
+ * SHAPE — the table names, the columns, the RPC names and their arguments, the
+ * validation and the normalization — and the caller owns the round trip. That
+ * split is what lets `sweep.test.ts` exercise the whole sweep against a Map,
+ * with every method a real call and nothing faked away.
  *
  * ===========================================================================
  * A BAD ROW IS DROPPED, NOT REPAIRED
@@ -63,6 +57,24 @@ export const OV_ALERT_RECORD_HIT_RPC = 'record_overview_alert_hit';
  * See `202608310002_overview_alert_hit_service.sql`.
  */
 export const OV_ALERT_RECORD_HIT_SERVICE_RPC = 'record_overview_alert_hit_service';
+
+/**
+ * The function that creates a rule — and the ONLY way one may be created.
+ *
+ * A direct `insert` into `overview_alert_rules` is permitted by RLS, so this is
+ * not enforced by the database and has to be enforced by everybody writing
+ * against it. Two things live inside this function and nowhere else:
+ *
+ *   * the per-account CAP of fifty rules, counted under an advisory lock so two
+ *     parallel creates cannot both observe forty-nine; and
+ *   * `user_id`, taken from `auth.uid()` rather than from the caller. The column
+ *     is `not null` with no default, so an insert that omits it raises 23502 and
+ *     one that supplies it is accepting an id a caller could substitute.
+ *
+ * The adapter had a direct insert until the generated types learned the table's
+ * real shape and refused it. See `202608300001_overview_alerts.sql`.
+ */
+export const OV_ALERT_CREATE_RULE_RPC = 'create_overview_alert_rule';
 
 /**
  * Exactly the columns the sweep reads, as a Supabase `select` string.
@@ -125,13 +137,21 @@ export function parseOvAlertRules(rows: unknown): OvAlertRule[] {
   });
 }
 
-/** What a caller supplies to create a rule. The id and the stamp are the store's. */
+/**
+ * What a caller supplies to create a rule. The id and the stamp are the store's.
+ *
+ * THERE IS NO `enabled` HERE, and its absence is load-bearing.
+ * {@link OV_ALERT_CREATE_RULE_RPC} inserts four columns and leaves `enabled` to
+ * the column default, so a draft field for it could not be honoured — it would
+ * be a parameter callers could set and the database would ignore. A rule is
+ * created switched on; switching it off is {@link updateOvAlertRule}, which is
+ * a plain `update` and does reach the column.
+ */
 export interface OvAlertRuleDraft {
   symbol: string;
   kind: OvAlertKind;
   /** Always positive. The direction is in the kind — see `types.ts`. */
   threshold: number;
-  enabled?: boolean;
 }
 
 /** What may be changed on an existing rule. Its kind and symbol may not. */
@@ -215,9 +235,18 @@ export function parseWrittenId(row: unknown): string | null {
   return typeof row === 'string' && row.length > 0 ? row : null;
 }
 
+/**
+ * `limit` exists because routing creation through
+ * {@link OV_ALERT_CREATE_RULE_RPC} made it reachable.
+ *
+ * The fifty-rule cap has always been in the function; nothing called the
+ * function, so nothing could hit it. Now that creation goes through it, a reader
+ * at the cap gets 54000 back — and reporting that as `database` would tell them
+ * the product is broken when it is enforcing a documented limit.
+ */
 export type OvAlertWriteResult =
   | { ok: true; rule: OvAlertRule }
-  | { ok: false; code: 'invalid' | 'duplicate' | 'not-found' | 'database' };
+  | { ok: false; code: 'invalid' | 'duplicate' | 'limit' | 'not-found' | 'database' };
 
 function invalidDraft(draft: OvAlertRuleDraft): boolean {
   if (!draft.symbol.trim()) return true;
@@ -235,7 +264,14 @@ function invalidDraft(draft: OvAlertRuleDraft): boolean {
  *
  * A 23505 becomes `duplicate` rather than being swallowed: the unique index is
  * one rule per symbol per kind, and a reader pressing a button that appears to
- * do nothing is what swallowing it produces.
+ * do nothing is what swallowing it produces. A 54000 becomes `limit` for the
+ * same reason — see {@link OvAlertWriteResult}.
+ *
+ * THE RETURNED RULE IS THE ROW THE DATABASE HOLDS, not the draft that was sent.
+ * The store re-reads it after the write, so the id, the normalized symbol, the
+ * `enabled` the column defaulted to and the `threshold` as `numeric` rounded it
+ * all come back from the row. Echoing the draft would let this report a rule
+ * that differs from the stored one in any of those.
  */
 export async function createOvAlertRule(
   store: OvAlertStore,
@@ -250,7 +286,8 @@ export async function createOvAlertRule(
     const rule = created[0];
     return rule ? { ok: true, rule } : { ok: false, code: 'database' };
   } catch (error) {
-    return { ok: false, code: isDuplicate(error) ? 'duplicate' : 'database' };
+    if (isDuplicate(error)) return { ok: false, code: 'duplicate' };
+    return { ok: false, code: isAtLimit(error) ? 'limit' : 'database' };
   }
 }
 
@@ -298,4 +335,17 @@ export async function deleteOvAlertRule(
 function isDuplicate(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === '23505';
+}
+
+/**
+ * The fifty-rule cap, raised by {@link OV_ALERT_CREATE_RULE_RPC} as 54000.
+ *
+ * `54000` is `program_limit_exceeded`, which the function chooses deliberately
+ * — it is a limit this product sets, not a constraint violation, and mapping it
+ * onto 23505 would make "you have too many alerts" read as "you already have
+ * this alert".
+ */
+function isAtLimit(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === '54000';
 }
