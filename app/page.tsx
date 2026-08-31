@@ -32,11 +32,13 @@ import {
   marketEventsCardEnabled,
   marketStatusCardEnabled,
   newsFilterEnabled,
+  phase2AlertsEnabled,
   phase2EventsEnabled,
   phase2MarketSnapshotEnabled,
   phase2WhatChangedEnabled,
   watchlistV2Enabled,
 } from '@/src/config/features';
+import { loadOvAlertCountsBySymbol } from '@/src/lib/market-overview/alerts/supabase-store';
 import {
   loadOvMarketSnapshot,
   ovMarketSnapshotView,
@@ -423,6 +425,24 @@ export default async function Home() {
     })
     : null;
 
+  /*
+   * How many alerts each symbol has, or null when that cannot be read.
+   *
+   * `overview_alert_rules` is created by a migration that has not been applied,
+   * so `null` is the answer in every deployment today — and the Watchlist row
+   * draws no alert element at all for it. The three outcomes the loader
+   * distinguishes are in `alerts/supabase-store.ts`; the one that matters here
+   * is that an unreadable count is NOT an empty object. A reader with two
+   * alerts on NVDA and a reader whose table does not exist must not be shown
+   * the same thing, and "0" would tell the second one something false about
+   * their own settings.
+   *
+   * One indexed read, scoped to the reader by RLS, and only when the flag is on.
+   */
+  const alertCountBySymbol = phase2AlertsEnabled() && client && user
+    ? await loadOvAlertCountsBySymbol(client)
+    : null;
+
   after(async () => {
     await Promise.allSettled([
       phase2MarketSnapshotEnabled() ? warmOvMarketSnapshot(overviewNow) : null,
@@ -549,13 +569,7 @@ export default async function Home() {
         */
         watchlistRows: watchlistV2Enabled() ? watchlistView?.rows ?? null : null,
         events,
-        /*
-          `alertCountBySymbol` is deliberately NOT set. `overview_alert_rules`
-          has not been applied in any deployment, so the count is unreadable
-          rather than zero — and the row draws no alert element at all for an
-          unreadable count. Passing an empty object here would claim every
-          symbol has none.
-        */
+        alertCountBySymbol,
         newsDefaultScope: newsFilterEnabled() ? 'portfolio' : undefined,
         limitations,
       }}
