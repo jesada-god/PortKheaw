@@ -100,6 +100,19 @@ export interface OvAlertRule {
   threshold: number;
   enabled: boolean;
   /**
+   * Whose rule this is, when the caller is in a position to know.
+   *
+   * NULL FROM A READER-SCOPED STORE, and that is not a gap: RLS has already
+   * narrowed the read to one account, so the id would be the reader's own and
+   * carrying it would invite somebody to filter on it — which is the check RLS
+   * is doing properly one layer down.
+   *
+   * Set by the service-role store, which reads every account's rules and has no
+   * RLS to lean on. `runOvAlertSweep` groups by this, so a reader-scoped sweep
+   * is simply the case where every rule lands in one group.
+   */
+  userId: string | null;
+  /**
    * When this rule last produced a hit, or null when it never has.
    *
    * The cooldown reads it and `record_overview_alert_hit` writes it, in the

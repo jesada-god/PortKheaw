@@ -54,17 +54,35 @@ export const OV_ALERT_HITS_TABLE = 'overview_alert_hits';
 export const OV_ALERT_RECORD_HIT_RPC = 'record_overview_alert_hit';
 
 /**
+ * The service-role twin, for the scheduled sweep.
+ *
+ * `record_overview_alert_hit` resolves `auth.uid()`, which is null under the
+ * service role, so a cron calling it would raise on every write. This one takes
+ * the same arguments, derives the owner from the rule row, and is granted to
+ * `service_role` alone — the shape `trigger_price_alert_service` already uses.
+ * See `202608310002_overview_alert_hit_service.sql`.
+ */
+export const OV_ALERT_RECORD_HIT_SERVICE_RPC = 'record_overview_alert_hit_service';
+
+/**
  * Exactly the columns the sweep reads, as a Supabase `select` string.
  *
  * Named rather than `*` so a column added later is not silently pulled into
  * every run, and so the migration and the reader can be diffed by eye.
  */
-export const OV_ALERT_RULES_COLUMNS = 'id, symbol, kind, threshold, enabled, last_fired_at';
+export const OV_ALERT_RULES_COLUMNS =
+  'id, user_id, symbol, kind, threshold, enabled, last_fired_at';
 
 const kindSchema = z.enum(OV_ALERT_KINDS as unknown as [string, ...string[]]);
 
 const rowSchema = z.object({
   id: z.string().min(1),
+  /*
+    Present on every read; meaningful only on a service-role one. A reader's own
+    id tells the sweep nothing it did not already know, and the parser keeps it
+    optional so a caller selecting a narrower column list still works.
+  */
+  user_id: z.string().min(1).nullable().optional(),
   symbol: z.string().min(1).max(20),
   kind: kindSchema,
   /*
@@ -97,6 +115,7 @@ export function parseOvAlertRules(rows: unknown): OvAlertRule[] {
     if (!parsed.success) return [];
     return [{
       id: parsed.data.id,
+      userId: parsed.data.user_id ?? null,
       symbol: parsed.data.symbol.trim().toUpperCase(),
       kind: parsed.data.kind as OvAlertKind,
       threshold: parsed.data.threshold,

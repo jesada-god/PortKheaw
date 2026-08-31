@@ -5,7 +5,7 @@ import {
   ovAlertKindsWithoutCooldown,
 } from './cooldown';
 import { evaluateOvAlerts, ovAlertMatches, type OvAlertQuote } from './evaluate';
-import { runOvAlertSweep } from './run';
+import { runOvAlertSweep, type OvAlertQuoteLoader } from './run';
 import {
   createOvAlertRule,
   deleteOvAlertRule,
@@ -35,6 +35,7 @@ const HOUR = 60 * 60 * 1_000;
 function rule(over: Partial<OvAlertRule> = {}): OvAlertRule {
   return {
     id: 'rule-1',
+    userId: null,
     symbol: 'NVDA',
     kind: 'price_above',
     threshold: 150,
@@ -48,6 +49,11 @@ function quotes(quote: Partial<OvAlertQuote> = {}): Map<string, OvAlertQuote> {
   return new Map([['NVDA', { price: 160, changePercent: 2, ...quote }]]);
 }
 
+/** The sweep takes a loader now. Every case that does not care about it uses this. */
+function loaderFor(map: ReadonlyMap<string, OvAlertQuote>): OvAlertQuoteLoader {
+  return async () => map;
+}
+
 /** A store with a Map behind it. Nothing is faked away — every method is one call. */
 function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {}) {
   const rows = new Map(rules.map((item) => [item.id, { ...item }]));
@@ -56,6 +62,7 @@ function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {})
   const store: OvAlertStore = {
     listRules: async () => [...rows.values()].map((item) => ({
       id: item.id,
+      user_id: item.userId,
       symbol: item.symbol,
       kind: item.kind,
       /* Postgres numeric arrives as a string. The parser has to survive that. */
@@ -67,6 +74,7 @@ function fakeStore(rules: OvAlertRule[], options: { failWrites?: boolean } = {})
       const id = `rule-${++sequence + rules.length}`;
       const created: OvAlertRule = {
         id,
+        userId: null,
         symbol: draft.symbol,
         kind: draft.kind,
         threshold: draft.threshold,
@@ -251,8 +259,8 @@ describe('runOvAlertSweep', () => {
 
   it('writes a hit, stamps the rule, and returns the row id', () => {
     const { store, rows, written } = fakeStore([rule()]);
-    return runOvAlertSweep({ store, quotes: quotes(), now }).then((summary) => {
-      expect(summary).toMatchObject({ evaluated: 1, recorded: 1, failed: 0 });
+    return runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now }).then((summary) => {
+      expect(summary).toMatchObject({ owners: 1, evaluated: 1, recorded: 1, failed: 0 });
       expect(summary.hits[0]!.notificationId).toBe('hit-1');
       expect(written).toHaveLength(1);
       expect(rows.get('rule-1')!.lastFiredAt).toBe(now);
@@ -265,10 +273,10 @@ describe('runOvAlertSweep', () => {
       rule that stays true must produce ONE row, not one per run.
     */
     const { store, written } = fakeStore([rule()]);
-    await runOvAlertSweep({ store, quotes: quotes(), now });
+    await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
     const second = await runOvAlertSweep({
       store,
-      quotes: quotes(),
+      loadQuotes: loaderFor(quotes()),
       now: new Date(Date.parse(now) + 15 * 60_000),
     });
     expect(second.recorded).toBe(0);
@@ -277,10 +285,10 @@ describe('runOvAlertSweep', () => {
 
   it('fires again on the sweep after the cooldown expires', async () => {
     const { store, written } = fakeStore([rule()]);
-    await runOvAlertSweep({ store, quotes: quotes(), now });
+    await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
     await runOvAlertSweep({
       store,
-      quotes: quotes(),
+      loadQuotes: loaderFor(quotes()),
       now: new Date(Date.parse(now) + 4 * HOUR),
     });
     expect(written).toHaveLength(2);
@@ -288,7 +296,7 @@ describe('runOvAlertSweep', () => {
 
   it('never looks at a disabled rule', async () => {
     const { store, written } = fakeStore([rule({ enabled: false })]);
-    const summary = await runOvAlertSweep({ store, quotes: quotes(), now });
+    const summary = await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
     expect(summary.evaluated).toBe(0);
     expect(written).toEqual([]);
   });
@@ -300,7 +308,7 @@ describe('runOvAlertSweep', () => {
       told something they were not.
     */
     const { store } = fakeStore([rule()], { failWrites: true });
-    const summary = await runOvAlertSweep({ store, quotes: quotes(), now });
+    const summary = await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
     expect(summary).toMatchObject({ recorded: 0, failed: 1 });
     expect(summary.hits).toEqual([]);
   });
@@ -309,11 +317,117 @@ describe('runOvAlertSweep', () => {
     const { store, written } = fakeStore([rule()]);
     const summary = await runOvAlertSweep({
       store,
-      quotes: new Map([['NVDA', { price: null, changePercent: null }]]),
+      loadQuotes: loaderFor(new Map([['NVDA', { price: null, changePercent: null }]])),
       now,
     });
     expect(summary.recorded).toBe(0);
     expect(written).toEqual([]);
+  });
+});
+
+describe('the sweep across many owners', () => {
+  const now = '2026-09-11T00:00:00.000Z';
+
+  /*
+   * The service-role case. A reader-scoped store returns rules with a null
+   * `userId` because RLS already answered that question; the service store fills
+   * it in. The sweep groups by it either way and has no `if` to get wrong.
+   */
+  it('sweeps every owner in one pass', async () => {
+    const { store, written } = fakeStore([
+      rule({ id: 'a', userId: 'user-1', symbol: 'NVDA' }),
+      rule({ id: 'b', userId: 'user-2', symbol: 'NVDA' }),
+      rule({ id: 'c', userId: 'user-3', symbol: 'NVDA' }),
+    ]);
+    const summary = await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
+    expect(summary.owners).toBe(3);
+    expect(summary.recorded).toBe(3);
+    expect(written.map((item) => item.ruleId).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('loads the readings once for a symbol many owners watch', async () => {
+    /*
+      Two readers watching NVDA is one quote. The alternative makes the provider
+      bill scale with how many people happen to watch the same stock.
+    */
+    const { store } = fakeStore([
+      rule({ id: 'a', userId: 'user-1' }),
+      rule({ id: 'b', userId: 'user-2' }),
+    ]);
+    const seen: string[][] = [];
+    await runOvAlertSweep({
+      store,
+      now,
+      loadQuotes: async (rules) => {
+        seen.push(rules.map((item) => item.symbol));
+        return quotes();
+      },
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('keeps sweeping when one owner throws', async () => {
+    /*
+      A cron that gave up on the first bad account would leave every account
+      after it unswept — and which ones those are would depend on the order
+      Postgres happened to return rows.
+    */
+    const { store, written } = fakeStore([
+      rule({ id: 'a', userId: 'user-1' }),
+      rule({ id: 'b', userId: 'user-2' }),
+      rule({ id: 'c', userId: 'user-3' }),
+    ]);
+    const guarded: typeof store = {
+      ...store,
+      recordHit: async (record) => {
+        if (record.ruleId === 'b') throw new Error('user-2 is broken');
+        return store.recordHit(record);
+      },
+    };
+    const summary = await runOvAlertSweep({ store: guarded, loadQuotes: loaderFor(quotes()), now });
+    expect(summary.recorded).toBe(2);
+    expect(summary.errors).toEqual([{ userId: 'user-2', message: 'user-2 is broken' }]);
+    expect(written.map((item) => item.ruleId).sort()).toEqual(['a', 'c']);
+  });
+
+  it('holds the cooldown per rule, not per symbol across owners', async () => {
+    /*
+      Two owners, same symbol, one of them already fired. The cooldown is a
+      property of the RULE, so the other owner is not silenced by somebody
+      else's alert.
+    */
+    const firedAt = now;
+    const { store, written } = fakeStore([
+      rule({ id: 'cooled', userId: 'user-1', lastFiredAt: firedAt }),
+      rule({ id: 'ready', userId: 'user-2', lastFiredAt: null }),
+    ]);
+    const summary = await runOvAlertSweep({
+      store,
+      loadQuotes: loaderFor(quotes()),
+      now: new Date(Date.parse(firedAt) + HOUR),
+    });
+    expect(summary.recorded).toBe(1);
+    expect(written.map((item) => item.ruleId)).toEqual(['ready']);
+  });
+
+  it('reports a total readings failure once, against no owner', async () => {
+    const { store, written } = fakeStore([
+      rule({ id: 'a', userId: 'user-1' }),
+      rule({ id: 'b', userId: 'user-2' }),
+    ]);
+    const summary = await runOvAlertSweep({
+      store,
+      now,
+      loadQuotes: async () => { throw new Error('provider down'); },
+    });
+    expect(summary.errors).toEqual([{ userId: null, message: 'provider down' }]);
+    expect(written).toEqual([]);
+  });
+
+  it('treats a reader-scoped store as one owner', async () => {
+    const { store } = fakeStore([rule({ id: 'a' }), rule({ id: 'b', symbol: 'NVDA', kind: 'price_below', threshold: 500 })]);
+    const summary = await runOvAlertSweep({ store, loadQuotes: loaderFor(quotes()), now });
+    expect(summary.owners).toBe(1);
   });
 });
 

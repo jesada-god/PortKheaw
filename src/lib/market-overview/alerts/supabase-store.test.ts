@@ -22,6 +22,7 @@ import type { OvAlertRule } from './types';
 function rule(over: Partial<OvAlertRule> = {}): OvAlertRule {
   return {
     id: 'rule-1',
+    userId: null,
     symbol: 'NVDA',
     kind: 'price_above',
     threshold: 150,
