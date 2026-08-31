@@ -39,13 +39,19 @@ import {
  * sweep to get the branch wrong in.
  *
  * ===========================================================================
- * THE CAST, AND WHY IT CANNOT OUTLIVE ITS REASON
+ * THE CAST THAT USED TO BE HERE
  * ===========================================================================
- * Same situation as `supabase-store.ts`: the migrations that create these
- * objects have not been applied, so neither the table nor the RPC is in
- * `src/types/database.ts`. `OV_ALERT_SERVICE_IS_UNTYPED` is a type-level
- * assertion that the table is STILL unknown, so regenerating the types after the
- * migrations run breaks this file and tells whoever did it to delete the cast.
+ * Same situation as `supabase-store.ts`, and the same ending. Neither the table
+ * nor the RPC was in `src/types/database.ts` while the migrations were
+ * unapplied, so this file reached the client through `as unknown as`, guarded by
+ * `OV_ALERT_SERVICE_IS_UNTYPED` — a type-level assertion that the table was
+ * STILL unknown, written so that regenerating the types would break the build
+ * rather than let the workaround outlive its reason.
+ *
+ * It did. The migrations are applied, the constant resolved to `never`, the
+ * build stopped, and the cast is gone; `client.from` and `client.rpc` are called
+ * directly. The paragraph stays because the mechanism is the point — a comment
+ * saying "remove this later" is a wish, and this is what actually removed it.
  *
  * ===========================================================================
  * DO NOT HAND THIS A READER'S CLIENT
