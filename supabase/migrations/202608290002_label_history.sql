@@ -4,8 +4,17 @@ begin;
 -- Published label history — one row per scope per key per trading date
 -- ===========================================================================
 --
--- NOT YET APPLIED. Written and reviewed before it is run; read the reversal
--- section at the bottom before applying it anywhere.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `label_history` resolves `scope`, `key`, `date`, `raw_label` and
+-- `held_label`. NOT covered: the CHECK constraints and the RLS policies —
+-- PostgREST reports relations and columns and nothing else, and production keeps
+-- no migration ledger to ask instead. See `docs/operations/migration-state.md`.
+--
+-- The header this replaces claimed the file had never been run. It said so while
+-- the table was live. Read the reversal section at the bottom before changing
+-- anything here.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THIS TABLE EXISTS

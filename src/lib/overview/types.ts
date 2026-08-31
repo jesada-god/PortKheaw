@@ -257,6 +257,57 @@ export interface OverviewDashboardData {
    */
   upcoming?: import('@/src/lib/upcoming/types').UpcomingFeed;
   /**
+   * ===========================================================================
+   * THE PHASE 2 FIELDS
+   * ===========================================================================
+   * Every one is optional and absent by default, because every one is behind a
+   * flag that is off. Absent must render as "this section is not part of the
+   * page" — never as a section that failed — which is the same contract
+   * `marketStatus` above already has.
+   */
+  /**
+   * The six-instrument reading, the three-way word and the regime with its
+   * reasons. Absent when `PHASE2_MARKET_SNAPSHOT` is off or the snapshot has
+   * not warmed yet.
+   */
+  marketToday?: import('@/src/lib/market-overview/types').OvMarketSnapshot | null;
+  /**
+   * "สิ่งที่เปลี่ยนไป", already detected, capped and deduped on the server.
+   *
+   * An EMPTY ARRAY and an absent field are different: empty means the reader
+   * has the section and nothing happened today, absent means they do not have
+   * it. The section renders its one-line quiet state for the first and nothing
+   * at all for the second.
+   */
+  changes?: import('@/src/lib/market-overview/what-changed').OvChangeEvent[] | null;
+  /**
+   * Watchlist rows with the trend column and the expanded details.
+   *
+   * Null when `WATCHLIST_V2` is off, when the reader has no list, or when the
+   * capped view could not be loaded inside its deadline — in all three the
+   * overview falls back to the quote-only rows in `watchlist` above.
+   */
+  watchlistRows?: import('@/src/lib/watchlist/rows').WatchlistRow[] | null;
+  /** The merged macro + upcoming list. Absent when `PHASE2_EVENTS` is off. */
+  events?: import('./events-feed').OverviewEventsView | null;
+  /**
+   * How many alert rules each symbol has.
+   *
+   * ABSENT MEANS UNREADABLE, and the row must then draw no alert element at all
+   * — not a zero, not a dash. `overview_alert_rules` has not been applied yet,
+   * so this is absent in every deployment today; the shape is here so the row
+   * that reads it does not have to change when it starts arriving.
+   */
+  alertCountBySymbol?: Record<string, number> | null;
+  /**
+   * Which news tab opens first. Absent leaves the feed on its own default.
+   *
+   * Carried in the payload rather than read from `process.env` in the client,
+   * for the reason `overviewV2` gives: a client component reading an env var
+   * reads what was baked in at build time.
+   */
+  newsDefaultScope?: import('@/src/lib/news/scope').NewsScope;
+  /**
    * The Market Status card's reading, or absent when `MARKET_STATUS_CARD` is off.
    *
    * Optional because the flag defaults to OFF and absent must mean "the card is

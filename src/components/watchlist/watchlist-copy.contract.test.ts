@@ -19,10 +19,25 @@ const visibleSurfaces = [
 
 const stringLiteralWithEnglishWatchlist = /(['"`])(?!@\/)[^'"`\r\n]*Watchlist[^'"`\r\n]*\1/g;
 
+/**
+ * A module specifier is a path, not copy.
+ *
+ * `import { WatchlistTable } from './WatchlistTable'` puts the word in a string
+ * literal no reader will ever see, and the rule this file holds is about the
+ * word ON THE SCREEN. Import and export statements are removed before the scan
+ * rather than the pattern being loosened — a literal anywhere else in the file
+ * still fails, including one sitting directly beside an import.
+ */
+function withoutModuleSpecifiers(source: string): string {
+  return source.replace(/^\s*(?:import|export)\s[^;]*?from\s*(['"])[^'"]*\1;?/gm, '');
+}
+
 describe('รายการติดตาม visible-copy contract', () => {
   it('does not expose the English Watchlist label on user-visible surfaces', () => {
     for (const file of visibleSurfaces) {
-      const source = readFileSync(resolve(process.cwd(), file), 'utf8');
+      const source = withoutModuleSpecifiers(
+        readFileSync(resolve(process.cwd(), file), 'utf8'),
+      );
       expect(source.match(stringLiteralWithEnglishWatchlist), file).toBeNull();
     }
   });

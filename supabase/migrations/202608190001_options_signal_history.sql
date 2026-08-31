@@ -4,9 +4,22 @@ begin;
 -- Options Signal history — one row per symbol per finalized-candle date
 -- ===========================================================================
 --
--- APPLIED 2026-08-19. Reviewed as a file before it was run, same as the P6
--- Market Signal history migration it is modelled on. Read the reversal block at
--- the bottom before touching it.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Applied 2026-08-19; the VERIFIED line is when that was last confirmed, not
+-- when it happened. Evidence: `options_signal_history` resolves `symbol`,
+-- `captured_at`, `signal_type` and `inputs`. NOT covered: the indexes, the
+-- CHECK constraints and the RLS policies. See
+-- `docs/operations/migration-state.md`.
+--
+-- Two commits touch this file — `be355b2` and `57cd2b2`, both dated 2026-08-19,
+-- the day it was applied — so its current text is not proof of what production
+-- ran, and no checksum exists anywhere that could settle it.
+--
+-- Reviewed as a file before it was run, same as the P6 Market Signal history
+-- migration it is modelled on. Read the reversal block at the bottom before
+-- touching it.
 --
 -- One thing this file's own constraints caught, recorded here because the next
 -- reader will meet it too: `inputs` below is `not null default '{}'`, and a

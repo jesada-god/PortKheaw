@@ -4,9 +4,20 @@ begin;
 -- Market Signal history — one row per symbol per day
 -- ===========================================================================
 --
--- NOT YET APPLIED. This file is written and reviewed before it is run, which is
--- the whole reason it exists as a reviewable artefact rather than as something
--- a deploy did. Read the reversal section at the bottom before applying.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `market_signal_history` resolves `symbol`, `as_of`, `state` and
+-- `bias`. NOT covered by that evidence: `market_signal_history_as_of_idx`, the
+-- RLS policies, and `sweep_market_signal_history` — PostgREST reports relations
+-- and columns and nothing else, and production keeps no migration ledger to ask
+-- instead. `docs/operations/migration-state.md` records what that leaves unknown.
+--
+-- The header this replaces claimed the file had never been run. It said so while
+-- the table was live, which is the failure the STATUS and VERIFIED lines above
+-- exist to make visible: `supabase/migration-order.test.ts` now requires both
+-- lines and a date. Read the reversal section at the bottom before changing
+-- anything here.
 --
 -- What this stores is what the card SAID, not what the market did. The market's
 -- own history is already in the candles; the thing nobody can reconstruct after

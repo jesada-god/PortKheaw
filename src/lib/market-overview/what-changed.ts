@@ -1,0 +1,240 @@
+/**
+ * THE SIX DETECTORS, IN THE PHASE 2 VOCABULARY.
+ *
+ * ===========================================================================
+ * THIS IS A MAPPING. IT IS NOT A SEVENTH DETECTOR.
+ * ===========================================================================
+ * `src/lib/watchlist/what-changed.ts` opens by explaining why every rule lives
+ * in one table: detectors accumulate across files, each grows its own idea of
+ * how big a move has to be, and by the time anybody asks "why did it say this"
+ * the answer is spread over four modules and two of them disagree.
+ *
+ * So nothing here measures anything. Every threshold, every Thai sentence and
+ * every decision about whether an item exists at all stays in that file. This
+ * module receives `WhatChangedItem[]` — already detected, already capped — and
+ * renames the detector that produced each one into `OvChangeKind`, which is a
+ * coarser vocabulary of six KINDS rather than six RULES.
+ *
+ * ===========================================================================
+ * THE MAPPING IS NOT ONE-TO-ONE, AND THAT IS THE WHOLE PROBLEM
+ * ===========================================================================
+ *   level-break    → level_break
+ *   trend-change   → trend_flip
+ *   return-sigma   → price_move   ┐ two rules, one kind
+ *   gap            → price_move   ┘
+ *   volume-surge   → volume
+ *   earnings-soon  → earnings
+ *   (nothing)      → news
+ *
+ * `price_move` collapses two detectors that can both fire on the same symbol on
+ * the same day — a stock that gapped down and then moved more than two sigma
+ * did one thing, not two — so without a dedupe the section would spend two of
+ * its five slots saying it twice. {@link dedupeOvChanges} keeps the stronger of
+ * the pair.
+ *
+ * `news` HAS NO SOURCE and is left with none. Stubbing it — "the feed returned
+ * three new articles" — would be inventing a detector in the second file, which
+ * is the thing the first file's header forbids, and it would do it without a
+ * stated threshold. The kind stays in the union because the contract names it
+ * and because a future rule needs somewhere to land; nothing produces it today,
+ * and `what-changed.test.ts` pins that.
+ */
+
+import {
+  WHAT_CHANGED_DETECTORS,
+  type WhatChangedDetectorId,
+  type WhatChangedItem,
+} from '@/src/lib/watchlist/what-changed';
+import type { StatusLevel } from '@/src/lib/presentation/status';
+
+export type OvChangeKind =
+  | 'price_move'
+  | 'level_break'
+  | 'volume'
+  | 'trend_flip'
+  | 'earnings'
+  | 'news';
+
+/**
+ * How loudly a change is drawn.
+ *
+ * Three words rather than the detector table's integers 0–5, because severity
+ * is shown to a reader and an integer is not: "importance 3" tells nobody
+ * anything, and printing it would be the numeric score this product keeps off
+ * every card. The integers survive underneath as the ORDERING — see
+ * {@link OV_CHANGE_SEVERITY_CUTS} — so the two never disagree about which of
+ * two items matters more.
+ */
+export type OvChangeSeverity = 'high' | 'medium' | 'low';
+
+export interface OvChangeEvent {
+  symbol: string;
+  kind: OvChangeKind;
+  severity: OvChangeSeverity;
+  /**
+   * The finished Thai sentence, copied from the detector verbatim.
+   *
+   * Never rebuilt here. Each sentence states the measurement that made its rule
+   * fire — "ปริมาณซื้อขายวันนี้ 3.2 เท่าของค่ากลาง 20 วัน" — and rewriting it in
+   * this module would separate the wording from the threshold it quotes.
+   */
+  valueText: string;
+  /** The mark, from the shared five-level vocabulary. Never a sixth level. */
+  level: StatusLevel;
+}
+
+/**
+ * Which kind each detector reports as.
+ *
+ * Exhaustive over `WhatChangedDetectorId` by type, so adding a seventh detector
+ * upstream is a compile error here rather than an item that silently vanishes
+ * from this feed.
+ */
+export const OV_CHANGE_KIND_OF: Readonly<Record<WhatChangedDetectorId, OvChangeKind>> = {
+  'level-break': 'level_break',
+  'trend-change': 'trend_flip',
+  'return-sigma': 'price_move',
+  gap: 'price_move',
+  'volume-surge': 'volume',
+  'earnings-soon': 'earnings',
+};
+
+/**
+ * Where the detector table's `importance` becomes one of three words.
+ *
+ * Read as "at least this much". The cuts land on the gaps the detector table
+ * already argues for: a crossed level (5) and a changed trend (4) are things
+ * that were not true yesterday; a move outside its own range (3) and a gap (2)
+ * are magnitudes; heavier volume (1) and a scheduled date (0) are context.
+ */
+export const OV_CHANGE_SEVERITY_CUTS = {
+  high: 4,
+  medium: 2,
+} as const;
+
+export function ovChangeSeverity(importance: number): OvChangeSeverity {
+  if (importance >= OV_CHANGE_SEVERITY_CUTS.high) return 'high';
+  if (importance >= OV_CHANGE_SEVERITY_CUTS.medium) return 'medium';
+  return 'low';
+}
+
+const SEVERITY_RANK: Readonly<Record<OvChangeSeverity, number>> = {
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
+/** The detector table's own order, the tie-break of last resort. */
+const DETECTOR_ORDER: ReadonlyMap<WhatChangedDetectorId, number> = new Map(
+  WHAT_CHANGED_DETECTORS.map((detector, index) => [detector.id, index]),
+);
+
+/** One detected item, renamed. Carries the detector so the dedupe can rank it. */
+interface Carried {
+  event: OvChangeEvent;
+  detector: WhatChangedDetectorId;
+  importance: number;
+}
+
+function carry(item: WhatChangedItem): Carried {
+  return {
+    event: {
+      symbol: item.symbol,
+      kind: OV_CHANGE_KIND_OF[item.detector],
+      severity: ovChangeSeverity(item.importance),
+      valueText: item.text,
+      level: item.level,
+    },
+    detector: item.detector,
+    importance: item.importance,
+  };
+}
+
+/**
+ * One event per symbol per kind, keeping the stronger.
+ *
+ * "Stronger" is a total order and every step of it is deterministic, because
+ * the alternative — first-wins over whatever order the symbols arrived in —
+ * would make the sentence a reader sees depend on an unrelated symbol being
+ * added to their watchlist:
+ *
+ *   1. higher severity wins
+ *   2. then higher `importance`, which separates two rules inside one severity
+ *      band (`return-sigma` 3 beats `gap` 2, both `medium`)
+ *   3. then earlier position in the detector table, so renaming a detector
+ *      cannot reshuffle a reader's card
+ *
+ * Applied over EVERY kind, not only `price_move`. Today only that one has two
+ * sources, but a dedupe written to special-case it would be a rule about the
+ * current table rather than about the shape, and would quietly stop applying
+ * the day a second kind gained a second detector.
+ *
+ * Input order is otherwise preserved: the caller has already capped and sorted
+ * the items by importance, and re-sorting here would throw that away.
+ */
+export function dedupeOvChanges(items: readonly OvChangeEvent[]): OvChangeEvent[] {
+  return dedupeCarried(items.map((event) => ({
+    event,
+    /*
+      A bare event carries no detector. Rank it by severity alone and leave the
+      finer tie-breaks to the path that still has the detector — this overload
+      exists for callers holding events that have already crossed a boundary.
+    */
+    detector: null,
+    importance: SEVERITY_RANK[event.severity],
+  })));
+}
+
+function dedupeCarried(
+  carried: readonly { event: OvChangeEvent; detector: WhatChangedDetectorId | null; importance: number }[],
+): OvChangeEvent[] {
+  const best = new Map<string, { event: OvChangeEvent; detector: WhatChangedDetectorId | null; importance: number }>();
+  const order: string[] = [];
+
+  for (const candidate of carried) {
+    /*
+      `|` appears in neither half — a symbol matches `[A-Z0-9.^-]+` and a kind
+      is snake_case — so no pair of distinct (symbol, kind) can collide on one
+      key. A separator that could appear in either would silently merge two
+      different events.
+    */
+    const key = `${candidate.event.symbol}|${candidate.event.kind}`;
+    const held = best.get(key);
+    if (!held) {
+      best.set(key, candidate);
+      order.push(key);
+      continue;
+    }
+    if (stronger(candidate, held)) best.set(key, candidate);
+  }
+
+  return order.map((key) => best.get(key)!.event);
+}
+
+function stronger(
+  candidate: { event: OvChangeEvent; detector: WhatChangedDetectorId | null; importance: number },
+  held: { event: OvChangeEvent; detector: WhatChangedDetectorId | null; importance: number },
+): boolean {
+  const bySeverity = SEVERITY_RANK[candidate.event.severity] - SEVERITY_RANK[held.event.severity];
+  if (bySeverity !== 0) return bySeverity > 0;
+  if (candidate.importance !== held.importance) return candidate.importance > held.importance;
+  const candidateOrder = candidate.detector === null
+    ? Number.POSITIVE_INFINITY
+    : DETECTOR_ORDER.get(candidate.detector) ?? Number.POSITIVE_INFINITY;
+  const heldOrder = held.detector === null
+    ? Number.POSITIVE_INFINITY
+    : DETECTOR_ORDER.get(held.detector) ?? Number.POSITIVE_INFINITY;
+  return candidateOrder < heldOrder;
+}
+
+/**
+ * The feed, from items the watchlist detectors already produced.
+ *
+ * An empty array is the ordinary outcome on a quiet day and the caller must
+ * render nothing at all for it — not an empty card, not "ไม่มีการเปลี่ยนแปลง".
+ * The rule is inherited from the module this reads, and the reason with it: a
+ * section that is always present teaches a reader to stop seeing it.
+ */
+export function ovChanges(items: readonly WhatChangedItem[]): OvChangeEvent[] {
+  return dedupeCarried(items.map(carry));
+}

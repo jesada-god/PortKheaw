@@ -83,14 +83,14 @@
 1. ห้ามตั้ง default เป็น `true`
 2. ห้ามลบ flag ทิ้งหลัง phase ลง — **flag คือ rollback**
 
-### 1.4 Migration ที่เขียนแล้วแต่ยังไม่รัน
+### 1.4 Migration ของกลุ่มนี้ — สถานะจริง
 
 | ไฟล์ | commit แล้ว? | รันแล้ว? |
 | --- | --- | --- |
-| `supabase/migrations/202608180001_market_signal_history.sql` | ✅ (`43cb65d`) | **ยังไม่รัน** — commit body บอกไว้ตรงๆ ว่า "THE MIGRATION IS NOT APPLIED" มี test รันกับ Postgres จริง (`history-migration.test.ts`) |
-| `supabase/migrations/202608180002_expected_move_collection.sql` | ❌ ยังไม่ commit | **ยังไม่รัน** — ในไฟล์เขียนว่า "NOT YET APPLIED" ไม่มี migration test |
+| `supabase/migrations/202608180001_market_signal_history.sql` | ✅ (`43cb65d`) | **รันแล้ว** — ยืนยัน 2026-08-31 ด้วย PostgREST probe (`market_signal_history` resolve `symbol`/`as_of`/`state`/`bias`) หัวไฟล์เป็น `-- STATUS: APPLIED` แล้ว · มี test รันกับ Postgres จริง (`history-migration.test.ts`) |
+| `supabase/migrations/202608180002_expected_move_collection.sql` | ✅ แต่อยู่คนละ branch — `wip/expected-move-collection` (`1854134`, 2026-08-18) ไม่มีในสายงานนี้ | **ยังไม่รัน** — `expected_move_observations` ตอบ PGRST205 ยืนยัน 2026-08-31 · ไม่มี migration test |
 
-**สถานะจริงของ DB ไม่ได้ตรวจ** — ยืนยันได้แค่ว่าไฟล์เขียนว่าอย่างนั้น และโค้ดฝั่ง repository ออกแบบให้ "ตารางยังไม่มี" = ไม่มี history ไม่ใช่ error
+**สถานะ DB ตรวจแล้ว 2026-08-31** ด้วย PostgREST probe ซึ่งยืนยันได้แค่ระดับตาราง/คอลัมน์ — function, policy และ constraint มองไม่เห็น (ดู `docs/operations/migration-state.md`) ส่วนโค้ดฝั่ง repository ยังออกแบบให้ "ตารางยังไม่มี" = ไม่มี history ไม่ใช่ error ตามเดิม
 
 ---
 
@@ -755,7 +755,7 @@ $ diff <report 20260818T092020Z> <report 20260818T113633Z>
 
 | งาน | ทำไมต้องเป็นเจ้าของ |
 | --- | --- |
-| **รัน migration `202608180001_market_signal_history.sql`** | แตะ production DB — และต้องรัน **ก่อน** เปิด `SIGNAL_HISTORY` (flag ที่ไม่มีตารางจะไม่บันทึกและไม่แสดงอะไร ไม่พัง แต่ก็ไม่ทำงาน) |
+| ~~**รัน migration `202608180001_market_signal_history.sql`**~~ | **ทำแล้ว** — ยืนยัน 2026-08-31 ว่าตารางอยู่บน production ยังต้องรัน **ก่อน** เปิด `SIGNAL_HISTORY` ตามเดิม (flag ที่ไม่มีตารางจะไม่บันทึกและไม่แสดงอะไร ไม่พัง แต่ก็ไม่ทำงาน) |
 | **ตัดสินใจ + รัน migration `202608180002` (expected move)** | เป็นการตัดสินใจว่าจะเริ่มเก็บข้อมูลที่จะตอบอะไรไม่ได้ไปอีกปี ต้นทุนไม่กี่ KB ต่อวัน ถ้าไม่เริ่ม คำถามนี้จะตอบไม่ได้ถาวร ซึ่งก็เป็นทางเลือกที่ชอบธรรม (เป็นสถานะปัจจุบันและไม่มีต้นทุน) |
 | **ตั้ง schedule ให้ `npm run collect:expected-move`** | วันละครั้งหลังตลาดสหรัฐปิด ต้องมี infra + service key |
 | **เปิด flag ตามลำดับใน `rollout-order.md`** | env variable บน production ลำดับ: GATE → ZONES → ACTIONABLE → สื่อสาร → HISTORY (พร้อม migration) → CONTEXT (ไม่มีอะไรให้เปิด) |

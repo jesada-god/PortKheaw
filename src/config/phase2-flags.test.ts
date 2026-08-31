@@ -180,6 +180,50 @@ describe('a flag that is off costs nothing', () => {
     }
   });
 
+  /*
+   * The Phase 2 foundation flags. Only one of the four spends, and it is the
+   * one checked hardest.
+   *
+   * `PHASE2_MARKET_SNAPSHOT` gates six provider quotes and `WATCHLIST_V2` /
+   * `PHASE2_WHAT_CHANGED` together gate the capped watchlist view — which is
+   * the signal engine per symbol plus a daily-bar read. Both guards are
+   * ternaries, so with the flags off the promise is never constructed.
+   */
+  it('reads PHASE2_MARKET_SNAPSHOT before building the snapshot promise', () => {
+    const page = code('app/page.tsx');
+    expect(page).toMatch(/phase2MarketSnapshotEnabled\(\)\s*\?/);
+    const guard = page.indexOf('phase2MarketSnapshotEnabled()');
+    expect(page.slice(0, guard)).not.toContain('loadOvMarketSnapshot(');
+  });
+
+  it('reads the watchlist-view flags before loading the view', () => {
+    const page = code('app/page.tsx');
+    const guard = page.indexOf('needsWatchlistView');
+    expect(guard).toBeGreaterThan(-1);
+    expect(page.slice(0, guard)).not.toContain('loadOverviewWatchlistView(');
+    expect(page).toMatch(/needsWatchlistView\s*\?/);
+  });
+
+  it('spends nothing for PHASE2_EVENTS — the calendar is a static import', () => {
+    const page = code('app/page.tsx');
+    expect(page).toMatch(/phase2EventsEnabled\(\)\s*\?/);
+    const feed = code('src/lib/overview/events-feed.ts');
+    expect(feed).not.toContain('fetch(');
+    expect(feed).not.toContain('await ');
+  });
+
+  it('caps what the overview asks the watchlist view for', () => {
+    /*
+     * The ceiling is the reason this is affordable on the front page at all. A
+     * cap that lived at the call site would be one refactor away from being
+     * dropped; it lives in the loader, and this pins that it is still there.
+     */
+    const cache = code('src/lib/overview/watchlist-view-cache.ts');
+    expect(cache).toContain('OVERVIEW_WATCHLIST_TREND_CAP = 20');
+    expect(cache).toContain('slice(0, OVERVIEW_WATCHLIST_TREND_CAP)');
+    expect(cache).toContain('OVERVIEW_WATCHLIST_VIEW_DEADLINE_MS');
+  });
+
   it('adds no request for NEWS_FILTER — it changes the one already made', () => {
     const page = code('app/page.tsx');
     const guard = page.indexOf('newsFilterEnabled()');

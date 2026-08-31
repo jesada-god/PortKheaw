@@ -161,6 +161,17 @@ export interface WhatChangedInputBundle {
   signals: ReadonlyMap<string, MarketSignalResult | null>;
   session: MarketSession;
   now: Date;
+  /**
+   * How many items survive the cap. Defaults to `WHAT_CHANGED_LIMIT`.
+   *
+   * A parameter rather than a second constant, because the cap is a statement
+   * about ATTENTION on one surface and the two surfaces have different amounts
+   * of it: the watchlist card sits above the rows it describes and shows five,
+   * the overview section is one of six blocks and shows eight. What survives is
+   * still decided by `capWhatChanged`'s total order, so the overview's extra
+   * three are the next three by importance and never a different three.
+   */
+  limit?: number;
 }
 
 /** One row's inputs, with whatever the loaders managed to supply. */
@@ -215,7 +226,7 @@ export async function loadWhatChanged(bundle: WhatChangedInputBundle): Promise<W
       row,
       bundle.signals.get(row.symbol) ?? null,
       barsBySymbol.get(row.symbol) ?? [],
-    ))),
+    )), bundle.limit),
     session: bundle.session,
     sessionDate,
   };

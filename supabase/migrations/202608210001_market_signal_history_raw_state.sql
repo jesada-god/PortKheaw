@@ -4,11 +4,22 @@ begin;
 -- Market Signal history — the reading BEFORE the hold rule
 -- ===========================================================================
 --
--- NOT YET APPLIED, and neither is the table it alters
--- (`202608180001_market_signal_history.sql`). Both are reviewed before they are
--- run. This one is separate rather than folded into that file because a
--- committed migration is a record of what was reviewed, and editing one in
--- place would quietly change what the review was of.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `market_signal_history.raw_state` resolves, as does the table it
+-- alters (`202608180001_market_signal_history.sql`, also applied). NOT covered:
+-- `market_signal_history_raw_state_check` and the re-stated `state` check —
+-- PostgREST reports relations and columns and nothing else, and production keeps
+-- no migration ledger to ask instead. See `docs/operations/migration-state.md`.
+--
+-- The header this replaces claimed that neither this file nor that table had
+-- ever been run. Both were live when it said so.
+--
+-- This one stays separate rather than folded into that file because a committed
+-- migration is a record of what was reviewed, and editing one in place would
+-- quietly change what the review was of. Now that both have run, editing either
+-- would also make the text disagree with the database it was applied to.
 --
 -- ---------------------------------------------------------------------------
 -- WHY A SECOND LABEL COLUMN EXISTS AT ALL

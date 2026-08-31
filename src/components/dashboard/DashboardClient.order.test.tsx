@@ -119,6 +119,8 @@ interface Toggles {
   upcoming: boolean;
   whatChanged: boolean;
   overviewV2: boolean;
+  /** The V2 merged list. Absent leaves the section off, exactly as the flag does. */
+  events: boolean;
 }
 
 function dashboardData(toggles: Toggles): OverviewDashboardData {
@@ -181,6 +183,9 @@ function dashboardData(toggles: Toggles): OverviewDashboardData {
       } as unknown as OverviewDashboardData['marketStatus']
       : undefined,
     upcoming: toggles.upcoming ? { events: [], total: 0 } : null,
+    events: toggles.events
+      ? { rows: [], total: 0, coverageNoteTh: null }
+      : null,
     limitations: [],
   } as unknown as OverviewDashboardData;
 }
@@ -210,11 +215,13 @@ function render(toggles: Toggles) {
  * section draws. `-1` means it is not on the page.
  */
 const MARKERS: Record<OverviewSectionKey, string> = {
+  marketToday: '#market-overview',
   marketStatus: '[data-testid="market-status-card"]',
   portfolio: '[data-testid="overview-portfolio-line"], [data-section="overview-portfolio-line"]',
   watchlist: '[data-testid="overview-watchlist"]',
   whatChanged: '[data-testid="overview-changes"]',
   marketEvents: '[data-testid="market-events-card"]',
+  events: '[data-testid="overview-events"]',
   upcoming: '[data-testid="upcoming-section"]',
   news: '[data-testid="overview-news"]',
 };
@@ -235,13 +242,23 @@ const ALL_ON: Toggles = {
   marketEvents: true,
   upcoming: true,
   whatChanged: true,
+  events: true,
   overviewV2: false,
 };
 
 describe('the overview reading order, rendered', () => {
+  /*
+   * Eight in V1 and six in V2, and the two numbers differ because the orders
+   * do: `events` belongs to V2 alone, and `marketStatus` / `upcoming` /
+   * `marketEvents` belong to V1 alone. A key that is switched on but absent
+   * from the order in force must draw NOTHING, which is what the two counts
+   * together assert.
+   */
   it('draws every managed section when everything is on', () => {
     render(ALL_ON);
-    expect(renderedOrder()).toHaveLength(7);
+    expect(renderedOrder()).toEqual([...OVERVIEW_ORDER_V1]);
+    act(() => root.render(<DashboardClient data={dashboardData({ ...ALL_ON, overviewV2: true })} />));
+    expect(renderedOrder()).toEqual([...OVERVIEW_ORDER_V2]);
   });
 
   it('follows the V1 order with OVERVIEW_V2 off', () => {
@@ -271,7 +288,9 @@ describe('the overview reading order, rendered', () => {
       for (const marketEvents of [false, true]) {
         for (const upcoming of [false, true]) {
           for (const whatChanged of [false, true]) {
-            const toggles = { marketStatus, marketEvents, upcoming, whatChanged, overviewV2 };
+            const toggles = {
+              marketStatus, marketEvents, upcoming, whatChanged, overviewV2, events: true,
+            };
             const name = `v2=${overviewV2} status=${marketStatus} events=${marketEvents}`
               + ` upcoming=${upcoming} changed=${whatChanged}`;
             it(`renders the right sections in the right order — ${name}`, () => {
@@ -302,10 +321,12 @@ describe('the overview reading order, rendered', () => {
       marketEvents: false,
       upcoming: false,
       whatChanged: false,
+      events: false,
       overviewV2: true,
     });
     for (const selector of [
-      MARKERS.marketStatus, MARKERS.marketEvents, MARKERS.upcoming, MARKERS.whatChanged,
+      MARKERS.marketStatus, MARKERS.marketEvents, MARKERS.upcoming,
+      MARKERS.whatChanged, MARKERS.events,
     ]) {
       expect(container.querySelector(selector)).toBeNull();
     }

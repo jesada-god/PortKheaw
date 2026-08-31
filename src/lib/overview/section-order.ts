@@ -36,17 +36,44 @@
  * money before anybody else's, and everything below the market is still read
  * against it.
  */
+/*
+ * ===========================================================================
+ * WHY `marketToday` EXISTS, AND WHY IT IS IN V1 TOO
+ * ===========================================================================
+ * "ตลาดวันนี้" used to be a fixed `<section>` rendered ABOVE this list, which
+ * meant the one block the page opens with was the one block the ordering flag
+ * could not move. Anything that had to go above it, or below it, could not.
+ *
+ * It is a key now. V1 lists it FIRST, which is exactly where the fixed section
+ * used to draw, so the shipped page is unchanged — the flag still has to be the
+ * rollback, and a rollback that reorders the top of the page is not one.
+ *
+ * `events` and `marketEvents` are two different sections and both keys are
+ * kept. `marketEvents` is the month grid V1 draws at the bottom; `events` is
+ * the merged list V2 draws instead, which carries the macro calendar AND
+ * everything `upcoming` used to carry. Neither appears in the other's order.
+ */
 export type OverviewSectionKey =
+  | 'marketToday'
   | 'marketStatus'
   | 'portfolio'
   | 'watchlist'
   | 'whatChanged'
   | 'marketEvents'
+  | 'events'
   | 'upcoming'
   | 'news';
 
-/** The page as it shipped. `marketEvents` is new, so it goes last here. */
+/**
+ * The page as it shipped.
+ *
+ * `marketToday` leads because the fixed section it replaces led. `marketStatus`
+ * still follows it, `marketEvents` is still last, and `events` — the merged
+ * list — is absent entirely: V1 keeps the separate Upcoming card and month grid
+ * it always had.
+ */
 export const OVERVIEW_ORDER_V1: readonly OverviewSectionKey[] = [
+  'marketToday',
   'marketStatus',
   'portfolio',
   'watchlist',
@@ -56,14 +83,23 @@ export const OVERVIEW_ORDER_V1: readonly OverviewSectionKey[] = [
   'marketEvents',
 ];
 
-/** The requested order, behind `OVERVIEW_V2`. */
+/**
+ * The requested order, behind `OVERVIEW_V2`.
+ *
+ * ตลาดวันนี้ → พอร์ต → สิ่งที่เปลี่ยนไป → Watchlist → Events → ข่าว, and the same
+ * six on every screen width.
+ *
+ * `marketStatus` is gone from this order rather than moved: `marketToday`
+ * publishes the same six instruments and the same regime, so keeping both would
+ * be two readings of one market on one page. `upcoming` is gone for the same
+ * reason — `events` carries its rows.
+ */
 export const OVERVIEW_ORDER_V2: readonly OverviewSectionKey[] = [
-  'marketStatus',
+  'marketToday',
   'portfolio',
   'whatChanged',
   'watchlist',
-  'marketEvents',
-  'upcoming',
+  'events',
   'news',
 ];
 

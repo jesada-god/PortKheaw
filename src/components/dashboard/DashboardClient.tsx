@@ -55,6 +55,15 @@ import {
   orderedOverviewSections,
   type OverviewSectionKey,
 } from '@/src/lib/overview/section-order';
+import {
+  MarketAssetStrip,
+  MarketTodaySkeleton,
+  MarketTodayStrip,
+} from './MarketTodaySection';
+import { ChangesList } from './ChangesList';
+import { WatchlistTable, WatchlistTableSkeleton } from './WatchlistTable';
+import { EventsList } from './EventsList';
+import type { WatchlistRow } from '@/src/lib/watchlist/rows';
 import { usePortfolioPrivacy } from '@/src/hooks/usePortfolioPrivacy';
 
 const NewsFeed = dynamic(
@@ -665,7 +674,17 @@ function PortfolioSummaryLine({ data, usdThbRate }: {
  *
  * With no symbols it is the market-wide feed that shipped, unchanged.
  */
-function NewsSection({ context }: { context: OverviewDashboardData['newsContext'] }) {
+function NewsSection({
+  context,
+  defaultScope,
+}: {
+  context: OverviewDashboardData['newsContext'];
+  /**
+   * Which tab opens first. Absent leaves the feed on its own default, which is
+   * how every surface other than this one behaves.
+   */
+  defaultScope?: OverviewDashboardData['newsDefaultScope'];
+}) {
   const filtered = context.portfolioSymbols.length > 0 || context.watchlistSymbols.length > 0;
   return (
     <section className="panel-quiet min-w-0" data-testid="overview-news">
@@ -674,6 +693,7 @@ function NewsSection({ context }: { context: OverviewDashboardData['newsContext'
         ? (
           <NewsFeed
             withScopeFilter
+            defaultScope={defaultScope}
             portfolioSymbols={context.portfolioSymbols}
             watchlistSymbols={context.watchlistSymbols}
           />
@@ -969,11 +989,25 @@ function IndustryRanking({
 
 function WatchlistSection({
   items,
+  rows,
+  alertCounts,
   preview,
   retrying,
   onRetry,
 }: {
   items: OverviewPrice[];
+  /**
+   * The rows with a trend column and the expanded details, when the capped
+   * watchlist view loaded.
+   *
+   * Null falls the section back to `items` — the quote-only rows the overview
+   * has always drawn. That is the degradation path for a slow or failed view
+   * load, and it is why the two are separate props rather than one: losing the
+   * trend must cost the trend, not the section.
+   */
+  rows?: WatchlistRow[] | null;
+  /** Alert rules per symbol. Undefined means unreadable — the row draws none. */
+  alertCounts?: Record<string, number> | null;
   /**
    * Present only while `WATCHLIST_V2` is on. It carries the lists the reader
    * owns so the card can say WHICH one it is showing and let them switch, and
@@ -992,6 +1026,16 @@ function WatchlistSection({
   const [filter, setFilter] = useState<'all' | 'up' | 'down'>('all');
   const visible = items.filter((item) =>
     filter === 'all' || (filter === 'up' ? (item.changePercent ?? 0) > 0 : (item.changePercent ?? 0) < 0));
+  /*
+    The same filter over the richer rows, and the same ORDER as `items` so the
+    two renderings cannot disagree about which symbol is third. Null whenever
+    the view did not load, which is what sends the section back to `items`.
+  */
+  const visibleRows = rows
+    ? items
+      .filter((item) => visible.includes(item))
+      .flatMap((item) => rows.find((row) => row.symbol === item.symbol) ?? [])
+    : null;
   const selected = preview?.lists.find((list) => list.id === preview.selectedId) ?? null;
   const router = useRouter();
   const [, startChoosing] = useTransition();
@@ -1087,6 +1131,17 @@ function WatchlistSection({
         </div>
       ) : visible.length === 0 ? (
         <p className="py-6 text-center text-sm text-[var(--text-secondary)]">ไม่มีหุ้นที่ตรงกับตัวกรองนี้</p>
+      ) : visibleRows ? (
+        /*
+          A retry replaces the rows with a skeleton of the same height rather
+          than dimming them: a half-faded table is still readable, and a reader
+          who reads it is reading numbers the page has already decided are
+          suspect. The skeleton is sized from the row count it is replacing, so
+          nothing below it moves.
+        */
+        retrying
+          ? <WatchlistTableSkeleton rows={visibleRows.length} />
+          : <WatchlistTable rows={visibleRows} counts={alertCounts} />
       ) : (
         <div className="divide-y divide-[var(--border)]">
           {visible.map((item) => (
@@ -1396,23 +1451,79 @@ export function DashboardClient({
    * states: the watchlist explains how to add a symbol, and the feed says when
    * there is no news. Those are contentful, not blank.
    */
+  /*
+   * The Phase 2 change feed, when the reader has it.
+   *
+   * Null and an empty array are different: null means the section is not part
+   * of this page, an empty array means it is and nothing happened today. The
+   * second owns a one-line quiet state, so the section is PRESENT for it — the
+   * V1 list, which has no such state, still disappears when it is empty.
+   */
+  const phase2Changes = view.changes ?? null;
+
   const sections = useMemo(() => orderedOverviewSections({
+    marketToday: true,
     marketStatus: Boolean(view.marketStatus),
     portfolio: true,
     watchlist: true,
-    whatChanged: changes.length > 0,
+    whatChanged: phase2Changes ? true : changes.length > 0,
     marketEvents: Boolean(view.marketEvents),
+    events: Boolean(view.events),
     upcoming: Boolean(view.upcoming),
     news: true,
   }, view.overviewV2), [
     view.marketStatus,
     view.marketEvents,
+    view.events,
     view.upcoming,
     view.overviewV2,
+    phase2Changes,
     changes.length,
   ]);
 
   const sectionNodes: Record<OverviewSectionKey, React.ReactNode> = {
+    /*
+      ตลาดวันนี้, and the one section that renders two different things.
+
+      With a Phase 2 snapshot it is the six-instrument band, the three-way word
+      and the regime reasons, with the nine assets compact underneath. Without
+      one it is exactly the block that shipped — the summary line and the nine
+      cards — because this key replaced a fixed `<section>` and V1 must not
+      notice that it moved.
+
+      Nothing was removed in either state: gold, silver, crude, rare earths and
+      Bitcoin are on the page both ways.
+    */
+    marketToday: (
+      <section id="market-overview" className="stack-lead scroll-mt-24">
+        <SectionTitle
+          title="ตลาดวันนี้"
+          action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
+        />
+        {view.marketToday ? (
+          <>
+            {retrying.market
+              ? <MarketTodaySkeleton />
+              : <MarketTodayStrip snapshot={view.marketToday} />}
+            <MarketAssetStrip items={orderedIndices} />
+          </>
+        ) : (
+          <>
+            {marketSummary && (
+              <StatusLabel
+                level={marketSummary.level}
+                label={marketSummary.text}
+                className="mb-3 text-sm"
+                data-testid="overview-market-summary"
+              />
+            )}
+            <div className="bleed-mobile flex snap-x snap-mandatory gap-3 overflow-x-auto px-[var(--page-gutter)] pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
+              {orderedIndices.map((item) => <MarketCard key={item.symbol} item={item} />)}
+            </div>
+          </>
+        )}
+      </section>
+    ),
     marketStatus: view.marketStatus && (
       <MarketStatusCard
         evaluation={view.marketStatus.evaluation}
@@ -1423,15 +1534,30 @@ export function DashboardClient({
     watchlist: (
       <WatchlistSection
         items={view.watchlist}
+        rows={view.watchlistRows}
+        alertCounts={view.alertCountBySymbol}
         preview={view.watchlistPreview}
         retrying={Boolean(retrying.watchlist)}
         onRetry={retry}
       />
     ),
-    whatChanged: <ChangesSection changes={changes} />,
+    whatChanged: phase2Changes
+      ? (
+        <section className="panel-quiet min-w-0" data-testid="overview-changes">
+          <SectionTitle title="สิ่งที่เปลี่ยนไป" />
+          <ChangesList changes={phase2Changes} />
+        </section>
+      )
+      : <ChangesSection changes={changes} />,
     marketEvents: view.marketEvents && <MarketEventsCard view={view.marketEvents} />,
+    events: view.events && (
+      <section className="panel-quiet min-w-0">
+        <SectionTitle title="วันสำคัญที่ใกล้ถึง" />
+        <EventsList view={view.events} />
+      </section>
+    ),
     upcoming: view.upcoming && <UpcomingSection feed={view.upcoming} />,
-    news: <NewsSection context={view.newsContext} />,
+    news: <NewsSection context={view.newsContext} defaultScope={view.newsDefaultScope} />,
   };
 
   return (
@@ -1449,49 +1575,13 @@ export function DashboardClient({
         <OnboardingCard view={onboarding} />
 
         {/*
-          THE READING ORDER, AND WHY IT CHANGED.
-
-          It used to run: my portfolio, my watchlist, the market, what is coming
-          up, what is being said. The market now leads.
-
-          The reason is that everything below it is read AGAINST it. A portfolio
-          down 1.2% on a day the whole market is down 1.4% is a different fact
-          from the same 1.2% on a green day, and the old order asked the reader
-          to hold their own number in their head while they scrolled to find out
-          which day they were having. Context first, then the numbers it
-          contextualises.
-
-          The portfolio stays second — above the watchlist — because somebody
-          opening the app is here for their own money before anybody else's.
-          Both of them fit above the fold on a 390px handset now, which is what
-          condensing the portfolio block to a line bought.
-
-          Nothing was removed. Breadth, the industry ranking and the service
-          status are all still on this page, one disclosure below, because they
-          answer a question a reader asks occasionally rather than every visit.
+          THE READING ORDER now lives in `src/lib/overview/section-order.ts`,
+          including the argument for why the market leads and the portfolio is
+          second. It used to live here because ตลาดวันนี้ was a fixed section
+          rendered above the ordered run — which also meant the one block the
+          page opens with was the one block the ordering flag could not move.
+          It is a key now, and the reasoning moved with it.
         */}
-        <section id="market-overview" className="stack-lead scroll-mt-24">
-          <SectionTitle
-            title="ตลาดวันนี้"
-            action={<RetryButton section="market" loading={Boolean(retrying.market)} onRetry={retry} />}
-          />
-          {/*
-            The reading, above the numbers it is a reading of. Four cards in a
-            scroller present the market; this states it, which is the difference
-            between a page a reader parses and one they glance at.
-          */}
-          {marketSummary && (
-            <StatusLabel
-              level={marketSummary.level}
-              label={marketSummary.text}
-              className="mb-3 text-sm"
-              data-testid="overview-market-summary"
-            />
-          )}
-          <div className="bleed-mobile flex snap-x snap-mandatory gap-3 overflow-x-auto px-[var(--page-gutter)] pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4">
-            {orderedIndices.map((item) => <MarketCard key={item.symbol} item={item} />)}
-          </div>
-        </section>
 
         {/*
           ==================================================================

@@ -4,8 +4,18 @@ begin;
 -- Daily closing snapshot — one row per symbol per trading date
 -- ===========================================================================
 --
--- NOT YET APPLIED. Written and reviewed before it is run; read the reversal
--- section at the bottom before applying it anywhere.
+-- STATUS: APPLIED
+-- VERIFIED: 2026-08-31, by PostgREST probe against production.
+--
+-- Evidence: `daily_snapshot` resolves `symbol`, `date`, `close`, `prev_close`
+-- and `source`. NOT covered: `daily_snapshot_date_idx`, the CHECK constraints
+-- that carry the rules described below, and the RLS policies — PostgREST reports
+-- relations and columns and nothing else, and production keeps no migration
+-- ledger to ask instead. See `docs/operations/migration-state.md`.
+--
+-- The header this replaces claimed the file had never been run. It said so while
+-- the table was live. Read the reversal section at the bottom before changing
+-- anything here.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THIS TABLE EXISTS
