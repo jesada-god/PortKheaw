@@ -1,3 +1,5 @@
+import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
+
 export const MARKET_ASSETS = [
   { symbol: 'SPY', name: 'S&P 500', proxyLabel: 'ETF อ้างอิง', logoUrl: '/market-logos/spy.svg', marketKind: 'us-equity' },
   { symbol: 'QQQ', name: 'NASDAQ 100', proxyLabel: 'ETF อ้างอิง', logoUrl: '/market-logos/qqq.svg', marketKind: 'us-equity' },
@@ -48,6 +50,24 @@ export function marketAssetLogoUrl(symbol: string): string | null {
 export type MarketAsset = (typeof MARKET_ASSETS)[number];
 
 /**
+ * The line that admits a card is not quoting the thing it names, or null.
+ *
+ * Three `proxyLabel` values, two meanings. 'ETF อ้างอิง' and 'สัญญาล่วงหน้า' both
+ * say the price on screen belongs to something OTHER than the name above it —
+ * a fund tracking an index, a front-month contract standing for a commodity —
+ * and a reader who checks either figure elsewhere will find a different number
+ * unless the card said so. 'สินทรัพย์จริง' says the opposite, and printing it is
+ * not a disclosure but a boast; its absence is the statement, exactly as a null
+ * `proxyLabelTh` is on the six-instrument band above.
+ *
+ * One predicate, because the two bands sit ten pixels apart and cannot be
+ * allowed to answer "is this the real thing" differently.
+ */
+export function proxyDisclosureTh(proxyLabel: string): string | null {
+  return proxyLabel === 'สินทรัพย์จริง' ? null : proxyLabel;
+}
+
+/**
  * The overview proxy for a symbol, when that symbol trades continuously.
  *
  * A 24/7 asset has no opening bell, no previous *regular* close and no row in
@@ -74,6 +94,32 @@ export function commodityMarketAsset(symbol: string): MarketAsset | null {
   return MARKET_ASSETS.find(
     (asset) => asset.symbol === normalized && asset.marketKind === 'commodity',
   ) ?? null;
+}
+
+/**
+ * The asset rows the six-instrument band has NOT already stated.
+ *
+ * ONLY THE PRESENTATION IS FILTERED. `MARKET_ASSETS` keeps all nine, because it
+ * is not just the source of this band: `buildMarketSummary` reads SPY and QQQ
+ * off it for the line above the V1 cards, and with `PHASE2_MARKET_SNAPSHOT` off
+ * the page still draws all nine cards and that line. Dropping the three at the
+ * catalogue would break the page that is live today in order to tidy the one
+ * behind a flag.
+ *
+ * The pairing is read from `MARKET_STATUS_INPUTS.overviewAssetSymbol` rather
+ * than listed here, because it is a statement about meaning and not about
+ * spelling — `SPX` quotes `^GSPC` and covers `SPY`, which no symbol comparison
+ * would ever discover. Written once, in the table that owns both facts.
+ */
+export function assetsOutsideMarketStatus<T extends { symbol: string }>(
+  items: readonly T[],
+): T[] {
+  const covered = new Set(
+    MARKET_STATUS_INPUTS
+      .map((input) => input.overviewAssetSymbol)
+      .filter((symbol): symbol is string => symbol !== null),
+  );
+  return items.filter((item) => !covered.has(item.symbol.trim().toUpperCase()));
 }
 
 export function equityMarketSymbols() {

@@ -196,6 +196,93 @@ describe('Yahoo Chart candle provider', () => {
     });
   });
 
+  /*
+   * THE TEN-YEAR YIELD, WHICH THIS PROVIDER USED TO REFUSE TO READ.
+   *
+   * `^TNX` is a Cboe INDEX with no intraday feed on the chart endpoint, so it
+   * answers 200 with a correct `regularMarketPrice` and a day high and low of
+   * exactly `0`. Both fields were declared `.positive()`, so the whole payload
+   * failed validation and every reading of the ten-year — the Market Status
+   * card's regime subtitle, which requires it, and the overview's band — came
+   * back empty over two numbers neither one reads.
+   *
+   * The payload below is the live shape, trimmed: no `previousClose` in `meta`
+   * either, which is normal for a `^` index and is what the completed-daily-
+   * candle fallback exists for.
+   */
+  describe('an index that reports no intraday range', () => {
+    function tnxPayload() {
+      return {
+        chart: {
+          result: [{
+            meta: {
+              symbol: '^TNX',
+              currency: 'USD',
+              exchangeTimezoneName: 'America/Chicago',
+              instrumentType: 'INDEX',
+              regularMarketPrice: 4.796,
+              regularMarketTime: Date.parse('2026-09-01T20:59:54.000Z') / 1_000,
+              regularMarketDayHigh: 0,
+              regularMarketDayLow: 0,
+              regularMarketVolume: 0,
+              chartPreviousClose: 4.703,
+            },
+            timestamp: [
+              Date.parse('2026-08-31T13:30:00.000Z') / 1_000,
+              Date.parse('2026-09-01T13:30:00.000Z') / 1_000,
+            ],
+            indicators: {
+              quote: [{
+                open: [4.72, 4.76],
+                high: [4.77, 4.8],
+                low: [4.7, 4.75],
+                close: [4.758, 4.796],
+                volume: [0, 0],
+              }],
+            },
+          }],
+          error: null,
+        },
+      };
+    }
+
+    function provider(payload: unknown) {
+      return new YahooCandleProvider(
+        new ProviderHttpClient({
+          fetcher: vi.fn<typeof fetch>(async () => new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })),
+          logger: () => undefined,
+          sleep: async () => undefined,
+        }),
+        () => new Date('2026-09-02T09:00:00.000Z'),
+      );
+    }
+
+    it('reads the price and the change instead of discarding the response', async () => {
+      const result = await provider(tnxPayload()).getQuote('^TNX');
+      expect(result.data.price).toBe(4.796);
+      // From the previous completed daily candle, because `^` indices carry no
+      // `meta.previousClose`.
+      expect(result.data.previousClose).toBe(4.758);
+      expect(result.data.previousCloseSource).toBe('yahoo-chart.previous-completed-daily-candle');
+      expect(result.data.changePercent).toBeCloseTo(0.799, 3);
+    });
+
+    it('reports the absent day range as null rather than as a zero price', async () => {
+      const result = await provider(tnxPayload()).getQuote('^TNX');
+      expect(result.data.high).toBeNull();
+      expect(result.data.low).toBeNull();
+    });
+
+    it('still refuses a quote whose own price is zero', async () => {
+      const payload = tnxPayload();
+      payload.chart.result[0].meta.regularMarketPrice = 0;
+      await expect(provider(payload).getQuote('^TNX')).rejects.toThrow();
+    });
+  });
+
   it('normalizes real Yahoo JSON into ordered, deduplicated canonical OHLCV and drops bad rows', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       chart: {

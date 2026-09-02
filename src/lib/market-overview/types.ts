@@ -60,7 +60,7 @@ export type OvIndexKey = 'SPX' | 'NDX' | 'DJI' | 'VIX' | 'US10Y' | 'DXY';
 
 export interface OvIndexReading {
   key: OvIndexKey;
-  /** The symbol actually quoted. SPY/QQQ/DIA are proxies; the other three are not. */
+  /** The symbol actually quoted. All six are the instruments themselves. */
   symbol: string;
   /** Plain Thai, no ticker. Copied from the shared input table. */
   labelTh: string;

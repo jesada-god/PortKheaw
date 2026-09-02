@@ -20,13 +20,18 @@ import type { MarketStatusEvaluation } from '@/src/lib/market-status/rules';
  * ===========================================================================
  * A PROXY IS LABELLED AS ONE, EVERY TIME
  * ===========================================================================
- * SPY is not the S&P 500. It is a fund that tracks it, priced by its own order
- * book and carrying a fee that makes it drift. The three equity rows therefore
- * carry "กองทุนอ้างอิง" next to the name — a reader comparing this row against an
- * index quoted elsewhere would otherwise find two different numbers and no way
- * to tell which was wrong. The three risk rows carry no such badge because they
- * are the instruments themselves, and printing one there would be the same lie
- * in reverse.
+ * No row carries a proxy badge today, because no row is a proxy: all six quote
+ * the instrument their label names. The three equity rows used to be SPY, QQQ
+ * and DIA — funds tracking the indices, priced by their own order books and
+ * carrying fees that make them drift — and they carried "กองทุนอ้างอิง" to say so.
+ * They now quote `^GSPC`, `^NDX` and `^DJI`, so the badge would itself be the
+ * false statement.
+ *
+ * The mechanism stays, and it is not decoration: the row prints whatever
+ * `proxyLabelTh` holds, for any input. Should a provider ever force a stand-in
+ * back, saying so is a config change and not a code change — because a reader
+ * comparing this row against an index quoted elsewhere must never find two
+ * different numbers with no way to tell which is wrong.
  *
  * ===========================================================================
  * THE MARK ON EACH ROW READS MEANING, NOT DIRECTION
