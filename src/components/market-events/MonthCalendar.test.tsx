@@ -279,6 +279,16 @@ describe('a month the calendar cannot speak for', () => {
     expect(at('[data-testid="market-events-month"]')?.textContent).toBe('มีนาคม 2570');
   });
 
+  /*
+   * "0 รายการ" is the exact sentence the coverage note exists to refuse, and it
+   * would have been printed one line above it.
+   */
+  it('prints no count for a month it cannot count', () => {
+    render('2026-11-10T04:00:00.000Z', { monthParam: '2027-03' });
+    expect(at('[data-testid="market-events-month-total"]')).toBeNull();
+    expect(text()).not.toContain('0 รายการ');
+  });
+
   it('draws its cells faint and stops making them tappable', () => {
     render('2026-11-10T04:00:00.000Z', { monthParam: '2027-03' });
     expect(container.innerHTML).toContain('opacity-40');

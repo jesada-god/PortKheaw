@@ -75,9 +75,18 @@ export function MonthCalendar({ view }: { view: MarketEventsMonthView }) {
           >
             {view.monthLabelTh}
           </h2>
-          <p className="text-[11px] text-[var(--text-muted)]" data-testid="market-events-month-total">
-            {view.totalInMonth} รายการ
-          </p>
+          {/*
+            THE COUNT IS ONLY PRINTED WHERE IT MEANS SOMETHING. On a month the
+            file does not reach, "0 รายการ" is the exact sentence this feature
+            spends a coverage note refusing to say — a reader would take it as
+            "nothing is scheduled" rather than "this calendar stops earlier",
+            and it would be sitting directly above the note that says otherwise.
+          */}
+          {covered && (
+            <p className="text-[11px] text-[var(--text-muted)]" data-testid="market-events-month-total">
+              {view.totalInMonth} รายการ
+            </p>
+          )}
         </div>
         <MonthStep
           monthKey={view.nextMonthKey}
@@ -158,7 +167,15 @@ function MonthStep({
 }) {
   const Icon = direction === 'prev' ? ChevronLeft : ChevronRight;
   const testId = `market-events-${direction}-month`;
-  const shape = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg';
+  /*
+    44 SQUARE, AND THE SAME 44 WHETHER IT IS A LINK OR A DEAD BUTTON.
+    `app/globals.css` gives every `button` a 44px minimum height, so a `h-9`
+    pair would render 36px as a link and 44px as a disabled button — the header
+    would change height at the ends of the calendar, which is exactly where the
+    reader is looking. Sizing both at the tap target settles it and is the size
+    a thumb wanted anyway.
+  */
+  const shape = 'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg';
 
   if (!monthKey) {
     return (
