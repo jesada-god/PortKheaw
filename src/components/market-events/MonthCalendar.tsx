@@ -1,0 +1,360 @@
+import Link from 'next/link';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import type {
+  MarketEventsMonthView,
+  MonthViewCell,
+} from '@/src/lib/market-events/month-view';
+import { MARK_LEGEND_TH } from '@/src/lib/market-events/month-view';
+import { IMPORTANCE_MARK_STYLE, MarketEventRow } from './MarketEventRow';
+
+/**
+ * ปฏิทินเศรษฐกิจ — a walkable month, and the day underneath it.
+ *
+ * ===========================================================================
+ * A SERVER COMPONENT WITH NO STATE, BECAUSE THE URL IS THE STATE
+ * ===========================================================================
+ * Every cell is a LINK to `?m=…&d=…`, every arrow is a link to another month,
+ * and there is not one line of JavaScript shipped for either. That is not
+ * frugality for its own sake — the reasoning is in the header of
+ * `month-view.ts` — but the consequence worth naming here is that a reader can
+ * bookmark 13 October, send it to somebody, and press Back out of it.
+ *
+ * ===========================================================================
+ * THE PHONE GETS MARKS; THE DESKTOP GETS NAMES
+ * ===========================================================================
+ * Seven columns at 375px is about fifty pixels a cell, and fifty pixels is not
+ * a width `ยอดขอรับสวัสดิการว่างงาน` survives — clipped to fit it is not
+ * shorter, it is unreadable. So below `sm:` a cell carries the day number and
+ * one solid mark per release, and the name arrives at `sm:` where there is room
+ * for it. The count a reader wants at a glance ("is the 25th busy?") is exactly
+ * what a row of marks answers and a truncated word does not.
+ *
+ * There is NO horizontal scroller, here or anywhere in this feature. A calendar
+ * that scrolls sideways has given up the one property that makes it a calendar,
+ * which is that the shape of the month is visible at once —
+ * `MarketEventsCard.test.tsx` asserts the same thing about the card.
+ *
+ * ===========================================================================
+ * COLOUR IS NEVER THE ONLY CHANNEL
+ * ===========================================================================
+ * The marks are coloured, and three things make that safe. Every cell carries
+ * an `aria-label` naming the date, the count and each importance in Thai words
+ * (built in `month-view.ts`). The number of marks is itself the count, which
+ * survives any colour vision. And a legend under the grid names the three
+ * ranks, for the reader who can see the dots and has not met them before — it
+ * sits under the phone layout only, because from `sm:` up the cell prints the
+ * release name and the marks are gone.
+ *
+ * Today is a filled disc and the selected day is a ring. Two different shapes,
+ * so a cell that is both is still legibly both.
+ *
+ * ===========================================================================
+ * AN UNCOVERED MONTH IS DRAWN FAINT AND SAYS WHY
+ * ===========================================================================
+ * Past the end of the file a month is still perfectly drawable: thirty-one
+ * numbered, eventless cells, which a reader would take to mean nothing is
+ * scheduled. So the note says where the calendar actually reaches, the grid is
+ * dimmed to say it is not speaking, and the cells stop being links — there is
+ * no day behind them to open.
+ */
+export function MonthCalendar({ view }: { view: MarketEventsMonthView }) {
+  const covered = view.coverage === 'covered';
+
+  return (
+    <section className="panel min-w-0 overflow-hidden" data-testid="market-events-calendar">
+      <div className="flex min-w-0 items-center gap-2 border-b border-[var(--hairline)] px-2 py-2 sm:px-3">
+        <MonthStep
+          monthKey={view.prevMonthKey}
+          direction="prev"
+          labelTh="เดือนก่อนหน้า"
+        />
+        <div className="min-w-0 flex-1 text-center">
+          <h2
+            className="truncate text-sm font-bold text-[var(--text)]"
+            data-testid="market-events-month"
+          >
+            {view.monthLabelTh}
+          </h2>
+          <p className="text-[11px] text-[var(--text-muted)]" data-testid="market-events-month-total">
+            {view.totalInMonth} รายการ
+          </p>
+        </div>
+        <MonthStep
+          monthKey={view.nextMonthKey}
+          direction="next"
+          labelTh="เดือนถัดไป"
+        />
+      </div>
+
+      {view.coverageNoteTh && (
+        <p
+          className="border-b border-[var(--hairline)] bg-[var(--surface-hover)] px-3.5 py-2 text-[11px] leading-5 text-[var(--text-secondary)] sm:px-4"
+          data-testid="market-events-coverage"
+        >
+          {view.coverageNoteTh}
+        </p>
+      )}
+
+      <div className={`min-w-0 px-2 py-3 sm:px-3 ${covered ? '' : 'opacity-40'}`}>
+        <div className="grid grid-cols-7 gap-px" role="presentation">
+          {view.weekdayHeadingsTh.map((heading) => (
+            <div
+              key={heading}
+              className="min-w-0 pb-1 text-center text-[10px] font-medium text-[var(--text-muted)]"
+            >
+              {heading}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-px">
+          {view.weeks.flat().map((cell) => (
+            <DayCell
+              key={cell.dayKey}
+              cell={cell}
+              monthKey={view.monthKey}
+              interactive={covered}
+            />
+          ))}
+        </div>
+      </div>
+
+      {covered && (
+        <ul
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--hairline)] px-3.5 pb-2.5 pt-2 sm:hidden"
+          data-testid="market-events-legend"
+        >
+          {MARK_LEGEND_TH.map((entry) => (
+            <li key={entry.importance} className="flex items-center gap-1.5">
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${IMPORTANCE_MARK_STYLE[entry.importance]}`}
+                aria-hidden="true"
+              />
+              <span className="text-[10px] text-[var(--text-muted)]">{entry.labelTh}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <SelectedDayPanel view={view} />
+    </section>
+  );
+}
+
+/**
+ * One arrow. A dead one is DISABLED, not missing.
+ *
+ * A control that vanishes at the edge of the calendar slides the other one
+ * under the reader's thumb, so the button that meant "back" last month means
+ * "forward" this month. Greying out keeps both in place.
+ */
+function MonthStep({
+  monthKey,
+  direction,
+  labelTh,
+}: {
+  monthKey: string | null;
+  direction: 'prev' | 'next';
+  labelTh: string;
+}) {
+  const Icon = direction === 'prev' ? ChevronLeft : ChevronRight;
+  const testId = `market-events-${direction}-month`;
+  const shape = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg';
+
+  if (!monthKey) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-label={labelTh}
+        data-testid={testId}
+        className={`${shape} cursor-not-allowed text-[var(--text-muted)] opacity-30`}
+      >
+        <Icon size={18} aria-hidden="true" />
+      </button>
+    );
+  }
+
+  return (
+    <Link
+      href={`/market-events?m=${monthKey}`}
+      aria-label={labelTh}
+      data-testid={testId}
+      className={`${shape} text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]`}
+    >
+      <Icon size={18} aria-hidden="true" />
+    </Link>
+  );
+}
+
+function DayCell({
+  cell,
+  monthKey,
+  interactive,
+}: {
+  cell: MonthViewCell;
+  monthKey: string;
+  interactive: boolean;
+}) {
+  /*
+    A padding day is drawn faintly and is never tappable. It exists to keep the
+    columns aligned to real weekdays; opening it would send a reader to a day
+    this month is not about.
+  */
+  if (!cell.inMonth) {
+    return (
+      <div
+        className="min-h-11 min-w-0 rounded-md px-0.5 py-1 text-center"
+        aria-hidden="true"
+        data-testid="market-events-cell-outside"
+      >
+        <span className="text-[11px] text-[var(--text-muted)] opacity-30">{cell.dayNumber}</span>
+      </div>
+    );
+  }
+
+  const body = (
+    <>
+      <span
+        className={[
+          'mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[11px] leading-none',
+          cell.isToday
+            ? 'bg-[var(--accent)] font-bold text-[var(--accent-fg)]'
+            : 'text-[var(--text-secondary)]',
+        ].join(' ')}
+      >
+        {cell.dayNumber}
+      </span>
+
+      {/*
+        THE PHONE LAYOUT. One mark per release, and a spacer on a quiet day so
+        every row of the month keeps the same height — a grid whose rows breathe
+        with their content stops reading as a month.
+      */}
+      <span
+        className="mt-1 flex h-1.5 items-center justify-center gap-0.5 sm:hidden"
+        aria-hidden="true"
+      >
+        {cell.marks.map((importance, index) => (
+          <span
+            key={`${cell.dayKey}-${index}`}
+            className={`h-1.5 w-1.5 rounded-full ${IMPORTANCE_MARK_STYLE[importance]}`}
+          />
+        ))}
+      </span>
+
+      {/*
+        THE DESKTOP LAYOUT. The name, clipped rather than wrapped, for the same
+        reason: a wrapping cell makes rows different heights.
+      */}
+      {cell.leadShortTh ? (
+        <span className="mt-0.5 hidden min-w-0 truncate text-center text-[10px] font-medium leading-tight text-[var(--text)] sm:block">
+          {cell.leadShortTh}
+          {cell.extraCount > 0 && (
+            <span className="text-[var(--text-muted)]"> +{cell.extraCount}</span>
+          )}
+        </span>
+      ) : (
+        <span className="mt-0.5 hidden h-[13px] sm:block" aria-hidden="true" />
+      )}
+    </>
+  );
+
+  const frame = [
+    'min-h-11 min-w-0 rounded-md px-0.5 py-1',
+    cell.isSelected ? 'bg-[var(--surface-hover)] ring-1 ring-[var(--accent)]' : '',
+  ].join(' ');
+
+  /*
+    In a month the calendar cannot speak for there is no day to open, so the
+    cells are plain boxes. Everywhere else EVERY day is tappable, quiet ones
+    included: somebody who taps the 14th is owed the answer "nothing is
+    scheduled", not a cell that ignores them.
+  */
+  if (!interactive) {
+    return (
+      <div
+        className={frame}
+        data-testid={`market-events-cell-${cell.dayKey}`}
+        data-today={cell.isToday ? 'true' : undefined}
+      >
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={`/market-events?m=${monthKey}&d=${cell.dayKey}`}
+      scroll={false}
+      className={`${frame} block hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]`}
+      data-testid={`market-events-cell-${cell.dayKey}`}
+      data-today={cell.isToday ? 'true' : undefined}
+      data-selected={cell.isSelected ? 'true' : undefined}
+      aria-label={cell.ariaLabelTh}
+      aria-current={cell.isSelected ? 'date' : undefined}
+    >
+      {body}
+    </Link>
+  );
+}
+
+/**
+ * The day under the grid — a PANEL, not a modal.
+ *
+ * A sheet over the calendar would hide the thing the reader is comparing
+ * against: tapping the 25th to see what is on it, then the 26th, then back to
+ * the 25th, means opening and dismissing three times to answer one question.
+ * Underneath, the grid stays visible and the next tap just changes what is
+ * written here.
+ *
+ * It renders nothing at all when there is no day to show. A heading over empty
+ * space reads as a panel that failed to load, when the truth is either that the
+ * month holds nothing or that the calendar does not reach it — and in the
+ * second case the coverage note above has already said so.
+ */
+function SelectedDayPanel({ view }: { view: MarketEventsMonthView }) {
+  const day = view.selected;
+  if (!day) return null;
+
+  return (
+    <div
+      className="min-w-0 border-t border-[var(--hairline)]"
+      data-testid="market-events-day-panel"
+    >
+      <div className="flex min-w-0 items-baseline justify-between gap-3 px-3.5 py-3 sm:px-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-bold text-[var(--text)]">{day.headingTh}</h3>
+          {/*
+            The relative heading is convenient and the date is checkable, so a
+            reader gets both — "วันนี้" alone would leave somebody returning to
+            a stale tab with no way to notice.
+          */}
+          {day.relative !== 'other' && (
+            <p className="text-[11px] text-[var(--text-muted)]">{day.dateLabelTh}</p>
+          )}
+        </div>
+        <span
+          className="shrink-0 text-[11px] text-[var(--text-muted)]"
+          data-testid="market-events-panel-count"
+        >
+          {day.count} รายการ
+        </span>
+      </div>
+
+      {day.count === 0 ? (
+        <p
+          className="px-3.5 pb-3.5 text-xs leading-5 text-[var(--text-secondary)] sm:px-4"
+          data-testid="market-events-panel-quiet"
+        >
+          ไม่มีตัวเลขเศรษฐกิจตามกำหนดในวันที่เลือก
+        </p>
+      ) : (
+        <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--hairline)]">
+          {day.items.map((item) => (
+            <MarketEventRow key={item.id} item={item} testIdPrefix="market-events-panel" />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
