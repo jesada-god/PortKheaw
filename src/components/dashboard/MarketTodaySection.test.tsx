@@ -7,6 +7,7 @@ import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
 import { MARKET_ASSETS } from '@/src/lib/overview/market-assets';
 import type { MarketIndexCard } from '@/src/lib/overview/types';
 import type { OvIndexKey, OvIndexReading, OvMarketSnapshot } from '@/src/lib/market-overview/types';
+import { OV_MARKET_STATUS_WORD, OV_REGIME_WORD } from '@/src/lib/market-overview/types';
 import { MarketAssetStrip, MarketTodayStrip } from './MarketTodaySection';
 
 /*
@@ -116,6 +117,11 @@ function assetCards(): MarketIndexCard[] {
 
 function renderStrip(overrides: Partial<Record<OvIndexKey, Partial<OvIndexReading>>> = {}) {
   act(() => root.render(<MarketTodayStrip snapshot={snapshot(overrides)} />));
+  return container;
+}
+
+function renderSnapshot(patch: Partial<OvMarketSnapshot>) {
+  act(() => root.render(<MarketTodayStrip snapshot={{ ...snapshot(), ...patch }} />));
   return container;
 }
 
@@ -336,6 +342,107 @@ describe('the asset cell carries the mark and the shape of the day', () => {
       // The cell itself is untouched: the price and the percentage still print.
       expect(container.querySelector('[data-testid="market-asset-SPY"]')!.textContent)
         .toContain('100.00');
+    }
+  });
+});
+
+describe('the two readings say what each of them measures', () => {
+  /*
+    THE BUG THIS REPLACES, exactly as a reader met it:
+
+        ● ตลาดไปทางลบ  กลาง ๆ
+        ทั้งสามตัวยังไม่ขยับเกินเกณฑ์
+
+    One coloured dot on a line carrying two answers to two different questions,
+    and the dot belonged to the first. The second had no mark of its own, so the
+    line read as a single self-contradicting sentence — and the reason under it,
+    which describes the risk trio and has never described the status word, read
+    as the explanation for the verdict it sat beneath.
+  */
+  it('names both readings, so neither is read as the other', () => {
+    const block = renderSnapshot({ status: 'down', regime: 'neutral' });
+    const direction = block.querySelector('[data-testid="market-today-status"]')!;
+    const money = block.querySelector('[data-testid="market-today-regime"]')!;
+    expect(direction.textContent).toContain('ทิศทาง');
+    expect(direction.textContent).toContain(OV_MARKET_STATUS_WORD.down);
+    expect(money.textContent).toContain('เงินรอบตลาด');
+    expect(money.textContent).toContain(OV_REGIME_WORD.neutral);
+    // The names have to differ, or naming them achieves nothing.
+    expect(direction.textContent).not.toContain('เงินรอบตลาด');
+  });
+
+  it('gives the regime a mark of its own instead of borrowing the status mark', () => {
+    const block = renderSnapshot({ status: 'down', regime: 'neutral' });
+    const direction = block.querySelector('[data-testid="market-today-status"] [data-status]')!;
+    const money = block.querySelector('[data-testid="market-today-regime"] [data-status]')!;
+    expect(direction.getAttribute('data-status')).toBe('bad');
+    expect(money.getAttribute('data-status')).toBe('neutral');
+  });
+
+  it.each([
+    ['risk_on', 'good'],
+    ['neutral', 'neutral'],
+    ['risk_off', 'bad'],
+  ] as const)('marks %s as %s', (regime, level) => {
+    const block = renderSnapshot({ status: 'down', regime });
+    const money = block.querySelector('[data-testid="market-today-regime"] [data-status]')!;
+    expect(money.getAttribute('data-status')).toBe(level);
+  });
+
+  /*
+    The reason line belongs to the regime and to nothing else. Asserted by
+    CONTAINMENT rather than by order, because "underneath" is what it looked
+    like before too — it was a sibling of the status row, and that is precisely
+    how it came to be read as the status word's explanation.
+  */
+  it('puts the reasons inside the regime row, not beside the status word', () => {
+    const block = renderSnapshot({
+      status: 'down',
+      regime: 'neutral',
+      regimeReasons: ['VIX พันธบัตร ดอลลาร์ ยังไม่ขยับเกินเกณฑ์'],
+    });
+    const reasons = block.querySelector('[data-testid="market-today-reasons"]')!;
+    expect(block.querySelector('[data-testid="market-today-regime"]')!.contains(reasons)).toBe(true);
+    expect(block.querySelector('[data-testid="market-today-status"]')!.contains(reasons)).toBe(false);
+    expect(reasons.textContent).toContain('VIX');
+  });
+
+  /*
+    VIX or the ten-year unreadable withholds the regime, but the lines saying
+    WHICH are still worth printing — and before this they printed with no header
+    at all, which is the orphaning the change exists to end.
+  */
+  it('keeps a headed row for the reasons when the regime is withheld', () => {
+    const block = renderSnapshot({
+      status: 'down',
+      regime: null,
+      regimeReasons: ['ความกังวลของตลาด ยังไม่มีข้อมูล'],
+    });
+    const money = block.querySelector('[data-testid="market-today-regime"]')!;
+    expect(money.textContent).toContain('เงินรอบตลาด');
+    expect(money.querySelector('[data-status]')!.getAttribute('data-status')).toBe('unknown');
+    expect(money.textContent).toContain('ความกังวลของตลาด ยังไม่มีข้อมูล');
+  });
+
+  it('draws no money row at all when there is neither a regime nor a reason', () => {
+    const block = renderSnapshot({ status: 'down', regime: null, regimeReasons: [] });
+    expect(block.querySelector('[data-testid="market-today-regime"]')).toBeNull();
+    expect(block.querySelector('[data-testid="market-today-status"]')).not.toBeNull();
+  });
+
+  /*
+    Both markers are read by `phase2-flag-manifest.mjs` and by
+    `overview-phase2-qa.mjs` to decide whether the flag reached the page, so
+    they have to survive a rewrite of what renders them.
+  */
+  it('keeps the markers the flag checker looks for', () => {
+    const block = renderSnapshot({
+      status: 'down',
+      regime: 'neutral',
+      regimeReasons: ['VIX พันธบัตร ดอลลาร์ ยังไม่ขยับเกินเกณฑ์'],
+    });
+    for (const marker of ['market-today-strip', 'market-today-status', 'market-today-reasons']) {
+      expect(block.querySelector(`[data-testid="${marker}"]`), marker).not.toBeNull();
     }
   });
 });

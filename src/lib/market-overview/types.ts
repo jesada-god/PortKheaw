@@ -159,6 +159,26 @@ export const OV_REGIME_WORD: Readonly<Record<OvRegime, string>> = {
 };
 
 /**
+ * THE REGIME GETS ITS OWN MARK, BECAUSE IT IS ITS OWN READING.
+ *
+ * It used to print as bare secondary text beside the status word, which left
+ * one coloured dot on a line carrying two different answers — and the dot
+ * belonged to the other one. A reader seeing "🔴 ตลาดไปทางลบ  กลาง ๆ" has no
+ * way to tell that the red mark is about the six instruments and the "กลาง ๆ"
+ * is about three of them; it reads as one sentence contradicting itself.
+ *
+ * `risk_off` is `bad` and not `weak`. `weak` is reserved for a narrow advance —
+ * a statement about how many names took part — and money moving out of risk is
+ * not that; it is the plain negative of `risk_on`, which is why the two sit
+ * symmetrically either side of `neutral` here.
+ */
+export const OV_REGIME_LEVEL: Readonly<Record<OvRegime, StatusLevel>> = {
+  risk_on: 'good',
+  neutral: 'neutral',
+  risk_off: 'bad',
+};
+
+/**
  * Breadth wears `weak` (🟠) and not `bad` (🔴).
  *
  * A narrow advance is a statement about participation, not about direction —

@@ -4,13 +4,14 @@ import { inputStatusLevel } from '@/src/lib/market-status/presentation';
 import {
   OV_MARKET_STATUS_LEVEL,
   OV_MARKET_STATUS_WORD,
+  OV_REGIME_LEVEL,
   OV_REGIME_WORD,
   type OvIndexKey,
   type OvIndexReading,
   type OvMarketSnapshot,
 } from '@/src/lib/market-overview/types';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
-import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import { StatusLabel, StatusRow } from '@/src/components/ui/StatusLabel';
 import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { proxyDisclosureTh } from '@/src/lib/overview/market-assets';
 import { signedPercent } from '@/src/lib/portfolio/presentation';
@@ -186,43 +187,87 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
         </div>
       </div>
       {/*
-        The reading, under the numbers it is a reading of.
+        TWO READINGS, EACH SAYING WHAT IT MEASURES.
+
+        These were one line: a status word with a coloured mark, and the regime
+        beside it as bare secondary text. That put two answers to two different
+        questions under one dot — and the dot belonged to the first. "🔴 ตลาด
+        ไปทางลบ  กลาง ๆ" reads as a single sentence contradicting itself, when
+        it is really "the six instruments point down" followed by "the three
+        that price risk are not alarmed", which is a coherent and useful day.
+
+        `StatusRow` is the product's existing shape for exactly this — a muted
+        name, a middle dot, then the mark and the phrase — so naming the two
+        readings costs no new component and lands them in the same alignment the
+        stock page and the planner already use.
+
+        The names are the shortest pair that still says these measure different
+        things. "ทิศทาง" does not repeat the "ตลาด" its own label already
+        carries, and "เงินรอบตลาด" names the subject the risk trio actually
+        reads: not how risky the market is, but what the money around it is
+        doing.
 
         `status === null` means the equity inputs were not all readable, and the
         honest answer is to say so rather than to soften the word — the numbers
         above still print whatever did arrive.
       */}
-      <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+      <div className="mt-3 space-y-1 text-sm">
         {status === null ? (
-          <StatusLabel level="unknown" label="ยังอ่านภาพรวมตลาดไม่ได้" data-testid="market-today-status" />
+          <div data-testid="market-today-status">
+            <StatusRow name="ทิศทาง" level="unknown" label="ยังอ่านภาพรวมตลาดไม่ได้" />
+          </div>
         ) : (
           <>
-            <StatusLabel
-              level={OV_MARKET_STATUS_LEVEL[status]}
-              label={OV_MARKET_STATUS_WORD[status]}
-              data-testid="market-today-status"
-            />
-            {snapshot.regime && (
-              <span className="text-[var(--text-secondary)]" data-testid="market-today-regime">
-                {OV_REGIME_WORD[snapshot.regime]}
-              </span>
+            <div data-testid="market-today-status">
+              <StatusRow
+                name="ทิศทาง"
+                level={OV_MARKET_STATUS_LEVEL[status]}
+                label={OV_MARKET_STATUS_WORD[status]}
+              />
+            </div>
+            {(snapshot.regime !== null || snapshot.regimeReasons.length > 0) && (
+              <div data-testid="market-today-regime">
+                {/*
+                  A WITHHELD REGIME IS STILL A ROW, BECAUSE THE REASONS ARE.
+
+                  VIX or the ten-year unreadable means no regime — but the lines
+                  saying which one is missing are exactly what a reader needs,
+                  and before this they printed with no header at all, which is
+                  the orphaning this change exists to end. `unknown` and its own
+                  fallback word, so nothing new is invented to say it.
+                */}
+                <StatusRow
+                  name="เงินรอบตลาด"
+                  level={snapshot.regime === null ? 'unknown' : OV_REGIME_LEVEL[snapshot.regime]}
+                  label={snapshot.regime === null ? undefined : OV_REGIME_WORD[snapshot.regime]}
+                />
+                {/*
+                  UNDER THE ROW IT EXPLAINS, AND ONLY THAT ROW.
+
+                  Every line `ovRegime` produces is about VIX, the ten-year and
+                  the dollar. It used to sit under the status word instead, where
+                  it read as the reason for a verdict it has never described —
+                  and on a flat day it said "ทั้งสามตัว" beneath six printed
+                  figures. Indented, so subordination is visible and not merely
+                  implied by order.
+
+                  Two or three measurements and nothing else: each is an
+                  instrument and a signed percentage, so a reader can disagree
+                  with the word above by reading the numbers that produced it.
+                */}
+                {snapshot.regimeReasons.length > 0 && (
+                  <p
+                    className="mt-0.5 ps-4 text-xs leading-5 text-[var(--text-muted)]"
+                    data-testid="market-today-reasons"
+                  >
+                    {snapshot.regimeReasons.slice(0, 3).join(' · ')}
+                  </p>
+                )}
+              </div>
             )}
           </>
         )}
       </div>
-      {/*
-        Two or three measurements, and nothing else. Each is an instrument and a
-        signed percentage — the reader can disagree with the word above by
-        reading the numbers that produced it.
-      */}
-      {status !== null && snapshot.regimeReasons.length > 0 && (
-        <p
-          className="mt-1 text-xs leading-5 text-[var(--text-muted)]"
-          data-testid="market-today-reasons"
-        >
-          {snapshot.regimeReasons.slice(0, 3).join(' · ')}
-        </p>
-      )}
       {snapshot.stale && (
         <p className="mt-1 text-[11px] leading-4 text-[var(--text-muted)]" data-testid="market-today-stale">
           {formatMarketDataAsOf(snapshot.evaluatedAt)} · กำลังอัปเดต

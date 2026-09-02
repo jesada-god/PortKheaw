@@ -55,7 +55,16 @@ describe('ovRegime', () => {
       reading('DXY', 0.1),
     ]);
     expect(verdict.regime).toBe('neutral');
-    expect(verdict.reasons).toEqual(['ทั้งสามตัวยังไม่ขยับเกินเกณฑ์']);
+    /*
+      NAMED, not counted. This read "ทั้งสามตัวยังไม่ขยับเกินเกณฑ์" and was
+      printed under a status word produced by all SIX instruments, whose figures
+      sit directly above it — so the reader counted six and could not tell which
+      three the line meant.
+    */
+    expect(verdict.reasons).toEqual(['VIX พันธบัตร ดอลลาร์ ยังไม่ขยับเกินเกณฑ์']);
+    // At the cap exactly, with nothing to spare. See the assertion over every
+    // generated reason at the foot of this file.
+    expect([...verdict.reasons[0]!].length).toBe(OV_REGIME_REASON_MAX_CHARS);
   });
 
   it('withholds the regime when VIX cannot be read', () => {
