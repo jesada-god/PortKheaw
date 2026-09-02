@@ -9,6 +9,7 @@ import {
   type OvMarketSnapshot,
 } from '@/src/lib/market-overview/types';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import { proxyDisclosureTh } from '@/src/lib/overview/market-assets';
 import { signedPercent } from '@/src/lib/portfolio/presentation';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
 import type { MarketIndexCard } from '@/src/lib/overview/types';
@@ -58,6 +59,29 @@ function ReadingCell({ reading }: { reading: OvIndexReading }) {
   return (
     <div className="data-strip__cell min-w-0" data-testid={`market-today-${reading.key}`}>
       <span className="figure-label truncate">{reading.labelTh}</span>
+      {/*
+        WHEN THE NUMBER IS NOT THE THING THE LABEL NAMES, THE CELL SAYS SO.
+
+        Null for all six today, because all six quote the instrument they name —
+        so this renders nothing and costs the cell no height. It is here for the
+        day a provider forces a stand-in back: `proxyLabelTh` is the only place
+        the product can admit one, and a field that no screen reads is a comment
+        pretending to be a contract. The reading carried it end to end and the
+        cell dropped it, which is how "หุ้นสหรัฐฯ 500 ตัวใหญ่" came to sit over a
+        fund's share price with nothing saying which was which.
+
+        Smaller and quieter than the percentage below it. A disclosure that
+        competed with the number would be answering a question the reader has
+        not asked yet.
+      */}
+      {reading.proxyLabelTh && (
+        <span
+          className="mt-0.5 block truncate text-[10px] leading-4 text-[var(--text-muted)]"
+          data-testid={`market-today-proxy-${reading.key}`}
+        >
+          {reading.proxyLabelTh}
+        </span>
+      )}
       {/*
         The number is the point, so it is the biggest and heaviest thing in the
         cell. An unreadable input prints an em dash and never a zero — a zero is
@@ -160,6 +184,24 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
         {items.map((item) => (
           <div key={item.symbol} className="data-strip__cell min-w-0" data-testid={`market-asset-${item.symbol}`}>
             <span className="figure-label truncate">{item.name}</span>
+            {/*
+              The same disclosure the nine cards used to carry in their subtitle
+              and this strip lost when it replaced them. "ทองคำ" over a number is
+              a front-month COMEX contract, and "แร่หายาก" is a fund holding
+              miners; a reader comparing either figure against a price quoted
+              anywhere else needs to know that before they conclude one of them
+              is wrong. `proxyDisclosureTh` is the single predicate both bands
+              ask, so Bitcoin — which IS the asset — stays unqualified here for
+              the same reason the six above do.
+            */}
+            {proxyDisclosureTh(item.proxyLabel) && (
+              <span
+                className="mt-0.5 block truncate text-[10px] leading-4 text-[var(--text-muted)]"
+                data-testid={`market-asset-proxy-${item.symbol}`}
+              >
+                {proxyDisclosureTh(item.proxyLabel)}
+              </span>
+            )}
             <span className="figure mt-0.5 block truncate text-sm font-bold text-[var(--text)]">
               {formatLevel(item.price)}
             </span>

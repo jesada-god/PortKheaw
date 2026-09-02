@@ -48,6 +48,24 @@ export function marketAssetLogoUrl(symbol: string): string | null {
 export type MarketAsset = (typeof MARKET_ASSETS)[number];
 
 /**
+ * The line that admits a card is not quoting the thing it names, or null.
+ *
+ * Three `proxyLabel` values, two meanings. 'ETF อ้างอิง' and 'สัญญาล่วงหน้า' both
+ * say the price on screen belongs to something OTHER than the name above it —
+ * a fund tracking an index, a front-month contract standing for a commodity —
+ * and a reader who checks either figure elsewhere will find a different number
+ * unless the card said so. 'สินทรัพย์จริง' says the opposite, and printing it is
+ * not a disclosure but a boast; its absence is the statement, exactly as a null
+ * `proxyLabelTh` is on the six-instrument band above.
+ *
+ * One predicate, because the two bands sit ten pixels apart and cannot be
+ * allowed to answer "is this the real thing" differently.
+ */
+export function proxyDisclosureTh(proxyLabel: string): string | null {
+  return proxyLabel === 'สินทรัพย์จริง' ? null : proxyLabel;
+}
+
+/**
  * The overview proxy for a symbol, when that symbol trades continuously.
  *
  * A 24/7 asset has no opening bell, no previous *regular* close and no row in
