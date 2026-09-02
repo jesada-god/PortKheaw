@@ -72,14 +72,26 @@ export type MarketStatusInputGroup = 'equity' | 'risk';
 export interface MarketStatusInput {
   key: MarketStatusInputKey;
   /**
-   * The symbol actually quoted.
+   * The symbol actually quoted. ALL SIX ARE NOW THE INSTRUMENTS THEMSELVES.
    *
-   * The three risk inputs are the INSTRUMENTS THEMSELVES — a live probe
+   * The three risk inputs always were: a live probe
    * (`npm run probe:market-status-inputs`) confirmed the provider returns
-   * `^VIX`, `^TNX` and `DX-Y.NYB` with plausible values and a `previousClose`,
-   * so no ETF proxy stands in for any of them and no direction has to be
-   * inverted to read them. The three equity inputs remain the ETF proxies the
-   * product has always quoted — see `proxyOf`.
+   * `^VIX`, `^TNX` and `DX-Y.NYB` with plausible values, so no ETF proxy stands
+   * in for any of them and no direction has to be inverted to read them.
+   *
+   * The three equity inputs were SPY, QQQ and DIA — the funds — under labels
+   * that named the indices. A card that prints 761.78 under "หุ้นสหรัฐฯ 500 ตัว
+   * ใหญ่" is quoting a fund's own order book at a reader who will find 7631.47
+   * everywhere else and have no way to tell which figure is wrong. The same
+   * probe confirmed `^GSPC`, `^NDX` and `^DJI` come back through the same
+   * endpoint with real index levels and a previous close from the completed-
+   * daily-candle fallback, so the labels are now true of the numbers under them.
+   *
+   * Measured over 135 sessions, the index and its fund disagree on the day by a
+   * median of 0.02–0.03pp — except on the fund's ex-dividend dates, where SPY
+   * printed -0.72% against the index's -0.05%. THAT is the reading this change
+   * removes: a distribution is not a market move, and the card was reporting it
+   * as one four times a year for SPY and twelve for DIA.
    */
   symbol: string;
   group: MarketStatusInputGroup;
@@ -88,11 +100,17 @@ export interface MarketStatusInput {
   /**
    * Set when `symbol` is a STAND-IN rather than the thing named.
    *
-   * SPY is not the S&P 500: it is a fund that tracks it, priced by its own order
-   * book and carrying a fee. The card must say so — a reader comparing this
-   * number against an index quoted anywhere else would otherwise find two
-   * different figures and no way to tell which was wrong. Null means the symbol
-   * IS the thing.
+   * Null means the symbol IS the thing, which is now true of all six — the
+   * equity rows quote `^GSPC`, `^NDX` and `^DJI` rather than the funds that
+   * track them. The field stays because it is the only place the card can admit
+   * a substitution, and the day a provider forces one back it must be said on
+   * screen rather than recorded in a comment: a reader comparing a fund's price
+   * against an index quoted anywhere else finds two figures and no way to tell
+   * which is wrong.
+   *
+   * A non-null value is a CONTRACT WITH THE SCREEN, not a note. Whatever is set
+   * here is printed under the label — see `ReadingCell` in
+   * `src/components/dashboard/MarketTodaySection.tsx`.
    */
   proxyLabelTh: string | null;
   /**
@@ -133,10 +151,10 @@ export interface MarketStatusInput {
 export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'SPX',
-    symbol: 'SPY',
+    symbol: '^GSPC',
     group: 'equity',
     labelTh: 'หุ้นสหรัฐฯ 500 ตัวใหญ่',
-    proxyLabelTh: 'กองทุนอ้างอิง',
+    proxyLabelTh: null,
     polarity: 1,
     weight: 3,
     flatBandPercent: 0.15,
@@ -144,10 +162,10 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   },
   {
     key: 'NDX',
-    symbol: 'QQQ',
+    symbol: '^NDX',
     group: 'equity',
     labelTh: 'หุ้นเทคโนโลยี 100 ตัวใหญ่',
-    proxyLabelTh: 'กองทุนอ้างอิง',
+    proxyLabelTh: null,
     polarity: 1,
     weight: 2,
     flatBandPercent: 0.15,
@@ -155,10 +173,10 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   },
   {
     key: 'DJI',
-    symbol: 'DIA',
+    symbol: '^DJI',
     group: 'equity',
     labelTh: 'หุ้นบริษัทขนาดใหญ่ดั้งเดิม',
-    proxyLabelTh: 'กองทุนอ้างอิง',
+    proxyLabelTh: null,
     polarity: 1,
     weight: 1,
     flatBandPercent: 0.15,

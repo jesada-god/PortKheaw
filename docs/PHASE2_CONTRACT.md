@@ -141,9 +141,9 @@ default argument) มีเอกสาร rollout อยู่แล้วท�
 
 | key | symbol ที่ quote จริง | group | polarity | weight | flat band | full weight |
 |---|---|---|---|---|---|---|
-| `SPX` | `SPY` (proxy) | equity | +1 | 3 | 0.15% | 1.5% |
-| `NDX` | `QQQ` (proxy) | equity | +1 | 2 | 0.15% | 1.8% |
-| `DJI` | `DIA` (proxy) | equity | +1 | 1 | 0.15% | 1.5% |
+| `SPX` | `^GSPC` | equity | +1 | 3 | 0.15% | 1.5% |
+| `NDX` | `^NDX` | equity | +1 | 2 | 0.15% | 1.8% |
+| `DJI` | `^DJI` | equity | +1 | 1 | 0.15% | 1.5% |
 | `VIX` | `^VIX` | risk | −1 | 3 | 3% | 15% |
 | `US10Y` | `^TNX` | risk | −1 | 1 | 1% | 4% |
 | `DXY` | `DX-Y.NYB` | risk | −1 | 2 | 0.3% | 1.2% |
@@ -521,7 +521,7 @@ export type MarketSnapshotKey = 'SPX' | 'NDX' | 'DJI' | 'VIX' | 'US10Y' | 'DXY';
 
 export interface MarketSnapshotReading {
   key: MarketSnapshotKey;
-  /** symbol ที่ quote จริง — SPY/QQQ/DIA เป็น proxy, ^VIX/^TNX/DX-Y.NYB เป็นตัวจริง */
+  /** symbol ที่ quote จริง — ทั้งหกเป็นตัวจริง ไม่มี proxy */
   symbol: string;
   /** null = อ่านไม่ได้ ไม่ใช่ 0 */
   value: number | null;

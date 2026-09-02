@@ -200,22 +200,41 @@ describe('polarity — the direction of every input, pinned', () => {
 });
 
 describe('proxy labelling — a stand-in is never presented as the thing', () => {
-  it('marks every equity input as a proxy and no risk input as one', () => {
-    /*
-      SPY is a fund tracking the S&P, not the S&P. The probe confirmed the three
-      risk inputs are the instruments themselves, so a proxy badge on one of them
-      would be the same misstatement in reverse.
-    */
-    for (const input of MARKET_STATUS_INPUTS) {
-      if (input.group === 'equity') expect(input.proxyLabelTh).not.toBeNull();
-      else expect(input.proxyLabelTh).toBeNull();
-    }
+  /*
+    This used to assert the opposite: that every EQUITY input carried a proxy
+    badge, because all three quoted funds — SPY, QQQ, DIA — under labels naming
+    the indices. The badge was the compensation for a number that was not the
+    thing its label said. The equity rows now quote `^GSPC`, `^NDX` and `^DJI`,
+    so there is nothing left to compensate for and a badge on any of them would
+    itself be the false statement.
+
+    What survives from that test is the rule it was enforcing, which was never
+    "equities are proxies": a symbol that is not the thing its label names must
+    say so on screen. Both halves are pinned below.
+  */
+  it('quotes every input at the instrument its label names', () => {
+    const bySymbol = Object.fromEntries(MARKET_STATUS_INPUTS.map((i) => [i.key, i.symbol]));
+    expect(bySymbol).toMatchObject({
+      SPX: '^GSPC',
+      NDX: '^NDX',
+      DJI: '^DJI',
+      VIX: '^VIX',
+      US10Y: '^TNX',
+      DXY: 'DX-Y.NYB',
+    });
   });
 
-  it('quotes the risk inputs directly, at the symbols the probe verified', () => {
-    const bySymbol = Object.fromEntries(MARKET_STATUS_INPUTS.map((i) => [i.key, i.symbol]));
-    expect(bySymbol).toMatchObject({ VIX: '^VIX', US10Y: '^TNX', DXY: 'DX-Y.NYB' });
+  it('carries no proxy badge, because nothing is standing in for anything', () => {
+    for (const input of MARKET_STATUS_INPUTS) expect(input.proxyLabelTh).toBeNull();
   });
+
+  /*
+    The other half — that a badge, once set, actually reaches the reader — is a
+    statement about the screen and is pinned beside the component, in
+    `MarketTodaySection.test.tsx`. `ReadingCell` renders whatever is here for
+    ANY input, with no list of which keys are allowed to have one, which is what
+    makes the day a provider forces a proxy back a one-line config change.
+  */
 });
 
 describe('missing data — the card withholds rather than guesses', () => {
