@@ -48,8 +48,11 @@ import { readFile } from 'node:fs/promises';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { MARKET_ASSETS, assetsOutsideMarketStatus } from '@/src/lib/overview/market-assets';
-import { MarketAssetStrip } from '@/src/components/dashboard/MarketTodaySection';
+import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
+import { MarketAssetStrip, MarketTodayStrip } from '@/src/components/dashboard/MarketTodaySection';
+import { ovRegime } from '@/src/lib/market-overview/regime';
 import type { MarketIndexCard } from '@/src/lib/overview/types';
+import type { OvIndexKey, OvIndexReading, OvMarketSnapshot } from '@/src/lib/market-overview/types';
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -58,7 +61,12 @@ const BROWSER = process.env.QA_BROWSER_PATH
 const args = process.argv.slice(2);
 const LABEL = args.includes('--label') ? args[args.indexOf('--label') + 1]! : 'current';
 const OUT_DIR = '.qa/artifacts/market-asset-strip';
-const WIDTH = 375;
+/*
+ * 375 is the capture width the reports are read at; 320 is the width
+ * `OV_REGIME_REASON_MAX_CHARS` was written against, so a reason line at the cap
+ * can be checked where it is tightest.
+ */
+const WIDTH = args.includes('--width') ? Number(args[args.indexOf('--width') + 1]) : 375;
 
 /**
  * A believable intraday shape, so the sparkline is measured at the length it
@@ -116,6 +124,51 @@ function cards(): MarketIndexCard[] {
       subtitle: `${asset.symbol} · ${asset.proxyLabel}`,
     } as unknown as MarketIndexCard;
   });
+}
+
+/**
+ * The live reading of 2026-09-01, which is the day the two-line status block was
+ * reported as contradicting itself: three equity indices down through their dead
+ * bands, and all three risk inputs inside theirs.
+ *
+ * Built through `ovRegime` rather than with hand-written reasons, so the line
+ * under the regime row is the one the module actually emits.
+ */
+const LIVE_READING: Record<OvIndexKey, number> = {
+  SPX: -0.711, NDX: -1.289, DJI: -0.788, VIX: 2.509, US10Y: 0.799, DXY: 0.132,
+};
+const LEVEL: Record<OvIndexKey, number> = {
+  SPX: 7631.47, NDX: 29077.22, DJI: 52766.88, VIX: 16.75, US10Y: 4.796, DXY: 99.802,
+};
+
+function snapshot(): OvMarketSnapshot {
+  const list: OvIndexReading[] = MARKET_STATUS_INPUTS.map((input) => {
+    const changePercent = LIVE_READING[input.key as OvIndexKey];
+    const value = LEVEL[input.key as OvIndexKey];
+    return {
+      key: input.key as OvIndexKey,
+      symbol: input.symbol,
+      labelTh: input.labelTh,
+      proxyLabelTh: input.proxyLabelTh,
+      value,
+      comparisonClose: value / (1 + changePercent / 100),
+      changePercent,
+      asOf: '2026-09-01T20:00:00.000Z',
+    };
+  });
+  const regime = ovRegime(list);
+  return {
+    readings: Object.fromEntries(list.map((r) => [r.key, r])) as OvMarketSnapshot['readings'],
+    status: 'down',
+    availability: 'available',
+    regime: regime.regime,
+    regimeReasons: regime.reasons,
+    missing: [],
+    session: 'CLOSED',
+    sessionDate: '2026-09-01',
+    evaluatedAt: '2026-09-02T00:00:00.000Z',
+    stale: false,
+  };
 }
 
 async function stylesheet(): Promise<string> {
@@ -195,6 +248,7 @@ const html = '<!doctype html><html lang="th" data-theme="portkheaw" data-appeara
   */
   + '<main class="mx-auto w-full max-w-[1440px] page-stack px-[var(--page-gutter)] py-4 sm:py-6">'
   + '<section id="market-overview" class="stack-lead">'
+  + renderToString(React.createElement(MarketTodayStrip, { snapshot: snapshot() }))
   + renderToString(React.createElement(MarketAssetStrip, { items }))
   + '</section></main></body></html>';
 
@@ -254,6 +308,41 @@ if (measured.missing) {
 
 const strip = await page.locator('[data-testid="market-today-assets"]');
 await strip.screenshot({ path: path.join(OUT, `strip-${WIDTH}-${LABEL}.png`) });
+/*
+ * The two readings and the reason line, clipped as one region.
+ *
+ * Not a screenshot of a single element: BEFORE this change the reason line was a
+ * SIBLING of the status row rather than a child of it — that orphaning is the
+ * whole subject — so any element-scoped shot would crop it out of the baseline
+ * and make the two captures show different things. The clip is the union of the
+ * status row's box and the reason line's, which is the same region either way.
+ */
+const boxes = (await Promise.all(
+  ['market-today-status', 'market-today-regime', 'market-today-reasons'].map(async (id) => {
+    const locator = page.locator(`[data-testid="${id}"]`);
+    return (await locator.count()) === 0 ? null : locator.boundingBox();
+  }),
+)).filter((box): box is NonNullable<typeof box> => box !== null);
+if (boxes.length) {
+  const left = Math.min(...boxes.map((b) => b.x));
+  const top = Math.min(...boxes.map((b) => b.y));
+  await page.screenshot({
+    path: path.join(OUT, `status-${WIDTH}-${LABEL}.png`),
+    clip: {
+      x: left - 4,
+      y: top - 4,
+      width: Math.max(...boxes.map((b) => b.x + b.width)) - left + 8,
+      height: Math.max(...boxes.map((b) => b.y + b.height)) - top + 8,
+    },
+  });
+}
+const statusText = (await page.locator('[data-testid="market-today-strip"]').innerText())
+  .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+console.log('STATUS BLOCK TEXT');
+for (const line of statusText.slice(-6)) console.log(`  | ${line}`);
+const reasonBox = await page.locator('[data-testid="market-today-reasons"]').boundingBox();
+const reasonText = await page.locator('[data-testid="market-today-reasons"]').innerText();
+console.log(`  reason line: "${reasonText}" ${[...reasonText].length} chars, ${reasonBox?.height}px tall`);
 await page.screenshot({ path: path.join(OUT, `page-${WIDTH}-${LABEL}.png`), fullPage: true });
 await browser.close();
 

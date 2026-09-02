@@ -162,7 +162,26 @@ function buildReasons(weighed: readonly Weighed[]): string[] {
     .map((item) => `${item.labelTh} ${signedPercent(item.changePercent!)}`);
 
   if (moved.length === 0 && missing.length === 0) {
-    return ['ทั้งสามตัวยังไม่ขยับเกินเกณฑ์'];
+    /*
+      NAMED, BECAUSE "ทั้งสามตัว" HAD SIX NUMBERS ABOVE IT.
+
+      This line used to read "ทั้งสามตัวยังไม่ขยับเกินเกณฑ์" and sat under a
+      status word produced by all SIX instruments, whose figures are printed
+      directly above it. A reader counting them found six and no way to know
+      which three the sentence meant — so the line read as an explanation of the
+      status word, which it has never been: every reason here is about the risk
+      trio and nothing else.
+
+      "ยังไม่ขยับเกินเกณฑ์" and not "ยังไม่ขยับ". They did move — VIX prints 2%
+      days routinely — they just did not clear their dead bands, and a line that
+      said they had not moved would be false about the numbers beside it.
+
+      Forty characters exactly, against `OV_REGIME_REASON_MAX_CHARS`. It is the
+      longest line this module can emit and it has no room to spare, which is
+      what the cap is for: `regime.test.ts` walks every generated reason against
+      it, so the next word added here fails a test rather than a handset.
+    */
+    return ['VIX พันธบัตร ดอลลาร์ ยังไม่ขยับเกินเกณฑ์'];
   }
   return [...moved, ...missing];
 }
