@@ -1,11 +1,16 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
+import { buildMarketSummary } from './market-summary';
+import type { MarketIndexCard } from './types';
 import {
+  assetsOutsideMarketStatus,
   commodityMarketAsset,
   continuousMarketAsset,
   equityMarketSymbols,
   marketAssetLogoUrl,
+  proxyDisclosureTh,
   MARKET_ASSETS,
 } from './market-assets';
 
@@ -107,5 +112,65 @@ describe('Overview market asset mapping', () => {
     expect(commodityMarketAsset('BTC-USD')).toBeNull();
     expect(commodityMarketAsset('SPY')).toBeNull();
     expect(commodityMarketAsset('GLD')).toBeNull();
+  });
+});
+
+describe('the asset band under the six-instrument snapshot', () => {
+  /*
+    The overview draws two bands. Three of the catalogue's rows are the same
+    three markets the band above already states, through the funds that track
+    them, and the page was printing the S&P twice at two different magnitudes.
+  */
+  it('drops exactly the rows the six-instrument band already states', () => {
+    const kept = assetsOutsideMarketStatus(MARKET_ASSETS).map((asset) => asset.symbol);
+    expect(kept).toEqual(['IWM', 'GC-F', 'SI-F', 'CL-F', 'REMX', 'BTC-USD']);
+  });
+
+  /*
+    The pairing is a statement about MEANING: `SPX` quotes `^GSPC` and covers
+    `SPY`, which comparing symbols would never find. That is what makes a typo
+    in it silent — the filter would simply stop removing a row — so every
+    pairing is checked against the catalogue it names.
+  */
+  it('pairs every covering input with a row that exists', () => {
+    for (const input of MARKET_STATUS_INPUTS) {
+      if (input.overviewAssetSymbol === null) continue;
+      expect(
+        MARKET_ASSETS.some((asset) => asset.symbol === input.overviewAssetSymbol),
+        `${input.key} covers ${input.overviewAssetSymbol}, which is not in MARKET_ASSETS`,
+      ).toBe(true);
+    }
+  });
+
+  it('claims to cover nothing through an input that is not an equity index', () => {
+    for (const input of MARKET_STATUS_INPUTS) {
+      if (input.group === 'risk') expect(input.overviewAssetSymbol, input.key).toBeNull();
+    }
+  });
+
+  /*
+    THE FILTER IS PRESENTATION ONLY. `MARKET_ASSETS` is also what the flag-off
+    page draws — all nine cards, and a summary line that reads SPY and QQQ off
+    this very array. Removing the three at the catalogue instead would have
+    broken the page that is live today to tidy the one behind a flag.
+  */
+  it('leaves the catalogue whole, so the V1 page and its summary line still work', () => {
+    expect(MARKET_ASSETS).toHaveLength(9);
+    const cards = MARKET_ASSETS.map((asset) => ({
+      symbol: asset.symbol,
+      changePercent: 1.2,
+    })) as MarketIndexCard[];
+    expect(buildMarketSummary(cards)).not.toBeNull();
+    // And the summary is genuinely reading the two rows the filter removes.
+    expect(buildMarketSummary(assetsOutsideMarketStatus(cards))).toBeNull();
+  });
+});
+
+describe('proxy disclosure', () => {
+  it('qualifies a stand-in and stays silent about the thing itself', () => {
+    expect(proxyDisclosureTh('ETF อ้างอิง')).toBe('ETF อ้างอิง');
+    expect(proxyDisclosureTh('สัญญาล่วงหน้า')).toBe('สัญญาล่วงหน้า');
+    // Not a disclosure but a boast; its absence is the statement.
+    expect(proxyDisclosureTh('สินทรัพย์จริง')).toBeNull();
   });
 });

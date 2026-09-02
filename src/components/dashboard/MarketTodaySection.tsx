@@ -163,15 +163,20 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
 }
 
 /**
- * The nine assets, compact.
+ * The assets the band above has not already stated, compact.
  *
  * They were nine cards; a card each is what made the market block the tallest
  * thing on the page. The same rows, in the same order, in the same strip shape
  * as the six above — so the section reads as one market with two bands rather
  * than as two sections that happen to be adjacent.
  *
- * NOTHING IS REMOVED. Gold, silver, crude, rare earths and Bitcoin are all
- * still here; they are quieter, not gone.
+ * WHAT IS REMOVED IS ONLY WHAT IS SAID TWICE. Three of the catalogue's rows are
+ * SPY, QQQ and DIA — the funds tracking the three indices the band above quotes
+ * directly — so drawing them here printed the S&P as 7,631 and again as 761.78,
+ * ten pixels apart. The caller filters them by meaning rather than by symbol;
+ * see `assetsOutsideMarketStatus`. Gold, silver, crude, Russell, rare earths and
+ * Bitcoin are all still here, quieter and not gone, and with the flag off the
+ * section still draws all nine as cards.
  */
 export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] }) {
   if (items.length === 0) return null;

@@ -94,6 +94,22 @@ export interface MarketStatusInput {
    * as one four times a year for SPY and twelve for DIA.
    */
   symbol: string;
+  /**
+   * The `MARKET_ASSETS` row this input already states, or null.
+   *
+   * The overview draws two bands: these six, and the asset catalogue under
+   * them. Three of the catalogue's rows are the same markets — SPY, QQQ and DIA
+   * track the three indices above — so without this the page printed the S&P
+   * twice, ten pixels apart, at two different magnitudes.
+   *
+   * It is a MEANING, not a symbol match, which is exactly why it has to be
+   * written down. `SPX` quotes `^GSPC` and covers `SPY`; comparing the two
+   * symbols finds nothing in common. The overview reads this to decide which
+   * asset rows are still worth drawing — see `assetsOutsideMarketStatus` — so
+   * the pairing is stated once here rather than restated as a list in a
+   * component that would silently go stale the next time a symbol changes.
+   */
+  overviewAssetSymbol: string | null;
   group: MarketStatusInputGroup;
   /** Plain Thai, for a reader who does not work on a desk. No ticker. */
   labelTh: string;
@@ -152,6 +168,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'SPX',
     symbol: '^GSPC',
+    overviewAssetSymbol: 'SPY',
     group: 'equity',
     labelTh: 'หุ้นสหรัฐฯ 500 ตัวใหญ่',
     proxyLabelTh: null,
@@ -163,6 +180,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'NDX',
     symbol: '^NDX',
+    overviewAssetSymbol: 'QQQ',
     group: 'equity',
     labelTh: 'หุ้นเทคโนโลยี 100 ตัวใหญ่',
     proxyLabelTh: null,
@@ -174,6 +192,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'DJI',
     symbol: '^DJI',
+    overviewAssetSymbol: 'DIA',
     group: 'equity',
     labelTh: 'หุ้นบริษัทขนาดใหญ่ดั้งเดิม',
     proxyLabelTh: null,
@@ -185,6 +204,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'VIX',
     symbol: '^VIX',
+    overviewAssetSymbol: null,
     group: 'risk',
     labelTh: 'ความกังวลของตลาด',
     proxyLabelTh: null,
@@ -196,6 +216,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'US10Y',
     symbol: '^TNX',
+    overviewAssetSymbol: null,
     group: 'risk',
     labelTh: 'ผลตอบแทนพันธบัตร 10 ปี',
     proxyLabelTh: null,
@@ -207,6 +228,7 @@ export const MARKET_STATUS_INPUTS: readonly MarketStatusInput[] = [
   {
     key: 'DXY',
     symbol: 'DX-Y.NYB',
+    overviewAssetSymbol: null,
     group: 'risk',
     labelTh: 'ค่าเงินดอลลาร์',
     proxyLabelTh: null,

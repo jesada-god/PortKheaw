@@ -1,3 +1,5 @@
+import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
+
 export const MARKET_ASSETS = [
   { symbol: 'SPY', name: 'S&P 500', proxyLabel: 'ETF อ้างอิง', logoUrl: '/market-logos/spy.svg', marketKind: 'us-equity' },
   { symbol: 'QQQ', name: 'NASDAQ 100', proxyLabel: 'ETF อ้างอิง', logoUrl: '/market-logos/qqq.svg', marketKind: 'us-equity' },
@@ -92,6 +94,32 @@ export function commodityMarketAsset(symbol: string): MarketAsset | null {
   return MARKET_ASSETS.find(
     (asset) => asset.symbol === normalized && asset.marketKind === 'commodity',
   ) ?? null;
+}
+
+/**
+ * The asset rows the six-instrument band has NOT already stated.
+ *
+ * ONLY THE PRESENTATION IS FILTERED. `MARKET_ASSETS` keeps all nine, because it
+ * is not just the source of this band: `buildMarketSummary` reads SPY and QQQ
+ * off it for the line above the V1 cards, and with `PHASE2_MARKET_SNAPSHOT` off
+ * the page still draws all nine cards and that line. Dropping the three at the
+ * catalogue would break the page that is live today in order to tidy the one
+ * behind a flag.
+ *
+ * The pairing is read from `MARKET_STATUS_INPUTS.overviewAssetSymbol` rather
+ * than listed here, because it is a statement about meaning and not about
+ * spelling — `SPX` quotes `^GSPC` and covers `SPY`, which no symbol comparison
+ * would ever discover. Written once, in the table that owns both facts.
+ */
+export function assetsOutsideMarketStatus<T extends { symbol: string }>(
+  items: readonly T[],
+): T[] {
+  const covered = new Set(
+    MARKET_STATUS_INPUTS
+      .map((input) => input.overviewAssetSymbol)
+      .filter((symbol): symbol is string => symbol !== null),
+  );
+  return items.filter((item) => !covered.has(item.symbol.trim().toUpperCase()));
 }
 
 export function equityMarketSymbols() {

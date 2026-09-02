@@ -44,6 +44,7 @@ import type { OnboardingView } from '@/src/lib/onboarding/onboarding';
 import { formatBangkokDateTime } from '@/src/lib/presentation/datetime';
 import { statusFromSignedValue, type StatusLevel } from '@/src/lib/presentation/status';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import { assetsOutsideMarketStatus } from '@/src/lib/overview/market-assets';
 import { buildMarketSummary } from '@/src/lib/overview/market-summary';
 import { buildOverviewChanges, type OverviewChange } from '@/src/lib/overview/changes';
 import { SENSITIVE_VALUE_MASK } from '@/src/lib/privacy';
@@ -1439,6 +1440,29 @@ export function DashboardClient({
   }, [view.indices]);
 
   /*
+   * The asset band under the Phase 2 snapshot, with nothing said twice.
+   *
+   * The band above states six markets; three of these rows are the same three
+   * markets through the funds that track them, so the page was printing the
+   * S&P twice — once as 7,631 and once as 761.78 — ten pixels apart. The design
+   * called for the lower band to hold what the upper one does NOT.
+   *
+   * Filtered HERE and not at `MARKET_ASSETS`, because the catalogue is also
+   * what the flag-off page draws: all nine cards, and a summary line that reads
+   * SPY and QQQ off the same array. With `PHASE2_MARKET_SNAPSHOT` off this
+   * value is never used and the section renders exactly as it shipped.
+   *
+   * `assetsOutsideMarketStatus` reads the pairing from the input table rather
+   * than from a list kept here — `SPX` quotes `^GSPC` and covers `SPY`, a
+   * relationship no comparison of symbols would find, and a copy of it in this
+   * file would go stale the next time one of them changes.
+   */
+  const uncoveredIndices = useMemo(
+    () => assetsOutsideMarketStatus(orderedIndices),
+    [orderedIndices],
+  );
+
+  /*
    * WHICH SECTIONS EXIST AT ALL, this render.
    *
    * "Present" means the section will draw something. A flag that is off, a
@@ -1505,7 +1529,7 @@ export function DashboardClient({
             {retrying.market
               ? <MarketTodaySkeleton />
               : <MarketTodayStrip snapshot={view.marketToday} />}
-            <MarketAssetStrip items={orderedIndices} />
+            <MarketAssetStrip items={uncoveredIndices} />
           </>
         ) : (
           <>
