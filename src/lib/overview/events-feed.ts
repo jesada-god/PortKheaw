@@ -49,8 +49,16 @@ import type { UpcomingEvent, UpcomingFeed } from '@/src/lib/upcoming/types';
 
 export type OverviewEventKind = 'macro' | 'earnings' | 'option-expiry' | 'alert';
 
-/** How many rows the section draws before it says how many are left. */
-export const OVERVIEW_EVENTS_LIMIT = 6;
+/**
+ * How many rows EACH GROUP draws before it says how many are left.
+ *
+ * Per group, not across both. A single budget of six was spent soonest-first
+ * over a merged list, so a week with five macro releases in it pushed every
+ * expiry and every earnings date off the section entirely — the reader lost a
+ * contract's expiry because the government publishes a lot in September, which
+ * is not a relationship either of those facts has to the other.
+ */
+export const OVERVIEW_EVENTS_GROUP_LIMIT = 5;
 
 export interface OverviewEventRow {
   id: string;
@@ -78,21 +86,64 @@ export interface OverviewEventRow {
   countdownDays: number | null;
   /** "วันนี้" / "อีก 5 วัน". Null when there is no count to state. */
   countdownText: string | null;
-  /** The reader's own symbols this row touches. Empty is a legitimate answer. */
+  /**
+   * The instrument this row IS ABOUT, for the link a reader opens.
+   *
+   * At most one, and only for the three kinds that genuinely belong to a single
+   * company: an earnings date, an expiry, an alert. A macro release belongs to
+   * no company and carries none — see `affectedCount`.
+   */
   symbols: string[];
+  /**
+   * How many of the reader's own symbols a MARKET-WIDE release reaches.
+   *
+   * Absent on every row that is not one, which is what distinguishes "this is
+   * an economy-wide number and you hold seven US names" from "this row is about
+   * NVDA". `ovEventRelevanceFor` has always computed it and this module used to
+   * drop it on the floor, taking the capped NAME LIST instead — so every macro
+   * row printed the same seven tickers and read as a per-stock claim the
+   * relevance module explicitly refuses to make.
+   *
+   * Zero is a real answer (a signed-out reader, an empty watchlist) and must
+   * render as nothing at all rather than as "0 ตัว".
+   */
+  affectedCount?: number;
 }
 
-export interface OverviewEventsView {
-  /** Ordered, soonest first, and cut to {@link OVERVIEW_EVENTS_LIMIT}. */
+export interface OverviewEventGroup {
+  /** Ordered, soonest first, cut to {@link OVERVIEW_EVENTS_GROUP_LIMIT}. */
   rows: OverviewEventRow[];
-  /** Rows before the cut, so the section can say how many are left. */
+  /** Rows before the cut, so the group can say how many of ITS OWN are left. */
   total: number;
+}
+
+/**
+ * TWO GROUPS, BECAUSE THEY ANSWER TWO QUESTIONS.
+ *
+ * The merge that produced this section was right about one thing — a reader
+ * asking "มีอะไรต้องรู้" does not sort their answer by subsystem — and wrong
+ * about the consequence. It put "IREN Call · หมดอายุในอีก 2 วัน" between CPI and
+ * NFP, on the sole grounds that its date fell there, and the two rows have
+ * nothing to do with each other: one is an economy-wide number published on a
+ * schedule, the other is a contract the reader personally owns running out.
+ *
+ * This module already had them as two arrays; the fix is to stop concatenating.
+ * Nothing downstream of `fromUpcoming` changes and neither source module learns
+ * about the other — the split is a property of the VIEW, which is the only
+ * layer that has ever known both exist.
+ */
+export interface OverviewEventsView {
+  /** Macro releases: the published economic calendar. */
+  calendar: OverviewEventGroup;
+  /** Earnings, expiries and alerts: things about instruments the reader holds. */
+  holdings: OverviewEventGroup;
   /**
    * Where the shipped calendar stops, when it stops short of the window.
    *
    * Null while it covers the window. NOT null-when-empty: a run of empty months
    * is perfectly drawable and reads as "nothing is scheduled", which is the
-   * opposite of what is true.
+   * opposite of what is true. It belongs to the CALENDAR group and says nothing
+   * about the other one.
    */
   coverageNoteTh: string | null;
 }
@@ -154,6 +205,7 @@ export interface OverviewEventsInput {
   portfolioSymbols?: readonly string[];
   watchlistSymbols?: readonly string[];
   now?: string | Date;
+  /** Rows per group, not across both. */
   limit?: number;
 }
 
@@ -170,7 +222,7 @@ export function buildOverviewEvents({
   portfolioSymbols = [],
   watchlistSymbols = [],
   now = new Date(),
-  limit = OVERVIEW_EVENTS_LIMIT,
+  limit = OVERVIEW_EVENTS_GROUP_LIMIT,
 }: OverviewEventsInput): OverviewEventsView {
   const macroEvents = window?.events ?? [];
   const relevance = ovEventRelevanceFor(macroEvents, { portfolioSymbols, watchlistSymbols });
@@ -192,16 +244,36 @@ export function buildOverviewEvents({
       importance: event.importance,
       countdownDays: days,
       countdownText: countdownTextOf(days),
-      symbols: relevance.get(event.id)?.affectedSymbols ?? [],
+      /*
+        NO NAMES ON A MACRO ROW.
+
+        `affectedSymbols` is the same alphabetical list on every market-wide
+        release — all seven codes are — because that is what the relevance
+        module means by breadth. Printed as bare linked tickers under a CPI row
+        it read as "these seven stocks are affected by CPI", which is precisely
+        the per-symbol claim `event-relevance.ts` says it is not making. The
+        count says the true part and cannot say the false one.
+      */
+      symbols: [],
+      affectedCount: relevance.get(event.id)?.total ?? 0,
     }];
   });
 
   const upcomingRows = (upcoming?.events ?? []).map(fromUpcoming);
-  const all = [...macroRows, ...upcomingRows].sort(compareRows);
+
+  /*
+    Sorted WITHIN each group and never across them. Soonest-first is the right
+    order for a list a reader plans by; it is not a reason to interleave a
+    contract expiry with a jobs report, which is what one merged sort did.
+  */
+  const group = (rows: OverviewEventRow[]): OverviewEventGroup => {
+    const ordered = [...rows].sort(compareRows);
+    return { rows: ordered.slice(0, Math.max(0, limit)), total: ordered.length };
+  };
 
   return {
-    rows: all.slice(0, Math.max(0, limit)),
-    total: all.length,
+    calendar: group(macroRows),
+    holdings: group(upcomingRows),
     coverageNoteTh: coverageNoteOf(window),
   };
 }

@@ -49,7 +49,7 @@ import { z } from 'zod';
 import calendarFile from '@/src/data/market-events.json';
 import {
   BANGKOK_TIME_ZONE,
-  formatBangkokDateTime,
+  formatBangkokTimeOnly,
   formatThaiDateOnly,
 } from '@/src/lib/presentation/datetime';
 
@@ -317,7 +317,17 @@ export function ovEventDayLabel(event: OvMarketEvent): string {
   return dayKey === null ? '—' : formatThaiDateOnly(dayKey);
 }
 
-/** Date and Bangkok wall-clock time, for the row a reader opens. */
+/**
+ * The Bangkok wall clock, and NOT the day.
+ *
+ * This returned `formatBangkokDateTime`, which carries a `dateStyle` — so the
+ * label was "3 ก.ย. 2569 19:30" while the field receiving it was documented as
+ * "Bangkok wall clock". The consumer joined it to `ovEventDayLabel`, exactly as
+ * that contract invites, and printed "3 ก.ย. 2569 · 3 ก.ย. 2569 19:30".
+ *
+ * The day is `ovEventDayLabel`'s job and only its job. A caller wanting both
+ * prints both; nothing gets the date twice from one call.
+ */
 export function ovEventTimeLabel(event: OvMarketEvent): string {
-  return formatBangkokDateTime(event.startsAtUtc);
+  return formatBangkokTimeOnly(event.startsAtUtc);
 }

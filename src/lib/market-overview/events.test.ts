@@ -4,6 +4,7 @@ import {
   ovBangkokDayKey,
   ovEventCountdownDays,
   ovEventDayLabel,
+  ovEventTimeLabel,
   ovEventCalendar,
   ovEventWindow,
   type OvMarketEvent,
@@ -214,5 +215,29 @@ describe('the shipped calendar', () => {
     const label = ovEventDayLabel(event('cpi-1', '2026-09-11T12:30:00.000Z'));
     expect(label).not.toBe('—');
     expect(label).toContain('2569'); // th-TH is Buddhist-era by default.
+  });
+
+  /*
+    THE TIME LABEL CARRIES NO DATE, which is what its consumers are told.
+
+    It used to return `formatBangkokDateTime` — a `dateStyle` formatter — while
+    `OverviewEventRow.timeLabel` documented it as "Bangkok wall clock". The
+    Events row joined the two labels exactly as that contract invites and
+    printed "3 ก.ย. 2569 · 3 ก.ย. 2569 19:30". Nothing in either module could
+    have caught it; only this can.
+  */
+  it('labels a time with no part of the date in it', () => {
+    const label = ovEventTimeLabel(event('cpi-1', '2026-09-11T12:30:00.000Z'));
+    expect(label).toBe('19:30');
+    expect(label).not.toContain('2569');
+    expect(label).not.toContain('ก.ย.');
+  });
+
+  it('leaves the day and the time with no overlap to print twice', () => {
+    const subject = event('cpi-1', '2026-09-11T12:30:00.000Z');
+    const day = ovEventDayLabel(subject);
+    const time = ovEventTimeLabel(subject);
+    // The join a card performs must not repeat anything.
+    expect(day.split(' ').some((part) => time.includes(part))).toBe(false);
   });
 });
