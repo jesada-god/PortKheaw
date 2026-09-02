@@ -15,6 +15,7 @@ import { useToast } from '@/src/components/ui/Toast';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { useOnlineStatus } from '@/src/hooks/useOnlineStatus';
 import { STATUS_PRESENTATION } from '@/src/lib/presentation/status';
+import { StatusMark } from '@/src/components/ui/StatusLabel';
 import { checkWatchlistName } from '@/src/lib/watchlist/naming';
 import { sortRowsByTrend, type WatchlistRow } from '@/src/lib/watchlist/rows';
 import type { WatchlistSummary } from '@/src/lib/watchlist/types';
@@ -60,13 +61,22 @@ function percentTone(value: number | null) {
   return 'text-[var(--text-secondary)]';
 }
 
-/** The mark and the word, together. The mark is decorative; the word carries it. */
+/**
+ * The mark and the word, together. The mark is decorative; the word carries it.
+ *
+ * The mark comes from the shared {@link StatusMark}, so "ขาขึ้น" here is drawn
+ * with the same arrow the overview's watchlist and the stock page use. A trend
+ * is the definition of a direction, so this row takes the arrow and not the dot.
+ */
 function TrendMark({ row }: { row: WatchlistRow }) {
   const presentation = STATUS_PRESENTATION[row.trend.level];
   return (
-    <span className="flex items-center gap-1.5 whitespace-nowrap">
-      <span aria-hidden="true">{presentation.emoji}</span>
-      <span className={`text-xs font-semibold text-[var(${presentation.token})]`}>{row.trend.word}</span>
+    <span
+      className="flex items-baseline gap-1.5 whitespace-nowrap text-xs"
+      style={{ color: `var(${presentation.token})` }}
+    >
+      <StatusMark level={row.trend.level} />
+      <span className="font-semibold">{row.trend.word}</span>
     </span>
   );
 }

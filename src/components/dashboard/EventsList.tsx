@@ -97,6 +97,11 @@ function EventRow({ row }: { row: OverviewEventRow }) {
         {row.importance !== null && (
           <StatusLabel
             level={levelOf(row)}
+            /*
+              A dot: this is how much an announcement matters, not which way
+              anything is moving. Nothing here has read a price.
+            */
+            mark="dot"
             label={IMPORTANCE_WORD[row.importance]}
             className="shrink-0 text-[11px]"
           />

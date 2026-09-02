@@ -1,6 +1,8 @@
 import type { MarketSession } from '@/src/lib/market-data/market-session';
 import { thaiSessionDate } from '@/src/lib/portfolio/day-change-label';
 import type { WhatChangedItem } from '@/src/lib/watchlist/what-changed';
+import { StatusMark } from '@/src/components/ui/StatusLabel';
+import { STATUS_PRESENTATION } from '@/src/lib/presentation/status';
 
 /**
  * มีอะไรเปลี่ยน — a mark, a symbol, a sentence. Nothing else.
@@ -34,9 +36,16 @@ import type { WhatChangedItem } from '@/src/lib/watchlist/what-changed';
  *   of event and is not numbered, badged, or described as importance. A reader
  *   who saw "1." beside a symbol would read it as the product's pick.
  *
- * The emoji is a data mark and is `aria-hidden`: it is the part that survives a
+ * The mark is a data mark and is `aria-hidden`: it is the part that survives a
  * screenshot, and the sentence beside it is the part that carries the meaning
  * for anybody not looking at colours. Same rule as `TrendMark`.
+ *
+ * It is a direction arrow, taken from the item's own `level` through the shared
+ * `StatusMark`, because every line in this list is a thing a price did: it broke
+ * a level, it gapped, it moved past two sigma, its trend flipped. The two lines
+ * with no direction of their own — a volume surge, an earnings date — are
+ * `neutral`, and `neutral` draws the flat arrow, which is the honest shape for
+ * "something changed, and it was not a move up or down".
  *
  * ===========================================================================
  * WHEN THE MARKET IS SHUT, THE CARD SAYS WHICH DAY
@@ -92,7 +101,12 @@ export function WhatChangedCard({
             className="flex min-w-0 items-start gap-2.5 px-3.5 py-2.5 sm:px-4"
             data-testid={`what-changed-${item.symbol}-${item.detector}`}
           >
-            <span aria-hidden="true" className="shrink-0 leading-6">{item.emoji}</span>
+            <span
+              className="shrink-0 leading-6"
+              style={{ color: `var(${STATUS_PRESENTATION[item.level].token})` }}
+            >
+              <StatusMark level={item.level} />
+            </span>
             <span className="min-w-0 flex-1">
               <span className="text-sm font-bold text-[var(--text)]">{item.symbol}</span>
               {' '}

@@ -51,6 +51,7 @@
     "qa:signal-zone-bar": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-signal-zone-bar-mobile-qa.mts",
     "qa:overview-events": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/overview-events-mobile-qa.mts",
     "qa:asset-strip": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-asset-strip-mobile-qa.mts",
+    "qa:status-marks": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/status-direction-marks-qa.mts",
     "qa:options-signal-card": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/options-signal-card-qa.mts",
     "signal:sensitivity": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sensitivity.ts",
     "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts",

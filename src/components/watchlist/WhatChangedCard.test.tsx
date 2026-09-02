@@ -70,7 +70,6 @@ function item(overrides: Partial<WhatChangedItem> = {}): WhatChangedItem {
     symbol: 'AAPL',
     importance: 5,
     level: 'good',
-    emoji: '🟢',
     text: 'ราคาขึ้นเหนือแนวต้าน 210 แล้ว',
     ...overrides,
   };
@@ -86,7 +85,7 @@ describe('what changed card — presence', () => {
   it('renders one line per item, with the mark, the symbol and the sentence', () => {
     render([
       item(),
-      item({ detector: 'earnings-soon', symbol: 'MSFT', importance: 0, level: 'neutral', emoji: '🟡', text: 'ประกาศผลประกอบการอีก 3 วัน' }),
+      item({ detector: 'earnings-soon', symbol: 'MSFT', importance: 0, level: 'neutral', text: 'ประกาศผลประกอบการอีก 3 วัน' }),
     ]);
     expect(container.querySelectorAll('[data-testid^="what-changed-"][data-testid*="-"]').length)
       .toBeGreaterThanOrEqual(2);
@@ -96,16 +95,37 @@ describe('what changed card — presence', () => {
     expect(text()).toContain('ประกาศผลประกอบการอีก 3 วัน');
   });
 
-  it('hides the emoji from assistive technology, leaving the sentence to carry it', () => {
+  /*
+   * The mark is drawn from the item's level and from nothing else — the payload
+   * no longer carries a glyph of its own — so "ราคาขึ้นเหนือแนวต้าน" gets the
+   * rising arrow because it is `good`, not because a detector said so.
+   */
+  it('hides the mark from assistive technology, leaving the sentence to carry it', () => {
     render([item()]);
     const mark = container.querySelector('[data-testid="what-changed-AAPL-level-break"] [aria-hidden="true"]');
-    expect(mark?.textContent).toBe('🟢');
+    expect(mark?.getAttribute('data-status-mark')).toBe('trending_up');
+    expect(mark?.textContent).toBe('');
+  });
+
+  /*
+   * A line that says a price fell must not be able to draw a rising arrow. This
+   * is the one thing the switch away from five same-shaped circles bought, so it
+   * is asserted on the rendered list and not only on the vocabulary.
+   */
+  it('points a fall down and a rise up, on the same screen', () => {
+    render([
+      item({ symbol: 'UP', level: 'good', text: 'เปิดตลาดห่างจากราคาปิดก่อนหน้า +3.10%' }),
+      item({ symbol: 'DOWN', detector: 'trend-change', level: 'bad', text: 'แนวโน้มเปลี่ยนจากขาขึ้นเป็นขาลง' }),
+    ]);
+    const marks = [...container.querySelectorAll('li [aria-hidden="true"]')]
+      .map((node) => node.getAttribute('data-status-mark'));
+    expect(marks).toEqual(['trending_up', 'trending_down']);
   });
 
   it('keeps the order it was given — the cap already decided it', () => {
     render([
       item({ symbol: 'AAA' }),
-      item({ symbol: 'BBB', detector: 'trend-change', importance: 4, text: 'แนวโน้มเปลี่ยนจากขาขึ้นเป็นขาลง', level: 'bad', emoji: '🔴' }),
+      item({ symbol: 'BBB', detector: 'trend-change', importance: 4, text: 'แนวโน้มเปลี่ยนจากขาขึ้นเป็นขาลง', level: 'bad' }),
       item({ symbol: 'CCC', detector: 'gap', importance: 2, text: 'เปิดตลาดห่างจากราคาปิดก่อนหน้า +3.10%' }),
     ]);
     const symbols = [...container.querySelectorAll('li')].map((node) => node.textContent ?? '');
@@ -185,10 +205,10 @@ describe('what changed card — what it must never say', () => {
   function everything() {
     return [
       item(),
-      item({ detector: 'trend-change', symbol: 'BBB', importance: 4, level: 'bad', emoji: '🔴', text: 'แนวโน้มเปลี่ยนจากขาขึ้นเป็นขาลง' }),
-      item({ detector: 'return-sigma', symbol: 'CCC', importance: 3, level: 'bad', emoji: '🔴', text: 'ขยับ -9.00% เกินช่วงปกติ 60 วัน (±2.02%)' }),
-      item({ detector: 'gap', symbol: 'DDD', importance: 2, level: 'good', emoji: '🟢', text: 'เปิดตลาดห่างจากราคาปิดก่อนหน้า +3.10%' }),
-      item({ detector: 'volume-surge', symbol: 'EEE', importance: 1, level: 'neutral', emoji: '🟡', text: 'ปริมาณซื้อขายวันนี้ 3.1 เท่าของค่ากลาง 20 วัน' }),
+      item({ detector: 'trend-change', symbol: 'BBB', importance: 4, level: 'bad', text: 'แนวโน้มเปลี่ยนจากขาขึ้นเป็นขาลง' }),
+      item({ detector: 'return-sigma', symbol: 'CCC', importance: 3, level: 'bad', text: 'ขยับ -9.00% เกินช่วงปกติ 60 วัน (±2.02%)' }),
+      item({ detector: 'gap', symbol: 'DDD', importance: 2, level: 'good', text: 'เปิดตลาดห่างจากราคาปิดก่อนหน้า +3.10%' }),
+      item({ detector: 'volume-surge', symbol: 'EEE', importance: 1, level: 'neutral', text: 'ปริมาณซื้อขายวันนี้ 3.1 เท่าของค่ากลาง 20 วัน' }),
     ];
   }
 

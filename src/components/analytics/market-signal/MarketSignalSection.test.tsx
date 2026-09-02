@@ -15,11 +15,11 @@ import { estimateLabelWidth, LABEL_BIAS, labelsCollide, spreadLabels, MARKET_SIG
 /**
  * What the card SAYS, with the decorative marks taken out.
  *
- * The state line carries a StatusLabel now, and its 🟡 is `aria-hidden` — a
- * screen reader is read the Thai phrase and nothing else. These assertions are
- * about the wording, so they read the card the same way that reader does;
- * asserting on the raw `textContent` would pin the emoji into a test whose
- * subject is the sentence.
+ * The state line carries a StatusLabel now, and its direction arrow is
+ * `aria-hidden` — a screen reader is read the Thai phrase and nothing else.
+ * These assertions are about the wording, so they read the card the same way
+ * that reader does; stripping the decoration keeps this test's subject the
+ * sentence, whatever the mark beside it is drawn as.
  */
 function spokenText(node: Element | null | undefined): string {
   if (!node) return '';
@@ -453,8 +453,8 @@ describe('MarketSignalSection', () => {
 
   /*
    * The four levels the seven states collapse onto have to stay distinguishable,
-   * or the vocabulary has bought nothing: a reader glancing at 🟢 and 🔴 on two
-   * stock pages must be reading two different claims.
+   * or the vocabulary has bought nothing: a reader glancing at a rising mark and
+   * a falling one on two stock pages must be reading two different claims.
    */
   it('does not collapse a rising state and a falling one onto one level', () => {
     expect(MARKET_SIGNAL_STATUS.STRONG_BULLISH).not.toBe(MARKET_SIGNAL_STATUS.STRONG_BEARISH);

@@ -132,12 +132,43 @@ describe('the domain tables', () => {
 describe('STATUS_PRESENTATION', () => {
   const levels: StatusLevel[] = ['good', 'neutral', 'weak', 'bad', 'unknown'];
 
-  it('gives every level its own mark and its own colour', () => {
-    const emoji = levels.map((level) => STATUS_PRESENTATION[level].emoji);
+  it('gives every level its own dot and its own colour', () => {
+    const dots = levels.map((level) => STATUS_PRESENTATION[level].dot);
     const tokens = levels.map((level) => STATUS_PRESENTATION[level].token);
-    expect(new Set(emoji).size).toBe(levels.length);
+    expect(new Set(dots).size).toBe(levels.length);
     // 🟡 ระวัง and 🟠 อ่อนแรง are two sentences; one amber would collapse them.
     expect(new Set(tokens).size).toBe(levels.length);
+  });
+
+  /*
+   * THE DIRECTION EACH LEVEL POINTS, PINNED ONE LEVEL AT A TIME.
+   *
+   * Stated as five separate facts rather than as "all different", because they
+   * are NOT all different and the one collision is the whole point: `weak` rises
+   * with `good`. Weak is a rise that fewer names are carrying, so a falling
+   * arrow there would print the opposite of the reading, and `--caution` is what
+   * says it is not a strong one. A future edit that "fixes" the duplicate by
+   * pointing weak downwards has to delete an assertion that says why not.
+   */
+  it('points each level the way its reading actually goes', () => {
+    expect(STATUS_PRESENTATION.good.icon).toBe('trending_up');
+    expect(STATUS_PRESENTATION.weak.icon).toBe('trending_up');
+    expect(STATUS_PRESENTATION.neutral.icon).toBe('trending_flat');
+    expect(STATUS_PRESENTATION.bad.icon).toBe('trending_down');
+    // No reading means no way to point: a rule, not an arrow.
+    expect(STATUS_PRESENTATION.unknown.icon).toBe('horizontal_rule');
+  });
+
+  /*
+   * The pair that must never converge. Everything else about a status can be
+   * argued over; a rise drawn the same shape as a fall is the vocabulary
+   * failing at the one job it was built for.
+   */
+  it('never draws a rise and a fall the same way', () => {
+    expect(STATUS_PRESENTATION.good.icon).not.toBe(STATUS_PRESENTATION.bad.icon);
+    expect(STATUS_PRESENTATION.weak.icon).not.toBe(STATUS_PRESENTATION.bad.icon);
+    // Colour is not allowed to be the only difference between them either.
+    expect(STATUS_PRESENTATION.good.token).not.toBe(STATUS_PRESENTATION.bad.token);
   });
 
   it('names a CSS custom property, never a literal colour', () => {

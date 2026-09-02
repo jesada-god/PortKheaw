@@ -133,9 +133,19 @@ describe('StaleNote', () => {
     expect(text).toContain('2569');
   });
 
-  it('carries the 🟡 mark, so stale data cannot read as live', () => {
+  /*
+   * A DOT, AND NOT A TREND ARROW.
+   *
+   * The five levels draw a direction wherever a status is about one, and this is
+   * the case where there is none: "ข้อมูลล่าสุด ..." says when a number was last
+   * true and points nowhere. A flat arrow here would read as "the price did not
+   * move", which is a claim about the market that this note has never made.
+   */
+  it('carries the neutral dot, so stale data cannot read as live', () => {
     render(<StaleNote asOf="2026-08-27T04:30:00.000Z" />);
     expect(container.querySelector('[data-status]')?.getAttribute('data-status')).toBe('neutral');
+    expect(container.querySelector('[aria-hidden="true"]')?.getAttribute('data-status-mark'))
+      .toBe('dot');
   });
 
   /*

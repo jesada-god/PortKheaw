@@ -426,7 +426,12 @@ function ServiceStatus({ data }: { data: OverviewDashboardData['serviceStatus'] 
     <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <summary className="grid min-h-11 cursor-pointer list-none gap-1 px-3 py-2 text-sm sm:flex sm:items-center sm:justify-between sm:gap-3">
         <span className="flex min-w-0 items-center gap-2">
-          <StatusLabel level={level} label={data.label} className="font-medium" />
+          {/*
+            A dot: "พร้อมใช้งาน" / "กำลังเชื่อมต่อ" is about this app's own
+            plumbing. An arrow would put a market direction on a row that is
+            reporting whether a feed answered.
+          */}
+          <StatusLabel level={level} label={data.label} mark="dot" className="font-medium" />
         </span>
         <span className="pl-4 text-[10px] text-[var(--text-muted)] sm:shrink-0 sm:pl-0 sm:text-xs">
           ตรวจล่าสุด {formatBangkokDateTime(data.checkedAt)}
