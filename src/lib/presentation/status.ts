@@ -9,11 +9,11 @@
  *
  * So there are exactly five levels here and no page may invent a sixth:
  *
- *   good     🟢  ดี / แข็งแรง / ขาขึ้น
- *   neutral  🟡  ปกติ / ระวัง
- *   weak     🟠  อ่อนแรง
- *   bad      🔴  แย่ / ขาลง
- *   unknown  ⚪  ยังไม่มีข้อมูล
+ *   good     ↗  ดี / แข็งแรง / ขาขึ้น
+ *   neutral  →  ปกติ / ระวัง
+ *   weak     ↗  อ่อนแรง        (the arrow still rises; the colour is what warns)
+ *   bad      ↘  แย่ / ขาลง
+ *   unknown  —  ยังไม่มีข้อมูล
  *
  * THE RULE THIS MODULE EXISTS TO HOLD: missing data never reads as good news.
  * Every mapper below returns `unknown` for a value it could not use — never
@@ -22,11 +22,38 @@
  * product that renders them the same way is lying by omission. {@link STATUS_RANK}
  * exists so a test can prove `unknown` never outranks `neutral`.
  *
- * The emoji is a data mark, not decoration: it is the only part of a status
- * that survives being screenshotted, pasted into a chat, or read at arm's
- * length. It is always `aria-hidden` at the render site — {@link StatusLabel}
- * prints the Thai word for assistive technology, which is the part that carries
- * the meaning.
+ * THE MARK IS A DIRECTION, NOT A DOT, WHEREVER THERE IS A DIRECTION TO SHOW.
+ *
+ * Every level carries two marks, and a render site picks one of them:
+ *
+ *   `icon`  a Material Symbols trend glyph, for a status that IS about which
+ *           way a price or a market is going. Five coloured circles all had the
+ *           same silhouette, so the only thing separating "ขาขึ้น" from "ขาลง"
+ *           at a glance was hue — which is exactly what a red/green-blind
+ *           reader, a dimmed screen and a greyscale screenshot each take away.
+ *           An arrow says the direction in its shape, and the colour then says
+ *           how strongly, which is the job colour is actually good at.
+ *
+ *   `dot`   the original emoji circle, kept for the statuses with NO direction:
+ *           a connection state, a data-freshness note, an event's importance,
+ *           the shape of a stated plan. An arrow there would point somewhere the
+ *           status never claimed to point. {@link StatusLabel} takes
+ *           `mark="dot"` for exactly those, and the four call sites that pass it
+ *           are the whole list.
+ *
+ * `weak` deliberately shares `good`'s RISING arrow. Weak means "still up, but
+ * fewer names are carrying it" — a falling arrow there would state the opposite
+ * of the reading. `--caution` is what says it is not strong, and the word beside
+ * it says the rest.
+ *
+ * WHAT THE SWITCH COST, STATED PLAINLY: an emoji is text, so it used to survive
+ * being copied out of the page and pasted into a chat. An inline SVG does not —
+ * a paste now carries the words alone. That is a real loss and it is accepted
+ * here because the words were always the half that carried the meaning: every
+ * mark in this file is `aria-hidden` at the render site and has a Thai phrase
+ * printed directly beside it, so a pasted "ขาขึ้นชัดเจน" says everything the
+ * pasted "🟢 ขาขึ้นชัดเจน" said. A screenshot — the other case the old comment
+ * named — loses nothing at all: the arrow is drawn, not typed.
  */
 
 export type StatusLevel = 'good' | 'neutral' | 'weak' | 'bad' | 'unknown';
@@ -46,9 +73,23 @@ export const STATUS_RANK: Readonly<Record<StatusLevel, number>> = {
   good: 4,
 };
 
+/**
+ * The Material Symbols glyphs the five levels draw from, by their official names.
+ *
+ * Named rather than inlined here because this module is data and has no business
+ * holding path geometry; `StatusLabel` owns the outlines, the same way
+ * `current-session.ts` names a session icon and `SessionIcon.tsx` draws it.
+ */
+export type StatusIconName = 'trending_up' | 'trending_flat' | 'trending_down' | 'horizontal_rule';
+
 export interface StatusPresentation {
-  /** Decorative at the render site; the label carries the meaning. */
-  emoji: string;
+  /**
+   * The direction this level points, for a status that is about a direction.
+   * Decorative at the render site; the label carries the meaning.
+   */
+  icon: StatusIconName;
+  /** The same mark as a coloured circle, for a status with no direction to point. */
+  dot: string;
   /** The CSS custom property the level's TEXT and mark paint with. */
   token: string;
   /**
@@ -68,16 +109,22 @@ export interface StatusPresentation {
 }
 
 export const STATUS_PRESENTATION: Readonly<Record<StatusLevel, StatusPresentation>> = {
-  good: { emoji: '🟢', token: '--positive', soft: '--positive-soft', line: '--positive-line', fallbackLabel: 'แข็งแรง' },
-  neutral: { emoji: '🟡', token: '--warning', soft: '--warning-soft', line: '--warning-line', fallbackLabel: 'ทรงตัว' },
+  good: { icon: 'trending_up', dot: '🟢', token: '--positive', soft: '--positive-soft', line: '--positive-line', fallbackLabel: 'แข็งแรง' },
+  neutral: { icon: 'trending_flat', dot: '🟡', token: '--warning', soft: '--warning-soft', line: '--warning-line', fallbackLabel: 'ทรงตัว' },
   /*
    * `--caution` rather than a second use of `--warning`. 🟡 and 🟠 are two
    * different sentences — "ปกติ ระวังไว้" and "อ่อนแรงแล้ว" — and painting them
    * the same amber collapses the distinction the five levels were split for.
+   *
+   * `trending_up` and not `trending_down`: weak is a rise that fewer names are
+   * carrying, and the one thing it is not is a fall. Two levels sharing an arrow
+   * is fine precisely because they do not share a colour — which is why the
+   * uniqueness test below is asserted on the token, not on the glyph.
    */
-  weak: { emoji: '🟠', token: '--caution', soft: '--caution-soft', line: '--caution-line', fallbackLabel: 'อ่อนแรง' },
-  bad: { emoji: '🔴', token: '--negative', soft: '--negative-soft', line: '--negative-line', fallbackLabel: 'อ่อนแอ' },
-  unknown: { emoji: '⚪', token: '--text-muted', soft: '--surface-elevated', line: '--border', fallbackLabel: 'ยังไม่มีข้อมูล' },
+  weak: { icon: 'trending_up', dot: '🟠', token: '--caution', soft: '--caution-soft', line: '--caution-line', fallbackLabel: 'อ่อนแรง' },
+  bad: { icon: 'trending_down', dot: '🔴', token: '--negative', soft: '--negative-soft', line: '--negative-line', fallbackLabel: 'อ่อนแอ' },
+  /* A rule and not an arrow. There is no reading, so there is no way to point. */
+  unknown: { icon: 'horizontal_rule', dot: '⚪', token: '--text-muted', soft: '--surface-elevated', line: '--border', fallbackLabel: 'ยังไม่มีข้อมูล' },
 };
 
 /**

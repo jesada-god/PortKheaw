@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CARD_MUST_NOT_SAY, NEVER_SAY } from '@/src/lib/presentation/banned-copy';
-import type { StatusLevel } from '@/src/lib/presentation/status';
+import { STATUS_PRESENTATION, type StatusLevel } from '@/src/lib/presentation/status';
 import {
   WHAT_CHANGED_DETECTORS,
   WHAT_CHANGED_LIMIT,
@@ -178,7 +178,14 @@ describe('what changed — the rule table itself', () => {
     }));
     for (const item of everything) {
       expect(['good', 'neutral', 'bad'], item.detector).toContain(item.level);
-      expect(item.emoji.length, item.detector).toBeGreaterThan(0);
+      /*
+        Every item still resolves to a drawable mark — the guarantee the old
+        `emoji.length > 0` held — except the mark now comes from the level
+        through the one shared table, so this asserts the level maps to a real
+        direction rather than that a detector remembered to copy a character in.
+      */
+      expect(['trending_up', 'trending_flat', 'trending_down'], item.detector)
+        .toContain(STATUS_PRESENTATION[item.level].icon);
     }
   });
 });
@@ -406,7 +413,7 @@ describe('what changed — a scheduled report within 7 days', () => {
 
 describe('what changed — the daily cap', () => {
   function item(symbol: string, detector: WhatChangedItem['detector'], importance: number): WhatChangedItem {
-    return { detector, symbol, importance, level: 'neutral', emoji: '🟡', text: `${symbol} ${detector}` };
+    return { detector, symbol, importance, level: 'neutral', text: `${symbol} ${detector}` };
   }
 
   it('keeps the most important and drops the least, never the tail of the input', () => {

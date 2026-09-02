@@ -26,7 +26,6 @@ function item(
     symbol,
     importance: IMPORTANCE[detector],
     level: 'neutral',
-    emoji: '🟡',
     text,
   };
 }

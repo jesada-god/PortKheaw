@@ -949,6 +949,13 @@ function PlanSimulation({
         name="สถานะแผน"
         level={stockPlanStatus(levels)}
         label={STOCK_PLAN_STATUS_LABEL[stockPlanStatus(levels)]}
+        /*
+          A dot, for the same reason the paragraph above gives: this row reads a
+          ratio between three prices the reader typed and has never looked at a
+          chart. A rising arrow on a 1:3 plan would say the stock is going up,
+          which is precisely the verdict this row refuses to give.
+        */
+        mark="dot"
         className="mt-3"
       />
 

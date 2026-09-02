@@ -42,13 +42,49 @@ describe('StatusLabel', () => {
 
   /*
    * The mark is for the eye only. A reader on a screen reader should hear
-   * "แนวโน้ม ขาขึ้นชัดเจน", not the emoji's own name in front of every row —
+   * "แนวโน้ม ขาขึ้นชัดเจน", not the arrow's own name in front of every row —
    * which on a stock page with five rows is five interruptions carrying nothing.
+   *
+   * Asserted on the DIRECTION rather than on the glyph's geometry: the claim is
+   * "a falling reading draws a falling mark", and a test that pinned the path
+   * data would fail the next time Material reissues the outline without
+   * changing anything a reader can see.
    */
-  it('hides the emoji from assistive technology', () => {
+  it('hides the mark from assistive technology, and points it downwards', () => {
     render(<StatusLabel level="bad" label="ขาลงชัดเจน" />);
     const mark = container.querySelector('[aria-hidden="true"]')!;
-    expect(mark.textContent).toBe('🔴');
+    expect(mark.getAttribute('data-status-mark')).toBe('trending_down');
+    // It says nothing a reader could hear or copy: the phrase carries it alone.
+    expect(mark.textContent).toBe('');
+  });
+
+  /*
+   * The whole reason the arrows exist: the direction survives colour being
+   * taken away — a greyscale screenshot, a dimmed screen, a red/green-blind
+   * reader. So a rise and a fall must differ in SHAPE, not only in hue.
+   */
+  it.each([
+    ['good', 'trending_up'],
+    ['weak', 'trending_up'],
+    ['neutral', 'trending_flat'],
+    ['bad', 'trending_down'],
+    ['unknown', 'horizontal_rule'],
+  ] as const)('draws %s as %s', (level, icon) => {
+    render(<StatusLabel level={level} label="ทดสอบ" />);
+    expect(container.querySelector('[aria-hidden="true"]')!.getAttribute('data-status-mark'))
+      .toBe(icon);
+  });
+
+  /*
+   * The opt-out, and the four callers it exists for: the service-status row, the
+   * stale-data note, an event's importance and the planner's plan status. None
+   * of those has read a price, so none of them may point at one.
+   */
+  it('draws the direction-free dot when a caller asks for one', () => {
+    render(<StatusLabel level="neutral" label="กำลังเชื่อมต่อ" mark="dot" />);
+    const mark = container.querySelector('[aria-hidden="true"]')!;
+    expect(mark.getAttribute('data-status-mark')).toBe('dot');
+    expect(mark.textContent).toBe(STATUS_PRESENTATION.neutral.dot);
   });
 
   it.each(LEVELS)('paints %s with its token and nothing hardcoded', (level) => {
@@ -79,9 +115,21 @@ describe('StatusLabel', () => {
 });
 
 describe('StatusRow', () => {
+  /*
+   * The mark contributes no text at all now, which is the accepted cost of the
+   * arrow: a reader copying this row out of the page gets "แนวโน้ม·ขาขึ้นชัดเจน"
+   * and no glyph. The words were always the half that carried the meaning, and
+   * they are all still here.
+   */
   it('reads as "name · status"', () => {
     render(<StatusRow name="แนวโน้ม" level="good" label="ขาขึ้นชัดเจน" />);
-    expect(container.textContent).toBe('แนวโน้ม·🟢ขาขึ้นชัดเจน');
+    expect(container.textContent).toBe('แนวโน้ม·ขาขึ้นชัดเจน');
+  });
+
+  it('passes the caller’s choice of mark through to the label', () => {
+    render(<StatusRow name="สถานะแผน" level="good" label="สมเหตุสมผล" mark="dot" />);
+    expect(container.querySelector('[data-status] [aria-hidden="true"]')!.getAttribute('data-status-mark'))
+      .toBe('dot');
   });
 
   it('appends a plain note without colouring it', () => {

@@ -78,7 +78,7 @@
  * table below and not of the market.
  */
 
-import { STATUS_PRESENTATION, type StatusLevel } from '@/src/lib/presentation/status';
+import type { StatusLevel } from '@/src/lib/presentation/status';
 import { WATCHLIST_TREND_WORD, type WatchlistTrend } from './trend';
 
 /**
@@ -206,8 +206,16 @@ export interface WhatChangedItem {
    * thing here as an item with no reading behind it.
    */
   level: Exclude<StatusLevel, 'unknown'>;
-  /** Decorative at the render site; `text` carries the meaning. */
-  emoji: string;
+  /*
+   * THERE IS NO `emoji` BESIDE THIS ANY MORE, AND DELIBERATELY SO.
+   *
+   * The mark is an inline SVG now — geometry, not a character — so it cannot
+   * travel in a payload, and it never needed to: `level` is the entire input the
+   * mark is computed from, and `WhatChangedCard` reads it through the one shared
+   * `StatusMark`. A detector shipping its own glyph was a presentation choice
+   * living in a rules file, recomputed once per item, and it made this type the
+   * second place a level-to-mark mapping existed.
+   */
   /** One short Thai sentence, stating the measurement that made it fire. */
   text: string;
 }
@@ -492,7 +500,6 @@ export function detectWhatChanged(input: WhatChangedInput): WhatChangedItem[] {
       symbol: input.symbol,
       importance: detector.importance,
       level: found.level,
-      emoji: STATUS_PRESENTATION[found.level].emoji,
       text: found.text,
     }];
   });

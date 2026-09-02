@@ -144,6 +144,13 @@ export function StaleNote({ asOf, className }: { asOf: string | null | undefined
   return (
     <StatusLabel
       level="neutral"
+      /*
+        A dot, not an arrow. "ข้อมูลล่าสุด ..." is a statement about WHEN a
+        number was true, and it points nowhere — a flat trend arrow here would
+        read as "the price is unchanged", which is a claim this note has never
+        made about any price.
+      */
+      mark="dot"
       label={`ข้อมูลล่าสุด ${formatted}`}
       className={cn('text-xs font-normal', className)}
       data-testid="stale-note"
