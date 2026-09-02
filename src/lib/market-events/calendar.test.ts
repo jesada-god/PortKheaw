@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { coverageOf, eventsOnDay, groupByBangkokDay, MARKET_EVENTS } from './calendar';
+import {
+  coverageOf,
+  coverageOfMonth,
+  eventsOnDay,
+  groupByBangkokDay,
+  MARKET_EVENTS,
+  monthRangeOf,
+} from './calendar';
 import { buildMonthGrid, WEEKDAY_HEADINGS_TH } from './month-grid';
 import { buildEventFeed, exposureNoteTh } from './feed';
 import type { MarketEvent } from './types';
@@ -286,5 +293,77 @@ describe.each(TIME_ZONES)('the detail feed under TZ=%s', (timeZone) => {
     for (const count of [0, 1, 7]) {
       expect(exposureNoteTh(count)).not.toMatch(/มัก|มักจะ|แนวโน้มว่า|น่าจะ|เทค|กลุ่มเทคโนโลยี/);
     }
+  });
+});
+
+/**
+ * THE SECOND COVERAGE QUESTION — asked about the month on screen.
+ *
+ * `coverageOf(now)` above answers about the READER: has their own day run past
+ * the end of the file. That was the only question a card fixed to the current
+ * month could have. The calendar page can be walked forwards, so it needs the
+ * other axis, and the two must not be confused: a reader sitting inside the
+ * window is `covered` by the first and can still be looking at a month the file
+ * has never heard of.
+ */
+describe('the months the file speaks for', () => {
+  const RANGE: MarketEvent[] = [
+    event({ id: 'oct', at: '2026-10-15T12:30:00.000Z' }),
+    event({ id: 'nov', at: '2026-11-10T13:30:00.000Z' }),
+    event({ id: 'dec', at: '2026-12-09T19:00:00.000Z' }),
+  ];
+
+  it('reads the first and last month off the events, not off a constant', () => {
+    expect(monthRangeOf(RANGE)).toEqual({ firstMonthKey: '2026-10', lastMonthKey: '2026-12' });
+  });
+
+  /*
+   * 30 September 18:00Z is 1 October in Bangkok. A range computed in UTC would
+   * call September the first month and be wrong about the whole page.
+   */
+  it('takes the month a row falls in IN BANGKOK', () => {
+    for (const timeZone of TIME_ZONES) {
+      expect(underTimeZone(timeZone, () =>
+        monthRangeOf([event({ id: 'edge', at: '2026-09-30T18:00:00.000Z' })])), timeZone)
+        .toEqual({ firstMonthKey: '2026-10', lastMonthKey: '2026-10' });
+    }
+  });
+
+  it('has no range at all when there are no events', () => {
+    expect(monthRangeOf([])).toBeNull();
+  });
+
+  it('covers every month between the first and the last, inclusive', () => {
+    for (const monthKey of ['2026-10', '2026-11', '2026-12']) {
+      expect(coverageOfMonth(monthKey, RANGE).state, monthKey).toBe('covered');
+    }
+  });
+
+  it('says a month before the calendar begins is before it', () => {
+    expect(coverageOfMonth('2026-09', RANGE)).toEqual({
+      state: 'before', firstMonthKey: '2026-10', lastMonthKey: '2026-12',
+    });
+  });
+
+  it('says a month past the last row is past it', () => {
+    expect(coverageOfMonth('2027-03', RANGE)).toEqual({
+      state: 'exhausted', firstMonthKey: '2026-10', lastMonthKey: '2026-12',
+    });
+  });
+
+  it('says an empty file is empty rather than uncovered', () => {
+    expect(coverageOfMonth('2026-11', [])).toEqual({
+      state: 'empty', firstMonthKey: null, lastMonthKey: null,
+    });
+  });
+
+  /*
+   * The two functions on the same data, disagreeing correctly. The reader's day
+   * is inside the window; the month in front of them is three months past the
+   * last row. Both answers are right, about different questions.
+   */
+  it('disagrees with coverageOf when the reader is inside the window and the month is not', () => {
+    expect(coverageOf('2026-11-10T04:00:00.000Z', RANGE).state).toBe('covered');
+    expect(coverageOfMonth('2027-03', RANGE).state).toBe('exhausted');
   });
 });

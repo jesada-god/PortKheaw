@@ -1,5 +1,5 @@
 import calendarFile from '@/src/data/market-events.json';
-import { bangkokDayKey } from './time';
+import { bangkokDayKey, monthKeyOf } from './time';
 import { marketEventFileSchema, type MarketEvent, type MarketEventImportance } from './types';
 
 /**
@@ -121,4 +121,99 @@ export function groupByBangkokDay(
         importanceRank(left.importance) - importanceRank(right.importance)
         || (left.at < right.at ? -1 : left.at > right.at ? 1 : 0)),
     }));
+}
+
+/**
+ * The months the file actually speaks for, READ OFF THE FILE.
+ *
+ * ===========================================================================
+ * WHY THIS IS DERIVED AND NEVER WRITTEN DOWN
+ * ===========================================================================
+ * "Sep–Dec 2026" is true today and will be false the first time somebody adds a
+ * January row — which, per the header of `market-overview/events.ts`, is meant
+ * to be an edit to `market-events.json` AND NOTHING ELSE. A constant here would
+ * quietly become a second calendar: the file would reach February and the month
+ * navigation would still stop at December, with nothing failing and nobody
+ * looking.
+ *
+ * So the range is a scan. Forty rows, once per render, and it cannot disagree
+ * with the data it was computed from.
+ *
+ * The scan takes a MIN and a MAX rather than reading the first and last rows of
+ * a sorted list. `MARKET_EVENTS` is sorted by instant and Bangkok is a fixed
+ * +7 with no daylight saving, so the two answers agree today — but they agree
+ * because of a property of a time zone, not because of anything this function
+ * arranged, and a scan needs no such argument.
+ */
+export interface CalendarMonthRange {
+  /** `YYYY-MM` of the earliest event, in Bangkok. */
+  firstMonthKey: string;
+  /** `YYYY-MM` of the latest. */
+  lastMonthKey: string;
+}
+
+export function monthRangeOf(
+  events: readonly MarketEvent[] = MARKET_EVENTS,
+): CalendarMonthRange | null {
+  let firstMonthKey: string | null = null;
+  let lastMonthKey: string | null = null;
+  for (const event of events) {
+    const dayKey = bangkokDayKey(event.at);
+    if (!dayKey) continue;
+    const monthKey = monthKeyOf(dayKey);
+    if (firstMonthKey === null || monthKey < firstMonthKey) firstMonthKey = monthKey;
+    if (lastMonthKey === null || monthKey > lastMonthKey) lastMonthKey = monthKey;
+  }
+  if (firstMonthKey === null || lastMonthKey === null) return null;
+  return { firstMonthKey, lastMonthKey };
+}
+
+/**
+ * Whether the calendar reaches THE MONTH ON SCREEN — not the month the reader
+ * happens to be living in.
+ *
+ * ===========================================================================
+ * THE AXIS THIS ASKS ON, AND WHY `coverageOf` COULD NOT BE REUSED
+ * ===========================================================================
+ * `coverageOf(now)` answers a question about the READER: has their own day run
+ * past the end of the file. That was the only question a card fixed to the
+ * current month could have. Once the grid can be walked forwards, it stops
+ * being the right one — a reader on 3 September paging to March 2027 is still
+ * "covered" by that test, because *they* are inside the window even though the
+ * month in front of them is a hundred days past the last row.
+ *
+ * Both functions stay. They answer different questions and the words they
+ * answer in are deliberately the same, so a reader of either call site is not
+ * learning a second vocabulary:
+ *
+ *   `covered`   — the month is inside the range the file speaks for
+ *   `before`    — the month is earlier than anything in the file
+ *   `exhausted` — the month is later than the last row
+ *   `empty`     — the file has no rows at all
+ *
+ * A `covered` month with nothing in it is a real and honest answer: the
+ * calendar reaches that month and there is nothing scheduled. That is the one
+ * case where a blank grid tells the truth, and it is the reason this returns a
+ * range check rather than a count.
+ */
+export type MonthCoverageState = CalendarCoverage['state'];
+
+export type MonthCoverage =
+  | { state: 'covered' | 'before' | 'exhausted'; firstMonthKey: string; lastMonthKey: string }
+  | { state: 'empty'; firstMonthKey: null; lastMonthKey: null };
+
+export function coverageOfMonth(
+  monthKey: string,
+  events: readonly MarketEvent[] = MARKET_EVENTS,
+): MonthCoverage {
+  const range = monthRangeOf(events);
+  if (!range) return { state: 'empty', firstMonthKey: null, lastMonthKey: null };
+  /*
+   * `YYYY-MM` sorts lexicographically exactly as it sorts chronologically, and
+   * every key on both sides of these comparisons was produced by `monthKeyOf`
+   * over a Bangkok day key. There is no second zone left in the comparison.
+   */
+  if (monthKey < range.firstMonthKey) return { state: 'before', ...range };
+  if (monthKey > range.lastMonthKey) return { state: 'exhausted', ...range };
+  return { state: 'covered', ...range };
 }
