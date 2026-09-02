@@ -49,6 +49,7 @@
 import { chromium } from 'playwright-core';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { PHASE2_FLAGS } from '../../src/config/phase2-flag-manifest.mjs';
 
 const args = process.argv.slice(2);
 function arg(name, fallback = null) {
@@ -104,68 +105,45 @@ function readBaseline() {
 }
 
 /**
- * What each flag is answerable for.
+ * What each flag is answerable for, DERIVED from the manifest.
  *
- * `expect` are markers that MUST appear once the flag is on. `forbid` are
- * markers that must NOT — they belong to a different flag, and seeing one means
- * more than the intended switch moved.
+ * The table used to live here. That is how the `PHASE2_EVENTS` prerequisite came
+ * to be missing from this file while being missing from the doc as well — two
+ * copies, both wrong, neither able to notice. `src/config/phase2-flag-manifest.mjs`
+ * is the only copy now, and `phase2-flag-manifest.test.ts` fails if this file
+ * stops importing it.
+ *
+ * `forbid` is still assembled here, because it is a property of the RUN rather
+ * than of a flag: it is every other flag's markers, so a step that moved more
+ * than one switch is caught.
  */
+const marker = (name) => [name, `[data-testid="${name}"]`];
+const allMarkers = PHASE2_FLAGS.flatMap((entry) => entry.markers);
+
 const FLAGS = {
   baseline: {
     env: '(none — every flag off)',
+    requires: [],
+    requiresAuth: false,
     expect: [],
-    forbid: [
-      ['market-today-strip', '[data-testid="market-today-strip"]'],
-      ['market-today-status', '[data-testid="market-today-status"]'],
-      ['overview-changes', '[data-testid="overview-changes"]'],
-      ['overview-events', '[data-testid="overview-events"]'],
-    ],
+    forbid: allMarkers.map(marker),
     note: 'Run this FIRST, before any flag is on. It records the production '
       + 'median as the baseline every later run is gated against, and confirms '
       + 'the starting point has none of the Phase 2 markers.',
   },
-  events: {
-    env: 'PHASE2_EVENTS',
-    expect: [['overview-events', '[data-testid="overview-events"]']],
-    forbid: [
-      ['market-today-strip', '[data-testid="market-today-strip"]'],
-      ['overview-changes', '[data-testid="overview-changes"]'],
-    ],
-    note: 'Costs nothing — the calendar is a static import. Signed out the list '
-      + 'may be empty; the SECTION is what must appear.',
-  },
-  'what-changed': {
-    env: 'PHASE2_WHAT_CHANGED',
-    expect: [['overview-changes', '[data-testid="overview-changes"]']],
-    forbid: [['market-today-strip', '[data-testid="market-today-strip"]']],
-    note: 'Costs nothing — it renames items the detectors already produced. '
-      + 'Needs WATCHLIST_V2 as well for the capped watchlist view.',
-  },
-  'market-snapshot': {
-    env: 'PHASE2_MARKET_SNAPSHOT',
-    expect: [
-      ['market-today-strip', '[data-testid="market-today-strip"]'],
-      ['market-today-status', '[data-testid="market-today-status"]'],
-      ['market-today-reasons', '[data-testid="market-today-reasons"]'],
-    ],
-    forbid: [['overview-changes', '[data-testid="overview-changes"]']],
-    note: 'The only flag that spends: six provider quotes behind a 60s shared '
-      + 'cache. Watch the timing number here more than anywhere else.',
-  },
-  alerts: {
-    env: 'PHASE2_ALERTS',
+  ...Object.fromEntries(PHASE2_FLAGS.map((entry) => [entry.flag, {
+    env: entry.env,
+    requires: entry.requires,
+    requiresAuth: entry.requiresAuth,
+    expect: entry.markers.map(marker),
     /*
-      Nothing to expect on the page, and that is the finding rather than a gap.
-      The alert count is per reader and this runs signed out, so the correct
-      page-level claim is that the Overview is unharmed. The evidence that the
-      flag did something is `overview_alert_hits` growing after a cron tick.
+      Every marker that is not this flag's. Seeing one means a switch this step
+      did not intend to move has moved.
     */
-    expect: [],
-    forbid: [],
-    note: 'Signed out this flag changes nothing on the page. Its real evidence '
-      + 'is the hit count after the next pg_cron tick — pass --wait-for-tick.',
-    checkHits: true,
-  },
+    forbid: allMarkers.filter((name) => !entry.markers.includes(name)).map(marker),
+    note: entry.note,
+    checkHits: entry.env === 'PHASE2_ALERTS',
+  }])),
 };
 
 if (!FLAG || !FLAGS[FLAG]) {
@@ -188,6 +166,28 @@ const report = { flag: FLAG, env: SPEC.env, base: BASE, generatedAt: new Date().
 function check(claim, ok, detail = '') {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${claim}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failures.push(`${claim}${detail ? ` — ${detail}` : ''}`);
+}
+
+/**
+ * Why a marker might be missing for a reason that is not a bug.
+ *
+ * Read from the manifest, so this can never be the thing that is out of date —
+ * which is what the missing `OVERVIEW_V2` prerequisite was.
+ */
+function diagnosis() {
+  const reasons = [];
+  if (SPEC.requires.length > 0) {
+    reasons.push(
+      `${SPEC.env} is unreachable unless ${SPEC.requires.join(' and ')} is also true `
+      + `(its section is absent from the V1 order array — see section-order.ts)`,
+    );
+  }
+  if (SPEC.requiresAuth) {
+    reasons.push(
+      `${SPEC.env} draws nothing for a signed-out reader, and this check is signed out`,
+    );
+  }
+  return reasons.length === 0 ? '' : `\n       ${reasons.join('\n       ')}`;
 }
 
 /** Median, because one slow sample must not decide a rollout step. */
@@ -268,6 +268,12 @@ function msUntilNextTick(margin = 75_000) {
 async function main() {
   const baseline = readBaseline();
   console.log(`Flag     : ${FLAG}  (${SPEC.env})`);
+  if (SPEC.requires.length > 0) {
+    console.log(`Requires : ${SPEC.requires.join(', ')}  <- must ALSO be true, or nothing renders`);
+  }
+  if (SPEC.requiresAuth) {
+    console.log('Signed in: REQUIRED to see this flag — the check below runs signed out');
+  }
   console.log(`Target   : ${BASE}`);
   console.log(baseline
     ? `Baseline : ${baseline.median} ms, gate ${MAX_RATIO}x — from ${baseline.source}`
@@ -341,9 +347,38 @@ async function main() {
     report.status = response?.status() ?? null;
 
     console.log('\nmarkers');
-    for (const [name, selector] of SPEC.expect) {
+    /*
+      A SIGNED-OUT RUN CANNOT JUDGE AN AUTH-GATED FLAG, SO IT DOES NOT TRY.
+
+      `overview-changes` is absent both when PHASE2_WHAT_CHANGED is off and when
+      the reader has no session — this browser has none. Reporting FAIL would be
+      asserting something this run has no evidence for, so it is reported as not
+      verified and handed to a person to look at signed in.
+    */
+    if (SPEC.requiresAuth && SPEC.expect.length > 0) {
+      for (const [name] of SPEC.expect) {
+        console.log(`  --   ${name} not checked — needs a signed-in reader`);
+      }
+      unverified.push(
+        `${SPEC.env} was not verified: its markers only render for a signed-in `
+        + 'reader and this check is signed out. Confirm it by eye while logged in.',
+      );
+    }
+    for (const [name, selector] of (SPEC.requiresAuth ? [] : SPEC.expect)) {
       const count = await page.locator(selector).count();
-      check(`${name} is present`, count > 0, `found ${count}`);
+      /*
+        A MISSING MARKER IS A SYMPTOM, AND THE OLD VERSION REPORTED ONLY THAT.
+
+        "overview-events found 0" was true and useless: the flag was set, the
+        deploy was live, the selector was right, and the section was unreachable
+        because `'events'` is not in `OVERVIEW_ORDER_V1`. The reader was left to
+        find that themselves.
+
+        So a failure now says what else has to be true. The prerequisites come
+        from the manifest, which is checked against the real order arrays by
+        `phase2-flag-manifest.test.ts`.
+      */
+      check(`${name} is present`, count > 0, count > 0 ? '' : `found 0${diagnosis()}`);
     }
     for (const [name, selector] of SPEC.forbid) {
       const count = await page.locator(selector).count();
