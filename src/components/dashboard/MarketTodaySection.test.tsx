@@ -2,12 +2,35 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
 import { MARKET_ASSETS } from '@/src/lib/overview/market-assets';
 import type { MarketIndexCard } from '@/src/lib/overview/types';
 import type { OvIndexKey, OvIndexReading, OvMarketSnapshot } from '@/src/lib/market-overview/types';
 import { MarketAssetStrip, MarketTodayStrip } from './MarketTodaySection';
+
+/*
+  A plain anchor, with the navigation swallowed. jsdom cannot follow a link and
+  prints "Not implemented: navigation" when one is activated — which the Space
+  test does on purpose — so the click is recorded and stopped here.
+*/
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: {
+    href: string;
+    children: React.ReactNode;
+  } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a
+      href={href}
+      {...rest}
+      onClick={(event) => {
+        event.preventDefault();
+        rest.onClick?.(event);
+      }}
+    >
+      {children}
+    </a>
+  ),
+}));
 
 /**
  * THE TWO BANDS, RENDERED.
@@ -165,6 +188,68 @@ describe('the asset band admits a stand-in', () => {
       const note = band.querySelector(`[data-testid="market-asset-proxy-${asset.symbol}"]`);
       if (asset.proxyLabel === 'สินทรัพย์จริง') expect(note, asset.symbol).toBeNull();
       else expect(note?.textContent, asset.symbol).toBe(asset.proxyLabel);
+    }
+  });
+});
+
+describe('a cell is tappable exactly when it has somewhere to go', () => {
+  /*
+    The regression this restores. Every one of these rows was a card, and every
+    card was a single anchor to the instrument's own page; the strip that
+    replaced them rendered `<div>`s, so a reader who tapped a price got nothing.
+  */
+  it('opens the instrument behind every asset cell', () => {
+    const band = renderAssets();
+    for (const asset of MARKET_ASSETS) {
+      const cell = band.querySelector(`[data-testid="market-asset-${asset.symbol}"]`)!;
+      expect(cell.tagName, asset.symbol).toBe('A');
+      expect(cell.getAttribute('href'), asset.symbol)
+        .toBe(`/stock/${encodeURIComponent(asset.symbol)}`);
+      // Named for a screen reader, because the visible text is a price.
+      expect(cell.getAttribute('aria-label'), asset.symbol).toContain(asset.name);
+    }
+  });
+
+  it('stays a band rather than becoming a card again', () => {
+    const cell = renderAssets().querySelector('[data-testid="market-asset-GC-F"]')!;
+    // The same cell class, so the hairlines and the height are untouched.
+    expect(cell.className).toContain('data-strip__cell');
+    expect(cell.className).toContain('hover:bg-[var(--surface-hover)]');
+    expect(cell.className).toContain('focus-visible:outline');
+    // No border, no elevation, no scale — those would rebuild the card.
+    expect(cell.className).not.toMatch(/rounded-2xl/);
+    expect(cell.className).not.toMatch(/border/);
+    expect(cell.className).not.toMatch(/shadow-/);
+  });
+
+  /*
+    Space is not a link's native key — it scrolls the page — and readers who
+    arrive by keyboard try it. The card this cell replaced claimed it, and so
+    does the cell.
+  */
+  it('navigates on Space as well as Enter', () => {
+    const cell = renderAssets().querySelector('[data-testid="market-asset-BTC-USD"]') as HTMLElement;
+    let clicked = false;
+    cell.addEventListener('click', () => { clicked = true; });
+    act(() => {
+      cell.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    });
+    expect(clicked).toBe(true);
+  });
+
+  /*
+    A live probe of `loadStockDetailGatewaySnapshot` against all six instrument
+    symbols returns a page carrying no price: "Symbol is not present in
+    market_instruments". The route does not 404 — it renders empty — which is
+    the worse failure, because the reader has already spent the tap. So these
+    cells are deliberately not anchors, and this pins that until the rows exist.
+  */
+  it('does not invite a tap on the six instruments, which have no page yet', () => {
+    const band = renderStrip();
+    for (const input of MARKET_STATUS_INPUTS) {
+      const cell = band.querySelector(`[data-testid="market-today-${input.key}"]`)!;
+      expect(cell.tagName, input.key).toBe('DIV');
+      expect(cell.getAttribute('href'), input.key).toBeNull();
     }
   });
 });

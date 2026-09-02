@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { MARKET_STATUS_INPUTS } from '@/src/config/market-status';
 import { inputStatusLevel } from '@/src/lib/market-status/presentation';
 import {
@@ -9,6 +10,7 @@ import {
   type OvMarketSnapshot,
 } from '@/src/lib/market-overview/types';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { proxyDisclosureTh } from '@/src/lib/overview/market-assets';
 import { signedPercent } from '@/src/lib/portfolio/presentation';
 import { formatMarketDataAsOf } from '@/src/lib/presentation/datetime';
@@ -43,6 +45,63 @@ import type { MarketIndexCard } from '@/src/lib/overview/types';
 
 const INPUT_BY_KEY = new Map(MARKET_STATUS_INPUTS.map((input) => [input.key, input]));
 
+/**
+ * ONE CELL, TAPPABLE WHEN THERE IS SOMEWHERE TO GO.
+ *
+ * The nine cards this section replaced were each a single anchor to the
+ * instrument's own page, and the strip that replaced them was nine `<div>`s —
+ * a reader who tapped a price got nothing. This puts the anchor back ON THE
+ * CELL rather than around a card: same class, same padding, same height, so the
+ * band stays a band. The hairlines are `box-shadow` on the cell and are
+ * unaffected by what element draws them.
+ *
+ * `href === null` renders a plain `<div>`, and that is a deliberate state, not
+ * a fallback. A cell that looks tappable and opens a page with no price on it
+ * is worse than one that does not invite the tap — see `MarketTodayStrip`,
+ * where the six instruments have no detail page today.
+ */
+function StripCell({
+  href,
+  ariaLabel,
+  testId,
+  children,
+}: {
+  href: string | null;
+  ariaLabel?: string;
+  testId: string;
+  children: React.ReactNode;
+}) {
+  if (href === null) {
+    return <div className="data-strip__cell min-w-0" data-testid={testId}>{children}</div>;
+  }
+  return (
+    <Link
+      href={href}
+      aria-label={ariaLabel}
+      data-testid={testId}
+      /*
+        Enter is native to a link; Space is not — it scrolls the page. Readers
+        who arrive by keyboard try both, so Space is claimed and turned into the
+        same navigation. Carried over from the card this cell replaced, where it
+        was there for the same reason.
+      */
+      onKeyDown={(event) => {
+        if (event.key !== ' ' && event.key !== 'Spacebar') return;
+        event.preventDefault();
+        event.currentTarget.click();
+      }}
+      /*
+        The hover tint and the focus ring are the whole of the affordance. No
+        border, no elevation, no scale — any of those would rebuild the card
+        this band exists to be lighter than.
+      */
+      className="data-strip__cell block min-w-0 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)] active:bg-[var(--surface-selected)]"
+    >
+      {children}
+    </Link>
+  );
+}
+
 /** Index levels, in the product's Thai locale, without inventing precision. */
 function formatLevel(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '—';
@@ -57,7 +116,17 @@ function ReadingCell({ reading }: { reading: OvIndexReading }) {
     input?.flatBandPercent ?? 0,
   );
   return (
-    <div className="data-strip__cell min-w-0" data-testid={`market-today-${reading.key}`}>
+    /*
+      NO DESTINATION, SO NO INVITATION.
+
+      A live probe of `loadStockDetailGatewaySnapshot` against all six symbols —
+      `^GSPC`, `^NDX`, `^DJI`, `^VIX`, `^TNX`, `DX-Y.NYB` — returns a page with
+      no price on it: "Symbol is not present in market_instruments", which lists
+      US-listed securities and holds none of these. The route does not 404, it
+      renders empty, which is the worse of the two failures because the reader
+      has already spent the tap. When those rows exist, this becomes an href.
+    */
+    <StripCell href={null} testId={`market-today-${reading.key}`}>
       <span className="figure-label truncate">{reading.labelTh}</span>
       {/*
         WHEN THE NUMBER IS NOT THE THING THE LABEL NAMES, THE CELL SAYS SO.
@@ -95,7 +164,7 @@ function ReadingCell({ reading }: { reading: OvIndexReading }) {
         label={reading.changePercent === null ? 'ยังไม่มีค่า' : signedPercent(reading.changePercent)}
         className="mt-0.5 text-xs"
       />
-    </div>
+    </StripCell>
   );
 }
 
@@ -187,7 +256,12 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
     >
       <div className="data-strip data-strip--flow">
         {items.map((item) => (
-          <div key={item.symbol} className="data-strip__cell min-w-0" data-testid={`market-asset-${item.symbol}`}>
+          <StripCell
+            key={item.symbol}
+            href={stockDetailHref(item.symbol)}
+            ariaLabel={`เปิดรายละเอียด ${item.name} (${item.symbol})`}
+            testId={`market-asset-${item.symbol}`}
+          >
             <span className="figure-label truncate">{item.name}</span>
             {/*
               The same disclosure the nine cards used to carry in their subtitle
@@ -219,7 +293,7 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
               label={item.changePercent === null ? 'ยังไม่มีค่า' : signedPercent(item.changePercent)}
               className="mt-0.5 text-xs"
             />
-          </div>
+          </StripCell>
         ))}
       </div>
     </div>
