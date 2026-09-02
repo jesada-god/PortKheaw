@@ -160,3 +160,121 @@ describe('a row about one company keeps its link', () => {
     expect(section.textContent).not.toContain('ตัวในลิสต์คุณ');
   });
 });
+
+
+describe('two groups, each saying what it is', () => {
+  /*
+    THE BUG THIS REPLACES: "IREN · Call หมดอายุในอีก 2 วัน" sat between CPI and
+    NFP, on the sole grounds that its date fell there. One is an economy-wide
+    number published on a schedule, the other is a contract the reader
+    personally owns running out; nothing about either explains the other.
+  */
+  it('separates the calendar from the reader own instruments', () => {
+    const section = render({
+      window: calendarOf([
+        macro('cpi', '2026-09-11T12:30:00.000Z'),
+        macro('nfp', '2026-09-04T12:30:00.000Z', 'NFP'),
+      ]),
+      upcoming: UPCOMING,
+      now: NOW,
+    });
+    const calendar = section.querySelector('[data-testid="overview-events-calendar"]')!;
+    const holdings = section.querySelector('[data-testid="overview-events-holdings"]')!;
+    expect(calendar.querySelector('[data-testid="overview-events-calendar-heading"]')!.textContent)
+      .toBe('ปฏิทินเศรษฐกิจ');
+    expect(holdings.querySelector('[data-testid="overview-events-holdings-heading"]')!.textContent)
+      .toBe('เรื่องของหุ้นที่ถืออยู่');
+    // The expiry falls between the two releases by date and is still not there.
+    expect(calendar.textContent).not.toContain('IREN');
+    expect(holdings.textContent).toContain('IREN');
+  });
+
+  /*
+    A HEADING WITH NOTHING UNDER IT reads as a section that failed to load. The
+    truth — no expiry, no earnings date, no alert coming up — is better said by
+    drawing neither the rows nor the title.
+  */
+  it('hides a group and its heading together when it is empty', () => {
+    const section = render({
+      window: calendarOf([macro('cpi', '2026-09-11T12:30:00.000Z')]),
+      upcoming: null,
+      now: NOW,
+    });
+    expect(section.querySelector('[data-testid="overview-events-calendar"]')).not.toBeNull();
+    expect(section.querySelector('[data-testid="overview-events-holdings"]')).toBeNull();
+    expect(section.textContent).not.toContain('เรื่องของหุ้นที่ถืออยู่');
+  });
+
+  it('hides the calendar group the same way when only holdings have rows', () => {
+    const section = render({ window: calendarOf([]), upcoming: UPCOMING, now: NOW });
+    expect(section.querySelector('[data-testid="overview-events-calendar"]')).toBeNull();
+    expect(section.textContent).not.toContain('ปฏิทินเศรษฐกิจ');
+    expect(section.querySelector('[data-testid="overview-events-holdings"]')).not.toBeNull();
+  });
+
+  it('says nothing is coming only when both groups are empty', () => {
+    const section = render({ window: calendarOf([]), upcoming: null, now: NOW });
+    expect(section.querySelector('[data-testid="overview-events-empty"]')).not.toBeNull();
+    expect(section.textContent).toContain('ยังไม่มีวันสำคัญที่ใกล้ถึง');
+  });
+
+  /*
+    Each group counts only its own remainder. A pooled number would tell a
+    reader looking at the economic calendar how many contract expiries they were
+    not being shown.
+  */
+  it('counts the remainder of each group separately', () => {
+    const many = Array.from({ length: 9 }, (_, index) =>
+      macro(`m${index}`, `2026-09-${String(4 + index).padStart(2, '0')}T12:30:00.000Z`));
+    const section = render({ window: calendarOf(many), upcoming: UPCOMING, now: NOW });
+    const remaining = section.querySelector('[data-testid="overview-events-calendar-remaining"]')!;
+    // Nine releases, five drawn.
+    expect(remaining.textContent).toContain('4');
+    // The one expiry is drawn in full, so its group says nothing about a rest.
+    expect(section.querySelector('[data-testid="overview-events-holdings-remaining"]')).toBeNull();
+  });
+
+  /*
+    The coverage note says how far the shipped economic calendar reaches. An
+    expiry date has never depended on that file, and at the foot of the whole
+    section the sentence read as a limit on everything above it.
+  */
+  it('keeps the coverage note inside the calendar group', () => {
+    const section = render({
+      window: calendarOf([macro('cpi', '2026-09-11T12:30:00.000Z')], {
+        coversThrough: false,
+        lastDayKey: '2026-12-31',
+      }),
+      upcoming: UPCOMING,
+      now: NOW,
+    });
+    const note = section.querySelector('[data-testid="overview-events-coverage"]')!;
+    expect(note.textContent).toContain('ปฏิทินถึง');
+    expect(section.querySelector('[data-testid="overview-events-calendar"]')!.contains(note))
+      .toBe(true);
+    expect(section.querySelector('[data-testid="overview-events-holdings"]')!.contains(note))
+      .toBe(false);
+  });
+
+  /*
+    `overview-events` is the marker `phase2-flag-manifest.mjs` reads to decide
+    whether PHASE2_EVENTS reached the page, and `overview-events-empty` and
+    `-coverage` are read by `overview-phase2-qa.mjs`. All three have to survive
+    a rewrite of what renders them.
+  */
+  it('keeps the markers the flag checker and the QA script read', () => {
+    const withRows = render({
+      window: calendarOf([macro('cpi', '2026-09-11T12:30:00.000Z')], {
+        coversThrough: false,
+        lastDayKey: '2026-12-31',
+      }),
+      upcoming: UPCOMING,
+      now: NOW,
+    });
+    expect(withRows.querySelector('[data-testid="overview-events"]')).not.toBeNull();
+    expect(withRows.querySelector('[data-testid="overview-events-coverage"]')).not.toBeNull();
+
+    const bare = render({ window: calendarOf([]), upcoming: null, now: NOW });
+    expect(bare.querySelector('[data-testid="overview-events-empty"]')).not.toBeNull();
+  });
+});

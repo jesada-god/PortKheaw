@@ -184,7 +184,18 @@ function dashboardData(toggles: Toggles): OverviewDashboardData {
       : undefined,
     upcoming: toggles.upcoming ? { events: [], total: 0 } : null,
     events: toggles.events
-      ? { rows: [], total: 0, coverageNoteTh: null }
+      /*
+        Both groups present and empty. The section is under test for WHERE it
+        lands in the reading order, not for what it contains — and an empty
+        section still renders its own marker, which is what the order is read
+        from. See `OverviewEventsView`: the calendar and the reader's own
+        instruments are separate lists.
+      */
+      ? {
+        calendar: { rows: [], total: 0 },
+        holdings: { rows: [], total: 0 },
+        coverageNoteTh: null,
+      }
       : null,
     limitations: [],
   } as unknown as OverviewDashboardData;

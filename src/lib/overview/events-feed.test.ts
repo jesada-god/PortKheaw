@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildOverviewEvents, OVERVIEW_EVENTS_LIMIT } from './events-feed';
+import { buildOverviewEvents, OVERVIEW_EVENTS_GROUP_LIMIT } from './events-feed';
+import type { OverviewEventsView } from './events-feed';
 import type { OvEventCalendar, OvMarketEvent } from '@/src/lib/market-overview/events';
 import type { UpcomingFeed } from '@/src/lib/upcoming/types';
 
@@ -13,6 +14,16 @@ import type { UpcomingFeed } from '@/src/lib/upcoming/types';
  */
 
 const NOW = '2026-09-11T00:00:00.000Z'; // 07:00 in Bangkok on the 11th.
+
+/*
+  Both groups, for the assertions that are about the merge LOSING NOTHING rather
+  than about where a row landed. The two are deliberately separate on the view —
+  see `OverviewEventsView` — so a test that wants "did this row survive at all"
+  has to say so explicitly instead of reading one list and assuming.
+*/
+function allRows(view: OverviewEventsView) {
+  return [...view.calendar.rows, ...view.holdings.rows];
+}
 
 function macro(id: string, startsAtUtc: string, importance: OvMarketEvent['importance'] = 'high'): OvMarketEvent {
   return { id, code: 'CPI', titleTh: `เงินเฟ้อ ${id}`, importance, startsAtUtc };
@@ -62,26 +73,42 @@ const UPCOMING: UpcomingFeed = {
 describe('buildOverviewEvents', () => {
   it('carries every kind Upcoming had, not only earnings', () => {
     const view = buildOverviewEvents({ window: windowOf([]), upcoming: UPCOMING, now: NOW });
-    expect(view.rows.map((row) => row.kind).sort())
+    expect(view.holdings.rows.map((row) => row.kind).sort())
       .toEqual(['alert', 'earnings', 'option-expiry']);
+    // And none of them leaked into the economic calendar.
+    expect(view.calendar.rows).toEqual([]);
   });
 
   it('keeps the sentence each builder already wrote', () => {
     const view = buildOverviewEvents({ window: windowOf([]), upcoming: UPCOMING, now: NOW });
-    expect(view.rows.map((row) => row.titleTh))
+    expect(allRows(view).map((row) => row.titleTh))
       .toContain('AAPL · Call หมดอายุในอีก 2 วัน');
   });
 
-  it('merges macro and upcoming into one list, soonest first', () => {
+  /*
+    THE TWO GROUPS DO NOT INTERLEAVE, which is the whole point of splitting them.
+
+    This test used to assert the opposite — one list reading `['cpi',
+    'expiry:AAPL-C', 'earnings:NVDA:2026-09-16']` — and that ordering is exactly
+    how "IREN Call · หมดอายุในอีก 2 วัน" came to sit between CPI and NFP.
+    Soonest-first is still right WITHIN a group; it was never a reason to put a
+    contract the reader owns in the middle of a publication schedule.
+  */
+  it('orders each group soonest first, and never across the two', () => {
     const view = buildOverviewEvents({
-      window: windowOf([macro('cpi', '2026-09-12T12:30:00.000Z')]),
+      window: windowOf([
+        macro('cpi', '2026-09-12T12:30:00.000Z'),
+        macro('nfp', '2026-09-14T12:30:00.000Z'),
+      ]),
       upcoming: UPCOMING,
       now: NOW,
     });
-    // One day, two days, five days — and the source each came from is not part
-    // of the ordering.
-    expect(view.rows.map((row) => row.id).slice(0, 3))
-      .toEqual(['cpi', 'expiry:AAPL-C', 'earnings:NVDA:2026-09-16']);
+    expect(view.calendar.rows.map((row) => row.id)).toEqual(['cpi', 'nfp']);
+    expect(view.holdings.rows.map((row) => row.id).slice(0, 2))
+      .toEqual(['expiry:AAPL-C', 'earnings:NVDA:2026-09-16']);
+    // The expiry falls between the two releases by date and still is not there.
+    expect(view.calendar.rows.every((row) => row.kind === 'macro')).toBe(true);
+    expect(view.holdings.rows.every((row) => row.kind !== 'macro')).toBe(true);
   });
 
   it('sorts an undated row last rather than as day zero', () => {
@@ -92,7 +119,7 @@ describe('buildOverviewEvents', () => {
       upcoming: UPCOMING,
       now: NOW,
     });
-    expect(view.rows[view.rows.length - 1]!.id).toBe('alert:RKLB');
+    expect(view.holdings.rows.at(-1)!.id).toBe('alert:RKLB');
   });
 
   it('breaks a same-day tie by how widely the release is watched', () => {
@@ -104,7 +131,7 @@ describe('buildOverviewEvents', () => {
       upcoming: null,
       now: NOW,
     });
-    expect(view.rows.map((row) => row.id)).toEqual(['high', 'low']);
+    expect(view.calendar.rows.map((row) => row.id)).toEqual(['high', 'low']);
   });
 
   it('drops a release that already happened', () => {
@@ -113,7 +140,7 @@ describe('buildOverviewEvents', () => {
       upcoming: null,
       now: NOW,
     });
-    expect(view.rows).toEqual([]);
+    expect(view.calendar.rows).toEqual([]);
   });
 
   it('states the countdown in days, and says วันนี้ for today', () => {
@@ -125,7 +152,8 @@ describe('buildOverviewEvents', () => {
       upcoming: null,
       now: NOW,
     });
-    expect(view.rows.map((row) => row.countdownText)).toEqual(['วันนี้', 'อีก 5 วัน']);
+    expect(view.calendar.rows.map((row) => row.countdownText))
+      .toEqual(['วันนี้', 'อีก 5 วัน']);
   });
 
   it('gives macro rows a date and a Bangkok time, and the others neither', () => {
@@ -134,8 +162,8 @@ describe('buildOverviewEvents', () => {
       upcoming: UPCOMING,
       now: NOW,
     });
-    const cpi = view.rows.find((row) => row.id === 'cpi')!;
-    const expiry = view.rows.find((row) => row.kind === 'option-expiry')!;
+    const cpi = view.calendar.rows.find((row) => row.id === 'cpi')!;
+    const expiry = view.holdings.rows.find((row) => row.kind === 'option-expiry')!;
     expect(cpi.dayLabel).not.toBeNull();
     expect(cpi.timeLabel).not.toBeNull();
     // A date and an expiry are DAYS. Printing 00:00 beside them would invent a
@@ -150,8 +178,8 @@ describe('buildOverviewEvents', () => {
       upcoming: UPCOMING,
       now: NOW,
     });
-    expect(view.rows.find((row) => row.id === 'cpi')!.importance).toBe('high');
-    for (const row of view.rows.filter((item) => item.kind !== 'macro')) {
+    expect(view.calendar.rows.find((row) => row.id === 'cpi')!.importance).toBe('high');
+    for (const row of allRows(view).filter((item) => item.kind !== 'macro')) {
       expect(row.importance, row.id).toBeNull();
     }
   });
@@ -174,7 +202,7 @@ describe('buildOverviewEvents', () => {
       watchlistSymbols: ['msft', 'AAPL'],
       now: NOW,
     });
-    const row = view.rows[0]!;
+    const row = view.calendar.rows[0]!;
     expect(row.symbols).toEqual([]);
     // Deduplicated across both lists: AAPL is in each and counts once.
     expect(row.affectedCount).toBe(2);
@@ -192,7 +220,7 @@ describe('buildOverviewEvents', () => {
       watchlistSymbols: Array.from({ length: 20 }, (_, index) => `SYM${index}`),
       now: NOW,
     });
-    expect(view.rows[0]!.affectedCount).toBe(20);
+    expect(view.calendar.rows[0]!.affectedCount).toBe(20);
   });
 
   /*
@@ -205,7 +233,7 @@ describe('buildOverviewEvents', () => {
       upcoming: null,
       now: NOW,
     });
-    expect(view.rows[0]!.affectedCount).toBe(0);
+    expect(view.calendar.rows[0]!.affectedCount).toBe(0);
   });
 
   /*
@@ -215,22 +243,33 @@ describe('buildOverviewEvents', () => {
   */
   it('leaves an upcoming row with its instrument and no breadth count', () => {
     const view = buildOverviewEvents({ window: windowOf([]), upcoming: UPCOMING, now: NOW });
-    const earnings = view.rows.find((row) => row.kind === 'earnings')!;
+    const earnings = view.holdings.rows.find((row) => row.kind === 'earnings')!;
     expect(earnings.symbols).toEqual(['NVDA']);
     expect(earnings.affectedCount).toBeUndefined();
   });
 
   it('names the symbol an upcoming row is about', () => {
     const view = buildOverviewEvents({ window: windowOf([]), upcoming: UPCOMING, now: NOW });
-    expect(view.rows.find((row) => row.kind === 'earnings')!.symbols).toEqual(['NVDA']);
+    expect(view.holdings.rows.find((row) => row.kind === 'earnings')!.symbols)
+      .toEqual(['NVDA']);
   });
 
-  it('caps the rows and reports how many there were', () => {
+  /*
+    THE BUDGET IS PER GROUP. One shared budget of six, spent soonest-first over a
+    merged list, meant a September carrying five macro releases pushed every
+    expiry and every earnings date off the section — a reader lost a contract
+    expiry because the government publishes a lot that month, which is not a
+    relationship those two facts have to each other.
+  */
+  it('caps each group on its own and reports each remainder separately', () => {
     const many = Array.from({ length: 10 }, (_, index) =>
       macro(`m${index}`, `2026-09-${String(12 + index).padStart(2, '0')}T12:30:00.000Z`));
-    const view = buildOverviewEvents({ window: windowOf(many), upcoming: null, now: NOW });
-    expect(view.rows).toHaveLength(OVERVIEW_EVENTS_LIMIT);
-    expect(view.total).toBe(10);
+    const view = buildOverviewEvents({ window: windowOf(many), upcoming: UPCOMING, now: NOW });
+    expect(view.calendar.rows).toHaveLength(OVERVIEW_EVENTS_GROUP_LIMIT);
+    expect(view.calendar.total).toBe(10);
+    // Ten releases do not cost the reader a single one of their own rows.
+    expect(view.holdings.rows).toHaveLength(3);
+    expect(view.holdings.total).toBe(3);
   });
 
   it('says where the calendar stops, and only when it stops short', () => {
@@ -263,18 +302,23 @@ describe('buildOverviewEvents', () => {
       upcoming: null,
       now: NOW,
     });
-    expect(view.rows).toEqual([]);
+    expect(view.calendar.rows).toEqual([]);
     expect(view.coverageNoteTh).toContain('ปฏิทินถึง');
   });
 
   it('survives a calendar that could not be read at all', () => {
     const view = buildOverviewEvents({ window: null, upcoming: UPCOMING, now: NOW });
-    expect(view.rows).toHaveLength(3);
+    expect(view.calendar.rows).toEqual([]);
+    expect(view.holdings.rows).toHaveLength(3);
     expect(view.coverageNoteTh).toBeNull();
   });
 
   it('is empty and quiet for a signed-out visitor with no calendar', () => {
     const view = buildOverviewEvents({ window: null, upcoming: null, now: NOW });
-    expect(view).toEqual({ rows: [], total: 0, coverageNoteTh: null });
+    expect(view).toEqual({
+      calendar: { rows: [], total: 0 },
+      holdings: { rows: [], total: 0 },
+      coverageNoteTh: null,
+    });
   });
 });
