@@ -28,17 +28,49 @@ Also from that run, at 375 × 812:
 
 ## The four flags
 
-| Flag | What turning it on does | Spends | Migration needed |
-|---|---|---|---|
-| `PHASE2_MARKET_SNAPSHOT` | Adds the market strip, the status word and its reasons to ตลาดวันนี้ | **Yes — the only one that spends.** Six provider quotes, behind a 60-second shared cache and a last-good snapshot, so a burst of readers costs one round rather than one each | None |
-| `PHASE2_WHAT_CHANGED` | Shows the renamed change feed | No. Renames items the watchlist detectors already produce — a mapping with a dedupe, no request, no clock, no history read | None |
-| `PHASE2_EVENTS` | Shows the 12-month macro calendar and its relevance join | No. The calendar is a static JSON already in the bundle; the symbol join is one array pass over lists the page holds | None |
-| `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` for `earnings` rules — **not applied** |
+Prerequisites are declared once, in
+[`src/config/phase2-flag-manifest.mjs`](../../src/config/phase2-flag-manifest.mjs).
+This table, the QA script and that file are held to each other by
+`phase2-flag-manifest.test.ts`, which compares them against the real order
+arrays in `section-order.ts`.
+
+| Flag | What turning it on does | Spends | Flag prerequisite | Signed in? | Migration needed |
+|---|---|---|---|---|---|
+| `PHASE2_MARKET_SNAPSHOT` | Adds the market strip, the status word and its reasons to ตลาดวันนี้ | **Yes — the only one that spends.** Six provider quotes, behind a 60-second shared cache and a last-good snapshot, so a burst of readers costs one round rather than one each | **None** — `marketToday` is in both order arrays | No | None |
+| `PHASE2_WHAT_CHANGED` | Shows the renamed change feed | No. Renames items the watchlist detectors already produce — a mapping with a dedupe, no request, no clock, no history read | **None** — `whatChanged` is in both order arrays | **Yes** — built from the reader's own watchlist | None |
+| `PHASE2_EVENTS` | Shows the 12-month macro calendar and its relevance join | No. The calendar is a static JSON already in the bundle; the symbol join is one array pass over lists the page holds | **`OVERVIEW_V2` — required.** `events` exists only in `OVERVIEW_ORDER_V2` | No | None |
+| `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` for `earnings` rules — **not applied** |
 
 `PHASE2_MARKET_SNAPSHOT` and the watchlist-view pair are read *before* their
 promises are constructed, so with a flag off the work is never started rather
 than started and discarded. `src/config/phase2-flags.test.ts` asserts that
 against the source of `app/page.tsx`.
+
+### `OVERVIEW_V2` is a base flag, not a fifth Phase 2 flag
+
+It does not add a section. It selects **which order array the page walks**, and
+that decision happens after presence is computed — so a section absent from the
+chosen array is dropped no matter how true its flag is.
+
+`PHASE2_EVENTS=true` was set in production and drew nothing for exactly this
+reason: the flag was read, the data was built, the presence map said
+`events: true`, and `orderedOverviewSections` filtered
+`OVERVIEW_ORDER_V1`, which has no `'events'` key at all
+([`section-order.ts:74-83`](../../src/lib/overview/section-order.ts#L74-L83)).
+
+**Turning `OVERVIEW_V2` on is a visible change to the whole page**, and it has to
+be accepted before `PHASE2_EVENTS` can do anything:
+
+- **Three sections disappear.** `marketStatus`, `upcoming` and `marketEvents`
+  exist only in V1. `marketStatus` goes because `marketToday` publishes the same
+  six instruments and the same regime; `upcoming` goes because `events` carries
+  its rows. `marketEvents` is simply not in the V2 list.
+- **One appears** — `events`, which is the point.
+- **Two swap.** V1 runs `watchlist` then `whatChanged`; V2 runs `whatChanged`
+  then `watchlist`. `marketToday`, `portfolio` and `news` do not move.
+
+So `PHASE2_EVENTS` is not the free render switch the rest of this table makes it
+look like. The flag itself costs nothing; its prerequisite reorders the Overview.
 
 ### `PHASE2_ALERTS` gates two things, and only one of them is a render
 
@@ -64,22 +96,37 @@ switch off but the flag.
 
 ## A safe order
 
-The four are independent — none reads another's output — so this order is about
-what you can still attribute when something moves, not about correctness.
+None of the four reads another's output, so this order is about what you can
+still attribute when something moves — not about correctness. Run
+`npm run verify:phase2-live -- --flag <name>` after each step; record the
+baseline first.
 
-1. **`PHASE2_EVENTS`** — costs nothing and touches no database. If the page
-   changes shape, it is the calendar and nothing else.
-2. **`PHASE2_WHAT_CHANGED`** — also free. Note the capped watchlist view needs
-   `WATCHLIST_V2` as well; this flag alone does not turn that on.
-3. **`PHASE2_MARKET_SNAPSHOT`** — the only one that buys anything. Turn it on
-   alone and watch provider usage for one session before adding the next, since
-   it is the only flag whose cost can grow with traffic.
-4. **`PHASE2_ALERTS`** — last, and only after `202608310003` is applied. It is
-   the only one with a write path, and the sweep it starts runs unattended every
-   fifteen minutes.
+**0. `--flag baseline`, before anything.** It records production's own median as
+the anchor every later step is gated against. The 413 ms above is a *localhost*
+number and is not comparable to production over the internet.
 
-Measured together at 1.03×, so the order is not protecting a budget — it is
-protecting attribution.
+1. **`PHASE2_MARKET_SNAPSHOT`** — the only one that buys anything, and moved to
+   the front because it is the only one visible signed-out with no prerequisite:
+   one switch, one visible change, nothing else to explain it. Watch provider
+   usage for a session before continuing.
+   `--flag market-snapshot`
+2. **`PHASE2_WHAT_CHANGED`** — free. `whatChanged` is in both order arrays, so no
+   base flag. It needs a **signed-in reader with a watchlist**, so the script
+   reports it as not verified and you confirm it by eye.
+   `--flag what-changed`
+3. **`PHASE2_ALERTS`** — free to render, but it starts the sweep. Only after
+   `202608310003` is applied if you want `earnings` rules.
+   `--flag alerts --wait-for-tick`
+4. **`OVERVIEW_V2` + `PHASE2_EVENTS`, together and last.** `PHASE2_EVENTS` alone
+   does nothing; `OVERVIEW_V2` alone drops three sections and adds none. Setting
+   only the base flag leaves the page strictly worse, so the two go in one step.
+   **Re-record the baseline afterwards** — the page is a different page.
+   `--flag events`, then `--flag baseline` again
+
+Measured together at 1.03× locally, so the order is not protecting a budget — it
+is protecting attribution. `OVERVIEW_V2` is last because it is the only step that
+cannot be judged by "did one thing appear": three sections leave at the same
+time, and that is worth looking at on its own rather than alongside another flag.
 
 ## Not ready
 
@@ -108,20 +155,22 @@ the same reason, without the type saying so.
 
 No flag changes this and none of the four is waiting on it.
 
-### The sweep has never been verified end to end
+### The sweep is verified on dev, never on production data
 
-`runOvAlertSweep` has never run against a real database. See
-"What is still unverified" in the Phase 2 finalization report: production holds
-**0** `overview_alert_rules`, so a sweep there has nothing to evaluate, and
-creating a test rule needs either a session or a write into a real account.
+`npm run verify:ov-alert-sweep` ran against the dev project on 2026-08-31 and
+passed every claim, with all five migrations applied there:
 
-What that leaves unproven, specifically:
+- all five kinds create through `create_overview_alert_rule`, `earnings`
+  included — the claim `202608310003` exists to make true;
+- after a sweep, no rule carries a stamp without a hit and no hit exists without
+  a stamp, and every `last_fired_at` equals its own hit's `observed_at`;
+- an immediate second sweep recorded nothing and moved no stamp, with
+  `evaluated: 5` — it looked at every rule and chose not to write;
+- `percent_down`, given a threshold it could not pass, did not fire.
 
-- that a hit row and `overview_alert_rules.last_fired_at` are written in the same
-  transaction, with no row carrying one without the other;
-- that a second sweep inside the cooldown writes nothing.
+That is the first time the hit/stamp pair has been observed as atomic in
+Postgres rather than modelled by a double.
 
-Both are asserted in `sweep.test.ts` against an in-memory double, and the double
-models the pair as atomic because the RPC does. Neither has been observed in
-Postgres. Turning `PHASE2_ALERTS` on is what would first exercise them, on live
-readers' rules.
+**What is still unproven** is behaviour on production data: production holds
+**0** `overview_alert_rules`, so nothing has swept a real reader's rule. The
+first real exercise will be the tick after `PHASE2_ALERTS` goes on.
