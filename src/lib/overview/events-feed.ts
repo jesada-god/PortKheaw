@@ -78,8 +78,28 @@ export interface OverviewEventRow {
   countdownDays: number | null;
   /** "วันนี้" / "อีก 5 วัน". Null when there is no count to state. */
   countdownText: string | null;
-  /** The reader's own symbols this row touches. Empty is a legitimate answer. */
+  /**
+   * The instrument this row IS ABOUT, for the link a reader opens.
+   *
+   * At most one, and only for the three kinds that genuinely belong to a single
+   * company: an earnings date, an expiry, an alert. A macro release belongs to
+   * no company and carries none — see `affectedCount`.
+   */
   symbols: string[];
+  /**
+   * How many of the reader's own symbols a MARKET-WIDE release reaches.
+   *
+   * Absent on every row that is not one, which is what distinguishes "this is
+   * an economy-wide number and you hold seven US names" from "this row is about
+   * NVDA". `ovEventRelevanceFor` has always computed it and this module used to
+   * drop it on the floor, taking the capped NAME LIST instead — so every macro
+   * row printed the same seven tickers and read as a per-stock claim the
+   * relevance module explicitly refuses to make.
+   *
+   * Zero is a real answer (a signed-out reader, an empty watchlist) and must
+   * render as nothing at all rather than as "0 ตัว".
+   */
+  affectedCount?: number;
 }
 
 export interface OverviewEventsView {
@@ -192,7 +212,18 @@ export function buildOverviewEvents({
       importance: event.importance,
       countdownDays: days,
       countdownText: countdownTextOf(days),
-      symbols: relevance.get(event.id)?.affectedSymbols ?? [],
+      /*
+        NO NAMES ON A MACRO ROW.
+
+        `affectedSymbols` is the same alphabetical list on every market-wide
+        release — all seven codes are — because that is what the relevance
+        module means by breadth. Printed as bare linked tickers under a CPI row
+        it read as "these seven stocks are affected by CPI", which is precisely
+        the per-symbol claim `event-relevance.ts` says it is not making. The
+        count says the true part and cannot say the false one.
+      */
+      symbols: [],
+      affectedCount: relevance.get(event.id)?.total ?? 0,
     }];
   });
 

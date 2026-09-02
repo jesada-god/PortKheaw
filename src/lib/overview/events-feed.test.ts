@@ -156,7 +156,17 @@ describe('buildOverviewEvents', () => {
     }
   });
 
-  it('attaches the reader\'s own symbols to a macro row and nobody else\'s', () => {
+  /*
+    A MACRO ROW COUNTS THE READER'S SYMBOLS AND NAMES NONE OF THEM.
+
+    It used to carry `affectedSymbols` — the capped, alphabetical list that is
+    IDENTICAL on every market-wide release, because all seven codes are one.
+    Rendered as linked tickers it read as "these stocks are affected by CPI",
+    which is the per-symbol claim `event-relevance.ts` states in its own header
+    that it does not make. The count says the true part and cannot say the
+    false one.
+  */
+  it('counts the symbols a macro row reaches and names none of them', () => {
     const view = buildOverviewEvents({
       window: windowOf([macro('cpi', '2026-09-12T12:30:00.000Z')]),
       upcoming: null,
@@ -164,7 +174,50 @@ describe('buildOverviewEvents', () => {
       watchlistSymbols: ['msft', 'AAPL'],
       now: NOW,
     });
-    expect(view.rows[0]!.symbols).toEqual(['AAPL', 'MSFT']);
+    const row = view.rows[0]!;
+    expect(row.symbols).toEqual([]);
+    // Deduplicated across both lists: AAPL is in each and counts once.
+    expect(row.affectedCount).toBe(2);
+  });
+
+  /*
+    The count is the FULL total, not the display cap. `affectedSymbols` stops at
+    eight; a reader with twenty is entitled to be told twenty, and the capped
+    list is exactly what this row no longer prints.
+  */
+  it('counts past the cap the name list stopped at', () => {
+    const view = buildOverviewEvents({
+      window: windowOf([macro('cpi', '2026-09-12T12:30:00.000Z')]),
+      upcoming: null,
+      watchlistSymbols: Array.from({ length: 20 }, (_, index) => `SYM${index}`),
+      now: NOW,
+    });
+    expect(view.rows[0]!.affectedCount).toBe(20);
+  });
+
+  /*
+    Zero is a real answer — a signed-out reader, an empty watchlist — and the
+    card must draw nothing for it rather than "0 ตัว".
+  */
+  it('reports a zero count rather than omitting it when nothing is held', () => {
+    const view = buildOverviewEvents({
+      window: windowOf([macro('cpi', '2026-09-12T12:30:00.000Z')]),
+      upcoming: null,
+      now: NOW,
+    });
+    expect(view.rows[0]!.affectedCount).toBe(0);
+  });
+
+  /*
+    The other three kinds are about one company each, so they keep the link a
+    reader opens. `affectedCount` is absent on them: it is a statement about a
+    market-wide release, and they are not one.
+  */
+  it('leaves an upcoming row with its instrument and no breadth count', () => {
+    const view = buildOverviewEvents({ window: windowOf([]), upcoming: UPCOMING, now: NOW });
+    const earnings = view.rows.find((row) => row.kind === 'earnings')!;
+    expect(earnings.symbols).toEqual(['NVDA']);
+    expect(earnings.affectedCount).toBeUndefined();
   });
 
   it('names the symbol an upcoming row is about', () => {

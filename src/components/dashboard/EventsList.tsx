@@ -47,8 +47,30 @@ function levelOf(row: OverviewEventRow): StatusLevel {
   return row.importance === null ? 'neutral' : IMPORTANCE_LEVEL[row.importance];
 }
 
-function EventRow({ row }: { row: OverviewEventRow }) {
+/**
+ * The line under a row: when it happens, and who it concerns.
+ *
+ * Two shapes, because the two kinds of row answer different questions. A macro
+ * release concerns the whole tape, so it states HOW MANY of the reader's
+ * symbols that reaches and names none of them — the same seven tickers under
+ * every release read as a per-stock claim, and `event-relevance.ts` refuses to
+ * make one. A row that genuinely belongs to one company keeps its link.
+ *
+ * The count carries no verb. "กระทบ" would be the causal claim the relevance
+ * module declines; the reader is told what is true — this is an economy-wide
+ * number, and seven of the names in front of it are theirs — and draws their
+ * own conclusion. Zero prints nothing, never "0 ตัว".
+ */
+function metaParts(row: OverviewEventRow): string[] {
   const when = [row.dayLabel, row.timeLabel].filter(Boolean).join(' · ');
+  const affected = row.affectedCount && row.affectedCount > 0
+    ? `${row.affectedCount} ตัวในลิสต์คุณ`
+    : null;
+  return [when, affected].filter((part): part is string => Boolean(part));
+}
+
+function EventRow({ row }: { row: OverviewEventRow }) {
+  const meta = metaParts(row);
   return (
     <li className="min-w-0">
       <div
@@ -76,10 +98,10 @@ function EventRow({ row }: { row: OverviewEventRow }) {
           />
         )}
       </div>
-      {(when || row.symbols.length > 0) && (
+      {(meta.length > 0 || row.symbols.length > 0) && (
         <p className="-mt-1 pb-2 text-[11px] leading-4 text-[var(--text-muted)]">
-          {when}
-          {when && row.symbols.length > 0 ? ' · ' : ''}
+          {meta.join(' · ')}
+          {meta.length > 0 && row.symbols.length > 0 ? ' · ' : ''}
           {row.symbols.map((symbol, index) => (
             <span key={symbol}>
               {index > 0 && ' '}
