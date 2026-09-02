@@ -43,6 +43,30 @@ export function formatBangkokDateTimeCE(
   }).format(date);
 }
 
+/**
+ * The Bangkok wall clock alone — no date, no seconds.
+ *
+ * Every other formatter in this file carries a `dateStyle`, which is what let
+ * "Bangkok wall clock" mean "3 ก.ย. 2569 19:30" in the one place that asked for
+ * a time. A caller that has already printed the day and wants only the minute
+ * had nowhere to go, so it reached for `formatBangkokDateTime` and the day was
+ * printed twice — see `ovEventTimeLabel`.
+ *
+ * `timeStyle: 'short'` and nothing else. Seconds are deliberately unavailable:
+ * a published release time is a minute, and the only surfaces that want seconds
+ * are live tickers, which want the date beside them too and already have
+ * `formatBangkokDateTime({ withSeconds: true })`.
+ */
+export function formatBangkokTimeOnly(value: string | Date | null | undefined): string {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) return '—';
+  return new Intl.DateTimeFormat(THAI_LOCALE, {
+    timeStyle: 'short',
+    timeZone: BANGKOK_TIME_ZONE,
+  }).format(date);
+}
+
 export function formatThaiDateOnly(value: string | null | undefined): string {
   const datePart = value?.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.000)?Z)?$/)?.[1];
   if (!datePart) return '—';
