@@ -31,8 +31,26 @@ const chartSchema = z.object({
         regularMarketPrice: z.number().finite().positive().optional(),
         regularMarketTime: z.number().int().positive().optional(),
         regularMarketOpen: z.number().finite().positive().optional(),
-        regularMarketDayHigh: z.number().finite().positive().optional(),
-        regularMarketDayLow: z.number().finite().positive().optional(),
+        /*
+         * ZERO IS A REAL ANSWER HERE, AND REJECTING IT THREW AWAY THE PAYLOAD.
+         *
+         * An index with no intraday feed on this endpoint reports its day high
+         * and low as `0` rather than omitting them. `^TNX` — the ten-year yield,
+         * a Cboe INDEX — does exactly that, and because both fields were
+         * `.positive()` the whole response failed validation and the ten-year
+         * came back unreadable everywhere it is quoted: the Market Status card's
+         * regime subtitle (which requires it) and the overview's six-instrument
+         * band. The price was in that payload the entire time, correct and
+         * plausible; two fields NEITHER CARD READS were what discarded it.
+         *
+         * `regularMarketPrice` stays `.positive()` — a zero there is a broken
+         * quote and must still be refused. These two do not need the same guard,
+         * because everything downstream reads them through `positiveNumber`,
+         * which maps `0` to null: the instrument genuinely has no day high or
+         * low, and null is how the product already says so.
+         */
+        regularMarketDayHigh: z.number().finite().nonnegative().optional(),
+        regularMarketDayLow: z.number().finite().nonnegative().optional(),
         regularMarketVolume: z.number().finite().nonnegative().optional(),
         previousClose: z.number().finite().positive().optional(),
         chartPreviousClose: z.number().finite().positive().optional(),
