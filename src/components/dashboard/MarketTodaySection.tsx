@@ -9,6 +9,7 @@ import {
   type OvIndexReading,
   type OvMarketSnapshot,
 } from '@/src/lib/market-overview/types';
+import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
 import { StatusLabel } from '@/src/components/ui/StatusLabel';
 import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { proxyDisclosureTh } from '@/src/lib/overview/market-assets';
@@ -232,6 +233,71 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
 }
 
 /**
+ * THE DAY, AS A LINE, IN SIXTEEN PIXELS.
+ *
+ * Not `MiniLine`. That one is forty pixels tall and belongs to a 238px card
+ * where it is a feature of the card; forty pixels in a cell of this band is a
+ * forty percent tax on the height the band exists to save, and the band would
+ * stop being a band. This draws the same closes at the height a cell can pay
+ * for, with no axis, no grid, no label and no baseline — the shape of the day
+ * and nothing else.
+ *
+ * `preserveAspectRatio="none"` because the box is six to one and the viewBox is
+ * not; letting it letterbox would leave the line floating in the middle of
+ * dead space. `vectorEffect="non-scaling-stroke"` is what keeps the stroke
+ * 1.5px after that stretch instead of a smeared wedge.
+ *
+ * THE COLOUR IS THE READING, NOT DECORATION. It is the same three-way the
+ * signed percentage directly above takes — up, down, or neither — so the line
+ * and the number can never disagree. That also makes the line redundant to a
+ * screen reader, which is why it is `aria-hidden`: the percentage above it has
+ * already said the fact, and "กราฟราคาระหว่างวัน" would only add a second
+ * announcement of the same thing.
+ *
+ * Fewer than two points is no line at all rather than a dot or a flat rule — a
+ * horizontal stroke across a cell reads as "did not move", which is a claim
+ * about the market and not an absence of data.
+ */
+function CellSparkline({ values, changePercent, symbol }: {
+  values: readonly number[];
+  changePercent: number | null;
+  symbol: string;
+}) {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values.map((value, index) => {
+    const x = (index / (values.length - 1)) * 100;
+    const y = 15 - ((value - min) / span) * 14;
+    return `${x},${y}`;
+  }).join(' ');
+  const stroke = changePercent === null || !Number.isFinite(changePercent)
+    ? 'var(--text-muted)'
+    : changePercent > 0 ? 'var(--positive)' : changePercent < 0 ? 'var(--negative)' : 'var(--text-muted)';
+  return (
+    <svg
+      viewBox="0 0 100 16"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+      className="mt-1 block h-4 w-full"
+      data-testid={`market-asset-spark-${symbol}`}
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+/**
  * The assets the band above has not already stated, compact.
  *
  * They were nine cards; a card each is what made the market block the tallest
@@ -262,7 +328,28 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
             ariaLabel={`เปิดรายละเอียด ${item.name} (${item.symbol})`}
             testId={`market-asset-${item.symbol}`}
           >
-            <span className="figure-label truncate">{item.name}</span>
+            {/*
+              The mark sits IN the label's line, not above it.
+
+              A row of its own would cost the cell another sixteen pixels for
+              something that is an identifier rather than a fact — and the name
+              beside it is what the mark identifies, so separating them makes
+              the reader join two rows to answer one question. `shrink-0` on the
+              logo and `truncate` on the name mean the mark is never what gets
+              cut: a nameless logo is unreadable, a shortened name is not.
+            */}
+            <span className="figure-label flex min-w-0 items-center gap-1.5">
+              <InstrumentLogo
+                symbol={item.symbol}
+                companyName={item.instrument.companyName}
+                logoUrl={item.instrument.logoUrl}
+                size={16}
+                appearance="plain"
+              />
+              <span className="truncate" data-testid={`market-asset-${item.symbol}-name`}>
+                {item.name}
+              </span>
+            </span>
             {/*
               The same disclosure the nine cards used to carry in their subtitle
               and this strip lost when it replaced them. "ทองคำ" over a number is
@@ -292,6 +379,18 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
               }
               label={item.changePercent === null ? 'ยังไม่มีค่า' : signedPercent(item.changePercent)}
               className="mt-0.5 text-xs"
+            />
+            {/*
+              Last, under the number it is the shape of. The nine cards each
+              drew one and the strip that replaced them drew none; the data
+              never stopped arriving — `loadMarketIndices` fetches 5-minute
+              closes for every row, and the commodity and continuous loaders
+              build theirs from candles they already hold.
+            */}
+            <CellSparkline
+              values={item.sparkline}
+              changePercent={item.changePercent}
+              symbol={item.symbol}
             />
           </StripCell>
         ))}

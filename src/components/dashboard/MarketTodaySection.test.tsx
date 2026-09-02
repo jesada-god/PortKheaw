@@ -105,7 +105,9 @@ function assetCards(): MarketIndexCard[] {
     tradingDate: '2026-09-01',
     extended: null,
     freshness: null,
-    sparkline: [],
+    // A short intraday series, because a cell with no series draws no line at
+    // all — which is a different case, asserted on its own below.
+    sparkline: [99.2, 99.8, 100.4, 100.1, 100],
     name: asset.name,
     proxyLabel: asset.proxyLabel,
     subtitle: `${asset.symbol} · ${asset.proxyLabel}`,
@@ -250,6 +252,90 @@ describe('a cell is tappable exactly when it has somewhere to go', () => {
       const cell = band.querySelector(`[data-testid="market-today-${input.key}"]`)!;
       expect(cell.tagName, input.key).toBe('DIV');
       expect(cell.getAttribute('href'), input.key).toBeNull();
+    }
+  });
+});
+
+describe('the asset cell carries the mark and the shape of the day', () => {
+  /*
+    Both were on the nine cards this band replaced and neither survived the
+    rewrite. The data never stopped arriving — `loadMarketIndices` fetches
+    5-minute closes for every row and the catalogue ships artwork for all nine —
+    so what was lost was only the rendering.
+  */
+  it('puts the instrument mark in the same line as the name', () => {
+    const band = renderAssets();
+    for (const asset of MARKET_ASSETS) {
+      const cell = band.querySelector(`[data-testid="market-asset-${asset.symbol}"]`)!;
+      const label = cell.querySelector('.figure-label')!;
+      const name = label.querySelector(`[data-testid="market-asset-${asset.symbol}-name"]`);
+      const mark = label.querySelector('img, [role="img"]');
+      // In the label, not above it — a row of its own would cost the cell
+      // another sixteen pixels for an identifier rather than a fact.
+      expect(mark, `${asset.symbol} has no mark`).not.toBeNull();
+      expect(name?.textContent, asset.symbol).toBe(asset.name);
+    }
+  });
+
+  it('never lets the mark be what gets cut when a name is long', () => {
+    const cell = renderAssets().querySelector('[data-testid="market-asset-CL-F"]')!;
+    const label = cell.querySelector('.figure-label')!;
+    const name = label.querySelector('[data-testid="market-asset-CL-F-name"]')!;
+    // A shortened name is readable; a cropped logo is not.
+    expect(name.className).toContain('truncate');
+    expect(label.className).toContain('min-w-0');
+  });
+
+  it('draws the day as a line under the percentage', () => {
+    const band = renderAssets();
+    for (const asset of MARKET_ASSETS) {
+      const spark = band.querySelector(`[data-testid="market-asset-spark-${asset.symbol}"]`);
+      expect(spark, `${asset.symbol} has no sparkline`).not.toBeNull();
+      expect(spark!.tagName.toLowerCase()).toBe('svg');
+      // Sixteen pixels, and no axis, no grid, no label inside it.
+      expect(spark!.getAttribute('class')).toContain('h-4');
+      expect(spark!.querySelectorAll('text, line, g')).toHaveLength(0);
+      /*
+        The signed percentage directly above states the same fact, so a second
+        announcement of it is noise to a screen reader.
+      */
+      expect(spark!.getAttribute('aria-hidden')).toBe('true');
+    }
+  });
+
+  /*
+    THE COLOUR IS THE READING. A line that were merely tinted could disagree
+    with the number above it, which is the one thing a chart beside a figure
+    must never do.
+  */
+  it('colours the line by direction, the same three ways the number is marked', () => {
+    const strokeFor = (changePercent: number | null) => {
+      const [item] = assetCards().filter((card) => card.symbol === 'SPY');
+      act(() => root.render(<MarketAssetStrip items={[{ ...item!, changePercent }]} />));
+      return container
+        .querySelector('[data-testid="market-asset-spark-SPY"] polyline')!
+        .getAttribute('stroke');
+    };
+    expect(strokeFor(1.2)).toBe('var(--positive)');
+    expect(strokeFor(-1.2)).toBe('var(--negative)');
+    expect(strokeFor(0)).toBe('var(--text-muted)');
+    expect(strokeFor(null)).toBe('var(--text-muted)');
+  });
+
+  /*
+    A single point is not a line, and drawing a flat rule across the cell would
+    say "did not move" — a claim about the market, where the truth is an absence
+    of data. The watchlist and portfolio paths still hardcode `sparkline: []`,
+    so this is a state the band will meet.
+  */
+  it('draws nothing at all rather than a flat rule when there is no series', () => {
+    const [item] = assetCards().filter((card) => card.symbol === 'SPY');
+    for (const sparkline of [[], [761.78]]) {
+      act(() => root.render(<MarketAssetStrip items={[{ ...item!, sparkline }]} />));
+      expect(container.querySelector('[data-testid="market-asset-spark-SPY"]')).toBeNull();
+      // The cell itself is untouched: the price and the percentage still print.
+      expect(container.querySelector('[data-testid="market-asset-SPY"]')!.textContent)
+        .toContain('100.00');
     }
   });
 });
