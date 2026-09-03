@@ -105,6 +105,49 @@ export default defineConfig([
     },
     {
         /*
+         * =====================================================================
+         * THE MARKET-REACTION BLOCK MAY STATE, AND MAY NOT ATTRIBUTE
+         * =====================================================================
+         * The calendar can print what an index did on days a release was
+         * published. Each number is a close-to-close change on a session that
+         * happened and is checkable against any chart. What nobody in this
+         * codebase computed is WHY it moved — no correlation, no event study,
+         * no control for the six other things that happen on a Friday morning.
+         *
+         * The phrases below cross that line by attributing ("ส่งผลให้",
+         * "ปฏิกิริยา"), by generalising three dates into a tendency ("มักจะ",
+         * "เฉลี่ย"), or by forecasting ("คาดว่า", "ครั้งนี้"). The reasoning
+         * for each is in `EVENT_REACTION_MUST_NOT_SAY` in
+         * `src/lib/presentation/banned-copy.ts`, and `banned-copy.test.ts`
+         * keeps this copy of the list from drifting from that one — an eslint
+         * rule is a `.mjs` module and cannot import the `.ts` original.
+         *
+         * SCOPED TO THE CALENDAR FEATURE, NOT ADDED TO `NEVER_SAY`. "เฉลี่ย"
+         * is the correct word in sixty-five places in this product — ต้นทุน
+         * เฉลี่ย, ค่าเฉลี่ย 20 วัน — so a product-wide ban would be a ban on
+         * the vocabulary rather than on its misuse. Same argument the
+         * trading-jargon list makes for staying on its card.
+         */
+        files: [
+            "src/lib/market-events/**/*.ts",
+            "src/components/market-events/**/*.{ts,tsx}",
+        ],
+        ignores: ["**/*.test.ts", "**/*.test.tsx"],
+        plugins: {
+            "portkheaw-reactions": { rules: { "no-banned-copy": noBannedCopy } },
+        },
+        rules: {
+            "portkheaw-reactions/no-banned-copy": ["error", {
+                banned: [
+                    'ส่งผลให้', 'ทำให้ราคา', 'กระตุ้นให้', 'ตอบสนองต่อ', 'ปฏิกิริยา',
+                    'มักจะ', 'โดยทั่วไป', 'ปกติแล้ว', 'ส่วนใหญ่', 'สถิติชี้', 'เฉลี่ย',
+                    'คาดว่า', 'น่าจะ', 'แนวโน้มว่า', 'ครั้งนี้',
+                ],
+            }],
+        },
+    },
+    {
+        /*
          * The card's copy layer, held to the card's vocabulary.
          *
          * Every file in the market-signal folder that a reader's eyes end up
