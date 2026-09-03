@@ -26,6 +26,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://localhost:3100').replace(/\/$/, '');
 const SYMBOL = (process.env.QA_SYMBOL ?? 'AAPL').toUpperCase();
@@ -36,6 +37,10 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const OUT_DIR = `.qa/artifacts/option-chain-purchase-${QA_LABEL}`;
 if (!SUPABASE_URL || !SERVICE_KEY || !ANON_KEY) throw new Error('Missing Supabase QA environment');
+
+/* Creates a real reader — see `scripts/qa/qa-accounts.mjs`. */
+assertQaTarget(SUPABASE_URL, 'qa:option-chain-purchase');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:option-chain-purchase' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const OPENING_CASH = 50_000;
@@ -108,6 +113,7 @@ async function createQaAccount() {
   });
   if (!created.ok) throw new Error(`Could not create the QA account: ${created.status}`);
   userId = created.body.id;
+  qaAccounts.register({ userId, email });
 
   // The signup trigger writes the subscription row; wait for it rather than race it.
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -779,25 +785,16 @@ try {
   report.failures.push({ message: 'The run threw', details: String(error?.stack ?? error) });
 } finally {
   await browser?.close().catch(() => {});
-  if (userId) {
-    /*
-     * The ledger has to be cleared by hand before the account can go.
-     * `portfolio_transactions.portfolio_id` has no cascade, so deleting a user
-     * who ever recorded a transaction fails on the foreign key and leaves the
-     * account — and its rows — behind in the project.
-     */
-    const portfolios = await supabase(`/rest/v1/portfolios?user_id=eq.${userId}&select=id`);
-    for (const portfolio of Array.isArray(portfolios.body) ? portfolios.body : []) {
-      await supabase(`/rest/v1/portfolio_transactions?portfolio_id=eq.${portfolio.id}`, { method: 'DELETE' });
-      await supabase(`/rest/v1/portfolios?id=eq.${portfolio.id}`, { method: 'DELETE' });
-    }
-    const deleted = await supabase(`/auth/v1/admin/users/${userId}`, { method: 'DELETE' });
-    report.cleanup.accountDeleted = deleted.ok;
-    const leftovers = await supabase(`/rest/v1/portfolios?user_id=eq.${userId}&select=id`);
-    report.cleanup.portfoliosRemaining = Array.isArray(leftovers.body) ? leftovers.body.length : leftovers.status;
-    check(report.cleanup.accountDeleted, 'The QA account was not deleted', deleted.body);
-    check(report.cleanup.portfoliosRemaining === 0, 'QA portfolios survived the cleanup', report.cleanup.portfoliosRemaining);
-  }
+  /*
+    Was a hand-rolled version of the shared teardown: it knew about the ledger
+    foreign key (the paragraph that worked it out is now in `qa-accounts.mjs`)
+    but only cleared `portfolio_transactions`, leaving the two option children
+    that hold the same RESTRICT.
+  */
+  const teardown = await qaAccounts.teardown();
+  report.cleanup.accountDeleted = teardown.remaining.length === 0;
+  report.cleanup.teardown = teardown;
+  check(teardown.remaining.length === 0, 'The QA account was not deleted', teardown);
   report.finishedAt = new Date().toISOString();
   report.verdict = report.failures.length === 0 ? 'PASS' : 'FAIL';
   writeFileSync(`${OUT_DIR}/report.json`, JSON.stringify(report, null, 2));

@@ -27,6 +27,7 @@
 import { chromium } from 'playwright-core';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -35,6 +36,14 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = '.qa/artifacts/admin-overview';
 const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
+
+/*
+ * This script creates a real reader, so it may not run against production.
+ * See `scripts/qa/qa-accounts.mjs` for why the guard and the teardown are one
+ * module rather than a pattern nine scripts copy.
+ */
+assertQaTarget(SUPABASE_URL, 'qa:admin-overview');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:admin-overview' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const VIEWPORTS = [
@@ -122,7 +131,7 @@ async function createOperator() {
     headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify({ user_id: userId, role: 'admin' }),
   });
-  return { userId, email, password };
+  return qaAccounts.register({ userId, email, password });
 }
 
 /* ------------------------------------------------------- the second factor */
@@ -385,6 +394,16 @@ async function run() {
   } finally {
     await context.close();
     await browser.close();
+    /*
+      This script created a reader and never removed it, which is why six of its
+      accounts were sitting in production. Teardown is in the `finally` so a red
+      check cleans up too, and anything it cannot remove becomes a failure of
+      the run rather than a line in a log nobody reads.
+    */
+    report.teardown = await qaAccounts.teardown();
+    if (report.teardown.remaining?.length || report.teardown.failed?.length) {
+      report.failures.push({ message: `teardown left ${report.teardown.remaining.length} account(s) behind`, details: report.teardown });
+    }
     report.finishedAt = new Date().toISOString();
     writeFileSync(`${OUT_DIR}/report.json`, JSON.stringify(report, null, 2));
     for (const entry of report.checks) console.log(`${entry.ok ? 'PASS' : 'FAIL'} ${entry.message}`);
