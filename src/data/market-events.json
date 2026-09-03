@@ -1,10 +1,12 @@
 {
   "schemaVersion": 1,
   "_README": [
-    "Macro release calendar, Sep-Dec 2026. `at` is THE value: a UTC instant, ISO 8601, ending in Z.",
+    "Macro release calendar. `at` is THE value: a UTC instant, ISO 8601, ending in Z.",
     "Every date below was read off the publishing agency’s own schedule - see `_provenance`.",
     "`etDisplay` is a LABEL. Nothing parses it. See market-events/time.ts and the contract test.",
-    "Earnings dates are deliberately absent: this file is macro-only."
+    "Earnings dates are deliberately absent: this file is macro-only.",
+    "ROWS DATED IN THE PAST ARE ALLOWED AND EXPECTED. The row shape is the same in both directions - a release that has happened differs from one that has not only in its instant - and every surface filters by date at read time rather than trusting the file to hold only the future. The forward schedules this file was built from are in `_provenance`; a past row comes from a different page at the same agency, and the procedure and the archive URLs are in docs/market-events-backfill.md.",
+    "The file no longer names its own window here. It had said \"Sep-Dec 2026\", which was true when it was written and is a second copy of a fact the rows already carry - `monthRangeOf` in market-events/calendar.ts reads the range off the data, so adding a row is the whole of adding a month."
   ],
   "_provenance": {
     "verifiedOn": "2026-08-30",
@@ -19,6 +21,7 @@
   "_knownGaps": [
     "FED SPEECH is NOT in this file. The Federal Reserve publishes no forward schedule of governor or chair speeches for Sep-Dec 2026, so every date would have been invented. It is absent rather than guessed.",
     "The window ends 2026-12-31. December 2026 reference data (Jan 2027 releases) is not covered; the card says so rather than drawing an empty month - see calendar.ts `calendarCoverage`.",
+    "NO HISTORY HAS BEEN TRANSCRIBED YET. There is not one row dated before this file’s first forward date, so anything that reads past releases - the market-reaction block among them - currently has nothing to read and renders nothing at all. That is a gap in the DATA and not in the code: the surfaces are proved against past rows in market-events/past-rows.test.ts. Backfilling means transcribing real dates from the agency archives, one at a time, exactly as the forward rows were. A date that was derived from a rule rather than read off a published page does not belong here - the same reason FED SPEECH is absent above.",
     "JOBLESS_CLAIMS holiday moves rest on DOL’s published rule plus its one published exception, not on an enumerated agency list - DOL does not publish one."
   ],
   "events": [
