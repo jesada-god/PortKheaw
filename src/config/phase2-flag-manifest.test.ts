@@ -51,12 +51,29 @@ describe('the Phase 2 flag manifest', () => {
     ]);
   });
 
-  it('names only section keys the order arrays can actually emit', () => {
+  /*
+   * A key in no order array can never be emitted, so a flag landing in one is
+   * a switch that does nothing. That is allowed — but only when the manifest
+   * SAYS SO, and the claim has to keep being true in both directions: a flag
+   * silently stranded is red, and a flag declared unreachable that quietly
+   * became reachable is red too.
+   */
+  it('names only section keys the order arrays can emit, or says why not', () => {
     for (const entry of PHASE2_FLAGS) {
       expect(OVERVIEW_SECTION_KEYS, `${entry.env} names ${entry.sectionKey}`)
         .toContain(entry.sectionKey);
-      expect(inV1(entry.sectionKey) || inV2(entry.sectionKey), `${entry.sectionKey} is in an order`)
-        .toBe(true);
+      const placed = inV1(entry.sectionKey) || inV2(entry.sectionKey);
+      expect(
+        placed || Boolean(entry.unreachable),
+        `${entry.env} lands in '${entry.sectionKey}', which is in no order array `
+        + '— it must carry an `unreachable` reason saying so',
+      ).toBe(true);
+      if (entry.unreachable) {
+        expect(
+          placed,
+          `${entry.env} is declared unreachable, but '${entry.sectionKey}' is in an order`,
+        ).toBe(false);
+      }
     }
   });
 
@@ -71,6 +88,9 @@ describe('the Phase 2 flag manifest', () => {
   it('declares the base flag for every section that only exists in V2', () => {
     const problems: string[] = [];
     for (const entry of PHASE2_FLAGS) {
+      // An unreachable flag has no prerequisite to declare — satisfying one
+      // would change nothing, and the previous test holds it to that.
+      if (entry.unreachable) continue;
       const onlyV2 = inV2(entry.sectionKey) && !inV1(entry.sectionKey);
       const declares = entry.requires.includes(OVERVIEW_ORDER_FLAG);
       if (onlyV2 && !declares) {
@@ -90,12 +110,11 @@ describe('the Phase 2 flag manifest', () => {
   });
 
   /*
-   * A V1-ONLY KEY WOULD BE THE SAME TRAP MIRRORED.
+   * A V1-ONLY KEY IS THE SAME TRAP MIRRORED.
    *
-   * Nothing lands in one today. If a Phase 2 flag ever produced a section that
-   * V2 dropped, turning the base flag on would silently remove it — and there is
-   * no `requires` value that expresses "only without the base flag", so this
-   * refuses the shape rather than pretending to describe it.
+   * If a flag lands in a section V2 dropped, turning the base flag ON silently
+   * removes it — the same invisible failure as `PHASE2_EVENTS`, in the other
+   * direction. Nothing lands in one today, and this is what would say so.
    */
   it('has no flag landing in a section V2 dropped', () => {
     const stranded = PHASE2_FLAGS
@@ -125,6 +144,20 @@ describe('the Phase 2 flag manifest', () => {
       const withBaseOff = orderedOverviewSections(allPresent, false);
       const withBaseOn = orderedOverviewSections(allPresent, true);
       const needsBase = entry.requires.includes(OVERVIEW_ORDER_FLAG);
+
+      /*
+        An unreachable flag's key must be emitted in NEITHER state — with every
+        section present, which is the most generous input there is. Anything
+        less than "absent both ways" would mean the `unreachable` claim is
+        wrong, and a claim like that is worse than no claim.
+      */
+      if (entry.unreachable) {
+        expect(withBaseOff, `${entry.env} is unreachable and must not appear in V1`)
+          .not.toContain(key);
+        expect(withBaseOn, `${entry.env} is unreachable and must not appear in V2`)
+          .not.toContain(key);
+        continue;
+      }
 
       expect(withBaseOn, `${entry.env} must be reachable with the base flag on`)
         .toContain(key);

@@ -3,6 +3,7 @@ import {
   orderedOverviewSections,
   OVERVIEW_ORDER_V1,
   OVERVIEW_ORDER_V2,
+  STRANDED_SECTION_KEYS,
   type OverviewSectionKey,
   type OverviewSectionPresence,
 } from './section-order';
@@ -15,11 +16,11 @@ const KEYS: readonly OverviewSectionKey[] = [
 /**
  * All 2^9 on/off combinations of the nine keys.
  *
- * Nine keys, and NEITHER ORDER LISTS ALL OF THEM. `marketStatus`, `upcoming`
- * and `marketEvents` are V1's; `events` is V2's. A key that is present but not
- * in the order being used must produce nothing at all, which is a property this
- * sweep now checks for free — it was not checkable while every order held every
- * key.
+ * Nine keys, and NEITHER ORDER LISTS ALL OF THEM. `marketStatus` and
+ * `upcoming` are V1's alone; `events` is in no order at all. A key that is
+ * present but not in the order being used must produce nothing, which is a
+ * property this sweep checks for free — it was not checkable while every order
+ * held every key.
  */
 function everySubset(): OverviewSectionPresence[] {
   const subsets: OverviewSectionPresence[] = [];
@@ -57,15 +58,24 @@ describe('the overview reading order', () => {
     }
   });
 
-  it('gives every key a home in at least one order', () => {
-    // A key in neither order is dead: nothing can ever render it.
+  /*
+   * A key in neither order is DEAD: nothing can ever render it, however true
+   * its flag. That is the `PHASE2_EVENTS` defect exactly, so a key may only be
+   * stranded when the module says so out loud — an accidental strand is red
+   * here, and a declared one has to keep being true.
+   */
+  it('gives every key a home in an order, or declares it stranded', () => {
     const placed = new Set([...OVERVIEW_ORDER_V1, ...OVERVIEW_ORDER_V2]);
-    expect([...placed].sort()).toEqual([...KEYS].sort());
+    expect([...placed, ...STRANDED_SECTION_KEYS].sort()).toEqual([...KEYS].sort());
+    // And the declaration cannot go stale: a stranded key is really in neither.
+    for (const key of STRANDED_SECTION_KEYS) {
+      expect(placed.has(key), `${key} is declared stranded but is in an order`).toBe(false);
+    }
   });
 
   it('puts the requested sections in the requested order under V2', () => {
     const requested: OverviewSectionKey[] = [
-      'marketToday', 'portfolio', 'whatChanged', 'watchlist', 'events', 'news',
+      'marketToday', 'portfolio', 'whatChanged', 'watchlist', 'marketEvents', 'news',
     ];
     const positions = requested.map((key) => OVERVIEW_ORDER_V2.indexOf(key));
     expect(positions.every((index) => index > -1)).toBe(true);
@@ -98,9 +108,39 @@ describe('the overview reading order', () => {
     // `marketToday` publishes the same six instruments and the same regime the
     // Market Status card does, so V2 carries one of them and not both.
     expect(OVERVIEW_ORDER_V2).not.toContain('marketStatus');
-    // And V2's merged list replaces the two blocks it carries the rows of.
+    // `upcoming` goes because the calendar slot answers the same question.
     expect(OVERVIEW_ORDER_V2).not.toContain('upcoming');
-    expect(OVERVIEW_ORDER_V2).not.toContain('marketEvents');
+  });
+
+  /*
+   * ===========================================================================
+   * THE CALENDAR IS ONE SECTION, AND IT IS THE GRID
+   * ===========================================================================
+   * The Overview shows the month grid, never the merged list, and never both:
+   * two cards about the same calendar on one page is the reader reading the
+   * same dates twice in two shapes.
+   *
+   * `marketEvents` in BOTH orders is the assertion that would go red if it were
+   * dropped from either — which is the failure that put a `MARKET_EVENTS_CARD`
+   * that was correctly switched on behind a page that could not draw it.
+   */
+  it('draws the calendar as the month grid in both orders, and never beside the list', () => {
+    expect(OVERVIEW_ORDER_V1).toContain('marketEvents');
+    expect(OVERVIEW_ORDER_V2).toContain('marketEvents');
+    for (const order of [OVERVIEW_ORDER_V1, OVERVIEW_ORDER_V2]) {
+      expect(order.includes('marketEvents') && order.includes('events')).toBe(false);
+    }
+  });
+
+  /*
+   * Under V2 the grid sits where a reader who has just looked at what they own
+   * asks what is coming — after the watchlist, before the news.
+   */
+  it('puts the calendar after the watchlist and above the news under V2', () => {
+    expect(OVERVIEW_ORDER_V2.indexOf('marketEvents'))
+      .toBeGreaterThan(OVERVIEW_ORDER_V2.indexOf('watchlist'));
+    expect(OVERVIEW_ORDER_V2.indexOf('marketEvents'))
+      .toBeLessThan(OVERVIEW_ORDER_V2.indexOf('news'));
   });
 
   it('puts the summary above the rows it is derived from, under V2 only', () => {

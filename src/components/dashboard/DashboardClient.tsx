@@ -1579,6 +1579,20 @@ export function DashboardClient({
       )
       : <ChangesSection changes={changes} />,
     marketEvents: view.marketEvents && <MarketEventsCard view={view.marketEvents} />,
+    /*
+      THE MERGED LIST, WHICH NO ORDER ARRAY WALKS ANY MORE.
+
+      Both orders draw `marketEvents` — the month grid — in the calendar slot,
+      so this key is never in `sections` and this node is never consulted. It
+      is kept whole rather than deleted because the decision it lost to is an
+      editorial one the owner can reverse: the grid shows the shape of a month
+      at a glance, the list shows which rows touch the reader's own symbols,
+      and putting the list back is one entry in `section-order.ts`.
+
+      `STRANDED_SECTION_KEYS` there says the same thing where the filtering
+      happens, and `section-order.test.ts` fails if a key is stranded without
+      being named.
+    */
     events: view.events && (
       <section className="panel-quiet min-w-0">
         <SectionTitle title="วันสำคัญที่ใกล้ถึง" />
