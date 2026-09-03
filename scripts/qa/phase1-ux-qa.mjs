@@ -467,6 +467,27 @@ async function featureChecks(page) {
   const upcomingRows = await page.locator('[data-testid="upcoming-section"] li').count();
   report.features.push({ id: 'upcoming-route', present: upcoming > 0, rows: upcomingRows });
   check(upcoming > 0, '/upcoming did not render the unified section');
+  /*
+    THE FIXTURE'S ALERT MUST NOT BE HERE, and that is the claim it was seeded to
+    make.
+
+    `seedAccount` writes one enabled alert on AAPL at 9999 — thousands of
+    percent above the market and deliberately so, because the feature being
+    proved is the NEGATIVE one: an alert nowhere near its target is not
+    something coming up, and must not be listed as though it were.
+
+    Until now this run only recorded the row count and asserted the section
+    existed. So the day a far-off alert started appearing, the count would have
+    moved from 0 to 1 in the report and every check would still have passed —
+    the one fixture written to catch that would have watched it happen. The
+    account is otherwise fresh, with no earnings date and no option expiry, so
+    zero is the whole expected content of this list.
+  */
+  check(
+    upcomingRows === 0,
+    `/upcoming listed ${upcomingRows} row(s); the seeded alert is 9999 on AAPL and must not be "coming up"`,
+    { rows: upcomingRows },
+  );
 }
 
 /**
