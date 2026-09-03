@@ -5,6 +5,8 @@ import {
   type MonthCoverageState,
 } from './calendar';
 import { IMPORTANCE_LABEL_TH, toFeedItem, type FeedItem } from './feed';
+import { reactionsFor, type EventReactionView, type ReactionRow } from './reactions';
+import type { ReleaseTiming } from './release-timing';
 import { buildMonthGrid, WEEKDAY_HEADINGS_TH } from './month-grid';
 import {
   addDays,
@@ -101,6 +103,24 @@ export interface MonthViewCell {
   ariaLabelTh: string;
 }
 
+/**
+ * A panel row: the feed row, plus what the index did the last few times this
+ * release was published.
+ *
+ * An INTERSECTION rather than a new shape, so a `SelectedDayItem` is still a
+ * `FeedItem` everywhere one is wanted — `MarketEventRow` takes the narrower
+ * type and neither knows nor cares that the panel hands it more.
+ *
+ * The history hangs off the PANEL row and not off `FeedItem`, which is what
+ * keeps it out of the feed below. The feed answers "what is still coming", and
+ * a column of past percentages under every future release would be answering a
+ * question nobody on that list asked.
+ */
+export type SelectedDayItem = FeedItem & {
+  /** Null when this release has no recorded history — the block then renders nothing. */
+  reaction: EventReactionView | null;
+};
+
 export interface SelectedDayView {
   dayKey: string;
   /** "วันศุกร์ที่ 11 กันยายน 2569". Never relative — see `headingTh`. */
@@ -110,7 +130,7 @@ export interface SelectedDayView {
   relative: 'today' | 'tomorrow' | 'other';
   count: number;
   /** Built by `toFeedItem`, so a panel row and a feed row cannot disagree. */
-  items: FeedItem[];
+  items: SelectedDayItem[];
 }
 
 export interface MarketEventsMonthView {
@@ -180,6 +200,7 @@ export function buildMarketEventsMonthView({
   monthParam,
   dayParam,
   events = MARKET_EVENTS,
+  reactionBuckets,
 }: {
   now: string | Date;
   /** Raw `?m=`, untrusted. */
@@ -187,6 +208,12 @@ export function buildMarketEventsMonthView({
   /** Raw `?d=`, untrusted. */
   dayParam?: string | null;
   events?: readonly MarketEvent[];
+  /**
+   * Overrides the shipped reaction file. Every caller in the product omits it;
+   * it exists so a test and the 375px capture can show the block at all, since
+   * the shipped file is empty until releases are backfilled.
+   */
+  reactionBuckets?: Record<ReleaseTiming, readonly ReactionRow[]>;
 }): MarketEventsMonthView | null {
   const todayKey = bangkokDayKey(now);
   if (!todayKey) return null;
@@ -222,7 +249,7 @@ export function buildMarketEventsMonthView({
     prevMonthKey: range && monthKey > range.firstMonthKey ? addMonths(monthKey, -1) : null,
     nextMonthKey: range && monthKey < range.lastMonthKey ? addMonths(monthKey, 1) : null,
     selected: selectedDayKey
-      ? toSelectedDay(selectedDayKey, findCell(grid, selectedDayKey), todayKey)
+      ? toSelectedDay(selectedDayKey, findCell(grid, selectedDayKey), todayKey, reactionBuckets)
       : null,
   };
 }
@@ -319,6 +346,7 @@ function toSelectedDay(
   dayKey: string,
   cell: ReturnType<typeof buildMonthGrid>['weeks'][number][number] | null,
   todayKey: string,
+  reactionBuckets?: Record<ReleaseTiming, readonly ReactionRow[]>,
 ): SelectedDayView {
   const events = cell?.events ?? [];
   const relative = dayKey === todayKey
@@ -337,7 +365,10 @@ function toSelectedDay(
         ? 'พรุ่งนี้'
         : dateLabelTh,
     count: events.length,
-    items: events.map((event) => toFeedItem(event, dayKey)),
+    items: events.map((event) => ({
+      ...toFeedItem(event, dayKey),
+      reaction: reactionsFor(event, reactionBuckets ? { buckets: reactionBuckets } : {}),
+    })),
   };
 }
 

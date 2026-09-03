@@ -52,6 +52,8 @@ import { MonthCalendar } from '@/src/components/market-events/MonthCalendar';
 import { MarketEventsFeed } from '@/src/components/market-events/MarketEventsFeed';
 import { buildEventFeed, exposureNoteTh } from '@/src/lib/market-events/feed';
 import { buildMarketEventsMonthView } from '@/src/lib/market-events/month-view';
+import type { ReactionRow } from '@/src/lib/market-events/reactions';
+import type { ReleaseTiming } from '@/src/lib/market-events/release-timing';
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -86,8 +88,33 @@ function column(children: string): string {
     + '</div></main>';
 }
 
-function calendarMarkup(monthParam?: string): string {
-  const view = buildMarketEventsMonthView({ now: NOW, monthParam });
+/*
+ * Reaction history, as a FIXTURE, and the only reason the block can be captured
+ * at all: `market-event-reactions.json` is empty because no past release has
+ * been transcribed into the calendar yet. Not one of these session dates is
+ * offered as a real publication date. They exist so the 375px behaviour of a
+ * three-number block under a row that already carries a time, a title, a source
+ * and an importance chip is measured BEFORE somebody backfills a hundred
+ * releases and finds out. See docs/market-events-backfill.md.
+ */
+const REACTIONS: Record<ReleaseTiming, ReactionRow[]> = {
+  beforeOpen: [
+    { eventId: 'qa-1', kind: 'PCE', sessionDate: '2026-08-28', previousSessionDate: '2026-08-27', close: 100, previousClose: 99.58, changePercent: 0.42 },
+    { eventId: 'qa-2', kind: 'PCE', sessionDate: '2026-07-31', previousSessionDate: '2026-07-30', close: 100, previousClose: 101.11, changePercent: -1.1 },
+    { eventId: 'qa-3', kind: 'PCE', sessionDate: '2026-06-26', previousSessionDate: '2026-06-25', close: 100, previousClose: 99.8, changePercent: 0.2 },
+    { eventId: 'qa-4', kind: 'GDP', sessionDate: '2026-08-27', previousSessionDate: '2026-08-26', close: 100, previousClose: 100.31, changePercent: -0.31 },
+    { eventId: 'qa-5', kind: 'GDP', sessionDate: '2026-07-30', previousSessionDate: '2026-07-29', close: 100, previousClose: 98.85, changePercent: 1.16 },
+    { eventId: 'qa-6', kind: 'JOBLESS_CLAIMS', sessionDate: '2026-11-19', previousSessionDate: '2026-11-18', close: 100, previousClose: 99.93, changePercent: 0.07 },
+  ],
+  intraday: [],
+  afterClose: [],
+};
+
+function calendarMarkup(
+  monthParam?: string,
+  reactionBuckets?: Record<ReleaseTiming, ReactionRow[]>,
+): string {
+  const view = buildMarketEventsMonthView({ now: NOW, monthParam, reactionBuckets });
   if (!view) throw new Error('the month view should build for a fixed instant');
   return renderToString(React.createElement(MonthCalendar, { view }));
 }
@@ -114,6 +141,17 @@ const STATES: Array<{ label: string; body: string; anchor: string }> = [
   {
     label: 'after-uncovered',
     body: column(calendarMarkup(UNCOVERED_MONTH) + feedMarkup()),
+    anchor: '[data-testid="market-events-calendar"]',
+  },
+  /*
+    The history block, which cannot appear from the shipped data at all. The
+    day being captured carries three releases, two of which have fixture
+    history, so this also measures what a row looks like when the one beside it
+    has none — the block must be absent there rather than reserved.
+  */
+  {
+    label: 'after-reactions',
+    body: column(calendarMarkup(undefined, REACTIONS) + feedMarkup()),
     anchor: '[data-testid="market-events-calendar"]',
   },
 ];
@@ -185,6 +223,15 @@ const PROBE = `() => {
       overflows: [...panel.querySelectorAll('li')]
         .filter((li) => li.scrollWidth > li.clientWidth + 1).length,
     } : null,
+    reactions: [...document.querySelectorAll('[data-testid*="-reaction-"]')].map((node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        testId: node.getAttribute('data-testid'),
+        text: node.innerText.replace(/\\s+/g, ' ').trim(),
+        height: Math.round(box.height),
+        overflows: node.scrollWidth > node.clientWidth + 1,
+      };
+    }),
   };
 }`;
 
@@ -249,6 +296,11 @@ for (const state of STATES) {
     for (const row of panel.rows) console.log(`      ${row}`);
   } else {
     console.log('  panel            : (none)');
+  }
+  const reactions = measured.reactions as Array<{ testId: string; text: string; height: number; overflows: boolean }>;
+  console.log(`  history blocks   : ${reactions.length}`);
+  for (const block of reactions) {
+    console.log(`      ${block.text}  [${block.height}px${block.overflows ? ', OVERFLOWS' : ''}]`);
   }
 }
 

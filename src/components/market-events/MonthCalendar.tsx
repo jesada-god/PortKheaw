@@ -368,7 +368,12 @@ function SelectedDayPanel({ view }: { view: MarketEventsMonthView }) {
       ) : (
         <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--hairline)]">
           {day.items.map((item) => (
-            <MarketEventRow key={item.id} item={item} testIdPrefix="market-events-panel" />
+            <MarketEventRow
+              key={item.id}
+              item={item}
+              reaction={item.reaction}
+              testIdPrefix="market-events-panel"
+            />
           ))}
         </ul>
       )}

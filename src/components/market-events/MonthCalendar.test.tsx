@@ -3,8 +3,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CARD_MUST_NOT_SAY, NEVER_SAY } from '@/src/lib/presentation/banned-copy';
+import {
+  CARD_MUST_NOT_SAY,
+  EVENT_REACTION_MUST_NOT_SAY,
+  NEVER_SAY,
+} from '@/src/lib/presentation/banned-copy';
 import { buildMarketEventsMonthView } from '@/src/lib/market-events/month-view';
+import type { ReactionRow } from '@/src/lib/market-events/reactions';
+import type { ReleaseTiming } from '@/src/lib/market-events/release-timing';
 import type { MarketEvent } from '@/src/lib/market-events/types';
 import { MonthCalendar } from './MonthCalendar';
 
@@ -83,9 +89,25 @@ const EVENTS: MarketEvent[] = [
   event({ id: 'cpi-dec', at: '2026-12-10T13:30:00.000Z', importance: 'medium' }),
 ];
 
+/*
+ * Reaction history, as a fixture. The shipped file is empty — no releases have
+ * been backfilled into the calendar — so this is the only way to see the block
+ * render at all, and none of these session dates is offered as a real
+ * publication date.
+ */
+const REACTIONS: Record<ReleaseTiming, ReactionRow[]> = {
+  beforeOpen: [
+    { eventId: 'cpi-jun', kind: 'CPI', sessionDate: '2026-06-10', previousSessionDate: '2026-06-09', close: 100, previousClose: 99.58, changePercent: 0.42 },
+    { eventId: 'cpi-jul', kind: 'CPI', sessionDate: '2026-07-14', previousSessionDate: '2026-07-13', close: 100, previousClose: 101.11, changePercent: -1.1 },
+    { eventId: 'cpi-aug', kind: 'CPI', sessionDate: '2026-08-12', previousSessionDate: '2026-08-11', close: 100, previousClose: 99.8, changePercent: 0.2 },
+  ],
+  intraday: [],
+  afterClose: [],
+};
+
 function render(
   now: string,
-  params: { monthParam?: string; dayParam?: string } = {},
+  params: { monthParam?: string; dayParam?: string; reactionBuckets?: Record<ReleaseTiming, ReactionRow[]> } = {},
   events: MarketEvent[] = EVENTS,
 ) {
   const view = buildMarketEventsMonthView({ now, events, ...params });
@@ -349,5 +371,86 @@ describe('what the calendar refuses to do', () => {
   it('names no holding and no ticker anywhere on the grid', () => {
     render('2026-12-10T04:00:00.000Z');
     expect(text()).not.toMatch(/NVDA|AAPL|หุ้นเทค|กลุ่มเทคโนโลยี/);
+  });
+});
+
+describe('what the index did the last few times a release was published', () => {
+  const reaction = () => at('[data-testid="market-events-panel-reaction-cpi-nov"]');
+
+  /*
+   * ===========================================================================
+   * THE STATE THE PRODUCT SHIPS IN TODAY
+   * ===========================================================================
+   * No releases have been backfilled, so there is no history for any row, and
+   * the whole block must be ABSENT — not a heading over a dash, not "ไม่มีข้อมูล",
+   * not a reserved empty strip. Any of those would be a permanent apology on
+   * every row, and would invite a reader to wonder what is broken when the
+   * answer is that nothing is.
+   */
+  it('renders nothing at all when there is no history — no heading, no dash, no gap', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(container.querySelectorAll('[data-testid*="-reaction-"]')).toHaveLength(0);
+    expect(text()).not.toContain('ครั้งก่อน');
+    expect(text()).not.toContain('S&P 500');
+    expect(text()).not.toContain('ไม่มีข้อมูล');
+    expect(text()).not.toContain('—%');
+  });
+
+  it('states the earlier publications and what the numbers are of', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    expect(reaction()?.textContent).toContain('ครั้งก่อน ๆ');
+    expect(reaction()?.textContent).toContain('S&P 500 วันนั้น');
+  });
+
+  it('prints each change signed, most recent first', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    const numbers = [...reaction()!.querySelectorAll('.font-mono')].map((node) => node.textContent);
+    expect(numbers).toEqual(['+0.20%', '-1.10%', '+0.42%']);
+  });
+
+  /*
+   * A percentage nobody can locate is not a fact a reader can check, and every
+   * other figure in this feature is traceable to something they can go and look
+   * at. Three dated closes are three facts; three undated ones are an assertion.
+   */
+  it('keeps the session date beside every number', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    expect(reaction()?.textContent).toContain('12 ส.ค. 2569');
+    expect(reaction()?.textContent).toContain('14 ก.ค. 2569');
+    expect(reaction()?.textContent).toContain('10 มิ.ย. 2569');
+  });
+
+  it('does not lean on colour: the sign is printed on every number', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    for (const node of reaction()!.querySelectorAll('.font-mono')) {
+      expect(node.textContent).toMatch(/^[+-]/);
+    }
+  });
+
+  /*
+   * The row component is shared with the feed, and the feed answers a different
+   * question — "what is still coming". Past percentages under a future release
+   * would answer one nobody on that list asked.
+   */
+  it('appears in the day panel and nowhere else on the page', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    const found = [...container.querySelectorAll('[data-testid*="-reaction-"]')];
+    expect(found).toHaveLength(1);
+    expect(found[0].getAttribute('data-testid')).toBe('market-events-panel-reaction-cpi-nov');
+    expect(at('[data-testid="market-events-day-panel"]')?.contains(found[0])).toBe(true);
+  });
+
+  it('shows no history on a release whose kind has none', () => {
+    render('2026-12-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    // The December day holds an FOMC statement and a CPI print; only CPI has rows,
+    // and the FOMC one reads a different bucket, which is empty.
+    expect(at('[data-testid="market-events-panel-reaction-fomc-dec"]')).toBeNull();
+  });
+
+  it('says none of the words a measured number is not allowed to imply', () => {
+    render('2026-11-10T04:00:00.000Z', { reactionBuckets: REACTIONS });
+    for (const phrase of EVENT_REACTION_MUST_NOT_SAY) {
+      expect(text(), `the calendar must not say "${phrase}"`).not.toContain(phrase);
+    }
   });
 });
