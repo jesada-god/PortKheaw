@@ -45,10 +45,26 @@ describe('the Phase 2 flag manifest', () => {
   const inV2 = (key: string) => (OVERVIEW_ORDER_V2 as readonly string[]).includes(key);
 
   it('has every flag to check, so a pass is never vacuous', () => {
-    expect(PHASE2_FLAGS.length).toBe(4);
+    expect(PHASE2_FLAGS.length).toBe(5);
     expect(PHASE2_FLAGS.map((entry) => entry.env).sort()).toEqual([
-      'PHASE2_ALERTS', 'PHASE2_EVENTS', 'PHASE2_MARKET_SNAPSHOT', 'PHASE2_WHAT_CHANGED',
+      'MARKET_EVENTS_CARD', 'PHASE2_ALERTS', 'PHASE2_EVENTS',
+      'PHASE2_MARKET_SNAPSHOT', 'PHASE2_WHAT_CHANGED',
     ]);
+  });
+
+  /*
+   * MARKET_EVENTS_CARD is not a PHASE2_* flag and belongs here anyway.
+   *
+   * What this file is for is flags whose output has to survive
+   * `orderedOverviewSections`, and that one does — it fell into this exact trap
+   * from the V1 side while the manifest built to prevent it did not mention it.
+   * Naming the requirement rather than the prefix is what stops the next
+   * order-gated flag being left out for the same reason.
+   */
+  it('covers every flag whose section key the order arrays decide', () => {
+    const covered = new Set(PHASE2_FLAGS.map((entry) => entry.sectionKey));
+    expect(covered, 'the calendar card is order-gated and must be declared')
+      .toContain('marketEvents');
   });
 
   /*
@@ -85,24 +101,39 @@ describe('the Phase 2 flag manifest', () => {
    * and the manifest must say so — because the whole failure was a flag whose
    * prerequisite nobody had written down.
    */
-  it('declares the base flag for every section that only exists in V2', () => {
+  it('declares the base flag in the direction its section actually needs it', () => {
     const problems: string[] = [];
     for (const entry of PHASE2_FLAGS) {
       // An unreachable flag has no prerequisite to declare — satisfying one
       // would change nothing, and the previous test holds it to that.
       if (entry.unreachable) continue;
       const onlyV2 = inV2(entry.sectionKey) && !inV1(entry.sectionKey);
-      const declares = entry.requires.includes(OVERVIEW_ORDER_FLAG);
-      if (onlyV2 && !declares) {
+      const onlyV1 = inV1(entry.sectionKey) && !inV2(entry.sectionKey);
+      const needs = entry.requires.includes(OVERVIEW_ORDER_FLAG);
+      const refuses = entry.forbids.includes(OVERVIEW_ORDER_FLAG);
+
+      if (onlyV2 && !needs) {
         problems.push(
           `${entry.env} lands in '${entry.sectionKey}', which is only in `
           + `OVERVIEW_ORDER_V2 — it must declare ${OVERVIEW_ORDER_FLAG} in requires`,
         );
       }
-      if (!onlyV2 && declares) {
+      if (onlyV1 && !refuses) {
         problems.push(
-          `${entry.env} declares ${OVERVIEW_ORDER_FLAG}, but '${entry.sectionKey}' `
-          + 'is in both orders and needs no base flag',
+          `${entry.env} lands in '${entry.sectionKey}', which is only in `
+          + `OVERVIEW_ORDER_V1 — it must declare ${OVERVIEW_ORDER_FLAG} in forbids`,
+        );
+      }
+      if (!onlyV2 && needs) {
+        problems.push(
+          `${entry.env} requires ${OVERVIEW_ORDER_FLAG}, but '${entry.sectionKey}' `
+          + 'is not a V2-only section',
+        );
+      }
+      if (!onlyV1 && refuses) {
+        problems.push(
+          `${entry.env} forbids ${OVERVIEW_ORDER_FLAG}, but '${entry.sectionKey}' `
+          + 'is not a V1-only section',
         );
       }
     }
@@ -110,17 +141,27 @@ describe('the Phase 2 flag manifest', () => {
   });
 
   /*
-   * A V1-ONLY KEY IS THE SAME TRAP MIRRORED.
+   * ===========================================================================
+   * THE CALENDAR CARD IS REACHABLE WHATEVER THE BASE FLAG IS
+   * ===========================================================================
+   * This is the assertion that goes red if `marketEvents` falls out of either
+   * order array — which is the defect it exists for. `MARKET_EVENTS_CARD` was
+   * set in production, `OVERVIEW_V2` was set too, and the card did not draw
+   * because V2's array had no `'marketEvents'` key. Nothing failed; there was
+   * simply nothing that could notice.
    *
-   * If a flag lands in a section V2 dropped, turning the base flag ON silently
-   * removes it — the same invisible failure as `PHASE2_EVENTS`, in the other
-   * direction. Nothing lands in one today, and this is what would say so.
+   * Stated over the REAL arrays and the REAL filter, so it cannot be satisfied
+   * by editing the manifest.
    */
-  it('has no flag landing in a section V2 dropped', () => {
-    const stranded = PHASE2_FLAGS
-      .filter((entry) => inV1(entry.sectionKey) && !inV2(entry.sectionKey))
-      .map((entry) => `${entry.env} -> ${entry.sectionKey}`);
-    expect(stranded).toEqual([]);
+  it('keeps the calendar card reachable in both orders', () => {
+    expect(inV1('marketEvents'), "'marketEvents' must be in OVERVIEW_ORDER_V1").toBe(true);
+    expect(inV2('marketEvents'), "'marketEvents' must be in OVERVIEW_ORDER_V2").toBe(true);
+
+    const allPresent = Object.fromEntries(
+      OVERVIEW_SECTION_KEYS.map((key) => [key, true]),
+    ) as OverviewSectionPresence;
+    expect(orderedOverviewSections(allPresent, false)).toContain('marketEvents');
+    expect(orderedOverviewSections(allPresent, true)).toContain('marketEvents');
   });
 
   it('lists exactly the sections the base flag removes', () => {
@@ -144,6 +185,7 @@ describe('the Phase 2 flag manifest', () => {
       const withBaseOff = orderedOverviewSections(allPresent, false);
       const withBaseOn = orderedOverviewSections(allPresent, true);
       const needsBase = entry.requires.includes(OVERVIEW_ORDER_FLAG);
+      const refusesBase = entry.forbids.includes(OVERVIEW_ORDER_FLAG);
 
       /*
         An unreachable flag's key must be emitted in NEITHER state — with every
@@ -159,8 +201,10 @@ describe('the Phase 2 flag manifest', () => {
         continue;
       }
 
-      expect(withBaseOn, `${entry.env} must be reachable with the base flag on`)
-        .toContain(key);
+      expect(
+        withBaseOn.includes(key),
+        `${entry.env} reachable with the base flag on should be ${!refusesBase}`,
+      ).toBe(!refusesBase);
       expect(
         withBaseOff.includes(key),
         `${entry.env} reachable with the base flag off should be ${!needsBase}`,
@@ -212,12 +256,14 @@ describe('the manifest is the only copy', () => {
         problems.push(`${entry.env} has no table row in the doc`);
         continue;
       }
-      for (const required of entry.requires) {
+      for (const required of [...entry.requires, ...entry.forbids]) {
         if (!row.includes(required)) {
           problems.push(`the doc's ${entry.env} row does not name its prerequisite ${required}`);
         }
       }
-      if (entry.requires.length === 0 && row.includes(OVERVIEW_ORDER_FLAG)) {
+      if (entry.requires.length === 0
+        && entry.forbids.length === 0
+        && row.includes(OVERVIEW_ORDER_FLAG)) {
         problems.push(`the doc's ${entry.env} row claims a ${OVERVIEW_ORDER_FLAG} prerequisite it does not have`);
       }
     }

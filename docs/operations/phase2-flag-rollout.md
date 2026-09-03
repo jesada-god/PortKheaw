@@ -1,9 +1,12 @@
 # Phase 2 flag rollout
 
-What each of the four flags costs, what it needs applied first, and the order
-that is safe. Measured 2026-08-31 against a production build.
+What each flag costs, what it needs applied first, and the order that is safe.
+Measured 2026-08-31 against a production build.
 
-**Nothing here has been switched on.** All four are off in production.
+The list is not "flags whose name starts with `PHASE2_`". It is **every flag
+whose output has to survive `orderedOverviewSections` to be seen**, which is why
+`MARKET_EVENTS_CARD` is here: it is not a Phase 2 flag, and it failed in exactly
+the way this document exists to prevent.
 
 ## Measured cost, all four on at once
 
@@ -26,7 +29,7 @@ Also from that run, at 375 × 812:
 - `document.scrollWidth` 375 against a 375 viewport, **0 overflow offenders**;
 - **0 page errors** and 0 console errors on either.
 
-## The four flags
+## The flags
 
 Prerequisites are declared once, in
 [`src/config/phase2-flag-manifest.mjs`](../../src/config/phase2-flag-manifest.mjs).
@@ -39,12 +42,28 @@ arrays in `section-order.ts`.
 | `PHASE2_MARKET_SNAPSHOT` | Adds the market strip, the status word and its reasons to ตลาดวันนี้ | **Yes — the only one that spends.** Six provider quotes, behind a 60-second shared cache and a last-good snapshot, so a burst of readers costs one round rather than one each | **None** — `marketToday` is in both order arrays | No | None |
 | `PHASE2_WHAT_CHANGED` | Shows the renamed change feed | No. Renames items the watchlist detectors already produce — a mapping with a dedupe, no request, no clock, no history read | **None** — `whatChanged` is in both order arrays | **Yes** — built from the reader's own watchlist | None |
 | `PHASE2_EVENTS` | **Nothing, in any combination.** It still builds the merged list; no order array walks the `events` key any more | No, and it buys nothing either | **Unreachable.** `events` is in neither order array — the Overview draws the month grid (`marketEvents`) in that slot. See below | No | None |
+| `MARKET_EVENTS_CARD` | Draws the ปฏิทินเศรษฐกิจ month grid on the Overview, and makes `/market-events` exist at all — the route `notFound()`s while it is off | No. The calendar is a static JSON import; the route adds one portfolio row read, to count holdings | **None** — `marketEvents` is in both order arrays | No | None |
 | `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` (`earnings` rules) and `202608310004` (account-deletion purge) — **not applied** |
 
 `PHASE2_MARKET_SNAPSHOT` and the watchlist-view pair are read *before* their
 promises are constructed, so with a flag off the work is never started rather
 than started and discarded. `src/config/phase2-flags.test.ts` asserts that
 against the source of `app/page.tsx`.
+
+### `MARKET_EVENTS_CARD` failed the same way, from the other side
+
+It was set in production, redeployed, and the card did not appear. `OVERVIEW_V2`
+was on, `'marketEvents'` was in `OVERVIEW_ORDER_V1` alone, and the section was
+filtered out before its presence was consulted — the `PHASE2_EVENTS` failure
+with the base flag inverted.
+
+The manifest could not have caught it: `MARKET_EVENTS_CARD` was not in it, and
+the schema had only `requires`, which says "this env var must also be TRUE".
+The prerequisite that was actually true — "`OVERVIEW_V2` must be OFF" — had
+nowhere to be written. There is a `forbids` field for that now, and
+`marketEvents` is in both order arrays, so neither field applies to it any
+more; the test derives that from `section-order.ts` and makes the matching
+field mandatory the moment the key drops out of an array.
 
 ### `PHASE2_EVENTS` no longer reaches the page at all
 
@@ -108,8 +127,8 @@ switch off but the flag.
 
 ## A safe order
 
-None of the four reads another's output, so this order is about what you can
-still attribute when something moves — not about correctness. Run
+None of them reads another's output, so this order is about what you can still
+attribute when something moves — not about correctness. Run
 `npm run verify:phase2-live -- --flag <name>` after each step; record the
 baseline first.
 
@@ -117,19 +136,23 @@ baseline first.
 the anchor every later step is gated against. The 413 ms above is a *localhost*
 number and is not comparable to production over the internet.
 
-1. **`PHASE2_MARKET_SNAPSHOT`** — the only one that buys anything, and moved to
+1. **`MARKET_EVENTS_CARD`** — free, visible signed out, in both order arrays,
+   and it is the step that makes `/market-events` stop returning 404. Nothing
+   else depends on it.
+   `--flag market-events-card`
+2. **`PHASE2_MARKET_SNAPSHOT`** — the only one that buys anything, and moved to
    the front because it is the only one visible signed-out with no prerequisite:
    one switch, one visible change, nothing else to explain it. Watch provider
    usage for a session before continuing.
    `--flag market-snapshot`
-2. **`PHASE2_WHAT_CHANGED`** — free. `whatChanged` is in both order arrays, so no
+3. **`PHASE2_WHAT_CHANGED`** — free. `whatChanged` is in both order arrays, so no
    base flag. It needs a **signed-in reader with a watchlist**, so the script
    reports it as not verified and you confirm it by eye.
    `--flag what-changed`
-3. **`PHASE2_ALERTS`** — free to render, but it starts the sweep. Only after
+4. **`PHASE2_ALERTS`** — free to render, but it starts the sweep. Only after
    `202608310003` is applied if you want `earnings` rules.
    `--flag alerts --wait-for-tick`
-4. **`OVERVIEW_V2`, last and alone.** `PHASE2_EVENTS` is no longer part of this
+5. **`OVERVIEW_V2`, last and alone.** `PHASE2_EVENTS` is no longer part of this
    step — it reaches nothing, and pairing it here would attribute the base
    flag's changes to a switch that did none of them. What this step does is drop
    `marketStatus` and `upcoming`, swap `watchlist` with `whatChanged`, and move
