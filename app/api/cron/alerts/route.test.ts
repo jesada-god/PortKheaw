@@ -172,9 +172,15 @@ describe('the Overview alert sweep on this endpoint', () => {
 
   it('a failed sweep leaves the notification pass reported as successful', async () => {
     /*
-      The case this whole wrapper exists for. The tables the sweep writes to are
-      unapplied migrations, so "the sweep threw" is the expected state in every
-      deployment today — and it must cost nothing.
+      The case this whole wrapper exists for: whatever kills the sweep, the
+      notification pass that already succeeded must still be reported as
+      successful.
+
+      This comment used to justify itself by saying the sweep's tables were
+      unapplied migrations and that throwing was therefore the everyday state.
+      They are applied (`202608300001`, `202608310001`), so it is not — a throw
+      is now an ordinary failure, which is a better reason for this test rather
+      than a worse one.
     */
     mocks.runOvAlertSweep.mockRejectedValue(new Error('relation does not exist'));
     const response = await GET(request());

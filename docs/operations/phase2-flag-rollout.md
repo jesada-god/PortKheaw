@@ -39,7 +39,7 @@ arrays in `section-order.ts`.
 | `PHASE2_MARKET_SNAPSHOT` | Adds the market strip, the status word and its reasons to ตลาดวันนี้ | **Yes — the only one that spends.** Six provider quotes, behind a 60-second shared cache and a last-good snapshot, so a burst of readers costs one round rather than one each | **None** — `marketToday` is in both order arrays | No | None |
 | `PHASE2_WHAT_CHANGED` | Shows the renamed change feed | No. Renames items the watchlist detectors already produce — a mapping with a dedupe, no request, no clock, no history read | **None** — `whatChanged` is in both order arrays | **Yes** — built from the reader's own watchlist | None |
 | `PHASE2_EVENTS` | Shows the 12-month macro calendar and its relevance join | No. The calendar is a static JSON already in the bundle; the symbol join is one array pass over lists the page holds | **`OVERVIEW_V2` — required.** `events` exists only in `OVERVIEW_ORDER_V2` | No | None |
-| `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` for `earnings` rules — **not applied** |
+| `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` (`earnings` rules) and `202608310004` (account-deletion purge) — **not applied** |
 
 `PHASE2_MARKET_SNAPSHOT` and the watchlist-view pair are read *before* their
 promises are constructed, so with a flag off the work is never started rather
@@ -139,6 +139,16 @@ the feature is built around. The column, the hits table, the evaluator and the
 
 `PHASE2_ALERTS` is safe to turn on before that migration — the four price and
 percent kinds work — but the feature is a fifth short until it lands.
+
+### Deleting an account leaves alert rows behind
+
+`202608310004` is written and **not applied**, so `purge_account_data` still
+carries a table list from before `overview_alert_rules`, `overview_alert_hits`
+and `user_release_note_state` existed, and deletes none of the three.
+
+Not urgent today only because nothing can create a rule — there is no interface
+for it, so those two tables are empty. It becomes a real gap the moment one
+lands, and it should land before that does.
 
 ### Breadth: `% above the 50-day / 200-day` is null and stays null
 

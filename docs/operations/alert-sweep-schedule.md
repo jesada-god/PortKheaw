@@ -82,7 +82,16 @@ next to it.
 
 `runOvAlertSweep` in
 [`src/lib/market-overview/alerts/run.ts`](../../src/lib/market-overview/alerts/run.ts)
-is complete and tested, and **is not yet called by the route**. Calling it means
-one addition to `app/api/cron/alerts/route.ts`, which this change was not
-permitted to edit. Until that line lands the sweep runs nowhere, and the tables
-it writes to are unapplied migrations, so nothing is silently half-live.
+is complete and tested, and **is called by the route** —
+`runOverviewAlertSweep` in `app/api/cron/alerts/route.ts` invokes it once per
+tick, behind `PHASE2_ALERTS` and behind the duplicate-window guard.
+
+The tables it reads and writes are applied: `202608300001`, `202608310001` and
+`202608310002` are all live. Both statements in this paragraph used to say the
+opposite and were stale — see
+[`migration-state.md`](migration-state.md).
+
+What is still pending is `202608310003`, which is why
+`create_overview_alert_rule` refuses `earnings`. That blocks a KIND of rule, not
+the sweep. In practice the sweep evaluates nothing today for a different reason
+entirely: no interface creates a rule, so there are none to sweep.

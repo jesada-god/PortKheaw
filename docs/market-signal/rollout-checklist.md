@@ -25,7 +25,7 @@ repository applies them — the SQL editor or your normal pipeline does, as
 | --- | --- | --- | --- |
 | 1 | `202608190002_earnings_calendar_lkg.sql` | `SIGNAL_GATE` — the gate's earnings rules (`earningsProximity`, `daysToEarnings`) come from `loadEarningsSchedule`, which reads `public.analytics_earnings_calendar_lkg` (`service.ts:36`) | **No, but do it first.** `schedule-repository.ts` is "soft about every failure": with no table the calendar degrades to the live provider and the gate quietly loses its durable earnings input. Skipping it means step 1 runs without the calendar it was measured with. |
 | 2 | `202608180001_market_signal_history.sql` | `SIGNAL_HISTORY` — creates `public.market_signal_history` and `public.sweep_market_signal_history()` | **Yes** for that flag. The flag with no table logs nothing and shows nothing; it does not break. |
-| 3 | `202608210001_market_signal_history_raw_state.sql` | `SIGNAL_HISTORY` — adds `raw_state`, the pre-hold-rule label P8 needs | **Yes**, and it ALTERs the table from #2, so it cannot go first. Its own header states that neither it nor #2 has been applied. |
+| 3 | `202608210001_market_signal_history_raw_state.sql` | `SIGNAL_HISTORY` — adds `raw_state`, the pre-hold-rule label P8 needs | **Yes**, and it ALTERs the table from #2, so it cannot go first. Its own header and #2's now both say `STATUS: APPLIED` (verified 2026-08-31); this row previously said the opposite and was stale. |
 
 The Options Signal migrations (`202608190001`, `202608190003`) are a different
 engine and a different decision. They are not part of this rollout.

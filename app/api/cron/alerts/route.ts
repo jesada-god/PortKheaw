@@ -66,10 +66,15 @@ async function runOverviewAlertSweep(
     };
   } catch {
     /*
-      The sweep itself died — the rules could not be read at all, most likely
-      because the migrations have not been applied. Reported, never thrown: the
-      notification pass above has already succeeded by this point and must not
-      be turned into a failed run by a section of the Overview.
+      The sweep itself died — the rules could not be read at all. This comment
+      used to name unapplied migrations as the likely cause; `202608300001` and
+      `202608310001` are applied, so that is no longer it, and the remaining
+      causes are the ordinary ones: the provider quote load failing, or the
+      database being unreachable.
+
+      Reported, never thrown, either way: the notification pass above has
+      already succeeded by this point and must not be turned into a failed run
+      by a section of the Overview.
     */
     return { ran: false, reason: 'failed' as const };
   }
