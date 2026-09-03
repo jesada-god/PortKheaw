@@ -53,6 +53,7 @@
     "qa:asset-strip": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-asset-strip-mobile-qa.mts",
     "qa:status-marks": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/status-direction-marks-qa.mts",
     "qa:events-calendar": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-events-calendar-mobile-qa.mts",
+    "backfill:event-reactions": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/backfill-event-reactions.ts",
     "qa:options-signal-card": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/options-signal-card-qa.mts",
     "signal:sensitivity": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sensitivity.ts",
     "signal:falsify": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-falsify.ts",
