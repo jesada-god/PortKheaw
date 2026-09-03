@@ -119,11 +119,50 @@ describe('the market events card', () => {
     expect(today?.className).toContain('bg-[var(--accent)]');
   });
 
-  it('links a day with events to that day on the detail page', () => {
+  /*
+   * ===========================================================================
+   * A DAY LINK HAS TO CARRY ITS OWN MONTH
+   * ===========================================================================
+   * `/market-events` reads `?m=` and `?d=`, and `resolveSelectedDayKey` drops
+   * the day outright when it does not fall inside the month — both are
+   * untrusted input, so disagreeing with itself is the one thing the link must
+   * never do. Without `?m=` the day is dropped and the reader lands on a grid
+   * with nothing selected, which is what tapping a cell was meant to avoid.
+   *
+   * The anchor is kept beside it: `?d=` selects the day in the grid, `#dayKey`
+   * scrolls to it in the feed below, and the bare-anchor form that shipped
+   * still resolves for anyone holding an old link.
+   */
+  it('links a day with events to that day on the detail page, month included', () => {
     render('2026-12-10T04:00:00.000Z');
     const link = cell('2026-12-10');
     expect(link?.tagName).toBe('A');
-    expect(link?.getAttribute('href')).toBe('/market-events#2026-12-10');
+    expect(link?.getAttribute('href')).toBe('/market-events?m=2026-12&d=2026-12-10#2026-12-10');
+  });
+
+  /*
+   * The month is sliced from the day rather than taken from the card, so it is
+   * the day's own month on every cell — checked across the whole grid rather
+   * than on the one cell the test above names.
+   */
+  it('gives every day link a month that contains the day it links to', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const links = container.querySelectorAll<HTMLAnchorElement>(
+      'a[data-testid^="market-events-cell-"]',
+    );
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      const href = link.getAttribute('href') ?? '';
+      const match = /^\/market-events\?m=(\d{4}-\d{2})&d=(\d{4}-\d{2}-\d{2})#(.+)$/
+        .exec(href);
+      expect(match, `${href} is not a month+day link with an anchor`).not.toBeNull();
+      const [, monthParam, dayParam, anchor] = match ?? [];
+      // `?m=` is the day's own month — anything else and the page drops `?d=`.
+      expect(monthParam, `${href} pairs a day with another month`)
+        .toBe(dayParam?.slice(0, 7));
+      // And the anchor is that same day, so the feed below scrolls to it.
+      expect(anchor, `${href} anchors somewhere other than its day`).toBe(dayParam);
+    }
   });
 
   it('links the card itself to the detail page', () => {

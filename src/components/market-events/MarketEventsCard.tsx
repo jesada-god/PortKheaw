@@ -163,9 +163,38 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
     );
   }
 
+  /*
+    ===========================================================================
+    THE MONTH COMES OFF THE DAY, NOT OFF THE CARD
+    ===========================================================================
+    `/market-events` takes its whole state from `?m=` and `?d=`, and
+    `resolveSelectedDayKey` DROPS the day when `monthKeyOf(d) !== m` — silently,
+    by design, because both values arrive from an address bar. So a link that
+    paired a day with the wrong month would land on the right grid with no day
+    selected, which is the same page the reader would have got by tapping
+    nothing at all.
+
+    Slicing the day key is right by construction rather than right today. The
+    card's own `view.monthKey` happens to agree on every link it currently
+    emits — only in-month cells are tappable — but that is a property of the
+    branch above, not of this line, and it would be quietly wrong the day a
+    padding cell became a link.
+
+    `monthKeyOf` is not imported to do it: this component is inside a
+    `'use client'` boundary, and pulling `time.ts` across it would put the Intl
+    formatters in the browser bundle that `card-view.ts` exists to keep out of
+    it. A `YYYY-MM-DD` key's first seven characters are its month.
+
+    The anchor stays. The two do different jobs and both are wanted: `?d=`
+    selects the day in the grid, `#dayKey` scrolls to that day in the feed
+    underneath. It is also the link that shipped, so an old bookmark still
+    lands where it always did.
+  */
+  const monthKey = cell.dayKey.slice(0, 7);
+
   return (
     <Link
-      href={`/market-events#${cell.dayKey}`}
+      href={`/market-events?m=${monthKey}&d=${cell.dayKey}#${cell.dayKey}`}
       className="min-w-0 rounded-md px-0.5 py-1 hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
       data-testid={`market-events-cell-${cell.dayKey}`}
       data-today={cell.isToday ? 'true' : undefined}
