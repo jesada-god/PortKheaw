@@ -40,18 +40,18 @@ Home (app/page.tsx, server)
         ├── [signed-out only] PublicValueProposition   DashboardClient.tsx:144
         ├── OnboardingCard                       src/components/onboarding/OnboardingCard.tsx
         │
-        ├── <section id="market-overview">       DashboardClient.tsx:1473   ← อยู่นอกลำดับ ไม่ย้ายตามธง
-        │   ├── SectionTitle "ตลาดวันนี้"        DashboardClient.tsx:204
-        │   ├── StatusLabel (market summary)     buildMarketSummary() จาก src/lib/overview/market-summary.ts
-        │   └── MarketCard × N                   DashboardClient.tsx:707  (scroller บนมือถือ / grid บน sm+)
-        │
         ├── {sections.map(...)}                  ← ลำดับตาม section-order.ts (ดูตารางถัดไป)
+        │   ├── <section id="market-overview">   key `marketToday` — อยู่ในลำดับแล้ว ธงขยับได้
+        │   │   ├── SectionTitle "ตลาดวันนี้"    DashboardClient.tsx:204
+        │   │   ├── StatusLabel (market summary) buildMarketSummary() จาก src/lib/overview/market-summary.ts
+        │   │   └── MarketCard × N               (scroller บนมือถือ / grid บน sm+)
         │   ├── MarketStatusCard                 src/components/dashboard/MarketStatusCard.tsx
         │   ├── PortfolioSummaryLine             DashboardClient.tsx:464
         │   ├── WatchlistSection                 DashboardClient.tsx:970
-        │   ├── ChangesSection                   DashboardClient.tsx:686
+        │   ├── ChangesSection / ChangesList     DashboardClient.tsx:686
         │   ├── MarketEventsCard                 src/components/market-events/MarketEventsCard.tsx
         │   ├── UpcomingSection                  src/components/upcoming/UpcomingSection.tsx
+        │   ├── EventsList                       ← key `events` ไม่อยู่ในลำดับไหนเลย จึงไม่ถูกเรียก
         │   └── NewsSection → NewsFeed           DashboardClient.tsx:668 → src/components/news/NewsFeed.tsx (dynamic, ssr:false)
         │
         └── <details> "ข้อมูลเชิงลึกของตลาดและสถานะระบบ"   ← ปิดอยู่โดย default
@@ -68,18 +68,26 @@ Home (app/page.tsx, server)
 
 | ลำดับ | `OVERVIEW_ORDER_V1` (default) | `OVERVIEW_ORDER_V2` (`OVERVIEW_V2=true`) |
 |---|---|---|
-| 1 | `marketStatus` | `marketStatus` |
-| 2 | `portfolio` | `portfolio` |
-| 3 | `watchlist` | `whatChanged` |
-| 4 | `whatChanged` | `watchlist` |
-| 5 | `upcoming` | `marketEvents` |
-| 6 | `news` | `upcoming` |
-| 7 | `marketEvents` | `news` |
+| 1 | `marketToday` | `marketToday` |
+| 2 | `marketStatus` | `portfolio` |
+| 3 | `portfolio` | `whatChanged` |
+| 4 | `watchlist` | `watchlist` |
+| 5 | `whatChanged` | `marketEvents` |
+| 6 | `upcoming` | `news` |
+| 7 | `news` | — |
+| 8 | `marketEvents` | — |
 
-เงื่อนไข present (DashboardClient.tsx:1399):
-`marketStatus` = มี `view.marketStatus` · `portfolio` / `watchlist` / `news` = เสมอ ·
-`whatChanged` = `changes.length > 0` · `marketEvents` = มี `view.marketEvents` ·
-`upcoming` = มี `view.upcoming`
+**`marketEvents` อยู่ทั้งสองชุด** — ปฏิทินคือ month grid (`MarketEventsCard`) ทั้งคู่ V1 วางไว้ล่างสุด
+V2 วางไว้หลัง watchlist ไม่มีชุดไหนที่ธง `MARKET_EVENTS_CARD` เปิดแล้วการ์ดหายอีก
+
+**`events` ไม่อยู่ชุดไหนเลย** — คือ key ที่ `orderedOverviewSections` ไม่มีวัน emit ประกาศไว้ที่
+`STRANDED_SECTION_KEYS` ใน section-order.ts และ `section-order.test.ts` จะแดงถ้ามี key อื่นหลุดมาอยู่
+สภาพนี้โดยไม่ได้ประกาศ ผลคือ **`PHASE2_EVENTS` ไม่เปลี่ยนพิกเซลใดเลยไม่ว่าธงอื่นจะเป็นอะไร**
+
+เงื่อนไข present (`DashboardClient.tsx` — `orderedOverviewSections({...})`):
+`marketToday` / `portfolio` / `watchlist` / `news` = เสมอ · `marketStatus` = มี `view.marketStatus` ·
+`whatChanged` = มี `view.changes` หรือ `changes.length > 0` · `marketEvents` = มี `view.marketEvents` ·
+`upcoming` = มี `view.upcoming` · `events` = มี `view.events` (แต่ถูก filter ทิ้งทุกกรณี)
 
 ### Feature flags ที่มีผลกับหน้านี้
 
@@ -91,9 +99,9 @@ default argument) มีเอกสาร rollout อยู่แล้วท�
 | `MARKET_STATUS_CARD` | `marketStatusCardEnabled()` | การ์ด Market Status + ค่า 6 quote |
 | `WATCHLIST_V2` | `watchlistV2Enabled()` | trend column, preview 5 แถว, หลาย watchlist |
 | `WHAT_CHANGED_CARD` | `whatChangedCardEnabled()` | section "มีอะไรเปลี่ยน" + daily bar loads |
-| `MARKET_EVENTS_CARD` | `marketEventsCardEnabled()` | ปฏิทิน macro (ไม่มีค่า provider) |
+| `MARKET_EVENTS_CARD` | `marketEventsCardEnabled()` | ปฏิทิน macro month grid บน Overview + ทั้งเส้นทาง `/market-events` (ไม่มีค่า provider) |
 | `NEWS_FILTER` | `newsFilterEnabled()` | market-wide → personalized news |
-| `OVERVIEW_V2` | `overviewV2Enabled()` | ลำดับ section เท่านั้น |
+| `OVERVIEW_V2` | `overviewV2Enabled()` | ลำดับ section เท่านั้น — เปิดแล้ว `marketStatus` กับ `upcoming` หายไป ปฏิทินขยับขึ้นมาหลัง watchlist |
 
 ---
 
