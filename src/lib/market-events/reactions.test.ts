@@ -83,6 +83,9 @@ describe('the list this builds', () => {
   it('names the most recent publications first, and stops at the limit', () => {
     expect(view(CPI)?.samples.map((sample) => sample.sessionDate))
       .toEqual(['2026-08-12', '2026-07-14', '2026-06-10']);
+    // WHICH rows, not just how many — the check `eventId` exists to make possible.
+    expect(view(CPI)?.samples.map((sample) => sample.eventId))
+      .toEqual(['cpi-c', 'cpi-b', 'cpi-a']);
   });
 
   it('shows three by default, because that is what the copy claims', () => {
@@ -150,7 +153,7 @@ describe('what it refuses to read', () => {
 
   it('never counts the event itself as one of its own earlier publications', () => {
     const self = event({ id: 'cpi-a', at: '2026-09-11T12:30:00.000Z' });
-    expect(reactionsFor(self, { buckets: BUCKETS })?.samples.map((sample) => sample.eventId ?? null))
+    expect(reactionsFor(self, { buckets: BUCKETS })?.samples.map((sample) => sample.eventId))
       .not.toContain('cpi-a');
     expect(reactionsFor(self, { buckets: BUCKETS })?.samples.map((sample) => sample.sessionDate))
       .not.toContain('2026-06-10');

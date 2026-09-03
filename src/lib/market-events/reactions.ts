@@ -97,6 +97,16 @@ const BUCKETS: Record<ReleaseTiming, readonly ReactionRow[]> = {
 export const REACTION_SAMPLE_LIMIT = 3;
 
 export interface ReactionSample {
+  /**
+   * The release this number belongs to.
+   *
+   * Carried so the component has a stable React key and so a test can assert
+   * WHICH rows were selected rather than only how many. Its absence made one
+   * assertion vacuous — `samples.map((s) => s.eventId)` was a list of
+   * `undefined` that passed `not.toContain` for every value on earth, and only
+   * `tsc` could see it.
+   */
+  eventId: string;
   /** The New York session, `YYYY-MM-DD`. */
   sessionDate: string;
   /** "11 ก.ย. 2569" — the date, so the row is checkable. */
@@ -158,6 +168,7 @@ export function reactionsFor(
 
 function toSample(row: ReactionRow): ReactionSample {
   return {
+    eventId: row.eventId,
     sessionDate: row.sessionDate,
     dayLabelTh: thaiShortDayLabel(row.sessionDate),
     changePercent: row.changePercent,
