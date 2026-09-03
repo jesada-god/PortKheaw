@@ -14,6 +14,8 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertNotProduction } from '../../src/lib/dev/db-target.ts';
+import { qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -21,7 +23,29 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = '.qa/artifacts/phase1-ux';
 const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
+/** Leave the accounts behind for inspection. Debugging only. */
+const KEEP = process.argv.includes('--keep');
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
+
+/*
+ * ===========================================================================
+ * THIS SCRIPT CREATES REAL ACCOUNTS, SO IT REFUSES PRODUCTION
+ * ===========================================================================
+ * It signs in as real readers, which means real `auth.users` rows, a real
+ * subscription row, real watchlist items and a real price alert. It had been
+ * running against PRODUCTION for as long as it has existed: `.env.local` is
+ * this repo's production configuration by convention — `db-target.ts` says so
+ * and names that project ref — and the npm script reads it. Because the script
+ * never deleted anything, every run left two accounts in production, and a
+ * second tool (`trial:qa-cleanup`) existed to go and find them afterwards.
+ *
+ * A QA script should not need another script following it around. It cleans up
+ * after itself now, and it refuses to run anywhere it should never have been
+ * writing. `assertNotProduction` throws and has no override flag, for the
+ * reasons its own header sets out.
+ */
+assertNotProduction(SUPABASE_URL, 'qa:phase1-ux');
+
 mkdirSync(OUT_DIR, { recursive: true });
 
 const VIEWPORTS = [
@@ -89,13 +113,116 @@ async function rpc(name, args, token = accessToken) {
   return { ok: response.ok, status: response.status, body };
 }
 
+/**
+ * EVERY ACCOUNT THIS RUN MADE, in creation order.
+ *
+ * Registered inside `createQaUser` rather than at each call site, because the
+ * two calls are in different places and the second one is easy to miss: `run`
+ * makes the Pro reader, and `eliteSummaryCheck` makes an Elite one four hundred
+ * lines away, inside a helper invoked from one branch of a nested loop. A
+ * teardown written against the call sites would have swept one of the two and
+ * looked like it worked.
+ */
+const createdUsers = [];
+
+/**
+ * The seeded rows an account owns, in the order they have to go.
+ *
+ * DELETING THE USER IS NOT ENOUGH, and the first version of this teardown found
+ * that out the honest way — by failing:
+ *
+ *     23503: update or delete on table "portfolios" violates foreign key
+ *     constraint "portfolio_transactions_portfolio_id_fkey"
+ *
+ * `portfolio_transactions` does not cascade from `portfolios`, so an account
+ * with a seeded ledger cannot be deleted until its own rows are. Which also
+ * means the accounts this script has been leaving behind were never removable
+ * by `trial:qa-cleanup` either: it calls the same admin delete and would have
+ * hit the same constraint.
+ *
+ * Each step is its own request so a failure names the table it happened on —
+ * the discipline `verify-overview-alert-sweep.ts` states for its own teardown.
+ * Rows this run did not create are not touched: every filter is the account's
+ * own id.
+ */
+async function purgeSeededRows(userId) {
+  const gone = [];
+  const del = async (label, path) => {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method: 'DELETE',
+      headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, Prefer: 'return=minimal' },
+    });
+    gone.push(`${label}${response.ok ? '' : ` FAILED ${response.status}`}`);
+  };
+  const owner = `user_id=eq.${encodeURIComponent(userId)}`;
+
+  await del('price_alerts', `price_alerts?${owner}`);
+
+  const lists = await supabase(`/rest/v1/watchlists?${owner}&select=id`);
+  const listIds = (Array.isArray(lists) ? lists : []).map((row) => row.id);
+  if (listIds.length > 0) {
+    await del('watchlist_items', `watchlist_items?watchlist_id=in.(${listIds.join(',')})`);
+    await del('watchlists', `watchlists?${owner}`);
+  }
+
+  /*
+    Transactions before portfolios: that is the constraint that failed, and the
+    order is the fix rather than a precaution.
+  */
+  const portfolios = await supabase(`/rest/v1/portfolios?${owner}&select=id`);
+  const portfolioIds = (Array.isArray(portfolios) ? portfolios : []).map((row) => row.id);
+  if (portfolioIds.length > 0) {
+    await del('portfolio_transactions', `portfolio_transactions?portfolio_id=in.(${portfolioIds.join(',')})`);
+    await del('portfolios', `portfolios?${owner}`);
+  }
+  return gone;
+}
+
+/**
+ * Delete every account this run made, and prove it.
+ *
+ * Newest first, so a partial failure leaves the older ledger intact rather than
+ * a half-swept pair.
+ *
+ * Then it CHECKS, rather than assuming: a `GET` on each id must answer 404. A
+ * teardown that reports success from the delete call alone is a teardown that
+ * tells you the mess is gone on exactly the runs where it is not — and the
+ * first version of this one did exactly that until the check was added.
+ */
+async function teardownAccounts() {
+  if (createdUsers.length === 0) return { deleted: 0, failed: [], remaining: [] };
+  console.log('\nteardown');
+  const failed = [];
+  for (const account of [...createdUsers].reverse()) {
+    try {
+      const rows = await purgeSeededRows(account.userId);
+      await supabase(`/auth/v1/admin/users/${encodeURIComponent(account.userId)}`, { method: 'DELETE' });
+      console.log(`  deleted ${account.tier.padEnd(5)} ${account.email}${rows.length ? `  [${rows.join(', ')}]` : ''}`);
+    } catch (error) {
+      failed.push({ ...account, error: error instanceof Error ? error.message : String(error) });
+      console.log(`  FAILED  ${account.tier.padEnd(5)} ${account.email}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  const remaining = [];
+  for (const account of createdUsers) {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(account.userId)}`, {
+      headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+    });
+    if (response.ok) remaining.push({ userId: account.userId, email: account.email });
+  }
+  console.log(remaining.length === 0
+    ? `  verified: ${createdUsers.length} account(s) created, 0 left behind`
+    : `  VERIFY FAILED: ${remaining.length} account(s) still present`);
+  return { deleted: createdUsers.length - failed.length, failed, remaining };
+}
+
 async function createQaUser(tier) {
   const email = `phase1.ux.qa.${tier}.${Date.now()}@example.com`;
   const password = `Qa!${randomUUID()}Aa7`;
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Phase1 UX QA ${tier}`, qa_owner: 'phase1-ux-qa' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Phase1 UX QA ${tier}`, qa_owner: qaOwner('phase1-ux-qa') } }),
   });
   const userId = created.id;
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -127,6 +254,7 @@ async function createQaUser(tier) {
     body: JSON.stringify({ email, password }),
   });
   accessToken = session.access_token;
+  createdUsers.push({ userId, email, tier });
   return { userId, email, password, tier };
 }
 
@@ -340,6 +468,27 @@ async function featureChecks(page) {
   const upcomingRows = await page.locator('[data-testid="upcoming-section"] li').count();
   report.features.push({ id: 'upcoming-route', present: upcoming > 0, rows: upcomingRows });
   check(upcoming > 0, '/upcoming did not render the unified section');
+  /*
+    THE FIXTURE'S ALERT MUST NOT BE HERE, and that is the claim it was seeded to
+    make.
+
+    `seedAccount` writes one enabled alert on AAPL at 9999 — thousands of
+    percent above the market and deliberately so, because the feature being
+    proved is the NEGATIVE one: an alert nowhere near its target is not
+    something coming up, and must not be listed as though it were.
+
+    Until now this run only recorded the row count and asserted the section
+    existed. So the day a far-off alert started appearing, the count would have
+    moved from 0 to 1 in the report and every check would still have passed —
+    the one fixture written to catch that would have watched it happen. The
+    account is otherwise fresh, with no earnings date and no option expiry, so
+    zero is the whole expected content of this list.
+  */
+  check(
+    upcomingRows === 0,
+    `/upcoming listed ${upcomingRows} row(s); the seeded alert is 9999 on AAPL and must not be "coming up"`,
+    { rows: upcomingRows },
+  );
 }
 
 /**
@@ -405,10 +554,20 @@ async function entitlementChecks(context, user) {
 }
 
 async function run() {
-  const user = await createQaUser('pro');
-  await seedAccount(user);
-  const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
+  /*
+    THE ACCOUNTS ARE CREATED INSIDE THE TRY.
+
+    They used to be made above it, so a failure in `seedAccount` — or in
+    `chromium.launch`, which needs a browser binary that is not always there —
+    leaked the Pro reader before the `finally` existed to catch it. The two
+    steps most likely to fail early are exactly the two that used to run
+    unprotected.
+  */
+  let browser = null;
   try {
+    const user = await createQaUser('pro');
+    await seedAccount(user);
+    browser = await chromium.launch({ executablePath: BROWSER, headless: true });
     for (const viewport of VIEWPORTS) {
       for (const appearance of ['dark', 'light']) {
         const context = await browser.newContext({
@@ -438,7 +597,28 @@ async function run() {
       }
     }
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
+    /*
+      TEARDOWN RUNS WHATEVER HAPPENED. A red assertion, a thrown fixture, a
+      missing browser — none of them is a reason to leave two accounts in a
+      database. `--keep` is the only way past it, and it prints what it left so
+      the ids are in the log rather than in somebody's memory.
+    */
+    if (KEEP) {
+      report.teardown = { kept: true, accounts: createdUsers };
+      console.log(`\n--keep: leaving ${createdUsers.length} account(s) in place:`);
+      for (const account of createdUsers) console.log(`  ${account.tier.padEnd(5)} ${account.email} (${account.userId})`);
+    } else {
+      report.teardown = await teardownAccounts();
+      /*
+        A teardown that could not finish is a FAILURE of the run. The whole
+        point is that nothing is left behind; reporting the surfaces as green
+        while two accounts survive is the state this change exists to end.
+      */
+      if (report.teardown.remaining.length > 0 || report.teardown.failed.length > 0) {
+        report.failures.push(`teardown left ${report.teardown.remaining.length} account(s) behind`);
+      }
+    }
     report.finishedAt = new Date().toISOString();
     writeFileSync(`${OUT_DIR}/report.json`, JSON.stringify(report, null, 2));
     console.log(JSON.stringify({
@@ -446,6 +626,7 @@ async function run() {
       surfaces: report.surfaces.length,
       features: report.features,
       entitlement: report.entitlement,
+      teardown: report.teardown,
     }, null, 2));
   }
   if (report.failures.length > 0) process.exitCode = 1;

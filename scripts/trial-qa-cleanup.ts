@@ -13,6 +13,7 @@
  *   npm run trial:qa-cleanup -- --apply
  *   npm run trial:qa-cleanup -- --mark=<claim-id>,<claim-id> --apply
  *   npm run trial:qa-cleanup -- --user=<uuid> --apply     # one account only
+ *   npm run trial:qa-cleanup -- --orphan=<uuid> --apply   # one UNOWNED account
  *
  * THE SECOND KIND: QA ACCOUNTS. The browser QA runs sign in as real accounts,
  * so they create real users — `qa:phase1-ux` alone makes two per run, one Elite
@@ -20,7 +21,7 @@
  * with `user_metadata.qa_owner`, and that label is what this sweeps.
  *
  * IT IS DELIBERATELY NOT A PREDICATE OVER TIME OR SHAPE. An account must carry
- * one of the tags in `QA_OWNERS` AND hold a `@example.com` address — a reserved
+ * one of the tags in the shared owner registry AND hold a `@example.com` address — a reserved
  * domain nobody receives mail at. Both, never either: a tag can be typed into
  * metadata by hand, and an address could in principle belong to something else,
  * but nothing that is not ours carries both. That is the same standard `--mark`
@@ -48,6 +49,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { QA_EMAIL_DOMAIN, QA_OWNER_TAGS } from './qa/qa-accounts.mjs';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -83,6 +85,69 @@ const onlyUser = (() => {
   }
   return value.toLowerCase();
 })();
+/**
+ * `--orphan=<uuid>[,<uuid>]`: collect residue the OWNER RULE CANNOT REACH.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT IS IN PRODUCTION THAT THE SWEEP ABOVE WILL NEVER TOUCH
+ * ---------------------------------------------------------------------------
+ * Four accounts, all on the reserved domain, none of them collectable by tag:
+ *
+ *     codex-portfolio-1785446418580@example.com   qa_owner absent
+ *     codex-phase3-1785714976201@example.com      qa_owner absent
+ *     hydration.locate.1786076018112@example.com  qa_owner "hydration-locate"
+ *     sim.probe.1786893723382@example.com         qa_owner "sim-probe"
+ *
+ * The first two were made by something that never stamped an owner. The last
+ * two were stamped by scripts that are NOT IN THIS REPOSITORY — no file writes
+ * either tag, at this commit or any other — so they are throwaways whose maker
+ * is gone.
+ *
+ * Registering those two tags would be the obvious fix and it is the wrong one:
+ * `qa-accounts.test.ts` requires a script behind every registered tag, because
+ * a tag with no creator is a sweep hunting accounts nothing makes, and the next
+ * reader would have no way to learn that the entry is dead. The residue is
+ * historical; the mechanism must not be widened to fit history.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IDS, AND ONLY IDS
+ * ---------------------------------------------------------------------------
+ * This is the same standard `--mark` holds for claims: name the rows, never a
+ * predicate. "Every unowned @example.com account" is a predicate, and a
+ * predicate is a guess about which rows are somebody's — so what this flag
+ * takes is uuids an operator has read out of the `unowned_preview` line below
+ * and typed on purpose, one run at a time.
+ *
+ * Three further refusals, all in `main`:
+ *
+ *   * the account must hold a `@example.com` address — the reserved domain,
+ *     which nobody receives mail at, so it cannot be a reader;
+ *   * it must NOT carry a registered owner. An account the ordinary sweep can
+ *     already collect goes through the ordinary sweep, where the proof is
+ *     stronger, rather than through the flag that skips the tag rule;
+ *   * an id that matches no account at all stops the run rather than being
+ *     counted as done.
+ *
+ * And it is EXCLUSIVE: a run with `--orphan` acts on the named ids and does
+ * nothing else — no owner sweep, no claim delete. Collecting residue by hand is
+ * a deliberate act, and it must not quietly carry a bulk delete alongside it.
+ *
+ * Deletion goes through `removeQaAccount` like everything else here, so these
+ * accounts get the dependency-ordered purge and the residual-count check rather
+ * than a bare auth delete.
+ */
+const orphanIds = (() => {
+  const flag = process.argv.find((argument) => argument.startsWith('--orphan='));
+  if (!flag) return [] as string[];
+  const values = flag.slice('--orphan='.length).split(',').map((value) => value.trim()).filter(Boolean);
+  const malformed = values.filter((value) => !UUID_PATTERN.test(value));
+  if (values.length === 0 || malformed.length > 0) {
+    console.error(`--orphan takes account uuids; could not read ${JSON.stringify(malformed.join(',') || '')}`);
+    process.exit(1);
+  }
+  return values.map((value) => value.toLowerCase());
+})();
+
 const markIds = (() => {
   const flag = process.argv.find((argument) => argument.startsWith('--mark='));
   if (!flag) return [] as string[];
@@ -107,17 +172,24 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 /**
- * The QA runs whose accounts this command owns.
+ * The QA runs whose accounts this command owns — IMPORTED, never restated.
  *
- * One entry per script that creates users, using the exact string that script
- * writes into `user_metadata.qa_owner`. A run whose tag is not listed is not
- * swept: adding a browser QA means adding its tag on purpose, in a diff
- * somebody reviewed, rather than a sweep quietly widening to fit.
+ * This list used to be written here, `['phase1-ux-qa']`, one entry against the
+ * nine tags the QA scripts actually stamp. The sweep was therefore correct and
+ * useless at the same time: it reported "0 deletable" while twelve QA accounts
+ * from eight other runs sat in production, because a tag it has never been told
+ * about is indistinguishable from no account at all.
+ *
+ * The two lists could drift because they WERE two lists. There is now one, in
+ * `scripts/qa/qa-accounts.mjs` beside the teardown that makes the accounts, and
+ * `qa-accounts.test.ts` fails if any script stamps a tag that is not in it.
+ * Adding a QA script still means adding its tag on purpose, in a diff somebody
+ * reviewed — it just cannot be done in a way that leaves this sweep behind.
+ *
+ * The mailbox domain comes from the same module for the same reason: the rule
+ * below is tag AND domain, so a script stamping a registered tag onto an
+ * address outside the reserved domain would make an account nothing collects.
  */
-const QA_OWNERS = ['phase1-ux-qa'] as const;
-
-/** Reserved domain, so a candidate cannot be an address anybody receives mail at. */
-const QA_EMAIL_DOMAIN = '@example.com';
 
 interface AdminUser {
   id: string;
@@ -127,7 +199,7 @@ interface AdminUser {
 
 /** Every account carrying one of our tags AND a reserved address. Paged. */
 async function findQaAccounts(): Promise<AdminUser[]> {
-  const owners = new Set<string>(QA_OWNERS);
+  const owners = new Set<string>(QA_OWNER_TAGS);
   const found: AdminUser[] = [];
   for (let page = 1; page <= 50; page += 1) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
@@ -140,6 +212,33 @@ async function findQaAccounts(): Promise<AdminUser[]> {
       // The narrowing goes here, past both proofs, never in place of them.
       if (onlyUser && user.id.toLowerCase() !== onlyUser) continue;
       found.push(user);
+    }
+    if (users.length < 200) break;
+  }
+  return found;
+}
+
+/**
+ * Every account on the reserved domain that the OWNER RULE CANNOT REACH.
+ *
+ * A `@example.com` address whose `qa_owner` is missing, or is a tag no script
+ * in this repository writes. These are reported and never deleted by `--apply`:
+ * the point is that residue the sweep cannot collect stops being invisible.
+ * `"deletable": 0` was a true sentence about the owner list and a false one
+ * about the database, and this is the line that would have said so.
+ */
+async function findUnownedQaAccounts(): Promise<{ account: AdminUser; owner: string | null }[]> {
+  const owners = new Set<string>(QA_OWNER_TAGS);
+  const found: { account: AdminUser; owner: string | null }[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(`Could not list accounts: ${error.message}`);
+    const users = (data?.users ?? []) as AdminUser[];
+    for (const user of users) {
+      if (!user.email?.endsWith(QA_EMAIL_DOMAIN)) continue;
+      const owner = user.user_metadata?.qa_owner;
+      if (typeof owner === 'string' && owners.has(owner)) continue;
+      found.push({ account: user, owner: typeof owner === 'string' ? owner : null });
     }
     if (users.length < 200) break;
   }
@@ -212,6 +311,61 @@ interface QaCleanupResult {
 }
 
 async function main() {
+  /*
+   * The orphan path runs FIRST and returns, because it is exclusive: naming ids
+   * by hand must not also fire the bulk sweep further down.
+   */
+  if (orphanIds.length > 0) {
+    const unowned = await findUnownedQaAccounts();
+    const byId = new Map(unowned.map((entry) => [entry.account.id.toLowerCase(), entry]));
+    /*
+     * ALL the ids are resolved before ANY of them is deleted, and a single
+     * unresolvable one stops the whole run. Deleting the first two of three and
+     * then refusing the third would leave an operator having to work out which
+     * half happened.
+     *
+     * `process.exitCode` rather than `process.exit()`, because the accounts have
+     * just been listed over HTTP and exiting on top of an undici handle that is
+     * still closing aborts the process with a libuv assertion instead of a
+     * refusal anybody can read.
+     */
+    const selected = orphanIds.map((id) => byId.get(id)).filter((entry) => entry !== undefined);
+    if (selected.length !== orphanIds.length) {
+      for (const id of orphanIds.filter((candidate) => !byId.has(candidate))) {
+        console.error(
+          `--orphan ${id} is not an unowned QA account: it is either not on ${QA_EMAIL_DOMAIN}, `
+          + `carries a registered qa_owner (use the ordinary sweep for those), or does not exist.`,
+        );
+      }
+      console.error('Nothing was deleted.');
+      process.exitCode = 1;
+      return;
+    }
+    console.info(JSON.stringify({
+      event: 'trial_qa_cleanup',
+      stage: 'orphan_preview',
+      accounts: selected.map((entry) => ({
+        id: entry.account.id, email: entry.account.email, qaOwner: entry.owner,
+      })),
+    }));
+    if (!apply) {
+      console.info('\npreview only. Re-run with --apply to delete the account(s) above.');
+      return;
+    }
+    let deleted = 0;
+    const failed: string[] = [];
+    for (const entry of selected) {
+      const failure = await removeQaAccount(entry.account);
+      if (failure) failed.push(failure);
+      else deleted += 1;
+    }
+    console.info(JSON.stringify({
+      event: 'trial_qa_cleanup', stage: 'orphan_applied', deleted, failed,
+    }));
+    if (failed.length > 0) process.exitCode = 1;
+    return;
+  }
+
   if (markIds.length > 0) {
     if (!apply) {
       console.info(JSON.stringify({
@@ -262,10 +416,26 @@ async function main() {
   console.info(JSON.stringify({
     event: 'trial_qa_cleanup',
     stage: 'accounts_preview',
-    owners: QA_OWNERS,
+    owners: QA_OWNER_TAGS,
     scopedToUser: onlyUser,
     deletable: accounts.length,
     emails: accounts.map((account) => account.email),
+  }));
+
+  /*
+   * The residue the owner rule cannot reach, printed on EVERY run and deleted
+   * by none of them. `--apply` does not touch these; `--orphan=<uuid>` does,
+   * one named id at a time, and this line is where the operator reads the ids.
+   */
+  const unowned = await findUnownedQaAccounts();
+  console.info(JSON.stringify({
+    event: 'trial_qa_cleanup',
+    stage: 'unowned_preview',
+    note: 'not deleted by --apply; collect one at a time with --orphan=<uuid> --apply',
+    count: unowned.length,
+    accounts: unowned.map((entry) => ({
+      id: entry.account.id, email: entry.account.email, qaOwner: entry.owner,
+    })),
   }));
 
   if (!apply) {

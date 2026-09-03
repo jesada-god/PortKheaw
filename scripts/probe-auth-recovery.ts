@@ -17,6 +17,7 @@
  *   npm run probe:auth-recovery
  */
 import { createClient } from '@supabase/supabase-js';
+import { assertNotProduction } from '../src/lib/dev/db-target';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -30,6 +31,18 @@ function required(name: string): string {
 const url = required('NEXT_PUBLIC_SUPABASE_URL');
 const anonKey = required('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY');
 const serviceKey = required('SUPABASE_SERVICE_ROLE_KEY');
+
+/*
+ * It creates a throwaway user, so it may not run against production — even
+ * though it deletes it again, and even though the account is on a
+ * reserved-invalid domain. "It cleans up afterwards" is a promise about the
+ * happy path; a killed process does not keep it, and the account it leaves is
+ * a real one in a real project.
+ *
+ * This one has nothing to purge before the delete: it seeds no portfolio, so
+ * the RESTRICT chain in `scripts/qa/qa-accounts.mjs` cannot reach it.
+ */
+assertNotProduction(url, 'probe:auth-recovery');
 
 /** Decodes a JWT payload without verifying it — this is a diagnostic, not a gate. */
 function payloadOf(accessToken: string): Record<string, unknown> {

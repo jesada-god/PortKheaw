@@ -428,14 +428,19 @@ export default async function Home() {
   /*
    * How many alerts each symbol has, or null when that cannot be read.
    *
-   * `overview_alert_rules` is created by a migration that has not been applied,
-   * so `null` is the answer in every deployment today — and the Watchlist row
-   * draws no alert element at all for it. The three outcomes the loader
-   * distinguishes are in `alerts/supabase-store.ts`; the one that matters here
-   * is that an unreadable count is NOT an empty object. A reader with two
-   * alerts on NVDA and a reader whose table does not exist must not be shown
-   * the same thing, and "0" would tell the second one something false about
-   * their own settings.
+   * `overview_alert_rules` is applied (`202608300001`), so the read succeeds and
+   * the answer today is `{}` — read fine, this reader has no rules — rather than
+   * the `null` this comment used to claim. Every reader has none because nothing
+   * creates one: there is no interface for it, and `create_overview_alert_rule`
+   * has no caller outside its own module.
+   *
+   * Either way the Watchlist row draws no alert element, which is why the stale
+   * claim was invisible. It must stay that way for opposite reasons: `{}` means
+   * "you have no alerts", `null` means "we could not check", and the three
+   * outcomes the loader distinguishes are in `alerts/supabase-store.ts`. An
+   * unreadable count is NOT an empty object — a reader with two alerts on NVDA
+   * and a reader whose table cannot be read must not be shown the same thing,
+   * and "0" would tell the second one something false about their own settings.
    *
    * One indexed read, scoped to the reader by RLS, and only when the flag is on.
    */

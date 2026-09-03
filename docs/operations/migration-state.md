@@ -3,7 +3,10 @@
 What is known about which migrations production has run, and what is not
 knowable at all. This file records the state; it does not propose changes to it.
 
-Last confirmed **2026-08-31**.
+Last confirmed **2026-08-31** — that is the date of the PostgREST probe every
+`VERIFIED:` header cites, and `supabase/migration-order.test.ts` requires this
+date and those to agree. The corrections below it dated 2026-09-03 are
+reconciliations of stale prose against those headers, not new probes.
 
 ## Production keeps no record of what it has run
 
@@ -87,18 +90,36 @@ this schema from zero and observed the result.
 
 ## Not yet applied
 
-Three files, verified absent 2026-08-31 (`overview_alert_rules` and
-`overview_alert_hits` both answer `PGRST205`):
+Two files:
 
-1. `202608300001_overview_alerts.sql`
-2. `202608310001_overview_alert_hits.sql`
-3. `202608310002_overview_alert_hit_service.sql`
+1. `202608310003_overview_alert_rule_kind_parity.sql`
+2. `202608310004_purge_account_data_overview_alerts.sql`
 
-That order is required: `310001` needs the table from `300001`, and `310002`
-needs the table and column from `310001`. `310002` creates only a function, so
-the probe cannot see it either way; it is known unapplied because `310001` is.
+Every other file in `supabase/migrations/` is applied — including the three
+`overview_alert_*` files that this section listed as pending until 2026-09-03.
+`overview_alert_rules` and `overview_alert_hits` both resolve now; the section
+was stale, and `supabase/migration-order.test.ts` reads this list against the
+`STATUS:` headers so it cannot go stale again silently.
 
-Every other file in `supabase/migrations/` is applied.
+**Neither of the two can be probed.** `310003` replaces one function and
+`310004` replaces two, and PostgREST reports relations and columns, never
+function bodies. Their headers say so themselves and say what WAS probed
+instead: for `310004`, every table it adds to or removes from the purge lists.
+So "not yet applied" here means "written, never run", not "run and observed
+absent" — which is the strongest thing that can be said about a function from
+outside the database, and the reason the file headers carry the evidence
+sentence rather than only a status.
+
+The order is required: `310004` does not depend on `310003`, but they were
+written in that order and the runners cannot skip.
+
+What follows from `310003` being unapplied is behavioural and worth stating
+where somebody will look for it: `create_overview_alert_rule` refuses
+`kind = 'earnings'`, so one of the five kinds the column, the hits table, the
+evaluator and the 24-hour cooldown all handle cannot be created. From `310004`:
+`purge_account_data` does not delete `overview_alert_rules`,
+`overview_alert_hits` or `user_release_note_state`, so an account deletion
+leaves those rows behind.
 
 ## The header contract
 

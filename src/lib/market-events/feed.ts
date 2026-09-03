@@ -92,12 +92,26 @@ export function buildEventFeed({
             ? 'พรุ่งนี้'
             : dateLabelTh,
         count: dayEvents.length,
-        items: dayEvents.map((event) => toItem(event, dayKey)),
+        items: dayEvents.map((event) => toFeedItem(event, dayKey)),
       };
     });
 }
 
-function toItem(event: MarketEvent, dayKey: string): FeedItem {
+/**
+ * One event turned into the row a reader sees, filed under a Bangkok day.
+ *
+ * EXPORTED SO THERE IS STILL EXACTLY ONE OF THESE. The calendar page's
+ * selected-day panel shows the same facts as a feed row — the Thai clock time,
+ * the importance wording, and the ET note that only appears where the two
+ * datelines disagree. A second builder would be a second place for the ET rule
+ * to drift, and that rule is the one this feature is least able to notice
+ * getting wrong.
+ *
+ * `dayKey` is the day the row is FILED under, not one derived here: the caller
+ * already grouped by it, and re-deriving it would put a second answer to "which
+ * day is this on" inside the function that renders the first.
+ */
+export function toFeedItem(event: MarketEvent, dayKey: string): FeedItem {
   const etDay = newYorkDayKey(event.at);
   return {
     id: event.id,

@@ -61,3 +61,61 @@ export const NEVER_SAY = [
   'AI วิเคราะห์ว่า',
   'การวิเคราะห์ด้วย AI',
 ] as const;
+
+/**
+ * THE MARKET-REACTION BLOCK'S LIST — the narrowest scope in this file, and the
+ * one with the sharpest reason.
+ *
+ * ===========================================================================
+ * WHAT THE BLOCK IS ALLOWED TO BE
+ * ===========================================================================
+ * It prints what an index did on days a release was published. Each number is
+ * a close-to-close change on a session that happened; it was measured, and it
+ * is checkable against any chart. What NOBODY here computed is why the index
+ * moved — no correlation, no event study, no control for the six other things
+ * that happen on a Friday morning.
+ *
+ * So the block may state, and may not attribute. Every phrase below crosses
+ * that line, in one of three ways:
+ *
+ *   IT ATTRIBUTES. "ส่งผลให้", "ทำให้ราคา", "กระตุ้นให้", "ตอบสนองต่อ" and
+ *   "ปฏิกิริยา" all name the release as the cause of the number beside it.
+ *   "ปฏิกิริยา" is on the list even though it is what this feature is called
+ *   in conversation — a heading reading "ปฏิกิริยาตลาด" would make the causal
+ *   claim in the one place a reader is guaranteed to look.
+ *
+ *   IT GENERALISES FROM THREE POINTS. "มักจะ", "โดยทั่วไป", "ปกติแล้ว",
+ *   "ส่วนใหญ่" and "สถิติชี้" turn a handful of dates into a tendency. Three
+ *   observations are three observations.
+ *
+ *   IT FORECASTS. "คาดว่า", "น่าจะ", "แนวโน้มว่า", "ครั้งนี้" — the last
+ *   because "ครั้งก่อน +0.4%, ครั้งนี้..." is a prediction written as a
+ *   sentence fragment.
+ *
+ * "เฉลี่ย" is the one that is not obviously wrong and is the most important.
+ * An average of three release days is arithmetic anybody can do and reads as a
+ * finding: it implies the three are samples of one repeatable quantity, which
+ * is the claim the whole list declines to make. The block shows the dates and
+ * their numbers, and lets a reader draw whatever they draw.
+ *
+ * ===========================================================================
+ * SCOPED, FOR THE REASON CARD_MUST_NOT_SAY IS SCOPED
+ * ===========================================================================
+ * This is NOT added to `NEVER_SAY`. "เฉลี่ย" appears in sixty-five places in
+ * the product — ต้นทุนเฉลี่ย, ค่าเฉลี่ย 20 วัน, ราคาไกลค่าเฉลี่ย — where it
+ * is the correct word for a real average of a real series. A product-wide ban
+ * would be a ban on the vocabulary rather than on its misuse, which is exactly
+ * the argument the trading-jargon list above makes for itself.
+ *
+ * Enforced by `portkheaw/no-banned-copy` scoped to the calendar feature in
+ * `eslint.config.mjs`, and asserted over rendered output in
+ * `reactions.test.ts` and `MonthCalendar.test.tsx`.
+ */
+export const EVENT_REACTION_MUST_NOT_SAY = [
+  // Attributes the movement to the release.
+  'ส่งผลให้', 'ทำให้ราคา', 'กระตุ้นให้', 'ตอบสนองต่อ', 'ปฏิกิริยา',
+  // Generalises a handful of dates into a tendency.
+  'มักจะ', 'โดยทั่วไป', 'ปกติแล้ว', 'ส่วนใหญ่', 'สถิติชี้', 'เฉลี่ย',
+  // Forecasts.
+  'คาดว่า', 'น่าจะ', 'แนวโน้มว่า', 'ครั้งนี้',
+] as const;

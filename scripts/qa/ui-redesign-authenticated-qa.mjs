@@ -23,6 +23,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -32,6 +33,14 @@ const OUT_DIR = '.qa/artifacts/ui-redesign-auth';
 const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
 
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment (.env.local)');
+
+/*
+ * This script creates a real reader, so it may not run against production.
+ * See `scripts/qa/qa-accounts.mjs` for why the guard and the teardown are one
+ * module rather than a pattern nine scripts copy.
+ */
+assertQaTarget(SUPABASE_URL, 'qa:ui-redesign-auth');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:ui-redesign-auth' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const VIEWPORTS = [
@@ -173,7 +182,7 @@ async function createQaUser(tier = 'elite') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email, password, email_confirm: true,
-      user_metadata: { full_name: 'UI Redesign QA', qa_owner: 'ui-redesign-qa' },
+      user_metadata: { full_name: 'UI Redesign QA', qa_owner: qaOwner('ui-redesign-qa') },
     }),
   });
   const userId = created.id;
@@ -202,7 +211,7 @@ async function createQaUser(tier = 'elite') {
     body: JSON.stringify({ email, password }),
   });
   accessToken = session.access_token;
-  return { userId, email, password };
+  return qaAccounts.register({ userId, email, password });
 }
 
 /** Seeded the way the product writes: through the RPCs the app itself calls. */
@@ -455,13 +464,16 @@ async function main() {
      * Every statement is filtered to THIS run's user or to a portfolio it owns.
      * Nothing here is a blanket delete.
      */
-    try {
-      await cleanup(user.userId);
-      report.cleanup = { deletedUser: user.userId, ok: true };
-      console.log('QA user and its seeded rows deleted');
-    } catch (error) {
-      report.cleanup = { deletedUser: user.userId, ok: false, error: String(error).slice(0, 300) };
-      console.error(`QA user ${user.userId} could not be deleted — remove it manually.`);
+    /*
+      This script already knew about the foreign key — the paragraph above is
+      the one that worked it out — and it still could not prove it had won: a
+      failed delete printed "remove it manually" and the run carried on. The
+      shared teardown does the same ordered purge and then CHECKS, and residue
+      is a failure of the run.
+    */
+    report.cleanup = await qaAccounts.teardown();
+    if (report.cleanup.remaining?.length || report.cleanup.failed?.length) {
+      report.missingAnchors.push({ surface: 'teardown', detail: `${report.cleanup.remaining.length} account(s) left behind` });
     }
   }
 

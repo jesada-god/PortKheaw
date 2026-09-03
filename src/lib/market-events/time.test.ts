@@ -221,3 +221,36 @@ describe('day-key arithmetic', () => {
     expect(time.thaiMonthLabel('2027-01')).toBe('มกราคม 2570');
   });
 });
+
+describe('month-key arithmetic', () => {
+  it('steps forward and back on the label, worked out by hand', async () => {
+    const time = await loadUnder('UTC');
+    expect(time.addMonths('2026-09', 1)).toBe('2026-10');
+    expect(time.addMonths('2026-10', -1)).toBe('2026-09');
+    expect(time.addMonths('2026-01', -1)).toBe('2025-12');
+    expect(time.addMonths('2026-12', 1)).toBe('2027-01');
+    expect(time.addMonths('2026-06', 7)).toBe('2027-01');
+    expect(time.addMonths('2026-03', -14)).toBe('2025-01');
+  });
+
+  /*
+   * The failure this rules out: stepping a month by adding days, which lands on
+   * the 1st of the month AFTER the one intended whenever the source month is
+   * longer than the target. `addMonths` steps from the 1st for exactly this
+   * reason, and February is where a day-based version breaks first.
+   */
+  it('does not slide when a month is shorter than the one before it', async () => {
+    const time = await loadUnder('UTC');
+    expect(time.addMonths('2026-01', 1)).toBe('2026-02');
+    expect(time.addMonths('2026-03', -1)).toBe('2026-02');
+    expect(time.addMonths('2026-08', 1)).toBe('2026-09');
+  });
+
+  it('answers the same under a host clock in Bangkok as under one in UTC', async () => {
+    for (const timeZone of TIME_ZONES) {
+      const time = await loadUnder(timeZone);
+      expect(time.addMonths('2026-12', 1), timeZone).toBe('2027-01');
+      expect(time.addMonths('2026-01', -1), timeZone).toBe('2025-12');
+    }
+  });
+});

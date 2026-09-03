@@ -294,9 +294,10 @@ export interface OverviewDashboardData {
    * How many alert rules each symbol has.
    *
    * ABSENT MEANS UNREADABLE, and the row must then draw no alert element at all
-   * — not a zero, not a dash. `overview_alert_rules` has not been applied yet,
-   * so this is absent in every deployment today; the shape is here so the row
-   * that reads it does not have to change when it starts arriving.
+   * — not a zero, not a dash. `overview_alert_rules` IS applied
+   * (`202608300001`), so what arrives today is an empty object rather than the
+   * absence this comment used to describe: the read works and every reader has
+   * zero rules, because nothing in the product creates one yet.
    */
   alertCountBySymbol?: Record<string, number> | null;
   /**

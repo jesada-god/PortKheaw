@@ -205,3 +205,20 @@ export function thaiShortDayLabel(dayKey: string): string {
 export function thaiMonthLabel(monthKey: string): string {
   return THAI_MONTH.format(utcMidnight(`${monthKey}-01`));
 }
+
+/*
+ * Month arithmetic on the KEY, for exactly the reason `addDays` does days on it.
+ *
+ * A month key is a label, so stepping it is integer arithmetic on the label,
+ * and `Date.UTC` normalises the overflow — month 13 becomes January of the next
+ * year, month 0 becomes December of the previous one — without this file
+ * owning a table of month lengths or a leap-year rule.
+ *
+ * The 1st is used as the day deliberately: it is the only day number every
+ * month has, so stepping from a 31-day month into a 30-day one cannot slide.
+ */
+export function addMonths(monthKey: string, months: number): string {
+  const [year, month] = monthKey.split('-').map(Number);
+  const moved = new Date(Date.UTC(year, month - 1 + months, 1));
+  return moved.toISOString().slice(0, 7);
+}

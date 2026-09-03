@@ -10,6 +10,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -17,6 +18,14 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = '.qa/artifacts/tools-simulator-mobile';
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
+
+/*
+ * This script creates a real reader, so it may not run against production.
+ * See `scripts/qa/qa-accounts.mjs` for why the guard and the teardown are one
+ * module rather than a pattern nine scripts copy.
+ */
+assertQaTarget(SUPABASE_URL, 'qa:tools-simulator-mobile');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:tools-simulator-mobile' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const VIEWPORTS = [
@@ -69,7 +78,7 @@ async function createQaUser(tier) {
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Tools Mobile QA ${tier}`, qa_owner: 'tools-simulator-mobile-qa' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Tools Mobile QA ${tier}`, qa_owner: qaOwner('tools-simulator-mobile-qa') } }),
   });
   const userId = created.id;
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -88,7 +97,7 @@ async function createQaUser(tier) {
       cancel_at_period_end: false,
     }),
   });
-  return { userId, email, password, tier };
+  return qaAccounts.register({ userId, email, password, tier });
 }
 
 /* Retried once: a cold first sign-in against a just-started server can outrun the wait. */
@@ -661,8 +670,16 @@ async function run() {
     }
   } finally {
     await browser.close();
-    for (const user of Object.values(users)) {
-      await supabase(`/auth/v1/admin/users/${user.userId}`, { method: 'DELETE' }).catch(() => undefined);
+    /*
+      This used to be a bare admin delete per user with `.catch(() => undefined)`
+      on the end, which is how two of these accounts ended up in production: the
+      delete came back 500 with a 23503 from `portfolio_transactions`, and the
+      catch threw the evidence away. The shared teardown removes the owned rows
+      in dependency order first, and then CHECKS — nothing is swallowed.
+    */
+    report.teardown = await qaAccounts.teardown();
+    if (report.teardown.remaining?.length || report.teardown.failed?.length) {
+      report.failures.push(`teardown left ${report.teardown.remaining.length} account(s) behind`);
     }
   }
 

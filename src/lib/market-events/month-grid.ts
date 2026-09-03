@@ -27,6 +27,17 @@ export interface CalendarCell {
   /** How many events the cell could not name. Rendered as "+N", zero means no badge. */
   extraCount: number;
   total: number;
+  /**
+   * EVERY event on the day, most important first — `lead` is `events[0]`.
+   *
+   * The overview card never reads this: one name and a count is all a 50px cell
+   * in a dashboard panel can carry, and `card-view.ts` maps it away so the JSON
+   * stays out of the client bundle. The calendar PAGE does read it, because its
+   * cells draw one mark per event and its detail panel lists the day. Building
+   * it here rather than calling `eventsOnDay` a second time keeps one pass over
+   * the month and one answer to "what is on this day".
+   */
+  events: MarketEvent[];
 }
 
 export interface MonthGrid {
@@ -76,6 +87,7 @@ export function buildMonthGrid({
         lead: dayEvents[0] ?? null,
         extraCount: Math.max(0, dayEvents.length - 1),
         total: dayEvents.length,
+        events: dayEvents,
       });
       cursor = addDays(cursor, 1);
     }

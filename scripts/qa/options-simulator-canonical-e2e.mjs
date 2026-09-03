@@ -1,6 +1,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'https://portkheaw.vercel.app').replace(/\/$/, '');
 const EXPECTED_SHA = process.env.QA_EXPECTED_SHA?.toLowerCase() ?? null;
@@ -10,6 +11,10 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = `.qa/artifacts/options-simulator-canonical-${QA_LABEL}`;
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
+
+/* Creates a real reader — see `scripts/qa/qa-accounts.mjs`. */
+assertQaTarget(SUPABASE_URL, 'qa:options-simulator');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:options-simulator' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const report = {
@@ -60,9 +65,10 @@ async function createEliteQaUser() {
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Options Canonical E2E', qa_owner: 'codex-options-canonical-e2e' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Options Canonical E2E', qa_owner: qaOwner('codex-options-canonical-e2e') } }),
   });
   userId = created.id;
+  qaAccounts.register({ userId, email });
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const rows = await supabase(`/rest/v1/user_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=user_id`);
     if (Array.isArray(rows) && rows.length === 1) break;
@@ -425,14 +431,16 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => undefined);
   report.cleanup.browserClosed = true;
-  if (userId) {
-    try {
-      await supabase(`/auth/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
-      report.cleanup.userDeleted = true;
-    } catch (error) {
-      report.cleanup.userDeleted = false;
-      report.failures.push({ message: 'QA user cleanup failed', details: error.message });
-    }
+  /*
+    A bare admin delete before this: it would have failed with 23503 the moment
+    the simulator run recorded anything against a portfolio, and the account
+    would have stayed.
+  */
+  const teardown = await qaAccounts.teardown();
+  report.cleanup.teardown = teardown;
+  report.cleanup.userDeleted = teardown.remaining.length === 0;
+  if (!report.cleanup.userDeleted) {
+    report.failures.push({ message: 'QA user cleanup failed', details: teardown });
   }
   report.finishedAt = new Date().toISOString();
   writeFileSync(`${OUT_DIR}/report.json`, `${JSON.stringify(report, null, 2)}\n`);

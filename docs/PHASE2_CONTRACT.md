@@ -481,14 +481,19 @@ RPC ที่เกี่ยวข้อง (จาก database.ts): `get_or_cre
 
 ### Migration
 
-- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202608310002_overview_alert_hit_service.sql`
+- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202608310004_purge_account_data_overview_alerts.sql`
 - ห้าไฟล์ที่เคยเขียนว่า `NOT YET APPLIED` — `202608180001`, `202608210001`, `202608290001`,
   `202608290002`, `202608290003` — **apply ไปแล้วทั้งหมด** ยืนยัน 2026-08-31 ด้วย PostgREST probe
   หัวไฟล์แก้เป็น `-- STATUS: APPLIED` แล้ว
-- migration ที่ยัง **ค้างจริง** เหลือสามไฟล์ ต้อง apply ตามลำดับนี้เท่านั้น:
-  - `202608300001_overview_alerts.sql`
-  - `202608310001_overview_alert_hits.sql`
-  - `202608310002_overview_alert_hit_service.sql`
+- `202608300001`, `202608310001`, `202608310002` ก็ **apply แล้ว** เช่นกัน (หัวไฟล์ทั้งสาม
+  เขียน `-- STATUS: APPLIED` ยืนยัน 2026-08-31) — ย่อหน้านี้เคยเขียนว่ายังค้าง ซึ่งค้างเก่า
+  แก้ 2026-09-03
+- migration ที่ยัง **ค้างจริง** เหลือสองไฟล์ ต้อง apply ตามลำดับนี้เท่านั้น:
+  - `202608310003_overview_alert_rule_kind_parity.sql`
+  - `202608310004_purge_account_data_overview_alerts.sql`
+- รายการค้างข้างบนนี้ **ไม่ใช่** สำเนาที่เชื่อถือได้ — ตัวจริงคือหัวไฟล์
+  `-- STATUS:` ซึ่ง `supabase/migration-order.test.ts` คุมอยู่ พร้อมกับรายการใน
+  `docs/operations/migration-state.md`
 - อะไรยืนยันได้และอะไรยืนยันไม่ได้: `docs/operations/migration-state.md`
 - เครื่องมือ: `npm run db:apply` (scripts/apply-migrations.ts) · `npm run db:schema-diff`
 - คำเตือนที่เขียนอยู่ใน `202608290003`: การถอนต้องทำ **หลัง** ยืนยันว่าไม่มีบัญชีไหนมี

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -319,5 +319,131 @@ describe('the migration status headers', () => {
       }
     }
     expect(problems).toEqual([]);
+  });
+});
+
+/**
+ * THE PROSE COPY OF THE QUEUE, HELD TO THE HEADERS.
+ *
+ * ===========================================================================
+ * THE DRIFT THIS CLOSES
+ * ===========================================================================
+ * `docs/operations/migration-state.md` carried a "Not yet applied" section
+ * naming `202608300001`, `202608310001` and `202608310002` for three days after
+ * all three were applied and their own headers said `STATUS: APPLIED`. Four
+ * other places said the same thing in different words: `PHASE2_CONTRACT.md`
+ * listed the same three as pending, `alert-sweep-schedule.md` said the sweep's
+ * tables were unapplied migrations, and two source comments — in `app/page.tsx`
+ * and `WatchlistTable.tsx` — told a reader the alert count is unreadable "in
+ * every deployment today".
+ *
+ * The block above already pins the SQL headers against each other, and it
+ * passed the whole time. Nothing read the documents, so the documents drifted,
+ * and it was invisible because the rendered result is identical either way: an
+ * unreadable count and a count of zero both draw nothing.
+ *
+ * ===========================================================================
+ * ONE CURATED LIST, NOT A SCAN OF THE PROSE
+ * ===========================================================================
+ * The first attempt was a repository-wide scan: every twelve-digit migration id
+ * sitting on a line with "not applied" / "unapplied" / "ยังไม่ได้ apply" must be
+ * a file that is actually unapplied. It was written and run before this was, and
+ * it is NOT shipped, because it found three lines and all three were correct:
+ *
+ *   PLAN.md             "~~ยังไม่ได้ apply~~ — แก้แล้ว: `202608300001` apply แล้ว"
+ *   cron/alerts/route   "used to name unapplied migrations as the likely cause;
+ *                        `202608300001` and `202608310001` are applied"
+ *   PHASE2_CONTRACT.md  "ห้าไฟล์ที่เคยเขียนว่า NOT YET APPLIED … apply ไปแล้วทั้งหมด"
+ *
+ * That is the shape a correction takes in this repository — the fixed sentence
+ * keeps the wrong one beside it and says what changed — so a proximity scan
+ * fires on exactly the writing it exists to reward. Telling "X is not applied"
+ * from "X used to be described as not applied" needs the meaning of the
+ * sentence, and a heuristic that guessed would teach people to write worse prose
+ * to keep a test green. Same reason `no-banned-copy` skips comments.
+ *
+ * So there is ONE machine-readable list, in the file whose job is to hold it,
+ * and everything else is prose pointing at it. That list is what is checked.
+ */
+describe('the documented migration state', () => {
+  const DOC = fileURLToPath(new URL('../docs/operations/migration-state.md', import.meta.url));
+  const doc = readFileSync(DOC, 'utf8');
+  const docLines = doc.split(/\r?\n/);
+
+  const statusLines = (file: string) => readFileSync(join(root, file), 'utf8').split(/\r?\n/);
+  const statusOf = (file: string): string | null => {
+    const found = statusLines(file)
+      .map((line) => /^-- STATUS: (.+)$/.exec(line.trimEnd())?.[1])
+      .filter((value): value is string => value !== undefined);
+    return found.length === 1 ? found[0] : null;
+  };
+  const UNAPPLIED = FILES.filter((file) => statusOf(file) === 'NOT YET APPLIED');
+
+  /**
+   * The numbered list under `## Not yet applied`, and nothing else in it.
+   *
+   * Read from the numbered items alone rather than from every backticked span in
+   * the section, so the paragraphs around the list can discuss a file — which
+   * ones stopped being pending, what follows from one still being unapplied —
+   * without a mention turning into a claim.
+   */
+  const listed = (): string[] => {
+    const start = docLines.findIndex((line) => line.trim() === '## Not yet applied');
+    if (start === -1) return [];
+    const rest = docLines.slice(start + 1);
+    const end = rest.findIndex((line) => line.startsWith('## '));
+    return (end === -1 ? rest : rest.slice(0, end))
+      .map((line) => /^\d+\.\s+`([^`]+)`$/.exec(line.trim())?.[1])
+      .filter((value): value is string => value !== undefined);
+  };
+
+  it('has a section to read, so a pass is never vacuous', () => {
+    expect(docLines).toContain('## Not yet applied');
+    expect(doc.length).toBeGreaterThan(1_000);
+  });
+
+  /*
+   * THE ASSERTION: the document's list and the files' own headers are the same
+   * set, in the same order.
+   *
+   * Order as well as membership. The runners apply in filename order and cannot
+   * skip one, so a list naming them out of order describes a sequence nobody can
+   * perform.
+   */
+  it('lists exactly the files whose headers say they are unapplied', () => {
+    expect(listed()).toEqual(UNAPPLIED);
+  });
+
+  /*
+   * Every listed name is a file that exists. Otherwise a rename leaves the
+   * document naming a migration nobody can run, and the comparison above would
+   * still pass on the day of the rename if the header moved with the file.
+   */
+  it('names only files that are on disk', () => {
+    for (const file of listed()) {
+      expect(existsSync(join(root, file)), `${file} is listed but not in supabase/migrations/`)
+        .toBe(true);
+    }
+  });
+
+  /*
+   * The document's confirmation date is the date the headers cite.
+   *
+   * `migration-state.md` is where the method is written down — what a PostgREST
+   * probe can and cannot establish — and every `VERIFIED:` line names that probe
+   * on one day. If a later probe moves the headers and the document keeps its
+   * old date, the document is summarising an observation older than the one it
+   * describes, which is how "last confirmed" becomes decoration.
+   */
+  it('is dated the day the headers were verified', () => {
+    const dates = new Set(
+      FILES.flatMap((file) => statusLines(file)
+        .map((line) => /^-- VERIFIED: (\d{4}-\d{2}-\d{2}),/.exec(line.trimEnd())?.[1])
+        .filter((value): value is string => value !== undefined)),
+    );
+    expect(dates.size, `headers cite ${dates.size} different verification dates`).toBe(1);
+    const [verified] = [...dates];
+    const confirmed = /^Last confirmed \*\*(\d{4}-\d{2}-\d{2})\*\*/m.exec(doc)?.[1];
+    expect(confirmed, 'migration-state.md states no "Last confirmed" date').toBe(verified);
   });
 });

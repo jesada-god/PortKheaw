@@ -16,6 +16,7 @@
 import { chromium } from 'playwright-core';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -24,6 +25,14 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OUT_DIR = '.qa/artifacts/phase2-ops';
 const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment');
+
+/*
+ * This script creates a real reader, so it may not run against production.
+ * See `scripts/qa/qa-accounts.mjs` for why the guard and the teardown are one
+ * module rather than a pattern nine scripts copy.
+ */
+assertQaTarget(SUPABASE_URL, 'qa:phase2-ops');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:phase2-ops' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const VIEWPORTS = [
@@ -68,7 +77,7 @@ async function createQaUser({ tier, admin = false }) {
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Phase2 Ops QA', qa_owner: 'phase2-ops-qa' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Phase2 Ops QA', qa_owner: qaOwner('phase2-ops-qa') } }),
   });
   const userId = created.id;
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -96,7 +105,7 @@ async function createQaUser({ tier, admin = false }) {
       body: JSON.stringify({ user_id: userId, role: 'admin' }),
     });
   }
-  return { userId, email, password, tier, admin };
+  return qaAccounts.register({ userId, email, password, tier, admin });
 }
 
 async function signIn(page, user, next, attempt = 0) {
@@ -476,6 +485,16 @@ async function run() {
     await analyticsChecks(browser, analyticsUser);
   } finally {
     await browser.close();
+    /*
+      Nothing here removed a reader before, and this script makes several. The
+      registry knows every one because `createQaUser` registers them, not the
+      call sites — which is the difference between sweeping the accounts and
+      sweeping the ones somebody remembered.
+    */
+    report.teardown = await qaAccounts.teardown();
+    if (report.teardown.remaining?.length || report.teardown.failed?.length) {
+      report.failures.push(`teardown left ${report.teardown.remaining.length} account(s) behind`);
+    }
     report.finishedAt = new Date().toISOString();
     writeFileSync(`${OUT_DIR}/report.json`, JSON.stringify(report, null, 2));
     console.log(JSON.stringify({

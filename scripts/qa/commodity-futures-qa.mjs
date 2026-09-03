@@ -24,6 +24,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -33,6 +34,14 @@ const OUT_DIR = '.qa/artifacts/commodity-futures';
 const THEME_STORAGE_KEY = 'portkheaw-theme-preferences';
 
 if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing Supabase QA environment (.env.local)');
+
+/*
+ * This script creates a real reader, so it may not run against production.
+ * See `scripts/qa/qa-accounts.mjs` for why the guard and the teardown are one
+ * module rather than a pattern nine scripts copy.
+ */
+assertQaTarget(SUPABASE_URL, 'qa:commodity-futures');
+const qaAccounts = createQaAccounts({ url: SUPABASE_URL, serviceKey: SERVICE_KEY, label: 'qa:commodity-futures' });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const CONTRACTS = [
@@ -120,7 +129,7 @@ async function createQaUser(tier) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email, password, email_confirm: true,
-      user_metadata: { full_name: 'Commodity QA', qa_owner: 'commodity-futures-qa' },
+      user_metadata: { full_name: 'Commodity QA', qa_owner: qaOwner('commodity-futures-qa') },
     }),
   });
   const userId = created.id;
@@ -143,7 +152,7 @@ async function createQaUser(tier) {
       cancel_at_period_end: false,
     }),
   });
-  return { userId, email, password, tier };
+  return qaAccounts.register({ userId, email, password, tier });
 }
 
 async function cleanup(userId) {
@@ -599,9 +608,15 @@ async function main() {
     }
   } finally {
     await browser.close();
-    await cleanup(elite.userId);
-    await cleanup(pro.userId);
-    await cleanup(basic.userId);
+    /*
+      Was three hand-written `cleanup(...)` calls, one per reader — correct only
+      for as long as nobody adds a fourth. The registry sweeps whatever was
+      created, and verifies it, which the old version never did.
+    */
+    report.teardown = await qaAccounts.teardown();
+    if (report.teardown.remaining?.length || report.teardown.failed?.length) {
+      report.failures.push(`teardown left ${report.teardown.remaining.length} account(s) behind`);
+    }
   }
 
   report.finishedAt = new Date().toISOString();

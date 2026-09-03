@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CARD_MUST_NOT_SAY, NEVER_SAY } from './banned-copy';
+import { CARD_MUST_NOT_SAY, EVENT_REACTION_MUST_NOT_SAY, NEVER_SAY } from './banned-copy';
 
 const read = (file: string) => readFileSync(join(process.cwd(), file), 'utf8');
 
@@ -149,6 +149,57 @@ describe('the banned copy lists', () => {
   it('keeps the two lists disjoint', () => {
     const overlap = CARD_MUST_NOT_SAY.filter((word) => NEVER_SAY.some((phrase) => phrase.includes(word)));
     expect(overlap).toEqual([]);
+  });
+
+  /*
+   * ===========================================================================
+   * THE REACTION LIST, AND WHY IT IS NOT IN `NEVER_SAY`
+   * ===========================================================================
+   * "เฉลี่ย" is the correct word in sixty-five places in this product —
+   * ต้นทุนเฉลี่ย, ค่าเฉลี่ย 20 วัน, ราคาไกลค่าเฉลี่ย — where it names a real
+   * average of a real series. Product-wide it would ban the vocabulary rather
+   * than its misuse, which is the argument `CARD_MUST_NOT_SAY` already makes
+   * for staying on its card.
+   *
+   * Where it IS wrong is over three release days, because an average implies
+   * they are samples of one repeatable quantity. That is the claim the block
+   * declines to make, so the ban is scoped to the block.
+   */
+  it('scopes the reaction list to the calendar feature and leaves the rest of the product alone', () => {
+    const config = read('eslint.config.mjs');
+    const before = config.slice(0, config.indexOf('"portkheaw-reactions/no-banned-copy"'));
+    const scope = before.slice(before.lastIndexOf('files: ['));
+    expect(scope).toContain('src/lib/market-events/');
+    expect(scope).toContain('src/components/market-events/');
+    expect(scope, 'the reaction vocabulary must not be enforced product-wide')
+      .not.toContain('src/**/*.{ts,tsx}');
+    for (const phrase of EVENT_REACTION_MUST_NOT_SAY) {
+      expect(NEVER_SAY as readonly string[], `"${phrase}" must not be banned product-wide`)
+        .not.toContain(phrase);
+    }
+  });
+
+  /*
+   * The same drift problem the `DEFAULT_BANNED` check above solves, for the
+   * same reason: the flat config is `.mjs` and cannot import this `.ts` list,
+   * so it carries a copy, and a copy that drifts is a ban with no reasoning
+   * beside it — or reasoning with no ban behind it.
+   */
+  it('keeps the eslint config’s reaction list identical to EVENT_REACTION_MUST_NOT_SAY', () => {
+    const config = read('eslint.config.mjs');
+    const start = config.indexOf('"portkheaw-reactions/no-banned-copy"');
+    const block = config.slice(config.indexOf('banned: [', start), config.indexOf('],', config.indexOf('banned: [', start)));
+    const inConfig = [...block.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    expect(new Set(inConfig)).toEqual(new Set(EVENT_REACTION_MUST_NOT_SAY));
+  });
+
+  it('names the three ways the reaction copy could cross the line', () => {
+    const list = EVENT_REACTION_MUST_NOT_SAY as readonly string[];
+    expect(list, 'attribution').toContain('ส่งผลให้');
+    expect(list, 'attribution, including the feature’s own Thai name').toContain('ปฏิกิริยา');
+    expect(list, 'generalising three dates into a tendency').toContain('มักจะ');
+    expect(list, 'the arithmetic that reads as a finding').toContain('เฉลี่ย');
+    expect(list, 'forecasting').toContain('คาดว่า');
   });
 
   it('carries every phrase the brief named', () => {

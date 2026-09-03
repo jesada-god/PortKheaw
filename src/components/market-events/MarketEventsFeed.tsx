@@ -1,5 +1,5 @@
 import type { FeedDay } from '@/src/lib/market-events/feed';
-import type { MarketEventImportance } from '@/src/lib/market-events/types';
+import { MarketEventRow } from './MarketEventRow';
 
 /**
  * The detail feed: every upcoming day, in day order, with what is on it.
@@ -30,13 +30,15 @@ import type { MarketEventImportance } from '@/src/lib/market-events/types';
  * The importance chip is on the same footing: it is an editorial note about how
  * widely a release is watched, labelled in words rather than as a score, so it
  * cannot be mistaken for something that was measured.
+ *
+ * ===========================================================================
+ * THE ROW ITSELF LIVES NEXT DOOR
+ * ===========================================================================
+ * `MarketEventRow` draws it, because the calendar page's day panel draws the
+ * same release with the same three facts and a second copy of that markup would
+ * drift on exactly the ones nobody would notice. This component owns the DAY —
+ * its heading, its anchor and its count — and nothing below it.
  */
-
-const IMPORTANCE_STYLE: Record<MarketEventImportance, string> = {
-  high: 'bg-[var(--negative-soft)] text-[var(--negative)]',
-  medium: 'bg-[var(--warning-soft)] text-[var(--warning)]',
-  low: 'bg-[var(--surface-hover)] text-[var(--text-secondary)]',
-};
 
 export function MarketEventsFeed({
   days,
@@ -94,35 +96,7 @@ export function MarketEventsFeed({
 
           <ul className="divide-y divide-[var(--hairline)]">
             {day.items.map((item) => (
-              <li
-                key={item.id}
-                className="flex min-w-0 items-start gap-3 px-3.5 py-2.5 sm:px-4"
-                data-testid={`market-events-item-${item.id}`}
-              >
-                <span className="shrink-0 pt-0.5 font-mono text-xs tabular-nums text-[var(--text-secondary)]">
-                  {item.timeLabel}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium leading-6 text-[var(--text)]">
-                    {item.titleTh}
-                  </span>
-                  <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-muted)]">
-                    {item.source} · {item.referencePeriod}
-                    {item.etNoteTh && (
-                      <>
-                        {' · '}
-                        <span data-testid={`market-events-et-${item.id}`}>{item.etNoteTh}</span>
-                      </>
-                    )}
-                  </span>
-                </span>
-                <span
-                  className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] ${IMPORTANCE_STYLE[item.importance]}`}
-                  data-testid={`market-events-importance-${item.id}`}
-                >
-                  {item.importanceLabelTh}
-                </span>
-              </li>
+              <MarketEventRow key={item.id} item={item} />
             ))}
           </ul>
         </section>
