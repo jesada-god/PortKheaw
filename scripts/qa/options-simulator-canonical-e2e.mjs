@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { assertQaTarget, createQaAccounts } from './qa-accounts.mjs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'https://portkheaw.vercel.app').replace(/\/$/, '');
 const EXPECTED_SHA = process.env.QA_EXPECTED_SHA?.toLowerCase() ?? null;
@@ -65,7 +65,7 @@ async function createEliteQaUser() {
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Options Canonical E2E', qa_owner: 'codex-options-canonical-e2e' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: 'Options Canonical E2E', qa_owner: qaOwner('codex-options-canonical-e2e') } }),
   });
   userId = created.id;
   qaAccounts.register({ userId, email });

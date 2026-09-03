@@ -26,7 +26,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { assertQaTarget, createQaAccounts } from './qa-accounts.mjs';
+import { assertQaTarget, createQaAccounts, qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://localhost:3100').replace(/\/$/, '');
 const SYMBOL = (process.env.QA_SYMBOL ?? 'AAPL').toUpperCase();
@@ -108,7 +108,7 @@ async function createQaAccount() {
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name: 'Option Chain Purchase E2E', qa_owner: 'option-chain-purchase-e2e' },
+      user_metadata: { full_name: 'Option Chain Purchase E2E', qa_owner: qaOwner('option-chain-purchase-e2e') },
     }),
   });
   if (!created.ok) throw new Error(`Could not create the QA account: ${created.status}`);

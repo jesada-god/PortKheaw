@@ -20,7 +20,7 @@
  * with `user_metadata.qa_owner`, and that label is what this sweeps.
  *
  * IT IS DELIBERATELY NOT A PREDICATE OVER TIME OR SHAPE. An account must carry
- * one of the tags in `QA_OWNERS` AND hold a `@example.com` address — a reserved
+ * one of the tags in the shared owner registry AND hold a `@example.com` address — a reserved
  * domain nobody receives mail at. Both, never either: a tag can be typed into
  * metadata by hand, and an address could in principle belong to something else,
  * but nothing that is not ours carries both. That is the same standard `--mark`
@@ -48,6 +48,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { QA_EMAIL_DOMAIN, QA_OWNER_TAGS } from './qa/qa-accounts.mjs';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -107,17 +108,24 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 /**
- * The QA runs whose accounts this command owns.
+ * The QA runs whose accounts this command owns — IMPORTED, never restated.
  *
- * One entry per script that creates users, using the exact string that script
- * writes into `user_metadata.qa_owner`. A run whose tag is not listed is not
- * swept: adding a browser QA means adding its tag on purpose, in a diff
- * somebody reviewed, rather than a sweep quietly widening to fit.
+ * This list used to be written here, `['phase1-ux-qa']`, one entry against the
+ * nine tags the QA scripts actually stamp. The sweep was therefore correct and
+ * useless at the same time: it reported "0 deletable" while twelve QA accounts
+ * from eight other runs sat in production, because a tag it has never been told
+ * about is indistinguishable from no account at all.
+ *
+ * The two lists could drift because they WERE two lists. There is now one, in
+ * `scripts/qa/qa-accounts.mjs` beside the teardown that makes the accounts, and
+ * `qa-accounts.test.ts` fails if any script stamps a tag that is not in it.
+ * Adding a QA script still means adding its tag on purpose, in a diff somebody
+ * reviewed — it just cannot be done in a way that leaves this sweep behind.
+ *
+ * The mailbox domain comes from the same module for the same reason: the rule
+ * below is tag AND domain, so a script stamping a registered tag onto an
+ * address outside the reserved domain would make an account nothing collects.
  */
-const QA_OWNERS = ['phase1-ux-qa'] as const;
-
-/** Reserved domain, so a candidate cannot be an address anybody receives mail at. */
-const QA_EMAIL_DOMAIN = '@example.com';
 
 interface AdminUser {
   id: string;
@@ -127,7 +135,7 @@ interface AdminUser {
 
 /** Every account carrying one of our tags AND a reserved address. Paged. */
 async function findQaAccounts(): Promise<AdminUser[]> {
-  const owners = new Set<string>(QA_OWNERS);
+  const owners = new Set<string>(QA_OWNER_TAGS);
   const found: AdminUser[] = [];
   for (let page = 1; page <= 50; page += 1) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
@@ -262,7 +270,7 @@ async function main() {
   console.info(JSON.stringify({
     event: 'trial_qa_cleanup',
     stage: 'accounts_preview',
-    owners: QA_OWNERS,
+    owners: QA_OWNER_TAGS,
     scopedToUser: onlyUser,
     deletable: accounts.length,
     emails: accounts.map((account) => account.email),

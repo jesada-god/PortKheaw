@@ -15,6 +15,7 @@ import { chromium } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { assertNotProduction } from '../../src/lib/dev/db-target.ts';
+import { qaOwner } from './qa-accounts.mjs';
 
 const BASE_URL = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const BROWSER = process.env.QA_BROWSER_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -221,7 +222,7 @@ async function createQaUser(tier) {
   const created = await supabase('/auth/v1/admin/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Phase1 UX QA ${tier}`, qa_owner: 'phase1-ux-qa' } }),
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: `Phase1 UX QA ${tier}`, qa_owner: qaOwner('phase1-ux-qa') } }),
   });
   const userId = created.id;
   for (let attempt = 0; attempt < 30; attempt += 1) {

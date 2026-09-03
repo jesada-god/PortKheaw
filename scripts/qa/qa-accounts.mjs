@@ -38,6 +38,77 @@
  */
 import { assertNotProduction } from '../../src/lib/dev/db-target.ts';
 
+/**
+ * ===========================================================================
+ * THE OWNER REGISTRY — ONE LIST, READ FROM BOTH ENDS
+ * ===========================================================================
+ * Every throwaway account is stamped at creation with `user_metadata.qa_owner`,
+ * and `trial:qa-cleanup` sweeps production by that stamp. Those were two lists:
+ * the tags nine scripts wrote, and the tags one sweep looked for. They drifted
+ * to the worst possible place — the sweep knew ONE of the nine — so it reported
+ * "0 deletable" against a production database holding twelve QA accounts, and
+ * the report was true about the list and false about the database.
+ *
+ * A sweep that names its own owners is a sweep that silently narrows every time
+ * somebody adds a QA script, and nothing goes red when it does: the new script
+ * passes, the sweep passes, and the accounts pile up. So the list lives HERE,
+ * once, beside the teardown — the writers get their tag out of it through
+ * `qaOwner()`, the sweep imports `QA_OWNER_TAGS`, and neither can name a tag
+ * the other has not seen.
+ *
+ * The value of each entry is the script that writes the tag. It is what makes
+ * the registry checkable rather than merely central: `qa-accounts.test.ts`
+ * reads every file under `scripts/` and fails if a `qa_owner` is written that
+ * is not registered, or if a registered tag names a file that does not write
+ * it. An entry cannot be added to widen the sweep without a script behind it,
+ * and a script cannot stamp an account the sweep will not come back for.
+ *
+ * ADDING A QA SCRIPT THAT CREATES ACCOUNTS: add its tag here, and write it with
+ * `qaOwner('<tag>')`. That is the whole procedure, and skipping it fails a test
+ * rather than leaking an account.
+ */
+export const QA_OWNERS = Object.freeze({
+  'admin-overview-qa': 'scripts/qa/admin-overview-qa.mjs',
+  'codex-options-canonical-e2e': 'scripts/qa/options-simulator-canonical-e2e.mjs',
+  'commodity-futures-qa': 'scripts/qa/commodity-futures-qa.mjs',
+  'option-chain-purchase-e2e': 'scripts/qa/option-chain-purchase-e2e.mjs',
+  'phase1-ux-qa': 'scripts/qa/phase1-ux-qa.mjs',
+  'phase2-ops-qa': 'scripts/qa/phase2-ops-qa.mjs',
+  'stock-planner-mobile-qa': 'scripts/qa/stock-planner-mobile-qa.mjs',
+  'tools-simulator-mobile-qa': 'scripts/qa/tools-simulator-mobile-qa.mjs',
+  'ui-redesign-qa': 'scripts/qa/ui-redesign-authenticated-qa.mjs',
+});
+
+/** The same list as a plain array, which is the shape the sweep filters with. */
+export const QA_OWNER_TAGS = Object.freeze(Object.keys(QA_OWNERS).sort());
+
+/**
+ * Reserved domain, so a swept candidate cannot be an address anybody receives
+ * mail at. Exported for the same reason the tags are: the sweep requires the
+ * tag AND this domain, so a script that stamped a registered tag onto an
+ * address outside it would create an account the sweep can never collect.
+ */
+export const QA_EMAIL_DOMAIN = '@example.com';
+
+/**
+ * The tag to stamp on an account, checked against the registry as it is read.
+ *
+ * It returns its argument, so the call site still reads as the literal it
+ * replaced — the point is not indirection, it is that a tag typed here and
+ * nowhere else THROWS at the moment the account would have been created,
+ * before there is anything in production to go and find.
+ */
+export function qaOwner(tag) {
+  if (!Object.hasOwn(QA_OWNERS, tag)) {
+    throw new Error(
+      `qa_owner ${JSON.stringify(tag)} is not registered in scripts/qa/qa-accounts.mjs. `
+      + `An unregistered tag is an account trial:qa-cleanup will never sweep. `
+      + `Registered: ${QA_OWNER_TAGS.join(', ')}.`,
+    );
+  }
+  return tag;
+}
+
 /** Leave the accounts behind for inspection. Debugging only. */
 export const KEEP = process.argv.includes('--keep');
 
