@@ -126,22 +126,73 @@ export function OptionsLevelsPanel({
   const wallsEntitled = can('options.analytics.walls');
   const greeksEntitled = can('options.greeks.full');
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
-  const [now, setNow] = useState(0);
+  /*
+    THE CLOCK, OR NULL BECAUSE IT HAS NOT BEEN READ YET.
+
+    It was `useState(0)`, and zero is a legal timestamp — so the countdown two
+    dozen lines down computed `ceil((retryAt - 0) / 1000)` on the first render
+    and printed the Unix epoch in seconds: "ลองใหม่ใน 1788431446s", a ten-digit
+    number on a control a reader is looking at precisely because something has
+    already gone wrong. In a browser it was one frame; in any renderer that does
+    not run effects it was the final answer, which is where it was caught.
+
+    `null` is what makes that unrepresentable. There is no arithmetic that
+    silently succeeds on it, so "the clock has not been read" can no longer
+    masquerade as "it is 1 January 1970".
+  */
+  const [now, setNow] = useState<number | null>(null);
   const rows = useMemo(() => chain ? rowsNearSpot(chain) : [], [chain]);
   const selectedContract = useMemo(() => {
     if (!chain || !selectedContractId) return null;
     return [...chain.calls, ...chain.puts].find((contract) => contract.contractSymbol === selectedContractId) ?? null;
   }, [chain, selectedContractId]);
-  const cooldown = retryAt ? Math.max(0, Math.ceil((retryAt - now) / 1_000)) : 0;
+  /*
+    Seconds left, or null while either half of the subtraction is unknown.
+
+    `coolingDown` deliberately reads null as NOT cooling rather than as cooling.
+    The opposite looks safer and is worse: `retryAt` in the past with the clock
+    unread would then disable the button permanently, which is the second defect
+    the old expression had — it printed a garbage countdown AND, because the
+    effect returned early on an expired `retryAt`, never replaced it.
+
+    The one frame before the effect runs therefore shows an enabled "ลองใหม่".
+    Nothing can be lost to it: `refresh` in `useOptionsSupportResistance`
+    re-checks `Date.now() < retryAt` and returns, so a click that beat the
+    effect is refused by the owner of the cooldown rather than by its label.
+  */
+  const cooldown = retryAt !== null && now !== null
+    ? Math.max(0, Math.ceil((retryAt - now) / 1_000))
+    : null;
+  const coolingDown = cooldown !== null && cooldown > 0;
   const status = presentOptionsStatus({ expanded, loading, chain, result });
   const provenance = presentOptionsProvenance(chain, result);
   const levels = result?.status === 'available' ? result : null;
 
   useEffect(() => {
-    if (!retryAt || retryAt <= Date.now()) return;
-    const initial = window.setTimeout(() => setNow(Date.now()), 0);
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+    if (retryAt === null) return;
+    /*
+      Read once for ANY `retryAt`, expired or not. The old version skipped an
+      expired one entirely, so whatever the first render had computed stayed on
+      screen — which was the epoch. Reading it here is also what keeps a
+      countdown honest when `retryAt` is set long after mount: the value from
+      the previous cooldown would otherwise be stale by that whole gap.
+
+      Synchronously, not in a `setTimeout(…, 0)`. The old one deferred the read
+      into a timer, which is why the wrong number survived every `act()` in the
+      test file: React flushes effects, not timers.
+    */
+    const tick = () => setNow(Date.now());
+    /*
+      A MICROTASK, not `setTimeout(…, 0)`. Both defer the read out of the effect
+      body; only the microtask runs before the browser paints, so there is no
+      frame where the cooldown is unknown, and only the microtask is flushed by
+      `act()`, so the test file can see the number the reader sees. The old
+      timer was invisible to both.
+    */
+    queueMicrotask(tick);
+    if (retryAt <= Date.now()) return; // Nothing left to tick down.
+    const timer = window.setInterval(tick, 1_000);
+    return () => window.clearInterval(timer);
   }, [retryAt]);
 
   return (
@@ -235,12 +286,12 @@ export function OptionsLevelsPanel({
           {status.state === 'error' && (
             <button
               type="button"
-              disabled={loading || cooldown > 0}
+              disabled={loading || coolingDown}
               onClick={onRetry}
               data-testid="options-retry"
               className="min-h-9 rounded-md border border-slate-700 px-3 text-slate-300 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {cooldown > 0 ? `ลองใหม่ใน ${cooldown}s` : 'ลองใหม่'}
+              {coolingDown ? `ลองใหม่ใน ${cooldown}s` : 'ลองใหม่'}
             </button>
           )}
         </div>

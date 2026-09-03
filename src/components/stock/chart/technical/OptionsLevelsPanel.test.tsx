@@ -230,10 +230,81 @@ describe('OptionsLevelsPanel loading and failure', () => {
     expect(host.querySelectorAll('[data-testid="options-retry"]')).toHaveLength(1);
     expect(retry.disabled).toBe(true);
 
+    /*
+      THE COUNTDOWN IS A COUNTDOWN.
+
+      The assertion above this block used to be the only thing standing between
+      a reader and `ลองใหม่ใน 1788431446s` — the Unix epoch in seconds, printed
+      because `now` began at 0 and `ceil((retryAt - 0) / 1000)` is a perfectly
+      valid number. It went unnoticed for as long as it did because the sweep it
+      tripped was looking for the string "429", and only caught it on the days
+      the epoch happened to contain those three digits. Nothing was asserting
+      what the button actually SAID.
+
+      So: thirty seconds were asked for and about thirty must be shown. The
+      upper bound is what makes this a real check rather than a smoke test — any
+      timestamp-shaped answer is thousands of times larger than the window, so a
+      bound of a minute rejects every one of them without being brittle about
+      whether the run lands on 29 or 30.
+    */
+    expect(retry.textContent).toMatch(/^ลองใหม่ใน \d+s$/);
+    const seconds = Number(/(\d+)/.exec(retry.textContent ?? '')?.[1]);
+    expect(seconds).toBeGreaterThan(25);
+    expect(seconds).toBeLessThanOrEqual(30);
+
     const trigger = host.querySelector('[data-testid="options-provenance-trigger"]') as HTMLButtonElement;
     await act(async () => trigger.click());
     expect(host.querySelector('[data-testid="options-failure-detail"]')?.textContent).toContain('จำกัดจำนวนการเรียก');
     await act(async () => root.unmount());
+  });
+
+  /*
+    THE SECOND HALF OF THE SAME DEFECT.
+
+    The old effect skipped an expired `retryAt` entirely — `if (!retryAt ||
+    retryAt <= Date.now()) return;` — so the clock was never read, `now` stayed
+    at 0, and whatever the first render had computed was final. A cooldown that
+    had already elapsed therefore left the button disabled forever, under a
+    ten-digit countdown that would never tick.
+
+    A cooldown in the past is not a cooldown.
+  */
+  it('re-enables the retry once the cooldown has already elapsed', async () => {
+    const { host, root } = mount();
+    await act(async () => root.render(
+      <OptionsLevelsPanel
+        {...baseProps()}
+        result={optionsUnavailable('AAPL', null, 'rate-limited', 'HTTP 429', 'alpaca')}
+        retryAt={Date.now() - 5_000}
+      />,
+    ));
+    const retry = host.querySelector('[data-testid="options-retry"]') as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    expect(retry.textContent).toBe('ลองใหม่');
+    await act(async () => root.unmount());
+  });
+
+  /*
+    A count of seconds, never a clock reading, whatever it is handed. The bug
+    was a timestamp reaching the label; this is the assertion that says a
+    timestamp never may.
+  */
+  it('never prints a number larger than the cooldown it was given', async () => {
+    for (const ms of [1_000, 30_000, 5 * 60_000]) {
+      const { host, root } = mount();
+      await act(async () => root.render(
+        <OptionsLevelsPanel
+          {...baseProps()}
+          result={optionsUnavailable('AAPL', null, 'rate-limited', 'HTTP 429', 'alpaca')}
+          retryAt={Date.now() + ms}
+        />,
+      ));
+      const label = host.querySelector('[data-testid="options-retry"]')?.textContent ?? '';
+      const shown = Number(/(\d+)/.exec(label)?.[1] ?? '0');
+      expect(shown, `${ms}ms cooldown printed "${label}"`).toBeLessThanOrEqual(ms / 1_000);
+      expect(shown, `${ms}ms cooldown printed "${label}"`).toBeGreaterThan(0);
+      await act(async () => root.unmount());
+    }
   });
 
   it('fires at most one retry per click and re-disables while the request runs', async () => {

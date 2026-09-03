@@ -173,6 +173,21 @@ export function NewsFeed({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError>();
   const [timestamp, setTimestamp] = useState<string>();
+  /*
+    THE SAME COUNTDOWN SHAPE AS `OptionsLevelsPanel`, AND IT IS SAFE HERE ONLY
+    BECAUSE OF A PAIRING.
+
+    `cooldown` below is `ceil((retryAt - now) / 1000)`, and both start at 0, so
+    a render with `retryAt` set and `now` still 0 would print the Unix epoch in
+    seconds — which is exactly what that panel shipped. It cannot happen here
+    because every `setRetryAt` in this file is immediately preceded by
+    `setNow(currentTime)` from the same `Date.now()`, in the same handler and
+    therefore the same batch. There are two such places and they both do it.
+
+    Keep them together. Splitting the pair, or setting `retryAt` from anywhere
+    that does not also set `now`, reintroduces the defect silently — the number
+    is well-formed, the button is disabled either way, and nothing fails.
+  */
   const [retryAt, setRetryAt] = useState(0);
   const [now, setNow] = useState(0);
   const saveData = useDataSaver();
