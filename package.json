@@ -42,7 +42,7 @@
     "instruments:backfill-logos": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-instrument-logos.ts",
     "qa:tools-simulator-mobile": "node --env-file-if-exists=.env.local scripts/qa/tools-simulator-mobile-qa.mjs",
     "qa:stock-planner-mobile": "node --env-file-if-exists=.env.local scripts/qa/stock-planner-mobile-qa.mjs",
-    "qa:phase1-ux": "node --env-file-if-exists=.env.local scripts/qa/phase1-ux-qa.mjs",
+    "qa:phase1-ux": "node --import=tsx --env-file-if-exists=.env.test scripts/qa/phase1-ux-qa.mjs",
     "qa:phase2-ops": "node --env-file-if-exists=.env.local scripts/qa/phase2-ops-qa.mjs",
     "qa:overview-phase2": "node --env-file-if-exists=.env.local scripts/qa/overview-phase2-qa.mjs",
     "qa:admin-overview": "node --env-file-if-exists=.env.local scripts/qa/admin-overview-qa.mjs",
