@@ -98,6 +98,55 @@ export function buildEventFeed({
 }
 
 /**
+ * THE FEED, MINUS THE DAY THE PANEL IS ALREADY SHOWING IN FULL.
+ *
+ * ===========================================================================
+ * THE DEFECT
+ * ===========================================================================
+ * `/market-events` drew the same day twice, one block under the other: the
+ * panel under the grid opens on today by default, and the feed under THAT
+ * starts at today. "วันนี้ · 4 ก.ย. · NFP" appeared, and then appeared again,
+ * and a reader has no way to tell whether the second one is a repeat or a
+ * second release they need to look at.
+ *
+ * ===========================================================================
+ * WHY THE DAY IS REMOVED AND THE FEED IS NOT TRUNCATED
+ * ===========================================================================
+ * The obvious fix — start the feed the day AFTER the selected one — is wrong
+ * for every selection except today's. A reader who taps the 25th would lose the
+ * 5th through the 24th from a list whose whole job is answering "what is
+ * coming", and those days are still coming; they are simply not the day being
+ * inspected. Removing exactly the one day the panel has already expanded keeps
+ * that answer complete and removes the duplicate wherever it falls, rather than
+ * only at the top.
+ *
+ * ===========================================================================
+ * AN EMPTY FEED HAS TWO DIFFERENT CAUSES AND MUST NOT SAY ONE SENTENCE
+ * ===========================================================================
+ * "The calendar has nothing left" and "the only thing left is in the panel
+ * above" are different facts, and the second one is what a reader meets in the
+ * last week the file covers. So `hiddenDayKey` reports whether a day was
+ * actually taken out, and the component says which of the two happened. It is
+ * null when nothing was removed — a selection with no rows, or none at all —
+ * so an empty feed cannot blame a removal that did not occur.
+ */
+export function splitFeedForPanel({
+  days,
+  panelDayKey,
+}: {
+  days: readonly FeedDay[];
+  /** The day the panel is showing, or null when there is no panel. */
+  panelDayKey: string | null;
+}): { days: FeedDay[]; hiddenDayKey: string | null } {
+  if (!panelDayKey) return { days: [...days], hiddenDayKey: null };
+  const kept = days.filter((day) => day.dayKey !== panelDayKey);
+  return {
+    days: kept,
+    hiddenDayKey: kept.length === days.length ? null : panelDayKey,
+  };
+}
+
+/**
  * One event turned into the row a reader sees, filed under a Bangkok day.
  *
  * EXPORTED SO THERE IS STILL EXACTLY ONE OF THESE. The calendar page's

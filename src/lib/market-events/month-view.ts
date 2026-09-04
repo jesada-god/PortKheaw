@@ -91,6 +91,17 @@ export interface MonthViewCell {
    */
   marks: MarketEventImportance[];
   /**
+   * The HIGHEST importance on the day, or null on a quiet one — what the cell's
+   * background is washed with.
+   *
+   * Read off `marks[0]` rather than recomputed: `month-grid.ts` already orders
+   * the day's releases most-important-first by a total order, so taking the
+   * front of that list is the same answer the lead name and the first dot are
+   * already using. A second `Math.max` over importances here would be a second
+   * ranking to disagree with the first.
+   */
+  topImportance: MarketEventImportance | null;
+  /**
    * What a screen reader hears, and the reason the marks are allowed to be
    * coloured dots at all.
    *
@@ -324,6 +335,7 @@ function toViewCell(
     extraCount: cell.extraCount,
     total: cell.total,
     marks: cell.events.map((event) => event.importance),
+    topImportance: cell.events[0]?.importance ?? null,
     ariaLabelTh: ariaLabelOf(cell.dayKey, cell.events),
   };
 }

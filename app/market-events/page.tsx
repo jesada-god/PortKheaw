@@ -3,7 +3,7 @@ import Header from '@/src/components/layout/Header';
 import { MarketEventsFeed } from '@/src/components/market-events/MarketEventsFeed';
 import { MonthCalendar } from '@/src/components/market-events/MonthCalendar';
 import { marketEventsCardEnabled } from '@/src/config/features';
-import { buildEventFeed, exposureNoteTh } from '@/src/lib/market-events/feed';
+import { buildEventFeed, exposureNoteTh, splitFeedForPanel } from '@/src/lib/market-events/feed';
 import { buildMarketEventsMonthView } from '@/src/lib/market-events/month-view';
 import { createClient } from '@/src/lib/supabase/server';
 import { PortfolioRepository } from '@/src/lib/portfolio/repository';
@@ -83,7 +83,19 @@ export default async function MarketEventsPage({
   }
 
   const month = buildMarketEventsMonthView({ now, monthParam: m, dayParam: d });
-  const days = buildEventFeed({ now });
+  /*
+   * THE PANEL AND THE FEED MUST NOT BOTH DRAW THE SAME DAY.
+   *
+   * The panel under the grid opens on today by default and the feed starts at
+   * today, so the page printed "วันนี้ · 4 ก.ย. · NFP" twice in a row and gave
+   * a reader no way to tell a repeat from a second release. The day the panel
+   * has already expanded comes out of the feed — see `splitFeedForPanel` for
+   * why the day is removed rather than the feed being started a day later.
+   */
+  const { days, hiddenDayKey } = splitFeedForPanel({
+    days: buildEventFeed({ now }),
+    panelDayKey: month?.selected?.dayKey ?? null,
+  });
 
   return (
     <div className="min-w-0">
@@ -98,7 +110,11 @@ export default async function MarketEventsPage({
           renders and still answers the reader's question.
         */}
         {month && <MonthCalendar view={month} />}
-        <MarketEventsFeed days={days} exposureNoteTh={exposureNoteTh(holdingCount)} />
+        <MarketEventsFeed
+          days={days}
+          hiddenDayKey={hiddenDayKey}
+          exposureNoteTh={exposureNoteTh(holdingCount)}
+        />
         {/*
           Where the dates came from, on the page that shows them. Each one was
           transcribed from the publishing agency's own schedule, and a reader who

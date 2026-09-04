@@ -71,7 +71,8 @@
     "signal:trend-agreement": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-agreement-probe.ts",
     "signal:trend-diagnosis": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-diagnosis-probe.ts",
     "inspect:daily-snapshot": "node --import=tsx --env-file-if-exists=.env.test scripts/inspect-daily-snapshot.ts",
-    "qa:overview-calendar-slot": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/overview-calendar-slot-qa.mts"
+    "qa:overview-calendar-slot": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/overview-calendar-slot-qa.mts",
+    "qa:events-calendar-theme": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-events-calendar-theme-qa.mts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
