@@ -66,8 +66,23 @@ export const MONTH_GRID_CLASS = 'grid grid-cols-7 gap-px bg-[var(--border)]';
  * `tracking-wide` finishes it. Thai has no uppercase to reach for, and
  * letter-spacing is the register shift that reads as a label in either script.
  */
+/*
+ * THE AIR IS 12px, NOT 6px.
+ *
+ * The first attempt gave the row a rule and 6px under it, which measured as a
+ * separation and did not read as one: on the real page the headings still sat
+ * close enough to the first week to be taken for part of it. Doubling it is the
+ * whole change, and it is affordable — the grid goes to 261px at 375px against
+ * an original 244px, which is 1.07x of a 1.20x budget.
+ *
+ * Air rather than a heavier rule on purpose. A second, darker line inside a
+ * panel starts to read as a box around the month, and the rules between the
+ * cells are already drawn in this exact token — making one of them louder than
+ * the others would say the row above is a different KIND of edge rather than
+ * the same edge with more room around it.
+ */
 export const WEEKDAY_ROW_CLASS =
-  'grid grid-cols-7 gap-px border-b border-[var(--border)] pb-2 mb-1.5';
+  'grid grid-cols-7 gap-px border-b border-[var(--border)] pb-2 mb-3';
 
 const WEEKDAY_CELL_CLASS =
   'min-w-0 text-center text-[10px] font-normal tracking-wide text-[var(--text-muted)]';
