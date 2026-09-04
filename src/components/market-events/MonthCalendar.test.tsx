@@ -544,6 +544,83 @@ describe('the importance wash', () => {
   });
 });
 
+/*
+ * ===========================================================================
+ * THE HEADING ROW IS NOT PART OF THE TABLE
+ * ===========================================================================
+ * `จ. อ. พ. พฤ. ศ. ส. อา.` sat one pixel above the first row of dates, in the
+ * same weight, at a LARGER size than the dates — `app/globals.css` floors
+ * `.text-[10px]` at 12px so the headings rendered at 12 and the day numbers at
+ * 11. The hierarchy was upside down and the two read as a single block.
+ *
+ * Size is not the lever available here: going below the floor would fight the
+ * rule that exists so small Thai labels stay legible. So the separation is a
+ * rule, air, and weight — and these pin all three, because any one of them
+ * alone was already there and was not enough.
+ */
+describe('the weekday headings', () => {
+  const headings = () => at('[data-testid="market-events-weekdays"]');
+  const headingCells = () => [
+    ...container.querySelectorAll<HTMLElement>('[data-testid="market-events-weekdays"] > div'),
+  ];
+
+  it('still names the seven days, Monday first', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(headingCells().map((node) => node.textContent))
+      .toEqual(['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.']);
+  });
+
+  /*
+   * The rule is the SAME token the grid lines are drawn in, so the row above
+   * the table is closed off by the line that already separates the cells rather
+   * than by a second kind of edge.
+   */
+  it('closes the row off with the same rule the grid is drawn in', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(headings()?.className).toContain('border-b');
+    expect(headings()?.className).toContain('border-[var(--border)]');
+  });
+
+  it('leaves air between itself and the first row of dates', () => {
+    render('2026-11-10T04:00:00.000Z');
+    const className = headings()?.className ?? '';
+    expect(className, 'the headings need padding under the words').toMatch(/\bpb-\d/);
+    expect(className, 'and a margin under the rule').toMatch(/\bmb-/);
+  });
+
+  /*
+   * WEIGHT AND COLOUR, in the right direction. The headings must be lighter and
+   * fainter than the numbers beneath them; before this they were neither, and
+   * the day numbers are what a reader is actually looking for.
+   */
+  it('reads as a fainter, lighter layer than the dates under it', () => {
+    render('2026-11-10T04:00:00.000Z');
+    const heading = headingCells()[0];
+    expect(heading?.className).toContain('font-normal');
+    expect(heading?.className).not.toContain('font-medium');
+    expect(heading?.className).toContain('text-[var(--text-muted)]');
+
+    // The date it sits above is the stronger of the two.
+    const number = cell('2026-11-12')?.querySelector('[data-day-number]');
+    expect(number?.className).toContain('text-[var(--text-secondary)]');
+  });
+
+  /*
+   * The headings are decoration for the table below them, so they stay out of
+   * the accessibility tree — the cells already name their own dates in full.
+   */
+  it('stays out of the accessibility tree', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(headings()?.getAttribute('role')).toBe('presentation');
+  });
+
+  it('names no colour of its own', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(headings()?.outerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(headings()?.outerHTML).not.toMatch(/rgb\(|hsl\(/);
+  });
+});
+
 describe('what the calendar refuses to do', () => {
   /*
    * A calendar that scrolls sideways has given up the one property that makes

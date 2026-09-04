@@ -109,11 +109,44 @@ export function MonthCalendar({ view }: { view: MarketEventsMonthView }) {
       )}
 
       <div className={`min-w-0 px-2 py-3 sm:px-3 ${covered ? '' : 'opacity-40'}`}>
-        <div className="grid grid-cols-7 gap-px" role="presentation">
+        {/*
+          ===================================================================
+          THE HEADINGS ARE A DIFFERENT LAYER FROM THE DATES
+          ===================================================================
+          They used to sit one pixel above the first row of numbers, in the
+          same weight, at a LARGER size than the dates themselves —
+          `app/globals.css` floors `.text-[10px]` at 12px for readability, so
+          `จ. อ. พ.` rendered at 12 and the day numbers at 11. The hierarchy
+          was upside down and the whole thing read as one block.
+
+          Three changes, none of them a new colour:
+
+          A RULE. `--border`, the same token the grid lines are drawn in, so
+          the row above the table is closed off by the same line that separates
+          the cells rather than by a second kind of edge.
+
+          AIR. `pb-2 mb-1.5` — enough to read as a break, and it is the only
+          part of this that costs height.
+
+          WEIGHT, not size. Dropping the headings below 12px would fight the
+          floor that exists so small Thai labels stay legible, so they get
+          `font-normal` and keep `--text-muted` while the dates keep
+          `--text-secondary`: the headings are now lighter AND fainter than the
+          numbers under them, which is the hierarchy that was inverted.
+
+          `tracking-wide` is the last of it. Thai has no uppercase to reach for,
+          and letter-spacing is the register shift that reads as a label rather
+          than as content in both scripts.
+        */}
+        <div
+          className="grid grid-cols-7 gap-px border-b border-[var(--border)] pb-2 mb-1.5"
+          role="presentation"
+          data-testid="market-events-weekdays"
+        >
           {view.weekdayHeadingsTh.map((heading) => (
             <div
               key={heading}
-              className="min-w-0 pb-1 text-center text-[10px] font-medium text-[var(--text-muted)]"
+              className="min-w-0 text-center text-[10px] font-normal tracking-wide text-[var(--text-muted)]"
             >
               {heading}
             </div>
