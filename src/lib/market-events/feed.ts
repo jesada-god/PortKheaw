@@ -7,13 +7,15 @@ import {
   thaiDayLabel,
   thaiShortDayLabel,
 } from './time';
+import { IMPORTANCE_LABEL_TH } from './types';
 import type { MarketEvent, MarketEventImportance } from './types';
 
-export const IMPORTANCE_LABEL_TH: Record<MarketEventImportance, string> = {
-  high: 'สำคัญมาก',
-  medium: 'สำคัญปานกลาง',
-  low: 'ติดตามได้',
-};
+/*
+ * Re-exported rather than declared, so the calendar components can reach the
+ * labels without importing this module — it pulls in `calendar.ts` and the
+ * events JSON with it. See the definition in `types.ts`.
+ */
+export { IMPORTANCE_LABEL_TH };
 
 export interface FeedItem {
   id: string;

@@ -49,9 +49,11 @@ import tailwind from '@tailwindcss/postcss';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { MonthCalendar } from '@/src/components/market-events/MonthCalendar';
+import { MarketEventsCard } from '@/src/components/market-events/MarketEventsCard';
 import { MarketEventsFeed } from '@/src/components/market-events/MarketEventsFeed';
 import { buildEventFeed, exposureNoteTh, splitFeedForPanel } from '@/src/lib/market-events/feed';
 import { buildMarketEventsMonthView } from '@/src/lib/market-events/month-view';
+import { buildMarketEventsCardView } from '@/src/lib/market-events/card-view';
 
 (globalThis as { React?: typeof React }).React = React;
 
@@ -61,6 +63,16 @@ const args = process.argv.slice(2);
 const flag = (name: string, fallback: string) =>
   (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1]! : fallback);
 const STATE = flag('state', 'after');
+/**
+ * Which recorded run the height budget is measured against.
+ *
+ * It defaults to the ORIGINAL `before` — the calendar as it was before any of
+ * this work — rather than to the previous round. A ceiling that moves up every
+ * time the grid grows a little is not a ceiling; anchoring it to the state the
+ * reporter first complained about is what keeps 1.20x meaning the same thing in
+ * round three as it did in round one.
+ */
+const BASELINE = flag('baseline', 'before');
 const OUT_DIR = '.qa/artifacts/market-events-calendar-theme';
 
 /**
@@ -90,14 +102,25 @@ function column(children: string): string {
     + '</div></main>';
 }
 
-function bodyMarkup(): string {
+/**
+ * THE TWO SURFACES THAT DRAW A MONTH, captured side by side.
+ *
+ * `MonthCalendar` is the calendar page and `MarketEventsCard` is the block on
+ * the Overview. They are two components on purpose — `month-view.ts` builds a
+ * walkable month with a selected day, `card-view.ts` builds a read-only one and
+ * keeps the calendar JSON out of the client bundle — and nothing here merges
+ * them. What this run is for is checking they LOOK like the same calendar,
+ * which is a different question from whether they share a builder.
+ */
+function calendarPageMarkup(): string {
   const view = buildMarketEventsMonthView({ now: NOW });
   if (!view) throw new Error('the month view should build for a fixed instant');
 
   const all = buildEventFeed({ now: NOW });
   /*
-    `before` is the wiring the page had — the panel shows the selected day and
-    the feed shows it again. `after` is the wiring it has now.
+    The original `before` is the wiring the page had — the panel shows the
+    selected day and the feed shows it again. Every later state is the wiring
+    it has now.
   */
   const split = STATE === 'before'
     ? { days: all, hiddenDayKey: null }
@@ -112,6 +135,20 @@ function bodyMarkup(): string {
     })),
   );
 }
+
+/** The Overview's own column, so the card is measured at the width it gets. */
+function overviewMarkup(): string {
+  const view = buildMarketEventsCardView({ now: NOW });
+  if (!view) throw new Error('the card view should build for a fixed instant');
+  return '<main class="mx-auto w-full max-w-[1440px] px-[var(--page-gutter)] py-4">'
+    + renderToString(React.createElement(MarketEventsCard, { view }))
+    + '</main>';
+}
+
+const SURFACES = [
+  { key: 'calendar', prefix: '', markup: calendarPageMarkup, shot: '[data-testid="market-events-calendar"]' },
+  { key: 'overview', prefix: 'overview-', markup: overviewMarkup, shot: '[data-testid="market-events-card"]' },
+];
 
 /**
  * Everything the four changes are answerable for, read off the live box model
@@ -146,7 +183,9 @@ const PROBE = String.raw`() => {
     return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
   };
 
-  const calendar = document.querySelector('[data-testid="market-events-calendar"]');
+  /* Whichever of the two is on the page — they are never both. */
+  const calendar = document.querySelector('[data-testid="market-events-calendar"]')
+    || document.querySelector('[data-testid="market-events-card"]');
   const pageBg = rgb(getComputedStyle(document.body).backgroundColor);
 
   const cells = [...document.querySelectorAll('[data-testid^="market-events-cell-2"]')];
@@ -163,9 +202,9 @@ const PROBE = String.raw`() => {
     ? headings.getBoundingClientRect().top
     : (cellGrid ? cellGrid.getBoundingClientRect().top : null);
   const gridBottom = cellGrid ? cellGrid.getBoundingClientRect().bottom : null;
-  const surface = rgb(getComputedStyle(
-    document.querySelector('[data-testid="market-events-calendar"]'),
-  ).backgroundColor) || pageBg;
+  const surface = (calendar
+    ? rgb(getComputedStyle(calendar).backgroundColor)
+    : null) || pageBg;
 
   /*
     EVERY LAYER, IN ORDER, because the wash is translucent and so is the
@@ -244,7 +283,6 @@ const PROBE = String.raw`() => {
 const OUT = path.resolve(OUT_DIR);
 mkdirSync(OUT, { recursive: true });
 
-const html = bodyMarkup();
 const [css, browser] = await Promise.all([
   stylesheet(),
   chromium.launch({ executablePath: BROWSER, headless: true }),
@@ -253,8 +291,10 @@ const [css, browser] = await Promise.all([
 const report: Record<string, unknown>[] = [];
 let failures = 0;
 
-for (const appearance of APPEARANCES) {
-  for (const size of WIDTHS) {
+for (const surface of SURFACES) {
+  const html = surface.markup();
+  for (const appearance of APPEARANCES) {
+    for (const size of WIDTHS) {
     const page = await browser.newPage({
       viewport: { width: size.width, height: 1400 },
       deviceScaleFactor: 2,
@@ -273,8 +313,12 @@ for (const appearance of APPEARANCES) {
     await page.goto('http://localhost/', { waitUntil: 'networkidle' });
 
     const measured = await page.evaluate(`(${PROBE})()`) as Record<string, any>;
-    const name = `${size.label}-${appearance}-${STATE}`;
-    await page.locator('[data-testid="market-events-calendar"]')
+    /*
+      The calendar surface keeps its bare name so the original `before-report`
+      still lines up with it; only the surface added later takes a prefix.
+    */
+    const name = `${surface.prefix}${size.label}-${appearance}-${STATE}`;
+    await page.locator(surface.shot)
       .screenshot({ path: path.join(OUT, `${name}-calendar.png`) });
     await page.screenshot({ path: path.join(OUT, `${name}-page.png`), fullPage: true });
     await page.close();
@@ -325,7 +369,8 @@ for (const appearance of APPEARANCES) {
       failures += 1;
     }
 
-    report.push({ name, appearance, width: size.width, state: STATE, measured });
+    report.push({ name, surface: surface.key, appearance, width: size.width, state: STATE, measured });
+    }
   }
 }
 
@@ -338,13 +383,18 @@ await browser.close();
  * against a number typed into this file — a hardcoded ceiling stops being the
  * real one the first time the grid legitimately changes.
  */
-const beforeFile = path.join(OUT, 'before-report.json');
-if (STATE === 'after' && existsSync(beforeFile)) {
+const beforeFile = path.join(OUT, `${BASELINE}-report.json`);
+if (STATE !== BASELINE && existsSync(beforeFile)) {
   const before = JSON.parse(readFileSync(beforeFile, 'utf8')) as { runs: any[] };
-  console.log('\ngrid height, before → after (budget 1.20x)');
+  console.log(`\ngrid height, ${BASELINE} → ${STATE} (budget 1.20x)`);
   for (const run of report as any[]) {
-    const previous = before.runs.find((item) => item.name === run.name.replace('-after', '-before'));
-    if (!previous) continue;
+    const previous = before.runs.find(
+      (item) => item.name === `${run.name.slice(0, -STATE.length)}${BASELINE}`,
+    );
+    if (!previous) {
+      console.log(`  ${run.name}: no ${BASELINE} run to compare against`);
+      continue;
+    }
     const from = previous.measured.gridHeight;
     const to = run.measured.gridHeight;
     const ratio = Math.round((to / from) * 1000) / 1000;

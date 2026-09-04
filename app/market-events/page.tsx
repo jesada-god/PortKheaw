@@ -99,9 +99,21 @@ export default async function MarketEventsPage({
 
   return (
     <div className="min-w-0">
+      {/*
+        A WAY OUT, and it is a link rather than a history step.
+
+        The only other arrow on this page steps to the previous MONTH, which is
+        a different thing entirely, so a reader who opened the calendar had
+        nothing that meant "leave". Readers arrive here from the Overview card,
+        from a day cell on that card, and from a bookmark — `router.back()`
+        would send the last of those out of the product, and the fallback would
+        not fire because any used tab has history. A link goes to the Overview
+        whichever way they came.
+      */}
       <Header
         title="ปฏิทินเศรษฐกิจ"
         subtitle="ตัวเลขเศรษฐกิจสหรัฐที่ประกาศตามกำหนด เวลาไทย"
+        backHref="/"
       />
       <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-8">
         {/*

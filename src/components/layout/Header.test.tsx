@@ -73,3 +73,78 @@ describe('Header back navigation', () => {
     expect(actions?.className).toContain('hidden sm:flex');
   });
 });
+
+/*
+ * ===========================================================================
+ * A BACK CONTROL THAT IS A DESTINATION, NOT A HISTORY STEP
+ * ===========================================================================
+ * `/market-events` had no way out. The only arrow on it steps to the previous
+ * MONTH, and readers arrive there from a card on the Overview, from a day cell
+ * on that card, and from bookmarks and shared links.
+ *
+ * `backFallbackHref` was the wrong tool for it: it calls `router.back()`
+ * whenever `window.history.length > 1`, which is true of any tab that has been
+ * used at all, so a reader who opened the page cold is sent OUT of the product
+ * and the fallback never fires. A link goes to the same place whatever route
+ * they took.
+ *
+ * These assert the two are the SAME control — same slot, same accessible name,
+ * same 44px target, same effect on the rest of the header — differing only in
+ * what happens when it is pressed. Two kinds of back button that looked
+ * different would be worse than one that occasionally goes to the wrong place.
+ */
+describe('Header back link', () => {
+  const renderHeader = async (props: Record<string, unknown>) => {
+    await act(async () => root.render(<Header title="ปฏิทินเศรษฐกิจ" {...props} />));
+  };
+
+  it('renders an anchor to the destination rather than a history button', async () => {
+    await renderHeader({ backHref: '/' });
+    const link = container.querySelector<HTMLAnchorElement>('a[aria-label="ย้อนกลับ"]');
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute('href')).toBe('/');
+    // And no history button beside it — one back control, not two.
+    expect(container.querySelector('button[aria-label="ย้อนกลับ"]')).toBeNull();
+  });
+
+  it('does not call the router when it is pressed', async () => {
+    await renderHeader({ backHref: '/' });
+    const link = container.querySelector<HTMLAnchorElement>('a[aria-label="ย้อนกลับ"]')!;
+    await act(async () => { link.click(); });
+    expect(router.back).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('is the same 44px target and keeps the same header layout as the button', async () => {
+    await renderHeader({ backHref: '/' });
+    const link = container.querySelector<HTMLAnchorElement>('a[aria-label="ย้อนกลับ"]')!;
+    const title = Array.from(container.querySelectorAll('h2'))
+      .find((heading) => heading.textContent === 'ปฏิทินเศรษฐกิจ')!;
+    const profile = container.querySelector<HTMLButtonElement>('button[aria-label="โปรไฟล์"]')!;
+
+    expect(link.className).toContain('min-h-11');
+    expect(link.className).toContain('min-w-11');
+    expect(link.className).toContain('focus-visible:ring-2');
+    expect(title.className).toContain('whitespace-nowrap');
+    expect(profile.parentElement?.parentElement?.className).toContain('hidden sm:flex');
+  });
+
+  /*
+   * The brand lockup steps aside for a back control. It did for the button
+   * already; a header that kept it would put the brand between the arrow and
+   * the page title on a handset.
+   */
+  it('drops the brand lockup, as the history button does', async () => {
+    await renderHeader({ backHref: '/' });
+    const withLink = container.innerHTML;
+    await renderHeader({ backFallbackHref: '/' });
+    const withButton = container.innerHTML;
+    await renderHeader({});
+    const withNeither = container.innerHTML;
+
+    const lockups = (html: string) => (html.match(/brand-lockup/g) ?? []).length;
+    expect(lockups(withNeither)).toBeGreaterThan(0);
+    expect(lockups(withLink)).toBe(0);
+    expect(lockups(withLink)).toBe(lockups(withButton));
+  });
+});

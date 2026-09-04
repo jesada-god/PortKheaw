@@ -1,6 +1,13 @@
 import Link from 'next/link';
 import { CalendarDays } from 'lucide-react';
 import type { MarketEventsCardView } from '@/src/lib/market-events/card-view';
+import {
+  cardDayLabelTh,
+  dayCellBody,
+  dayCellFrame,
+  MONTH_GRID_CLASS,
+  WeekdayHeadings,
+} from './calendar-grid';
 
 /**
  * ปฏิทินเศรษฐกิจ — one month, seven columns, Monday first.
@@ -38,6 +45,21 @@ import type { MarketEventsCardView } from '@/src/lib/market-events/card-view';
  * once. The event name is clipped rather than wrapped for the same reason: a
  * wrapping cell would make rows different heights and the grid stop reading as
  * a month.
+ *
+ * ===========================================================================
+ * THE SAME TABLE AS `/market-events`, FROM A DIFFERENT VIEW MODEL
+ * ===========================================================================
+ * The rules between the cells, the wash behind a day that has something on it,
+ * and the weekday row reading as a layer above the dates all come from
+ * `calendar-grid.tsx`, which the calendar page uses too. They landed there
+ * first and not here, and a reader met two different-looking months in one
+ * product.
+ *
+ * What is NOT shared is the data. `card-view.ts` builds this month and
+ * `month-view.ts` builds that one, on purpose: this card is read-only and its
+ * builder exists so the calendar JSON and the Intl formatters stay on the
+ * server. Sharing the appearance costs none of that — every value that crossed
+ * over is a class string.
  *
  * ===========================================================================
  * AN UNCOVERED MONTH SAYS SO
@@ -79,17 +101,8 @@ export function MarketEventsCard({ view }: { view: MarketEventsCardView }) {
       )}
 
       <div className="min-w-0 px-2 py-3 sm:px-3">
-        <div className="grid grid-cols-7 gap-px" role="presentation">
-          {view.weekdayHeadingsTh.map((heading) => (
-            <div
-              key={heading}
-              className="min-w-0 pb-1 text-center text-[10px] font-medium text-[var(--text-muted)]"
-            >
-              {heading}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 gap-px">
+        <WeekdayHeadings headings={view.weekdayHeadingsTh} />
+        <div className={MONTH_GRID_CLASS}>
           {view.weeks.flat().map((cell) => (
             <DayCell key={cell.dayKey} cell={cell} />
           ))}
@@ -108,7 +121,7 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
   if (!cell.inMonth) {
     return (
       <div
-        className="min-w-0 rounded-md px-0.5 py-1 text-center"
+        className="min-h-11 min-w-0 bg-[var(--surface)] px-0.5 py-1 text-center"
         aria-hidden="true"
         data-testid="market-events-cell-outside"
       >
@@ -118,8 +131,9 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
   }
 
   const body = (
-    <>
+    <span className={dayCellBody(cell.leadImportance)}>
       <span
+        data-day-number="true"
         className={[
           'mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[11px] leading-none',
           /*
@@ -135,7 +149,10 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
         {cell.dayNumber}
       </span>
       {cell.leadShortTh ? (
-        <span className="mt-0.5 block min-w-0 truncate text-center text-[9px] font-medium leading-tight text-[var(--text)] sm:text-[10px]">
+        <span
+          data-day-name="true"
+          className="mt-0.5 block min-w-0 truncate text-center text-[9px] font-medium leading-tight text-[var(--text)] sm:text-[10px]"
+        >
           {cell.leadShortTh}
           {cell.extraCount > 0 && (
             <span className="text-[var(--text-muted)]"> +{cell.extraCount}</span>
@@ -148,13 +165,13 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
         */
         <span className="mt-0.5 block h-[12px] sm:h-[13px]" aria-hidden="true" />
       )}
-    </>
+    </span>
   );
 
   if (cell.total === 0) {
     return (
       <div
-        className="min-w-0 rounded-md px-0.5 py-1"
+        className={dayCellFrame()}
         data-testid={`market-events-cell-${cell.dayKey}`}
         data-today={cell.isToday ? 'true' : undefined}
       >
@@ -195,10 +212,16 @@ function DayCell({ cell }: { cell: MarketEventsCardView['weeks'][number][number]
   return (
     <Link
       href={`/market-events?m=${monthKey}&d=${cell.dayKey}#${cell.dayKey}`}
-      className="min-w-0 rounded-md px-0.5 py-1 hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+      className={`${dayCellFrame()} focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]`}
       data-testid={`market-events-cell-${cell.dayKey}`}
       data-today={cell.isToday ? 'true' : undefined}
-      aria-label={`${cell.dayNumber} — ${cell.total} รายการ`}
+      data-importance={cell.leadImportance ?? undefined}
+      /*
+        COLOUR IS NEVER THE ONLY CHANNEL. The wash behind this cell says how
+        important the day is; this says the same thing in Thai words, for the
+        reader who cannot see the hue or is not looking at it.
+      */
+      aria-label={cardDayLabelTh(cell.dayNumber, cell.total, cell.leadImportance)}
     >
       {body}
     </Link>
