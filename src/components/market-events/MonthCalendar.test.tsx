@@ -340,6 +340,93 @@ describe('a month the calendar cannot speak for', () => {
   });
 });
 
+/*
+ * ===========================================================================
+ * THE CELLS HAVE TO LOOK LIKE A TABLE
+ * ===========================================================================
+ * `gap-px` was reserving a one-pixel gap between every cell and the gap showed
+ * the panel surface — the same colour as the cells — so the month read as
+ * numbers floating in a box rather than as a grid. Painting the CONTAINER is
+ * what turns the gaps into rules, and it is the reason each cell then has to be
+ * opaque: a translucent cell composites over `--border` and goes grey.
+ *
+ * These pin the mechanism, not the appearance, because the appearance is
+ * checked with pixels in `qa:events-calendar-theme`.
+ */
+describe('the grid lines', () => {
+  const dayGrid = () => cell('2026-11-10')?.parentElement ?? null;
+
+  it('draws the rules by showing the container between the cells', () => {
+    render('2026-11-10T04:00:00.000Z');
+    const grid = dayGrid();
+    expect(grid?.className).toContain('gap-px');
+    expect(grid?.className).toContain('bg-[var(--border)]');
+  });
+
+  /*
+   * The rules must be INNER ONLY. The container is the size of the cells it
+   * holds, so its colour shows between them and nowhere else — a rule around
+   * the whole month, inside a panel, is a card inside a card.
+   */
+  it('puts no border around the month itself', () => {
+    render('2026-11-10T04:00:00.000Z');
+    const grid = dayGrid();
+    expect(grid?.className).not.toMatch(/(^|\s)(border|ring|p-|px-|py-)/);
+  });
+
+  /*
+   * EVERY cell, padding days included, or the rule colour shows through the
+   * ones that are not covered and the month grows patches.
+   */
+  it('gives every cell an opaque background, padding days included', () => {
+    render('2026-11-10T04:00:00.000Z');
+    const cells = [
+      ...container.querySelectorAll<HTMLElement>('[data-testid^="market-events-cell-"]'),
+    ];
+    expect(cells.length).toBeGreaterThan(28);
+    for (const node of cells) {
+      expect(node.className, `${node.dataset.testid} must paint its own background`)
+        .toMatch(/bg-\[var\(--surface/);
+    }
+  });
+
+  /*
+   * A rounded cell in a ruled grid leaves four wedges of rule colour at every
+   * intersection. The selected day's ring is inset for the same reason — an
+   * outset ring would sit on top of its neighbours' rules.
+   */
+  it('squares the cells off so the intersections stay clean', () => {
+    render('2026-11-10T04:00:00.000Z', { dayParam: '2026-11-25' });
+    for (const node of container.querySelectorAll<HTMLElement>('[data-testid^="market-events-cell-"]')) {
+      expect(node.className, `${node.dataset.testid} must not round its corners`)
+        .not.toMatch(/rounded/);
+    }
+    expect(cell('2026-11-25')?.className).toContain('ring-inset');
+  });
+
+  /*
+   * ONE background class per cell. `bg-[var(--surface)]` and
+   * `bg-[var(--surface-hover)]` have equal specificity, so a cell carrying both
+   * renders whichever Tailwind happened to emit last — correct until the day
+   * the build order changes.
+   */
+  it('lets each cell choose one background rather than layering two', () => {
+    render('2026-11-10T04:00:00.000Z', { dayParam: '2026-11-25' });
+    for (const node of container.querySelectorAll<HTMLElement>('[data-testid^="market-events-cell-"]')) {
+      /*
+        UNPREFIXED classes only. `hover:bg-…` is a pseudo-class and outranks the
+        base by specificity rather than by emit order, so it is not one of the
+        two racing — counting it would forbid the hover state.
+      */
+      const backgrounds = node.className
+        .split(/\s+/)
+        .filter((name) => /^bg-\[var\(--surface/.test(name));
+      expect(backgrounds.length, `${node.dataset.testid} has ${backgrounds.join(' + ')}`)
+        .toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 describe('what the calendar refuses to do', () => {
   /*
    * A calendar that scrolls sideways has given up the one property that makes

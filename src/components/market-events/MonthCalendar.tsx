@@ -115,7 +115,24 @@ export function MonthCalendar({ view }: { view: MarketEventsMonthView }) {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-px">
+        {/*
+          THE RULES ARE THE CONTAINER SHOWING THROUGH, NOT SEVEN BORDERS.
+
+          `gap-px` was already here and drew nothing, because the gap showed the
+          panel surface — the same colour as the cells. Painting the container
+          `--border` turns the gaps it already reserved into the grid lines, at
+          no extra height and with no border on any cell to pull its number off
+          the baseline its neighbours sit on.
+
+          It also means the rules are INNER ONLY. The container is exactly the
+          size of the cells it holds, so the colour is visible between them and
+          nowhere else — no rectangle around the month, which inside a panel
+          would read as a card in a card.
+
+          The cost is that every cell must be OPAQUE. A translucent cell would
+          composite over `--border` instead of over the surface and go grey.
+        */}
+        <div className="grid grid-cols-7 gap-px bg-[var(--border)]">
           {view.weeks.flat().map((cell) => (
             <DayCell
               key={cell.dayKey}
@@ -220,7 +237,7 @@ function DayCell({
   if (!cell.inMonth) {
     return (
       <div
-        className="min-h-11 min-w-0 rounded-md px-0.5 py-1 text-center"
+        className="min-h-11 min-w-0 bg-[var(--surface)] px-0.5 py-1 text-center"
         aria-hidden="true"
         data-testid="market-events-cell-outside"
       >
@@ -276,9 +293,23 @@ function DayCell({
     </>
   );
 
+  /*
+    ONE BACKGROUND DECISION, NOT TWO CLASSES RACING.
+
+    `bg-[var(--surface)]` and `bg-[var(--surface-hover)]` are the same
+    specificity, so which one won would depend on the order Tailwind happened to
+    emit them in — a coin toss that renders correctly until the day it does not.
+    The selected day picks its background instead of layering a second one.
+
+    The corners are square now. A rounded cell inside a ruled grid leaves four
+    little wedges of rule colour at every intersection, and the ring on the
+    selected day follows the same shape so the two agree.
+  */
   const frame = [
-    'min-h-11 min-w-0 rounded-md px-0.5 py-1',
-    cell.isSelected ? 'bg-[var(--surface-hover)] ring-1 ring-[var(--accent)]' : '',
+    'min-h-11 min-w-0 px-0.5 py-1',
+    cell.isSelected
+      ? 'bg-[var(--surface-hover)] ring-1 ring-inset ring-[var(--accent)]'
+      : 'bg-[var(--surface)]',
   ].join(' ');
 
   /*
