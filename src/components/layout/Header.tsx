@@ -1,5 +1,6 @@
 'use client';
 import { ArrowLeft, Search, Bell, User } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { BrandLockup } from '@/src/components/brand/BrandLockup';
@@ -12,6 +13,29 @@ interface HeaderProps {
     indicator: 'green' | 'yellow' | 'red';
   };
   backFallbackHref?: string;
+  /**
+   * A back control that is a LINK to a fixed destination, not a history step.
+   *
+   * ===========================================================================
+   * WHY THERE ARE TWO OF THESE
+   * ===========================================================================
+   * `backFallbackHref` steps through browser history and only falls back to its
+   * href when there is nothing to step to. That is right for a page you always
+   * arrive at from one place — a support ticket from the ticket list — because
+   * "back" there means "the list I was just looking at, scrolled where I left
+   * it".
+   *
+   * It is wrong for a page a reader can arrive at cold: from a card on another
+   * page, from a bookmark, from a link somebody sent them. `router.back()` then
+   * sends them OUT of the product, and `window.history.length > 1` is true for
+   * a tab that has been used at all, so the fallback never fires. A `Link` says
+   * where it goes, survives a middle-click, shows its target on hover, and is
+   * the same destination whatever route the reader took to get here.
+   *
+   * Both render the same control in the same slot with the same accessible
+   * name, so a reader meets one back button, not two kinds.
+   */
+  backHref?: string;
 }
 
 type BackRouter = Pick<ReturnType<typeof useRouter>, 'back' | 'replace'>;
@@ -24,8 +48,22 @@ export function navigateBackWithFallback(router: BackRouter, fallbackHref: strin
   router.replace(fallbackHref);
 }
 
-export default function Header({ title, subtitle, status, backFallbackHref }: HeaderProps) {
+export default function Header({
+  title,
+  subtitle,
+  status,
+  backFallbackHref,
+  backHref,
+}: HeaderProps) {
   const router = useRouter();
+  /*
+    One flag for every layout decision below. A header with either kind of back
+    control drops the brand lockup and hides the secondary actions on a
+    handset — that was already true of one of them and has nothing to do with
+    which mechanism moves the reader.
+  */
+  const hasBack = Boolean(backFallbackHref || backHref);
+  const backClassName = 'flex min-h-11 min-w-11 flex-none items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]';
   const [unreadCount, setUnreadCount] = useState(0);
   useEffect(() => {
     const load = () => { void fetch('/api/notifications/unread-count').then((response) => response.json()).then((data) => setUnreadCount(Number(data.count) || 0)).catch(() => undefined); };
@@ -36,12 +74,16 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_86%,transparent)] px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-md transition-colors duration-200 sm:px-6 lg:px-8">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
-        {backFallbackHref && (
+        {backHref ? (
+          <Link href={backHref} aria-label="ย้อนกลับ" className={backClassName}>
+            <ArrowLeft aria-hidden="true" size={21} />
+          </Link>
+        ) : backFallbackHref && (
           <button
             type="button"
             onClick={() => navigateBackWithFallback(router, backFallbackHref)}
             aria-label="ย้อนกลับ"
-            className="flex min-h-11 min-w-11 flex-none items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+            className={backClassName}
           >
             <ArrowLeft aria-hidden="true" size={21} />
           </button>
@@ -53,7 +95,7 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
           title no room to share a row.
         */}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:gap-4">
-          {!backFallbackHref && (
+          {!hasBack && (
             <>
               <BrandLockup priority />
               <span aria-hidden="true" className="hidden h-7 w-px flex-none bg-[var(--border)] md:block" />
@@ -63,7 +105,7 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
               below never engages, so a long title runs under the header actions
               at 320px instead of ellipsing. */}
           <div className="min-w-0">
-            <h2 className={backFallbackHref ? 'whitespace-nowrap text-base font-semibold text-[var(--text)] sm:text-lg' : 'truncate text-base font-semibold text-[var(--text)] sm:text-lg'}>{title}</h2>
+            <h2 className={hasBack ? 'whitespace-nowrap text-base font-semibold text-[var(--text)] sm:text-lg' : 'truncate text-base font-semibold text-[var(--text)] sm:text-lg'}>{title}</h2>
             {subtitle && <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block">{subtitle}</p>}
           </div>
         </div>
@@ -84,7 +126,7 @@ export default function Header({ title, subtitle, status, backFallbackHref }: He
         )}
       </div>
 
-      <div className={`${backFallbackHref ? 'hidden sm:flex' : 'flex'} shrink-0 items-center gap-4 md:gap-6`}>
+      <div className={`${hasBack ? 'hidden sm:flex' : 'flex'} shrink-0 items-center gap-4 md:gap-6`}>
         <div
           className="hidden md:block relative cursor-text"
           onClick={() => router.push('/search')}
