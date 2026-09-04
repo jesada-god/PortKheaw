@@ -218,16 +218,52 @@ describe('a cell is tappable exactly when it has somewhere to go', () => {
     }
   });
 
-  it('stays a band rather than becoming a card again', () => {
+  /*
+    THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the point.
+
+    It read "stays a band rather than becoming a card again" and forbade a
+    border and a radius on the cell, guarding the `.data-strip` band this
+    section shipped as. The owner reversed that decision: the section's three
+    grids now share one corner radius, so the guard is INVERTED rather than
+    deleted — what is pinned down is still that the cell's box is deliberate,
+    and only the decision it pins has changed.
+
+    (The three `not.toMatch` lines this replaces could not fail. Their regexes
+    were written with a literal 0x08 byte where `\b` was meant, so each was
+    matching backspace-border-backspace and never the word. They are replaced
+    with `toContain` on the token, which cannot be written wrong the same way.)
+
+    The radius and the border are asserted as the TOKENS, never as pixels: a
+    cell that hardcoded 14px would satisfy a value check and still be exactly
+    the drift this exists to catch.
+  */
+  it('draws every cell as a card on the section’s one radius', () => {
     const cell = renderAssets().querySelector('[data-testid="market-asset-GC-F"]')!;
-    // The same cell class, so the hairlines and the height are untouched.
-    expect(cell.className).toContain('data-strip__cell');
+    expect(cell.className).toContain('rounded-[var(--radius-panel)]');
+    expect(cell.className).toContain('border-[var(--border)]');
+    // The affordance is untouched by the reversal.
     expect(cell.className).toContain('hover:bg-[var(--surface-hover)]');
     expect(cell.className).toContain('focus-visible:outline');
-    // No border, no elevation, no scale — those would rebuild the card.
-    expect(cell.className).not.toMatch(/rounded-2xl/);
-    expect(cell.className).not.toMatch(/border/);
-    expect(cell.className).not.toMatch(/shadow-/);
+    // Still no elevation and no scale — a card that lifts is a different claim.
+    expect(cell.className).not.toMatch(/shadow-/);
+    expect(cell.className).not.toMatch(/scale-/);
+  });
+
+  /*
+    The band's own edge had to go when the cells got corners: a rectangle drawn
+    around eight rounded cards is a second, square frame around them.
+
+    `.data-strip` is SHARED — the portfolio tracker and the stock detail metrics
+    still draw bands with it — so this asserts the override happens HERE, in
+    this file's markup, and not in `foundation.css` where it would silently
+    reshape two other surfaces.
+  */
+  it('drops the band border in this markup, not in the shared class', () => {
+    const strip = renderAssets().querySelector('.data-strip')!;
+    expect(strip.className).toContain('border-0');
+    expect(strip.className).toContain('gap-2');
+    // The column geometry is still the shared class's.
+    expect(strip.className).toContain('data-strip--flow');
   });
 
   /*

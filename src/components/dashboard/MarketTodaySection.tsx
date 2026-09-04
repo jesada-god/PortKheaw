@@ -24,17 +24,33 @@ import type { MarketIndexCard } from '@/src/lib/overview/types';
  * ตลาดวันนี้ — one row, one market.
  *
  * ===========================================================================
- * A BAND, NOT SIX CARDS
+ * SIX CARDS, NOT A BAND — THE DECISION IS REVERSED
  * ===========================================================================
- * `.data-strip` is the product's existing shape for "one object with several
- * facets": a hairline rectangle whose cells are divided by rules rather than by
- * gaps. Six boxed cards in a row would say these are six independent things,
- * and they are not — they are six readings of one market, which is the whole
- * claim the status line underneath makes.
+ * This was a `.data-strip` band: one hairline rectangle whose cells were
+ * divided by rules rather than gaps, argued for on the grounds that six boxed
+ * cards would say these are six independent things when they are six readings
+ * of one market.
+ *
+ * The owner reversed it. The section now holds three grids — these six, the two
+ * reading panels, and the asset strip — and with the panels drawn as cards the
+ * band was the one row on the page with square corners and shared edges, which
+ * read as an unfinished table rather than as a deliberate difference. One
+ * corner radius across the whole section was worth more than the distinction
+ * the band was making, so every cell here is now a card at
+ * `--radius-panel`, the same token the panels and the watchlist cards use.
+ *
+ * THE HAIRLINES HAD TO GO WITH IT, and that is mechanical rather than
+ * editorial: `.data-strip__cell` draws its dividers as `box-shadow`, which is a
+ * square 1px rule that a rounded corner cuts straight through. The cells carry
+ * their own `--border` instead — the same border the panels carry — so the
+ * corner and the edge are the same shape. `.data-strip__cell` ITSELF is
+ * untouched in `foundation.css`: the portfolio tracker and the stock detail
+ * metrics still draw bands with it, and this file overrides only its own cells.
  *
  * Six across at every width. On a handset the strip overflows and
  * `.data-strip-scroll` scrolls it sideways; it does NOT reflow into three rows
- * of two, because a band that becomes a block stops being a band.
+ * of two, because the row is still one market read six ways even when its cells
+ * are cards.
  *
  * ===========================================================================
  * THE MARK READS MEANING, NOT DIRECTION
@@ -50,14 +66,26 @@ import type { MarketIndexCard } from '@/src/lib/overview/types';
 const INPUT_BY_KEY = new Map(MARKET_STATUS_INPUTS.map((input) => [input.key, input]));
 
 /**
+ * ONE CELL'S BOX, SHARED BY BOTH BANDS AND BY BOTH OF `StripCell`'S BRANCHES.
+ *
+ * `--radius-panel` and `--border`, which is exactly what the two reading panels
+ * and the watchlist cards carry — written once here so the three grids in this
+ * section cannot drift apart, and so no px value is spelled out where a token
+ * already says it.
+ *
+ * The padding is `.data-strip__cell`'s own — `0.625rem 0.75rem` — kept to the
+ * pixel so the reversal changed corners and edges and nothing else.
+ */
+const CELL_BOX = 'block min-w-0 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-2.5';
+
+/**
  * ONE CELL, TAPPABLE WHEN THERE IS SOMEWHERE TO GO.
  *
  * The nine cards this section replaced were each a single anchor to the
  * instrument's own page, and the strip that replaced them was nine `<div>`s —
  * a reader who tapped a price got nothing. This puts the anchor back ON THE
- * CELL rather than around a card: same class, same padding, same height, so the
- * band stays a band. The hairlines are `box-shadow` on the cell and are
- * unaffected by what element draws them.
+ * CELL: same padding as the band it grew out of, so no row changed height when
+ * the corners were rounded.
  *
  * `href === null` renders a plain `<div>`, and that is a deliberate state, not
  * a fallback. A cell that looks tappable and opens a page with no price on it
@@ -76,7 +104,7 @@ function StripCell({
   children: React.ReactNode;
 }) {
   if (href === null) {
-    return <div className="data-strip__cell min-w-0" data-testid={testId}>{children}</div>;
+    return <div className={CELL_BOX} data-testid={testId}>{children}</div>;
   }
   return (
     <Link
@@ -95,11 +123,16 @@ function StripCell({
         event.currentTarget.click();
       }}
       /*
-        The hover tint and the focus ring are the whole of the affordance. No
-        border, no elevation, no scale — any of those would rebuild the card
-        this band exists to be lighter than.
+        The hover tint and the focus ring are still the whole of the affordance.
+        The border is the card's edge and is drawn on every cell whether it is
+        tappable or not, so it says nothing about tappability; no elevation and
+        no scale, which would make a card that lifts under a pointer out of one
+        that only tints.
       */
-      className="data-strip__cell block min-w-0 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)] active:bg-[var(--surface-selected)]"
+      className={cn(
+        CELL_BOX,
+        'transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)] active:bg-[var(--surface-selected)]',
+      )}
     >
       {children}
     </Link>
@@ -257,7 +290,13 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
   return (
     <div className="min-w-0" data-testid="market-today-strip">
       <div className="data-strip-scroll bleed-mobile px-[var(--page-gutter)] sm:px-0">
-        <div className="data-strip data-strip--6">
+        {/*
+          `.data-strip`'s column geometry is kept — `--6` is what holds six
+          across and gives each a 7.5rem floor — while its band border is
+          dropped and a real gap put between the cells. Utilities beat the
+          `@layer components` rule, so this needs no change to the shared class.
+        */}
+        <div className="data-strip data-strip--6 gap-2 border-0">
           {readings.map((reading) => <ReadingCell key={reading.key} reading={reading} />)}
         </div>
       </div>
@@ -289,7 +328,29 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
         half-width panel beside an empty track reads as a panel that failed to
         load rather than as the only reading there is.
       */}
-      <div className="mt-3 grid grid-cols-2 gap-3.5">
+      {/*
+        SIXTEEN PIXELS, THE SAME SIXTEEN, BETWEEN ALL THREE BLOCKS.
+
+        The section is three bordered bands stacked — the six readings, the two
+        panels, the asset strip — and at the twelve pixels they shipped with,
+        three hairline rectangles a hair apart read as one grid that lost its
+        internal rules rather than as three things. Sixteen is the smallest
+        step that separates them without the section starting to look like
+        three sections.
+
+        NOTHING WAS COLLAPSING OR BEING OVERRIDDEN — it was simply too small.
+        `.bleed-mobile` sets `margin-inline` only, so it cannot touch a block
+        margin; `.data-strip-scroll` is `overflow-x: auto`, which establishes a
+        block formatting context and therefore PREVENTS collapse rather than
+        causing it; and `.page-stack > * + *` applies to the section, never to
+        the blocks inside it. The margin was always landing — see
+        `foundation.css:391` and `:406`.
+
+        The stale line below keeps its own `mt-1` and is deliberately NOT on
+        this rhythm: it is a footnote on the panels above it, and giving it the
+        same air as a block would make it read as a fourth one.
+      */}
+      <div className="mt-4 grid grid-cols-2 gap-3.5">
         {status === null ? (
           <ReadingPanel
             eyebrow="ทิศทาง · Market Direction"
@@ -446,10 +507,10 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
   if (items.length === 0) return null;
   return (
     <div
-      className="data-strip-scroll bleed-mobile mt-3 px-[var(--page-gutter)] sm:px-0"
+      className="data-strip-scroll bleed-mobile mt-4 px-[var(--page-gutter)] sm:px-0"
       data-testid="market-today-assets"
     >
-      <div className="data-strip data-strip--flow">
+      <div className="data-strip data-strip--flow gap-2 border-0">
         {items.map((item) => (
           <StripCell
             key={item.symbol}
@@ -531,7 +592,7 @@ export function MarketAssetStrip({ items }: { items: readonly MarketIndexCard[] 
 /** The skeleton, at the height the strip actually occupies. */
 export function MarketTodaySkeleton() {
   return (
-    <div className="space-y-3" role="status" aria-label="กำลังโหลดภาพรวมตลาด">
+    <div className="space-y-4" role="status" aria-label="กำลังโหลดภาพรวมตลาด">
       <div className="h-[86px] animate-pulse rounded-[var(--radius-mark)] bg-[var(--surface-elevated)] motion-reduce:animate-none" />
       <div className="h-5 w-2/3 animate-pulse rounded-[var(--radius-mark)] bg-[var(--surface-elevated)] motion-reduce:animate-none" />
     </div>
