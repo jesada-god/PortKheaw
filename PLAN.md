@@ -65,8 +65,33 @@
 | `MarketCard` | เลิกใช้ (ถ้า Q2 = ลบ) | ยังถูกใช้ที่อื่นไหมต้องเช็ก |
 | `PortfolioSummaryLine` | **รอ Q1** | ลำดับที่สั่งมาไม่มี portfolio |
 | `UpcomingSection` | **รอ Q3** | ลำดับที่สั่งมาไม่มี upcoming |
-| `MarketEventsCard` (ปฏิทินเดือน) | เลิกใช้บน Overview | `EventsList` เป็น list ไม่ใช่ grid เดือน · หน้า `/market-events` ยังใช้ของเดิม |
+| `MarketEventsCard` (ปฏิทินเดือน) | ~~เลิกใช้บน Overview~~ → **ใช้ต่อ และเป็นการ์ดปฏิทินตัวเดียวบน Overview** | **มติกลับแล้ว — ดู §1.4.1** |
 | `ServiceStatus` · `IndustryRanking` · `BreadthSection` ใน `<details>` | **คงไว้เหมือนเดิม** | ไม่ได้อยู่ใน 5 section และไม่ได้สั่งให้แตะ |
+
+#### 1.4.1 มติที่กลับ: Overview ใช้ grid ไม่ใช่ list
+
+แผนเดิมข้างบนตัด `MarketEventsCard` ออกจาก Overview ด้วยเหตุผลว่า `EventsList`
+คือ section 4 ตามที่สั่งมา และปฏิทินเดือนซ้ำกับมัน **เจ้าของกลับมติข้อนี้** —
+`OVERVIEW_ORDER_V2` ใช้ `marketEvents` ในช่องปฏิทินแทน `events` แล้ว
+
+เหตุผลที่กลับ: สองอย่างนี้ตอบคนละคำถาม
+
+| | ตอบคำถามอะไร | เหมาะกับหน้าไหน |
+|---|---|---|
+| `MarketEventsCard` (grid) | "เดือนนี้หน้าตาเป็นยังไง มีอะไรกองอยู่ตรงไหน" — อ่านจบด้วยการกวาดตา ไม่ต้องอ่านทีละบรรทัด | **Overview** — หน้าที่คนเปิดผ่าน ไม่ได้ตั้งใจมาอ่าน |
+| `EventsList` (list) | "อะไรกำลังจะมา และมันแตะของที่ผมถืออยู่ไหม" — ต้องอ่านทีละแถว | `/market-events` — หน้าที่คนตั้งใจเปิดมาดู |
+
+**สิ่งที่ยอมเสีย:** relevance join — `EventsList` ทำเครื่องหมายแถวที่ตรงกับ symbol ใน
+พอร์ต/watchlist ส่วน grid ไม่ทำ ของนั้นอยู่ห่างไปหนึ่งแตะที่ `/market-events`
+และ cell แต่ละวันลิงก์ไปวันนั้นตรง ๆ แล้ว (`?m=&d=` + anchor)
+
+**ผลข้างเคียงที่ต้องตามเก็บ:** key `events` ไม่เหลืออยู่ในลำดับไหนเลย →
+`PHASE2_EVENTS` กลายเป็นธงที่ไม่เปลี่ยนอะไรในทุกกรณี ประกาศไว้ที่
+`STRANDED_SECTION_KEYS` ([section-order.ts](src/lib/overview/section-order.ts))
+และช่อง `unreachable` ใน
+[phase2-flag-manifest.mjs](src/config/phase2-flag-manifest.mjs) — ปิดธงได้เลย
+โค้ดของ `EventsList` และ `buildOverviewEvents` ยังอยู่ครบ ถ้าจะกลับไปใช้ list
+แก้ที่ `OVERVIEW_ORDER_V2` บรรทัดเดียว
 
 ---
 

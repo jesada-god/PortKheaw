@@ -70,7 +70,8 @@
     "signal:sideways-pressure": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-sideways-pressure-probe.ts",
     "signal:trend-agreement": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-agreement-probe.ts",
     "signal:trend-diagnosis": "node --conditions=react-server --import=tsx --env-file-if-exists=.env.local scripts/signal-trend-diagnosis-probe.ts",
-    "inspect:daily-snapshot": "node --import=tsx --env-file-if-exists=.env.test scripts/inspect-daily-snapshot.ts"
+    "inspect:daily-snapshot": "node --import=tsx --env-file-if-exists=.env.test scripts/inspect-daily-snapshot.ts",
+    "qa:overview-calendar-slot": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/overview-calendar-slot-qa.mts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

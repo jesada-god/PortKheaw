@@ -11,8 +11,13 @@
  *
  * It failed one step further down. `orderedOverviewSections` iterates the ORDER
  * ARRAY and filters by presence, so a key absent from the array can never be
- * emitted however true its presence is — and `'events'` is absent from
- * `OVERVIEW_ORDER_V1`. The flag is unreachable without `OVERVIEW_V2=true`.
+ * emitted however true its presence is — and `'events'` was absent from
+ * `OVERVIEW_ORDER_V1`.
+ *
+ * `'events'` is now absent from BOTH arrays, because the Overview's calendar
+ * slot draws the month grid instead of the merged list. Same trap, wider: the
+ * flag reaches nothing in any combination. That is what `unreachable` on an
+ * entry records, and it is checked against the real arrays rather than trusted.
  *
  * That dependency was written down in three places and wrong in all three: the
  * rollout doc listed no prerequisite, the QA script's note said only "the
@@ -62,17 +67,21 @@ export const OVERVIEW_SECTION_KEYS = [
  * The base flag that selects which order array is walked.
  *
  * Not a Phase 2 flag and not parallel to them: it decides whether a Phase 2
- * section is reachable at all. `OVERVIEW_ORDER_V2` is the only array containing
- * `'events'`.
+ * section is reachable at all, because a key is only ever emitted from the
+ * array this flag selects.
  */
 export const OVERVIEW_ORDER_FLAG = 'OVERVIEW_V2';
 
 /**
  * Sections that exist ONLY in V1, and therefore disappear when the base flag is
- * turned on. Stated here because it is the cost of satisfying `PHASE2_EVENTS`,
+ * turned on. Stated here because it is the cost of turning the base flag on,
  * and nobody should discover it by looking at the page afterwards.
+ *
+ * `marketEvents` used to be on this list and is not any more: the Overview
+ * draws the month grid in BOTH orders now, so turning the base flag on no
+ * longer costs the calendar.
  */
-export const LOST_WHEN_ORDER_FLAG_ON = ['marketStatus', 'upcoming', 'marketEvents'];
+export const LOST_WHEN_ORDER_FLAG_ON = ['marketStatus', 'upcoming'];
 
 /**
  * One entry per Phase 2 flag.
@@ -80,9 +89,43 @@ export const LOST_WHEN_ORDER_FLAG_ON = ['marketStatus', 'upcoming', 'marketEvent
  *   flag         the `--flag` value `verify:phase2-live` takes
  *   env          the environment variable, spelled exactly
  *   sectionKey   the `OverviewSectionKey` this flag's output lands in
- *   requires     env vars that must ALSO be true, or the output is unreachable
+ *   requires     env vars that must ALSO be TRUE, or the output is unreachable
+ *   forbids      env vars that must be FALSE, or the output is unreachable
  *   requiresAuth whether a signed-out reader can see the result at all
  *   markers      `data-testid` values the flag makes appear, once reachable
+ *   unreachable  set when the section key is in NO order array, so the flag
+ *                cannot draw anything in ANY combination. The string is why.
+ *                Absent on a flag that can reach the page.
+ *
+ * `forbids` is the half that was missing, and its absence is why this file did
+ * not cover `MARKET_EVENTS_CARD` at all. A V1-only key is the same trap as a
+ * V2-only one with the base flag inverted: `MARKET_EVENTS_CARD` was correctly
+ * set in production, `OVERVIEW_V2` was also on, and the card was filtered out
+ * because `'marketEvents'` was in V1's array alone. The old schema could only
+ * say "needs OVERVIEW_V2", so the one prerequisite that was true — "needs
+ * OVERVIEW_V2 OFF" — had nowhere to be written and was not written anywhere.
+ *
+ * Both fields are empty on every entry today, because every reachable section
+ * is in both order arrays. That is a fact about the arrays, not about the
+ * schema, and the test derives it from `section-order.ts` rather than trusting
+ * it: a key that drops out of either array makes the matching field mandatory.
+ *
+ * The `@type` is not decoration. This file is `.mjs`, so TypeScript infers the
+ * narrowest thing the literals allow: with every `requires` currently empty it
+ * infers `never[]`, and a test comparing one against an env-var name stops
+ * compiling. The shape is the contract, not today's values.
+ *
+ * @type {ReadonlyArray<{
+ *   flag: string,
+ *   env: string,
+ *   sectionKey: string,
+ *   requires: string[],
+ *   forbids: string[],
+ *   requiresAuth: boolean,
+ *   unreachable?: string,
+ *   markers: string[],
+ *   note: string,
+ * }>}
  */
 export const PHASE2_FLAGS = [
   {
@@ -90,16 +133,26 @@ export const PHASE2_FLAGS = [
     env: 'PHASE2_EVENTS',
     sectionKey: 'events',
     /*
-      The one that bit us. `'events'` is in OVERVIEW_ORDER_V2 and NOT in
-      OVERVIEW_ORDER_V1, so with the base flag off the section is filtered out
-      before it is ever asked whether it has rows.
+      The one that bit us, and now the one that draws nothing at all.
+
+      It bit us because `'events'` was in OVERVIEW_ORDER_V2 and not in V1, so
+      with the base flag off the section was filtered out before it was ever
+      asked whether it had rows. V2 draws the month grid in that slot now, so
+      `'events'` is in NEITHER array and no combination of switches reaches it.
+
+      `requires` is empty rather than `[OVERVIEW_ORDER_FLAG]` because naming a
+      prerequisite would promise that satisfying it changes something. It does
+      not. `unreachable` is the honest field and the tests read it.
     */
-    requires: [OVERVIEW_ORDER_FLAG],
+    requires: [],
+    forbids: [],
     requiresAuth: false,
+    unreachable: "'events' is in no order array — OVERVIEW_ORDER_V2 draws "
+      + "'marketEvents' (the month grid) in that slot. This flag changes no "
+      + 'pixel with any combination of switches; it is waiting to be retired.',
     markers: ['overview-events'],
-    note: 'The macro calendar is a static import and its rows do not depend on '
-      + 'a session, so once reachable this shows rows signed out — not an empty '
-      + 'section.',
+    note: 'Draws nothing. The marker is kept so every other run still FORBIDS '
+      + 'it — an overview-events on the page would mean the list came back.',
   },
   {
     flag: 'what-changed',
@@ -112,6 +165,7 @@ export const PHASE2_FLAGS = [
       there is a client, a user and a selected watchlist.
     */
     requires: [],
+    forbids: [],
     requiresAuth: true,
     markers: ['overview-changes'],
     note: 'Signed out the section falls back to the V1 ChangesSection, which '
@@ -127,6 +181,7 @@ export const PHASE2_FLAGS = [
       — the Phase 2 band, or the block that shipped.
     */
     requires: [],
+    forbids: [],
     requiresAuth: false,
     markers: ['market-today-strip', 'market-today-status', 'market-today-reasons'],
     note: 'The only flag that spends: six provider quotes behind a 60s shared '
@@ -142,10 +197,40 @@ export const PHASE2_FLAGS = [
     */
     sectionKey: 'watchlist',
     requires: [],
+    forbids: [],
     requiresAuth: true,
     markers: [],
     note: 'Draws no section. Signed out it changes nothing on the page at all; '
       + 'its evidence is overview_alert_hits after a pg_cron tick.',
+  },
+  {
+    flag: 'market-events-card',
+    env: 'MARKET_EVENTS_CARD',
+    sectionKey: 'marketEvents',
+    /*
+      NOT a PHASE2_* flag, and here anyway.
+
+      This manifest is not a list of flags that happen to share a prefix — it
+      is the list of flags whose output has to survive `orderedOverviewSections`
+      to be seen at all. `MARKET_EVENTS_CARD` does, it fell into exactly the
+      trap this file was built to prevent, and it was not covered here because
+      the schema had no way to express the direction it failed in.
+
+      `requires` and `forbids` are both empty because 'marketEvents' is in BOTH
+      order arrays now, so no base-flag state hides it. The test derives that
+      from the real arrays: drop the key from V1 and `forbids` becomes
+      mandatory, drop it from V2 and `requires` does.
+
+      It also gates the whole `/market-events` route, which `notFound()`s
+      without it — the only entry here that decides a URL exists.
+    */
+    requires: [],
+    forbids: [],
+    requiresAuth: false,
+    markers: ['market-events-card'],
+    note: 'Costs no provider call in either state — the calendar is a static '
+      + 'JSON import. Visible signed out. Also gates /market-events, which '
+      + '404s while it is off.',
   },
 ];
 

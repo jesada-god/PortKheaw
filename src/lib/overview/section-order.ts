@@ -30,6 +30,20 @@
  * watchlist, where a reader who has just looked at what they own asks what is
  * coming.
  *
+ * ===========================================================================
+ * THE CALENDAR IS A MONTH GRID IN BOTH ORDERS, NOT A LIST IN ONE
+ * ===========================================================================
+ * V2 used to fill that slot with `events` — the merged list. It is
+ * `marketEvents` now, the month grid, on the owner's decision: a grid answers
+ * "what does this month look like" at a glance, which is the question the
+ * Overview is for, and a list answers "what exactly is coming and does it touch
+ * me", which is the question `/market-events` is for. Two pages, two questions,
+ * and the Overview gets the shape you can read without reading.
+ *
+ * What that gives up is the relevance join — `EventsList` marked the rows that
+ * touched the reader's own symbols and the grid does not. It is one tap away on
+ * the detail page, and it was not worth a list on the Overview.
+ *
  * What does NOT move: the market block still leads, and the portfolio line is
  * still second. Both were argued for in `DashboardClient.tsx` and neither
  * argument is weakened by anything here — a reader is still here for their own
@@ -49,9 +63,9 @@
  * rollback, and a rollback that reorders the top of the page is not one.
  *
  * `events` and `marketEvents` are two different sections and both keys are
- * kept. `marketEvents` is the month grid V1 draws at the bottom; `events` is
- * the merged list V2 draws instead, which carries the macro calendar AND
- * everything `upcoming` used to carry. Neither appears in the other's order.
+ * kept. `marketEvents` is the month grid, and it is now in BOTH orders — V1
+ * draws it last, V2 draws it after the watchlist. `events` is the merged list,
+ * and it is in NEITHER: see `STRANDED_SECTION_KEYS` below.
  */
 export type OverviewSectionKey =
   | 'marketToday'
@@ -86,22 +100,41 @@ export const OVERVIEW_ORDER_V1: readonly OverviewSectionKey[] = [
 /**
  * The requested order, behind `OVERVIEW_V2`.
  *
- * ตลาดวันนี้ → พอร์ต → สิ่งที่เปลี่ยนไป → Watchlist → Events → ข่าว, and the same
- * six on every screen width.
+ * ตลาดวันนี้ → พอร์ต → สิ่งที่เปลี่ยนไป → Watchlist → ปฏิทินเศรษฐกิจ → ข่าว, and the
+ * same six on every screen width.
  *
  * `marketStatus` is gone from this order rather than moved: `marketToday`
  * publishes the same six instruments and the same regime, so keeping both would
- * be two readings of one market on one page. `upcoming` is gone for the same
- * reason — `events` carries its rows.
+ * be two readings of one market on one page. `upcoming` is gone because the
+ * calendar slot answers the same question and the grid answers it faster.
  */
 export const OVERVIEW_ORDER_V2: readonly OverviewSectionKey[] = [
   'marketToday',
   'portfolio',
   'whatChanged',
   'watchlist',
-  'events',
+  'marketEvents',
   'news',
 ];
+
+/**
+ * KEYS NO ORDER WALKS — declared, so a new one cannot arrive unnoticed.
+ *
+ * `orderedOverviewSections` filters the order array, so a key in neither array
+ * is dead: its flag can be on, its data built and its presence true, and the
+ * page will still never emit it. That is the exact shape of the `PHASE2_EVENTS`
+ * defect, and `section-order.test.ts` fails on any key that is stranded and not
+ * named here — which is what makes an accidental strand loud and this one
+ * deliberate.
+ *
+ * `events` is here because V2 draws the month grid instead of the merged list.
+ * The key, `EventsList` and everything behind `PHASE2_EVENTS` still compile and
+ * still pass their own tests; nothing on the Overview reaches them. **So
+ * `PHASE2_EVENTS` is now a flag that changes no pixel in any combination**, and
+ * the honest next step is to retire it rather than leave a switch on that does
+ * nothing.
+ */
+export const STRANDED_SECTION_KEYS: readonly OverviewSectionKey[] = ['events'];
 
 export type OverviewSectionPresence = Readonly<Record<OverviewSectionKey, boolean>>;
 

@@ -135,12 +135,22 @@ const FLAGS = {
     env: entry.env,
     requires: entry.requires,
     requiresAuth: entry.requiresAuth,
-    expect: entry.markers.map(marker),
+    unreachable: entry.unreachable,
+    /*
+      An UNREACHABLE flag expects nothing and forbids everything, its own marker
+      included. Its section key is in no order array, so the page cannot emit it
+      whatever is switched on — and a run that expected the marker anyway would
+      fail every time and teach the operator to ignore a red.
+    */
+    expect: entry.unreachable ? [] : entry.markers.map(marker),
     /*
       Every marker that is not this flag's. Seeing one means a switch this step
-      did not intend to move has moved.
+      did not intend to move has moved. For an unreachable flag that is ALL of
+      them: its own marker appearing would mean the section came back.
     */
-    forbid: allMarkers.filter((name) => !entry.markers.includes(name)).map(marker),
+    forbid: (entry.unreachable
+      ? allMarkers
+      : allMarkers.filter((name) => !entry.markers.includes(name))).map(marker),
     note: entry.note,
     checkHits: entry.env === 'PHASE2_ALERTS',
   }])),
@@ -176,6 +186,9 @@ function check(claim, ok, detail = '') {
  */
 function diagnosis() {
   const reasons = [];
+  if (SPEC.unreachable) {
+    reasons.push(`${SPEC.env} cannot draw anything at all — ${SPEC.unreachable}`);
+  }
   if (SPEC.requires.length > 0) {
     reasons.push(
       `${SPEC.env} is unreachable unless ${SPEC.requires.join(' and ')} is also true `

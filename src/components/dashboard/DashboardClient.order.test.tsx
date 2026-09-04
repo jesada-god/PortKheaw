@@ -260,10 +260,11 @@ const ALL_ON: Toggles = {
 describe('the overview reading order, rendered', () => {
   /*
    * Eight in V1 and six in V2, and the two numbers differ because the orders
-   * do: `events` belongs to V2 alone, and `marketStatus` / `upcoming` /
-   * `marketEvents` belong to V1 alone. A key that is switched on but absent
-   * from the order in force must draw NOTHING, which is what the two counts
-   * together assert.
+   * do: `marketStatus` and `upcoming` belong to V1 alone, and `events` belongs
+   * to NEITHER — the calendar slot draws the month grid in both. A key that is
+   * switched on but absent from the order in force must draw NOTHING, and
+   * `events: true` in `ALL_ON` is what makes that a real assertion rather than
+   * an untested one: it is on in every case below and must never appear.
    */
   it('draws every managed section when everything is on', () => {
     render(ALL_ON);
