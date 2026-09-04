@@ -137,8 +137,20 @@ describe('the header that carries it', () => {
   });
 
   it('keeps the brand out of the way of a back-navigable page title', () => {
-    // Alert-style pages replace the lockup with a back control, so the two can
-    // never compete for the same 320px row.
-    expect(header).toContain('{!backFallbackHref && (');
+    /*
+      Alert-style pages replace the lockup with a back control, so the two can
+      never compete for the same 320px row.
+
+      Asserted against `hasBack` rather than against one prop name: there are
+      two kinds of back control now — a history step and a link to a fixed
+      destination — and the brand has to stand aside for BOTH. Naming a single
+      prop here would have gone quietly stale the moment a page used the other
+      one, which is exactly what it did.
+
+      `Header.test.tsx` holds the rendered half of this, counting lockups with
+      each kind of back control and with neither.
+    */
+    expect(header).toContain('{!hasBack && (');
+    expect(header).toContain('const hasBack = Boolean(backFallbackHref || backHref);');
   });
 });
