@@ -5,11 +5,13 @@ import type {
   MonthViewCell,
 } from '@/src/lib/market-events/month-view';
 import { MARK_LEGEND_TH } from '@/src/lib/market-events/month-view';
+import { IMPORTANCE_MARK_STYLE, MarketEventRow } from './MarketEventRow';
 import {
-  IMPORTANCE_MARK_STYLE,
-  IMPORTANCE_WASH_STYLE,
-  MarketEventRow,
-} from './MarketEventRow';
+  dayCellBody,
+  dayCellFrame,
+  MONTH_GRID_CLASS,
+  WeekdayHeadings,
+} from './calendar-grid';
 
 /**
  * ปฏิทินเศรษฐกิจ — a walkable month, and the day underneath it.
@@ -110,66 +112,12 @@ export function MonthCalendar({ view }: { view: MarketEventsMonthView }) {
 
       <div className={`min-w-0 px-2 py-3 sm:px-3 ${covered ? '' : 'opacity-40'}`}>
         {/*
-          ===================================================================
-          THE HEADINGS ARE A DIFFERENT LAYER FROM THE DATES
-          ===================================================================
-          They used to sit one pixel above the first row of numbers, in the
-          same weight, at a LARGER size than the dates themselves —
-          `app/globals.css` floors `.text-[10px]` at 12px for readability, so
-          `จ. อ. พ.` rendered at 12 and the day numbers at 11. The hierarchy
-          was upside down and the whole thing read as one block.
-
-          Three changes, none of them a new colour:
-
-          A RULE. `--border`, the same token the grid lines are drawn in, so
-          the row above the table is closed off by the same line that separates
-          the cells rather than by a second kind of edge.
-
-          AIR. `pb-2 mb-1.5` — enough to read as a break, and it is the only
-          part of this that costs height.
-
-          WEIGHT, not size. Dropping the headings below 12px would fight the
-          floor that exists so small Thai labels stay legible, so they get
-          `font-normal` and keep `--text-muted` while the dates keep
-          `--text-secondary`: the headings are now lighter AND fainter than the
-          numbers under them, which is the hierarchy that was inverted.
-
-          `tracking-wide` is the last of it. Thai has no uppercase to reach for,
-          and letter-spacing is the register shift that reads as a label rather
-          than as content in both scripts.
+          The weekday row, the grid rules and the wash behind a busy day are
+          all shared with `MarketEventsCard` — see `calendar-grid.tsx` for why
+          the appearance is shared while the two view models stay apart.
         */}
-        <div
-          className="grid grid-cols-7 gap-px border-b border-[var(--border)] pb-2 mb-1.5"
-          role="presentation"
-          data-testid="market-events-weekdays"
-        >
-          {view.weekdayHeadingsTh.map((heading) => (
-            <div
-              key={heading}
-              className="min-w-0 text-center text-[10px] font-normal tracking-wide text-[var(--text-muted)]"
-            >
-              {heading}
-            </div>
-          ))}
-        </div>
-        {/*
-          THE RULES ARE THE CONTAINER SHOWING THROUGH, NOT SEVEN BORDERS.
-
-          `gap-px` was already here and drew nothing, because the gap showed the
-          panel surface — the same colour as the cells. Painting the container
-          `--border` turns the gaps it already reserved into the grid lines, at
-          no extra height and with no border on any cell to pull its number off
-          the baseline its neighbours sit on.
-
-          It also means the rules are INNER ONLY. The container is exactly the
-          size of the cells it holds, so the colour is visible between them and
-          nowhere else — no rectangle around the month, which inside a panel
-          would read as a card in a card.
-
-          The cost is that every cell must be OPAQUE. A translucent cell would
-          composite over `--border` instead of over the surface and go grey.
-        */}
-        <div className="grid grid-cols-7 gap-px bg-[var(--border)]">
+        <WeekdayHeadings headings={view.weekdayHeadingsTh} />
+        <div className={MONTH_GRID_CLASS}>
           {view.weeks.flat().map((cell) => (
             <DayCell
               key={cell.dayKey}
@@ -283,23 +231,8 @@ function DayCell({
     );
   }
 
-  /*
-    ===========================================================================
-    THE WASH GOES ON AN INNER BOX, NOT ON THE CELL
-    ===========================================================================
-    `--negative-soft` and `--warning-soft` are washes — `color-mix(… 12–14%,
-    transparent)` — and the cell itself has to stay opaque so it covers the
-    `--border` the container is painted with. Putting the wash on the cell would
-    composite it over the rule colour and turn every marked day grey.
-
-    So the cell keeps the opaque surface and this box, filling it, carries the
-    colour. The hover state rides on the same box through `group-hover` for the
-    same reason: on the cell it would sit UNDER the wash and never be seen.
-  */
-  const wash = cell.topImportance ? IMPORTANCE_WASH_STYLE[cell.topImportance] : '';
-
   const body = (
-    <span className={`flex flex-1 flex-col px-0.5 py-1 ${wash} group-hover:bg-[var(--surface-hover)]`}>
+    <span className={dayCellBody(cell.topImportance)}>
       <span
         data-day-number="true"
         className={[
@@ -361,18 +294,13 @@ function DayCell({
     little wedges of rule colour at every intersection, and the ring on the
     selected day follows the same shape so the two agree.
   */
-  const frame = [
-    'group flex min-h-11 min-w-0 flex-col',
-    /*
-      A SELECTED DAY KEEPS ITS WASH and is marked by the ring instead.
-      Overriding the background would mean the busiest day in the month loses
-      the colour that said so at the moment a reader points at it, which is
-      when they are most likely to be comparing it against its neighbours.
-    */
-    cell.isSelected
-      ? 'bg-[var(--surface-hover)] ring-1 ring-inset ring-[var(--accent)]'
-      : 'bg-[var(--surface)]',
-  ].join(' ');
+  /*
+    A SELECTED DAY KEEPS ITS WASH and is marked by the ring instead. Overriding
+    the background would mean the busiest day in the month loses the colour that
+    said so at the moment a reader points at it, which is when they are most
+    likely to be comparing it against its neighbours.
+  */
+  const frame = dayCellFrame({ selected: cell.isSelected });
 
   /*
     In a month the calendar cannot speak for there is no day to open, so the

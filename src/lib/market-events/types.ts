@@ -52,6 +52,24 @@ export const marketEventFileSchema = z.object({
   events: z.array(marketEventSchema),
 });
 
+/**
+ * The three ranks in Thai words.
+ *
+ * IT LIVES HERE, not beside the feed, because both calendar components need it
+ * for their `aria-label` and `feed.ts` imports `calendar.ts` — which imports
+ * the events JSON. A client component reaching for the label through `feed.ts`
+ * would drag the whole file into the browser bundle, which is the exact cost
+ * `card-view.ts` exists to avoid. This module imports nothing but zod.
+ *
+ * `feed.ts` re-exports it, so every existing caller is unchanged and there is
+ * still one copy.
+ */
+export const IMPORTANCE_LABEL_TH: Record<z.infer<typeof marketEventImportanceSchema>, string> = {
+  high: 'สำคัญมาก',
+  medium: 'สำคัญปานกลาง',
+  low: 'ติดตามได้',
+};
+
 export type MarketEventKind = z.infer<typeof marketEventKindSchema>;
 export type MarketEventImportance = z.infer<typeof marketEventImportanceSchema>;
 export type MarketEvent = z.infer<typeof marketEventSchema>;

@@ -114,7 +114,9 @@ describe('the market events card', () => {
    */
   it('distinguishes today by more than colour alone', () => {
     render('2026-12-10T04:00:00.000Z');
-    const today = cell('2026-12-10')?.querySelector('span');
+    // Addressed by its own marker, not by position: the cell gained a wash box
+    // around its contents and "the first span" stopped meaning the number.
+    const today = cell('2026-12-10')?.querySelector('[data-day-number]');
     expect(today?.className).toContain('rounded-full');
     expect(today?.className).toContain('bg-[var(--accent)]');
   });
@@ -214,6 +216,106 @@ describe('the market events card', () => {
     expect(note?.textContent).toContain('ยังไม่มีข้อมูลปฏิทินเศรษฐกิจในระบบ');
   });
 
+  /*
+   * ===========================================================================
+   * THE SAME TABLE AS THE CALENDAR PAGE
+   * ===========================================================================
+   * The rules, the wash and the weekday layer landed on `/market-events` and
+   * not here, so one reader met two different-looking months inside one
+   * product. `calendar-grid.tsx` owns those three now and both components
+   * render it — these assert this surface actually uses it, because "we
+   * extracted a module" is not the same claim as "both callers changed".
+   *
+   * The DATA stays apart. `card-view.ts` and `month-view.ts` answer different
+   * questions and nothing here merges them.
+   */
+  it('draws its rules by showing the container between the cells', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const grid = cell('2026-12-10')?.parentElement;
+    expect(grid?.className).toContain('gap-px');
+    expect(grid?.className).toContain('bg-[var(--border)]');
+    // Inner rules only — a border round the month is a card inside a card.
+    expect(grid?.className).not.toMatch(/(^|\s)(border|ring|p-|px-|py-)/);
+  });
+
+  it('gives every cell an opaque background, padding days included', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const cells = [
+      ...container.querySelectorAll<HTMLElement>('[data-testid^="market-events-cell-"]'),
+    ];
+    expect(cells.length).toBeGreaterThan(28);
+    for (const node of cells) {
+      expect(node.className, `${node.dataset.testid} must paint its own background`)
+        .toMatch(/bg-\[var\(--surface/);
+      expect(node.className, `${node.dataset.testid} must not round its corners`)
+        .not.toMatch(/rounded/);
+    }
+  });
+
+  it('washes a day with releases and leaves a quiet day alone', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const busy = cell('2026-12-10');
+    expect(busy?.dataset.importance).toBe('high');
+    expect(busy?.querySelector('span')?.className).toContain('bg-[var(--negative-soft)]');
+
+    const quiet = cell('2026-12-01');
+    expect(quiet?.dataset.importance).toBeUndefined();
+    const resting = (quiet?.querySelector('span')?.className ?? '')
+      .split(/\s+/).filter((name) => !name.includes(':')).join(' ');
+    expect(resting).not.toMatch(/bg-\[var\(--/);
+  });
+
+  /*
+   * COLOUR IS NEVER THE ONLY CHANNEL. The card knows one importance per day —
+   * the lead, which is the highest — so the label names that one in words.
+   */
+  it('says the importance in Thai words beside the count', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const label = cell('2026-12-10')?.getAttribute('aria-label') ?? '';
+    expect(label).toContain('รายการ');
+    expect(label).toContain('สำคัญมาก');
+  });
+
+  it('gives every washed cell a label, whatever the rank', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const washed = [...container.querySelectorAll<HTMLElement>('[data-importance]')];
+    expect(washed.length).toBeGreaterThan(0);
+    for (const node of washed) {
+      expect(node.getAttribute('aria-label'), `${node.dataset.testid} is washed but unlabelled`)
+        .toBeTruthy();
+    }
+  });
+
+  it('separates the weekday row from the dates the same way the page does', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const headings = container.querySelector<HTMLElement>('[data-testid="market-events-weekdays"]');
+    expect(headings).not.toBeNull();
+    expect(headings?.className).toContain('border-b');
+    expect(headings?.className).toContain('border-[var(--border)]');
+    expect(headings?.className).toMatch(/\bpb-\d/);
+    expect(headings?.className).toMatch(/\bmb-/);
+    const first = headings?.firstElementChild as HTMLElement | null;
+    expect(first?.className).toContain('font-normal');
+    expect(first?.className).toContain('text-[var(--text-muted)]');
+  });
+
+  /*
+   * Every colour is a token. Read off the CLASS ATTRIBUTES rather than the
+   * markup: a day link ends in `#2026-12-10`, which is eight hex characters
+   * after a hash and would be read as a literal colour by anything scanning
+   * innerHTML. That is also why the calendar page's copy of this assertion
+   * passes on markup — its cells carry no anchor.
+   */
+  it('names no colour of its own anywhere on the grid', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const grid = cell('2026-12-10')?.parentElement;
+    const classes = [...(grid?.querySelectorAll('*') ?? [])]
+      .map((node) => node.getAttribute('class') ?? '')
+      .join(' ');
+    expect(classes).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(classes).not.toMatch(/rgb\(|hsl\(/);
+  });
+
   it('renders no undefined, null or NaN into a cell', () => {
     render('2026-12-10T04:00:00.000Z');
     expect(text()).not.toMatch(/undefined|null|NaN/);
@@ -241,7 +343,7 @@ describe('the market events card', () => {
 
   it('clips a long event name rather than wrapping it into a taller row', () => {
     render('2026-12-10T04:00:00.000Z');
-    const name = cell('2026-12-10')?.querySelectorAll('span')[1];
+    const name = cell('2026-12-10')?.querySelector('[data-day-name]');
     expect(name?.className).toContain('truncate');
   });
 
