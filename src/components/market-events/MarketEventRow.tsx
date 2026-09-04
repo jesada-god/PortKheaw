@@ -43,6 +43,32 @@ export const IMPORTANCE_MARK_STYLE: Record<MarketEventImportance, string> = {
   low: 'bg-[var(--text-muted)]',
 };
 
+/**
+ * The same three ranks as a WASH behind a whole calendar cell.
+ *
+ * ===========================================================================
+ * THE SAME TOKENS AS THE CHIP, ON PURPOSE
+ * ===========================================================================
+ * `--negative-soft` and `--warning-soft` are what the chip beside the release
+ * name is already filled with, so the colour a reader meets behind the 11th in
+ * the grid is the colour they meet again on the row when they open it. A wash
+ * mixed from anything else would be a fourth vocabulary for a three-word
+ * ranking.
+ *
+ * Both are `color-mix(… 12–14%, transparent)` — a wash, not a fill. That is
+ * what keeps the day number at full contrast on top of it, and it is why the
+ * cell underneath has to stay opaque: these composite over the surface.
+ *
+ * `low` gets `--surface-elevated` rather than `--surface-hover`, which is the
+ * hovered and the selected background. A low-importance day painted in the
+ * hover colour would be a day that looks permanently pointed at.
+ */
+export const IMPORTANCE_WASH_STYLE: Record<MarketEventImportance, string> = {
+  high: 'bg-[var(--negative-soft)]',
+  medium: 'bg-[var(--warning-soft)]',
+  low: 'bg-[var(--surface-elevated)]',
+};
+
 export function MarketEventRow({
   item,
   reaction = null,

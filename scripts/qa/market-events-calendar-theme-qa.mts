@@ -167,20 +167,43 @@ const PROBE = String.raw`() => {
     document.querySelector('[data-testid="market-events-calendar"]'),
   ).backgroundColor) || pageBg;
 
+  /*
+    EVERY LAYER, IN ORDER, because the wash is translucent and so is the
+    number's own disc. Reading one element's computed backgroundColor and
+    calling it "the background" is how a wash gets reported as the surface it
+    is sitting on. The stack is: panel surface, then the cell's own
+    opaque background, then the wash box that fills it, then the disc under
+    today's number if there is one.
+
+    Both pieces of text on the cell are measured — the day number, and the
+    release name the desktop layout prints — because a wash that keeps the
+    number readable can still swallow the name.
+  */
+  const textOn = (el, behind) => {
+    if (!el) return null;
+    const own = rgb(getComputedStyle(el).backgroundColor);
+    const bg = own && own[3] > 0 ? over(own, behind) : behind;
+    return contrastRatio(over(rgb(getComputedStyle(el).color), bg), bg);
+  };
+
   const cellReport = cells.map((cell) => {
-    const number = cell.querySelector('span');
-    const cellBg = rgb(getComputedStyle(cell).backgroundColor);
-    const behind = over(cellBg, surface);
-    const fg = over(rgb(getComputedStyle(number).color), behind);
-    /* Today's number sits on a filled disc, so its own background is the disc. */
-    const discBg = rgb(getComputedStyle(number).backgroundColor);
-    const bg = discBg && discBg[3] > 0 ? over(discBg, behind) : behind;
+    const washBox = cell.firstElementChild;
+    let behind = over(rgb(getComputedStyle(cell).backgroundColor), surface);
+    const washColour = washBox ? getComputedStyle(washBox).backgroundColor : null;
+    if (washBox) behind = over(rgb(washColour), behind);
+
+    const numberContrast = textOn(cell.querySelector('[data-day-number]'), behind);
+    const nameContrast = textOn(cell.querySelector('[data-day-name]'), behind);
+    const both = [numberContrast, nameContrast].filter((value) => value !== null);
+
     return {
       day: cell.getAttribute('data-testid').replace('market-events-cell-', ''),
       importance: cell.getAttribute('data-importance'),
       today: cell.getAttribute('data-today') === 'true',
-      background: getComputedStyle(cell).backgroundColor,
-      contrast: contrastRatio(fg, bg),
+      background: washColour,
+      numberContrast,
+      nameContrast,
+      contrast: both.length ? Math.min.apply(null, both) : null,
       ariaLabel: cell.getAttribute('aria-label'),
     };
   });
@@ -257,7 +280,9 @@ for (const appearance of APPEARANCES) {
     await page.close();
 
     const worst = measured.cells.reduce(
-      (low: any, cell: any) => (low === null || cell.contrast < low.contrast ? cell : low),
+      (low: any, cell: any) => (cell.contrast === null
+        ? low
+        : (low === null || cell.contrast < low.contrast ? cell : low)),
       null,
     );
     const washed = measured.cells.filter((cell: any) => cell.importance);
@@ -268,7 +293,7 @@ for (const appearance of APPEARANCES) {
       + ` · heading ${measured.headingFontSize} ${measured.headingColor}`);
     console.log(`  headings rule: ${measured.headingsBorderBottom}`);
     console.log(`  washed cells ${washed.length}/${measured.cells.length}`
-      + ` · worst day-number contrast ${worst ? worst.contrast : '—'}:1`
+      + ` · worst text contrast ${worst ? worst.contrast : '—'}:1`
       + `${worst ? ` (${worst.day}${worst.importance ? `, ${worst.importance}` : ''})` : ''}`);
     console.log(`  panel day: ${measured.panelDay} · feed days: ${measured.feedDayIds.join(', ') || '(none)'}`);
     if (measured.feedEmptyText) console.log(`  feed empty says: ${measured.feedEmptyText.trim()}`);
@@ -277,7 +302,7 @@ for (const appearance of APPEARANCES) {
       A wash that costs legibility is not a wash, it is a defect. 4.5:1 is the
       WCAG AA threshold for body text and the day number is body text.
     */
-    const failing = measured.cells.filter((cell: any) => cell.contrast < 4.5);
+    const failing = measured.cells.filter((cell: any) => cell.contrast !== null && cell.contrast < 4.5);
     if (failing.length > 0) {
       console.error(`  FAIL — ${failing.length} cells below 4.5:1`);
       for (const cell of failing.slice(0, 5)) {

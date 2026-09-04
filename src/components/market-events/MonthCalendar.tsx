@@ -5,7 +5,11 @@ import type {
   MonthViewCell,
 } from '@/src/lib/market-events/month-view';
 import { MARK_LEGEND_TH } from '@/src/lib/market-events/month-view';
-import { IMPORTANCE_MARK_STYLE, MarketEventRow } from './MarketEventRow';
+import {
+  IMPORTANCE_MARK_STYLE,
+  IMPORTANCE_WASH_STYLE,
+  MarketEventRow,
+} from './MarketEventRow';
 
 /**
  * ปฏิทินเศรษฐกิจ — a walkable month, and the day underneath it.
@@ -246,9 +250,25 @@ function DayCell({
     );
   }
 
+  /*
+    ===========================================================================
+    THE WASH GOES ON AN INNER BOX, NOT ON THE CELL
+    ===========================================================================
+    `--negative-soft` and `--warning-soft` are washes — `color-mix(… 12–14%,
+    transparent)` — and the cell itself has to stay opaque so it covers the
+    `--border` the container is painted with. Putting the wash on the cell would
+    composite it over the rule colour and turn every marked day grey.
+
+    So the cell keeps the opaque surface and this box, filling it, carries the
+    colour. The hover state rides on the same box through `group-hover` for the
+    same reason: on the cell it would sit UNDER the wash and never be seen.
+  */
+  const wash = cell.topImportance ? IMPORTANCE_WASH_STYLE[cell.topImportance] : '';
+
   const body = (
-    <>
+    <span className={`flex flex-1 flex-col px-0.5 py-1 ${wash} group-hover:bg-[var(--surface-hover)]`}>
       <span
+        data-day-number="true"
         className={[
           'mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[11px] leading-none',
           cell.isToday
@@ -281,7 +301,10 @@ function DayCell({
         reason: a wrapping cell makes rows different heights.
       */}
       {cell.leadShortTh ? (
-        <span className="mt-0.5 hidden min-w-0 truncate text-center text-[10px] font-medium leading-tight text-[var(--text)] sm:block">
+        <span
+          data-day-name="true"
+          className="mt-0.5 hidden min-w-0 truncate text-center text-[10px] font-medium leading-tight text-[var(--text)] sm:block"
+        >
           {cell.leadShortTh}
           {cell.extraCount > 0 && (
             <span className="text-[var(--text-muted)]"> +{cell.extraCount}</span>
@@ -290,7 +313,7 @@ function DayCell({
       ) : (
         <span className="mt-0.5 hidden h-[13px] sm:block" aria-hidden="true" />
       )}
-    </>
+    </span>
   );
 
   /*
@@ -306,7 +329,13 @@ function DayCell({
     selected day follows the same shape so the two agree.
   */
   const frame = [
-    'min-h-11 min-w-0 px-0.5 py-1',
+    'group flex min-h-11 min-w-0 flex-col',
+    /*
+      A SELECTED DAY KEEPS ITS WASH and is marked by the ring instead.
+      Overriding the background would mean the busiest day in the month loses
+      the colour that said so at the moment a reader points at it, which is
+      when they are most likely to be comparing it against its neighbours.
+    */
     cell.isSelected
       ? 'bg-[var(--surface-hover)] ring-1 ring-inset ring-[var(--accent)]'
       : 'bg-[var(--surface)]',
@@ -324,6 +353,7 @@ function DayCell({
         className={frame}
         data-testid={`market-events-cell-${cell.dayKey}`}
         data-today={cell.isToday ? 'true' : undefined}
+        data-importance={cell.topImportance ?? undefined}
       >
         {body}
       </div>
@@ -334,10 +364,11 @@ function DayCell({
     <Link
       href={`/market-events?m=${monthKey}&d=${cell.dayKey}`}
       scroll={false}
-      className={`${frame} block hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]`}
+      className={`${frame} focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]`}
       data-testid={`market-events-cell-${cell.dayKey}`}
       data-today={cell.isToday ? 'true' : undefined}
       data-selected={cell.isSelected ? 'true' : undefined}
+      data-importance={cell.topImportance ?? undefined}
       aria-label={cell.ariaLabelTh}
       aria-current={cell.isSelected ? 'date' : undefined}
     >

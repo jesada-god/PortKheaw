@@ -427,6 +427,123 @@ describe('the grid lines', () => {
   });
 });
 
+/*
+ * ===========================================================================
+ * A DAY WITH SOMETHING ON IT LOOKS DIFFERENT FROM A DAY WITHOUT
+ * ===========================================================================
+ * The wash is drawn from the SAME tokens as the importance chip and the dot —
+ * `--negative-soft`, `--warning-soft` — so a reader meets one colour per rank
+ * across the whole feature rather than three separate vocabularies for one
+ * three-word ranking.
+ *
+ * COLOUR IS NEVER THE ONLY CHANNEL, and that is the assertion that matters
+ * most here: every washed cell also names its releases and their importance in
+ * Thai words in its `aria-label`, and prints one dot per release. A reader who
+ * cannot separate the hues loses nothing.
+ */
+describe('the importance wash', () => {
+  const washOf = (dayKey: string) => cell(dayKey)?.querySelector<HTMLElement>('span');
+  /*
+    UNPREFIXED classes only. `group-hover:bg-…` is a state, not the resting
+    background, and counting it would make every quiet cell look washed and
+    every washed cell look like it was painted in the hover colour.
+  */
+  const resting = (node: HTMLElement | null | undefined) => (node?.className ?? '')
+    .split(/\s+/)
+    .filter((name) => !name.includes(':'))
+    .join(' ');
+
+  it('washes a day with releases and leaves a quiet day alone', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(cell('2026-11-10')?.dataset.importance).toBe('high');
+    expect(washOf('2026-11-10')?.className).toContain('bg-[var(--negative-soft)]');
+
+    // Nothing on the 12th, so nothing behind it.
+    expect(cell('2026-11-12')?.dataset.importance).toBeUndefined();
+    expect(resting(washOf('2026-11-12'))).not.toMatch(/bg-\[var\(--/);
+  });
+
+  it('gives each of the three ranks its own colour', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(cell('2026-11-25')?.dataset.importance).toBe('low');
+    expect(washOf('2026-11-25')?.className).toContain('bg-[var(--surface-elevated)]');
+
+    render('2026-10-15T04:00:00.000Z');
+    expect(cell('2026-10-15')?.dataset.importance).toBe('medium');
+    expect(washOf('2026-10-15')?.className).toContain('bg-[var(--warning-soft)]');
+  });
+
+  /*
+   * 10 December carries the FOMC statement (high) and a CPI print (medium).
+   * The cell has to say high — a day is as important as the most important
+   * thing on it, and washing it amber would understate the busiest day of the
+   * month.
+   */
+  it('takes the highest rank on a day that holds several', () => {
+    render('2026-12-10T04:00:00.000Z');
+    expect(cell('2026-12-10')?.dataset.importance).toBe('high');
+    expect(washOf('2026-12-10')?.className).toContain('bg-[var(--negative-soft)]');
+  });
+
+  /*
+   * The low wash must not be the hover and selection colour. A day painted in
+   * `--surface-hover` permanently looks like a day being pointed at.
+   */
+  it('does not paint a low day in the colour that means hovered or selected', () => {
+    render('2026-11-10T04:00:00.000Z');
+    expect(resting(washOf('2026-11-25'))).not.toContain('bg-[var(--surface-hover)]');
+  });
+
+  it('says the importance in Thai words, so the colour is never the only channel', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const label = cell('2026-12-10')?.getAttribute('aria-label') ?? '';
+    expect(label).toContain('สำคัญมาก');
+    expect(label).toContain('สำคัญปานกลาง');
+    // And the count is a shape as well: one dot per release.
+    expect(cell('2026-12-10')?.querySelectorAll('span.rounded-full').length).toBeGreaterThan(1);
+  });
+
+  it('gives every washed cell a label, whatever the rank', () => {
+    for (const now of ['2026-10-15T04:00:00.000Z', '2026-11-10T04:00:00.000Z', '2026-12-10T04:00:00.000Z']) {
+      render(now);
+      for (const node of container.querySelectorAll<HTMLElement>('[data-importance]')) {
+        expect(node.getAttribute('aria-label'), `${node.dataset.testid} is washed but unlabelled`)
+          .toBeTruthy();
+      }
+    }
+  });
+
+  /*
+   * The wash rides on an inner box because the cell itself has to stay opaque
+   * over the grid's rule colour — a translucent cell composites over
+   * `--border` and goes grey. If it ever moves onto the cell, this fails.
+   */
+  it('keeps the cell opaque and puts the wash on the box inside it', () => {
+    /*
+      Checked on a day that is washed but NOT selected. The selected day paints
+      itself `--surface-hover` — opaque as well, so it would pass without
+      testing the ordinary case. In this view today is the 10th and the panel
+      opens on it, which leaves the 25th as the washed day nobody is pointing
+      at.
+    */
+    render('2026-11-10T04:00:00.000Z');
+    const node = cell('2026-11-25');
+    expect(node?.dataset.importance).toBe('low');
+    expect(node?.dataset.selected).toBeUndefined();
+    expect(node?.className).toContain('bg-[var(--surface)]');
+    // The wash token is on the inner box and on nothing else.
+    expect(node?.className).not.toContain('--surface-elevated');
+    expect(washOf('2026-11-25')?.className).toContain('bg-[var(--surface-elevated)]');
+  });
+
+  it('names no colour of its own anywhere on the grid', () => {
+    render('2026-12-10T04:00:00.000Z');
+    const grid = cell('2026-12-10')?.parentElement;
+    expect(grid?.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(grid?.innerHTML).not.toMatch(/rgb\(|hsl\(/);
+  });
+});
+
 describe('what the calendar refuses to do', () => {
   /*
    * A calendar that scrolls sideways has given up the one property that makes
