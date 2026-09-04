@@ -155,13 +155,13 @@ const PROBE = `() => {
     */
     clipped: [...slot.querySelectorAll('li, [data-testid^="market-events-cell-"]')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => el.innerText.replace(/\s+/g, ' ').trim().slice(0, 40)),
+      .map((el) => el.innerText.replace(/\\s+/g, ' ').trim().slice(0, 40)),
     /* Anything drawn past the right edge of the slot, at this width. */
     pastRightEdge: (() => {
       const edge = slot.getBoundingClientRect().right;
       return [...slot.querySelectorAll('*')]
         .filter((el) => el.getBoundingClientRect().right > edge + 1)
-        .map((el) => el.innerText.replace(/\s+/g, ' ').trim().slice(0, 40))
+        .map((el) => el.innerText.replace(/\\s+/g, ' ').trim().slice(0, 40))
         .filter(Boolean)
         .slice(0, 6);
     })(),
