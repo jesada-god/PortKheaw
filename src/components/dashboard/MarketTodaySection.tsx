@@ -11,7 +11,9 @@ import {
   type OvMarketSnapshot,
 } from '@/src/lib/market-overview/types';
 import { InstrumentLogo } from '@/src/components/instruments/InstrumentLogo';
-import { StatusLabel, StatusRow } from '@/src/components/ui/StatusLabel';
+import { StatusLabel } from '@/src/components/ui/StatusLabel';
+import type { StatusLevel } from '@/src/lib/presentation/status';
+import { cn } from '@/src/utils/cn';
 import { stockDetailHref } from '@/src/lib/instruments/routes';
 import { proxyDisclosureTh } from '@/src/lib/overview/market-assets';
 import { signedPercent } from '@/src/lib/portfolio/presentation';
@@ -171,6 +173,72 @@ function ReadingCell({ reading }: { reading: OvIndexReading }) {
 }
 
 /**
+ * ONE READING, AS A PANEL.
+ *
+ * The eyebrow names the question, the value answers it, and the panel's own
+ * edge is what says the two belong together — which is the whole reason this
+ * is a box rather than the `StatusRow` line it replaced: two rows in a stack
+ * read as two lines of one paragraph, and a reader who skims them takes the
+ * second as a qualifier on the first.
+ *
+ * `--surface-elevated` and `--border` are the same pair `.inset` uses in
+ * `foundation.css`, so the panels sit inside the section at the tint every
+ * other sub-region of a section already has, in both appearances. NEVER a tint
+ * by level: the value's own colour is the only place the reading is stated, and
+ * a panel that painted itself would say it a second time and louder.
+ */
+function ReadingPanel({
+  eyebrow,
+  testId,
+  className,
+  children,
+}: {
+  eyebrow: string;
+  testId: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className={cn(
+        'min-w-0 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3',
+        className,
+      )}
+    >
+      {/*
+        Small, spaced and muted, because it is the QUESTION and not the answer.
+        `uppercase` does nothing to the Thai half and everything to the English
+        one, which is the point of carrying both: the gloss is what a reader
+        scanning for "Direction" or "Momentum" actually lands on.
+      */}
+      <span className="block truncate text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-[var(--text-muted)]">
+        {eyebrow}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The word the panel is for, at the size that makes it the answer.
+ *
+ * `StatusLabel` and not a coloured `<span>`: the mark, the five-level colour
+ * token and the `data-status` attribute all come from the one component the
+ * rest of the product reads statuses through, so this panel cannot drift from
+ * the strip above it or from the stock page. Only the SIZE is set here.
+ */
+function ReadingValue({ level, label }: { level: StatusLevel; label?: string }) {
+  return (
+    <StatusLabel
+      level={level}
+      label={label}
+      className="mt-1 text-base leading-6 [&>span]:font-bold"
+    />
+  );
+}
+
+/**
  * The six readings, the word, and why.
  *
  * Absent entirely when the snapshot has not arrived — the section then draws
@@ -179,6 +247,13 @@ function ReadingCell({ reading }: { reading: OvIndexReading }) {
 export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
   const readings = Object.values(snapshot.readings);
   const status = snapshot.status;
+  /*
+    The money panel exists when there is either a regime or a reason to
+    print — the same predicate the row it replaced used, unchanged. When it
+    does not, the direction panel takes both columns rather than leaving a
+    half-width gap that reads as a second panel still loading.
+  */
+  const showMoney = snapshot.regime !== null || snapshot.regimeReasons.length > 0;
   return (
     <div className="min-w-0" data-testid="market-today-strip">
       <div className="data-strip-scroll bleed-mobile px-[var(--page-gutter)] sm:px-0">
@@ -187,7 +262,7 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
         </div>
       </div>
       {/*
-        TWO READINGS, EACH SAYING WHAT IT MEASURES.
+        TWO READINGS, EACH SAYING WHAT IT MEASURES — NOW AS TWO PANELS.
 
         These were one line: a status word with a coloured mark, and the regime
         beside it as bare secondary text. That put two answers to two different
@@ -196,39 +271,49 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
         it is really "the six instruments point down" followed by "the three
         that price risk are not alarmed", which is a coherent and useful day.
 
-        `StatusRow` is the product's existing shape for exactly this — a muted
-        name, a middle dot, then the mark and the phrase — so naming the two
-        readings costs no new component and lands them in the same alignment the
-        stock page and the planner already use.
+        Naming them as two `StatusRow`s fixed the ambiguity but left them
+        reading as two lines of one paragraph. Two panels side by side say it in
+        the layout as well as in the words: equal width, equal weight, one
+        question each. The eyebrow carries the Thai name and its English gloss,
+        so the subject is stated before the word that answers it.
 
-        The names are the shortest pair that still says these measure different
-        things. "ทิศทาง" does not repeat the "ตลาด" its own label already
-        carries, and "เงินรอบตลาด" names the subject the risk trio actually
-        reads: not how risky the market is, but what the money around it is
-        doing.
+        THE COLOUR IS STILL `StatusLabel`'S AND NOTHING ELSE'S. The panel is
+        `--surface-elevated` in both appearances and never tints itself by
+        level: a card that painted itself green would be the wall of coloured
+        boxes the status vocabulary exists to replace, and it would state the
+        reading twice.
 
         `status === null` means the equity inputs were not all readable, and the
         honest answer is to say so rather than to soften the word — the numbers
-        above still print whatever did arrive.
+        above still print whatever did arrive. It spans both columns, because a
+        half-width panel beside an empty track reads as a panel that failed to
+        load rather than as the only reading there is.
       */}
-      <div className="mt-3 space-y-1 text-sm">
+      <div className="mt-3 grid grid-cols-2 gap-3.5">
         {status === null ? (
-          <div data-testid="market-today-status">
-            <StatusRow name="ทิศทาง" level="unknown" label="ยังอ่านภาพรวมตลาดไม่ได้" />
-          </div>
+          <ReadingPanel
+            eyebrow="ทิศทาง · Market Direction"
+            testId="market-today-status"
+            className="col-span-2"
+          >
+            <ReadingValue level="unknown" label="ยังอ่านภาพรวมตลาดไม่ได้" />
+          </ReadingPanel>
         ) : (
           <>
-            <div data-testid="market-today-status">
-              <StatusRow
-                name="ทิศทาง"
+            <ReadingPanel
+              eyebrow="ทิศทาง · Market Direction"
+              testId="market-today-status"
+              className={showMoney ? undefined : 'col-span-2'}
+            >
+              <ReadingValue
                 level={OV_MARKET_STATUS_LEVEL[status]}
                 label={OV_MARKET_STATUS_WORD[status]}
               />
-            </div>
-            {(snapshot.regime !== null || snapshot.regimeReasons.length > 0) && (
-              <div data-testid="market-today-regime">
+            </ReadingPanel>
+            {showMoney && (
+              <ReadingPanel eyebrow="เงินรอบตลาด · Market Momentum" testId="market-today-regime">
                 {/*
-                  A WITHHELD REGIME IS STILL A ROW, BECAUSE THE REASONS ARE.
+                  A WITHHELD REGIME IS STILL A PANEL, BECAUSE THE REASONS ARE.
 
                   VIX or the ten-year unreadable means no regime — but the lines
                   saying which one is missing are exactly what a reader needs,
@@ -236,20 +321,19 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
                   the orphaning this change exists to end. `unknown` and its own
                   fallback word, so nothing new is invented to say it.
                 */}
-                <StatusRow
-                  name="เงินรอบตลาด"
+                <ReadingValue
                   level={snapshot.regime === null ? 'unknown' : OV_REGIME_LEVEL[snapshot.regime]}
                   label={snapshot.regime === null ? undefined : OV_REGIME_WORD[snapshot.regime]}
                 />
                 {/*
-                  UNDER THE ROW IT EXPLAINS, AND ONLY THAT ROW.
+                  INSIDE THE PANEL IT EXPLAINS, AND ONLY THAT PANEL.
 
                   Every line `ovRegime` produces is about VIX, the ten-year and
                   the dollar. It used to sit under the status word instead, where
                   it read as the reason for a verdict it has never described —
                   and on a flat day it said "ทั้งสามตัว" beneath six printed
-                  figures. Indented, so subordination is visible and not merely
-                  implied by order.
+                  figures. The panel's own edge states the subordination now, so
+                  the indent that used to imply it is gone.
 
                   Two or three measurements and nothing else: each is an
                   instrument and a signed percentage, so a reader can disagree
@@ -257,13 +341,13 @@ export function MarketTodayStrip({ snapshot }: { snapshot: OvMarketSnapshot }) {
                 */}
                 {snapshot.regimeReasons.length > 0 && (
                   <p
-                    className="mt-0.5 ps-4 text-xs leading-5 text-[var(--text-muted)]"
+                    className="mt-1.5 text-xs leading-5 text-[var(--text-muted)]"
                     data-testid="market-today-reasons"
                   >
                     {snapshot.regimeReasons.slice(0, 3).join(' · ')}
                   </p>
                 )}
-              </div>
+              </ReadingPanel>
             )}
           </>
         )}

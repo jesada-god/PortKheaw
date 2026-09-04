@@ -101,6 +101,28 @@ function tone(value: number | null): string {
   return value > 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]';
 }
 
+/**
+ * The fill and the text colour for a signed percentage drawn as a pill.
+ *
+ * Three states, not two. Zero and unreadable both take the neutral surface,
+ * for the reason `tone` above takes the muted text for them: a green wash on
+ * "0.00%" states a direction the number does not have, and one on "ยังไม่มี
+ * ข้อมูล" states a direction nothing measured.
+ *
+ * `--positive-soft` and `--negative-soft` are `foundation.css`'s own 12%
+ * washes of the two colours the text already uses, so the pill needs no
+ * light/dark rule of its own — the wash follows whatever the appearance set
+ * `--positive` and `--negative` to.
+ */
+function changePill(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value === 0) {
+    return 'bg-[var(--surface-hover)] text-[var(--text-muted)]';
+  }
+  return value > 0
+    ? 'bg-[var(--positive-soft)] text-[var(--positive)]'
+    : 'bg-[var(--negative-soft)] text-[var(--negative)]';
+}
+
 function MiniLine({ values, positive }: { values: number[]; positive: boolean }) {
   if (values.length < 2) return <div className="h-10" aria-hidden="true" />;
   const min = Math.min(...values);
@@ -1149,49 +1171,95 @@ function WatchlistSection({
           ? <WatchlistTableSkeleton rows={visibleRows.length} />
           : <WatchlistTable rows={visibleRows} counts={alertCounts} />
       ) : (
-        <div className="divide-y divide-[var(--border)]">
+        /*
+          A GRID OF CARDS, NOT A LIST OF ROWS.
+
+          The quote-only fallback drew one full-width row per symbol — logo,
+          name, price — which on a desktop spent 1,400 pixels of width to say
+          three short things and made five holdings four hundred pixels tall.
+          A card states the same three at the width they actually need, and the
+          grid puts five of them in two lines.
+
+          Three across from `sm`, two below it. NOT one: a phone showing one
+          card per line is the row layout again with more padding, and the
+          fields here are short enough that two fit at 375px. Nothing is
+          hidden at any width — every card draws every field it has.
+
+          The fields are exactly the ones the rows drew, in the same order and
+          off the same `OverviewPrice`; only the arrangement changed.
+        */
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {visible.map((item) => (
             <Link
               key={item.symbol}
               href={stockDetailHref(item.symbol)}
-              className="grid min-h-[82px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 py-3"
+              data-testid={`overview-watchlist-card-${item.symbol}`}
+              /*
+                The hover tint and the focus ring are the whole of the
+                affordance — the same pair `StripCell` uses in the market band,
+                so the two card grids on this page respond to a pointer
+                identically. `min-h` rather than a fixed height: a card with an
+                after-hours line is taller than one without, and the grid row
+                equalises them.
+              */
+              className="flex min-h-[128px] min-w-0 flex-col gap-2 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] active:bg-[var(--surface-selected)]"
             >
-              <InstrumentLogo
-                symbol={item.symbol}
-                companyName={item.instrument.companyName}
-                logoUrl={item.instrument.logoUrl}
-                size={40}
-                appearance="plain"
-              />
-              <span className="min-w-0">
-                <span className="flex items-baseline gap-2">
-                  <strong className="text-sm text-[var(--text)]">{item.symbol}</strong>
-                  <span className="truncate text-[10px] text-[var(--text-muted)]">{item.instrument.companyName}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <InstrumentLogo
+                  symbol={item.symbol}
+                  companyName={item.instrument.companyName}
+                  logoUrl={item.instrument.logoUrl}
+                  size={32}
+                  appearance="plain"
+                />
+                <span className="min-w-0">
+                  <strong className="block truncate text-sm text-[var(--text)]">{item.symbol}</strong>
+                  <span className="block truncate text-[10px] text-[var(--text-muted)]">{item.instrument.companyName}</span>
                 </span>
-                <span className="mt-1 block text-[10px] text-[var(--text-muted)]">
-                  {item.sessionLabel} · {OVERVIEW_STATUS_COPY[item.status]}
-                  {item.asOf ? ` · ${formatBangkokDateTime(item.asOf)}` : ''}
-                </span>
-                {item.extended && (
-                  <span className="mt-1 block text-[10px] text-[var(--text-secondary)]">
-                    {item.extended.label} {formatNumber(item.extended.price)}{' '}
-                    <span
-                      className={tone(item.extended.changePercent)}
-                      data-testid={`watchlist-extended-change-${item.symbol}`}
-                    >
-                      {signed(item.extended.changePercent, '%')}
-                    </span>
-                  </span>
-                )}
               </span>
-              <span className="text-right">
+              <span className="block truncate text-[10px] text-[var(--text-muted)]">
+                {item.sessionLabel} · {OVERVIEW_STATUS_COPY[item.status]}
+                {item.asOf ? ` · ${formatBangkokDateTime(item.asOf)}` : ''}
+              </span>
+              {item.extended && (
+                <span className="block truncate text-[10px] text-[var(--text-secondary)]">
+                  {item.extended.label} {formatNumber(item.extended.price)}{' '}
+                  <span
+                    className={tone(item.extended.changePercent)}
+                    data-testid={`watchlist-extended-change-${item.symbol}`}
+                  >
+                    {signed(item.extended.changePercent, '%')}
+                  </span>
+                </span>
+              )}
+              {/*
+                `mt-auto` pins the figures to the bottom edge, so the prices of
+                three cards in a row line up whatever their names and session
+                lines did to the space above.
+              */}
+              <span className="mt-auto flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className="block whitespace-nowrap text-sm font-bold tabular-nums text-[var(--text)]">
                   {item.price === null ? 'ข้อมูลยังไม่พร้อม' : `${formatNumber(item.price)} ${item.currency}`}
                 </span>
-                <span className={`mt-1 flex justify-end gap-2 whitespace-nowrap text-xs font-semibold tabular-nums ${tone(item.changePercent)}`}>
-                  <span>{signed(item.change)}</span>
-                  <span>{signed(item.changePercent, '%')}</span>
+                <span className={`whitespace-nowrap text-[10px] tabular-nums ${tone(item.change)}`}>
+                  {signed(item.change)}
                 </span>
+              </span>
+              {/*
+                THE PERCENTAGE, AS A PILL.
+
+                The one figure a reader scans a watchlist FOR, and the only
+                thing on the card allowed a fill. Its tint is `--positive-soft`
+                / `--negative-soft` — the 12% washes `foundation.css` already
+                derives from the same two colours the text uses — so light and
+                dark are handled by the tokens rather than by a second rule
+                here. Flat and unreadable share the neutral surface, because a
+                green pill on 0.00% would be a claim the number does not make.
+              */}
+              <span
+                className={`inline-flex w-fit items-baseline rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${changePill(item.changePercent)}`}
+              >
+                {signed(item.changePercent, '%')}
               </span>
             </Link>
           ))}
