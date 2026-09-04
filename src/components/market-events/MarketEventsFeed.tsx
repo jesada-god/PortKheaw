@@ -43,16 +43,38 @@ import { MarketEventRow } from './MarketEventRow';
 export function MarketEventsFeed({
   days,
   exposureNoteTh,
+  hiddenDayKey = null,
 }: {
   days: readonly FeedDay[];
   /** How many symbols the reader holds, already turned into a sentence. */
   exposureNoteTh: string;
+  /**
+   * The day taken out because the panel above is already showing it in full,
+   * or null when nothing was removed. See `splitFeedForPanel`.
+   */
+  hiddenDayKey?: string | null;
 }) {
   if (days.length === 0) {
+    /*
+      AN EMPTY FEED HAS TWO CAUSES AND THEY ARE NOT THE SAME NEWS.
+
+      "The calendar has nothing upcoming left" tells a reader the file has run
+      out and they should not expect more. "Everything left is in the panel
+      above" tells them to look up. Printing the first sentence in the second
+      situation would send somebody away from a release that is on the screen —
+      which is what happens in the last week the calendar covers, the exact
+      week a reader is most likely to be checking.
+
+      Either way it is a SENTENCE. The section never renders as nothing: a feed
+      that vanished silently would read as a page that failed to finish
+      loading.
+    */
     return (
       <section className="panel min-w-0 p-6 text-center" data-testid="market-events-feed-empty">
         <p className="text-sm text-[var(--text-secondary)]">
-          ปฏิทินนี้ไม่มีรายการที่ยังมาไม่ถึงแล้ว
+          {hiddenDayKey
+            ? 'ไม่มีวันอื่นที่ยังมาไม่ถึง — รายการที่เหลืออยู่ในแผงด้านบนแล้ว'
+            : 'ปฏิทินนี้ไม่มีรายการที่ยังมาไม่ถึงแล้ว'}
         </p>
       </section>
     );

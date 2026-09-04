@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CARD_MUST_NOT_SAY, NEVER_SAY } from '@/src/lib/presentation/banned-copy';
-import { buildEventFeed, exposureNoteTh } from '@/src/lib/market-events/feed';
+import { buildEventFeed, exposureNoteTh, splitFeedForPanel } from '@/src/lib/market-events/feed';
 import type { MarketEvent } from '@/src/lib/market-events/types';
 import { MarketEventsFeed } from './MarketEventsFeed';
 
@@ -63,7 +63,99 @@ function render(now: string, holdings = 6, events: MarketEvent[] = EVENTS) {
   return days;
 }
 
+/** The page's own wiring: the feed as it renders BESIDE a panel showing one day. */
+function renderBesidePanel(now: string, panelDayKey: string | null, events = EVENTS) {
+  const split = splitFeedForPanel({
+    days: buildEventFeed({ now, events }),
+    panelDayKey,
+  });
+  act(() => root.render(
+    <MarketEventsFeed
+      days={split.days}
+      hiddenDayKey={split.hiddenDayKey}
+      exposureNoteTh={exposureNoteTh(6)}
+    />,
+  ));
+  return split;
+}
+
 const text = () => container.textContent ?? '';
+
+/*
+ * ===========================================================================
+ * THE PANEL AND THE FEED DREW THE SAME DAY, ONE UNDER THE OTHER
+ * ===========================================================================
+ * The panel opens on today, the feed starts at today, and the page printed
+ * "วันนี้ · NFP" twice in a row. These pin the fix at the seam the page
+ * actually uses — `splitFeedForPanel` feeding the component — rather than at
+ * either half on its own, because the defect only existed where they met.
+ */
+describe('the feed beside the day panel', () => {
+  it('does not repeat the day the panel is already showing', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2026-12-10T04:00:00.000Z', '2026-12-10');
+    expect(hiddenDayKey).toBe('2026-12-10');
+    expect(days.map((day) => day.dayKey)).toEqual(['2026-12-11', '2026-12-15']);
+    expect(container.querySelector('[data-testid="market-events-day-2026-12-10"]')).toBeNull();
+    // The heading it used to duplicate is gone from the feed entirely.
+    expect(text()).not.toContain('วันนี้');
+  });
+
+  /*
+   * THE REASON THE DAY IS REMOVED RATHER THAN THE FEED TRUNCATED.
+   *
+   * Starting the feed after the selected day would drop every day between
+   * today and it — days that are still coming, on a list whose only job is
+   * saying what is coming. Selecting the 15th must leave the 10th and the 11th
+   * exactly where they were.
+   */
+  it('keeps every other upcoming day when a later day is selected', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2026-12-10T04:00:00.000Z', '2026-12-15');
+    expect(hiddenDayKey).toBe('2026-12-15');
+    expect(days.map((day) => day.dayKey)).toEqual(['2026-12-10', '2026-12-11']);
+    expect(container.querySelector('[data-testid="market-events-day-2026-12-10"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="market-events-day-2026-12-11"]')).not.toBeNull();
+  });
+
+  it('removes nothing when the selected day has no rows of its own', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2026-12-10T04:00:00.000Z', '2026-12-12');
+    expect(hiddenDayKey).toBeNull();
+    expect(days.map((day) => day.dayKey)).toEqual(['2026-12-10', '2026-12-11', '2026-12-15']);
+  });
+
+  it('removes nothing when there is no panel at all', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2026-12-10T04:00:00.000Z', null);
+    expect(hiddenDayKey).toBeNull();
+    expect(days).toHaveLength(3);
+  });
+
+  /*
+   * THE LAST DAY THE CALENDAR COVERS, which is the case the reporter asked
+   * about: the panel holds the only thing left, so the feed is empty for a
+   * reason that is not "nothing is scheduled".
+   */
+  it('says the remaining rows are in the panel rather than going silent', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2026-12-15T04:00:00.000Z', '2026-12-15');
+    expect(days).toHaveLength(0);
+    expect(hiddenDayKey).toBe('2026-12-15');
+    const empty = container.querySelector('[data-testid="market-events-feed-empty"]');
+    expect(empty).not.toBeNull();
+    expect(empty?.textContent).toContain('แผงด้านบน');
+  });
+
+  /*
+   * And the OTHER empty state keeps its own sentence. Past the end of the file
+   * nothing was removed, so blaming a panel would send a reader to look up at
+   * a panel that has nothing in it either.
+   */
+  it('still says the calendar has run out when that is the actual reason', () => {
+    const { days, hiddenDayKey } = renderBesidePanel('2027-01-05T04:00:00.000Z', '2027-01-05');
+    expect(days).toHaveLength(0);
+    expect(hiddenDayKey).toBeNull();
+    const empty = container.querySelector('[data-testid="market-events-feed-empty"]');
+    expect(empty?.textContent).toContain('ไม่มีรายการที่ยังมาไม่ถึง');
+    expect(empty?.textContent).not.toContain('แผงด้านบน');
+  });
+});
 
 describe('the market events feed', () => {
   it('heads the first two days in words and keeps the checkable date beside them', () => {
