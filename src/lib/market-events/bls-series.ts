@@ -51,18 +51,42 @@ import type { MarketEventKind } from './types';
  * by roughly 23 million people, and returns numbers that look every bit as
  * plausible. Nothing in this repository can tell them apart.
  *
- * The debt is tracked by a failing test rather than by this comment —
- * `bls-series.test.ts` is RED while `CATALOG_VERIFIED` is false and says what
- * to run. Run `npm run probe:bls-series` with a working key, check each
- * `series_title` against `believedToBe` below, and flip the flag.
+ * ===========================================================================
+ * ONE INDEPENDENT SOURCE AGREES, WHICH IS NOT THE SAME AS CONFIRMATION
+ * ===========================================================================
+ * `CUSR0000SA0` for July 2026 reads 332.813, and Polygon's `fed/v1/inflation`
+ * reports the same 332.813 for the same month. Polygon is a different vendor
+ * with a different pipeline, so this is not the same number checked twice — it
+ * is two sources landing on one value.
+ *
+ * That is real evidence and it is worth more than "the magnitude looks about
+ * right", which is all this feature had before. It is still NOT a catalog
+ * entry: it corroborates the CPI series and says nothing about `WPSFD4`, and
+ * nothing at all about the one that could be off by 23 million people. A
+ * vendor agreeing about CPI cannot tell you whether the employment id you
+ * picked is total or total-private.
+ *
+ * ===========================================================================
+ * HOW THE DEBT IS TRACKED
+ * ===========================================================================
+ * `bls-series.test.ts` holds it, and the rule is about MEANS rather than about
+ * state: an unverified id is acceptable while nobody can verify it, and is a
+ * failure the moment somebody can. BLS refusing three registration keys in a
+ * row is not something this repository can fix by trying harder, and a suite
+ * that stays red over it would only teach everybody to ignore a red suite.
+ *
+ * Settle it by running `npm run probe:bls-series` with a working key, checking
+ * each `series_title` against `believedToBe` below, flipping this flag, and
+ * regenerating the figures.
  */
 
 /**
  * Whether BLS itself has confirmed the ids in this file.
  *
  * FALSE until somebody runs the catalog probe with a working key and reads the
- * titles. It is a constant rather than a comment because a test asserts it, and
- * a test is the only kind of note nobody can walk past.
+ * titles. It is a constant rather than a comment because a test reads it — see
+ * `bls-series.test.ts` for what that test does and, more importantly, what it
+ * deliberately does not do.
  */
 export const CATALOG_VERIFIED = false;
 
@@ -89,16 +113,29 @@ export interface BlsSeriesBinding {
  */
 export const BLS_SERIES: Partial<Record<MarketEventKind, BlsSeriesBinding>> = {
   CPI: {
-    // Consumer Price Index for All Urban Consumers, all items, US city average.
-    // NOT catalog-verified — see the header. NSA twin is CUUR0000SA0.
+    /*
+      Consumer Price Index for All Urban Consumers, all items, US city average.
+      NSA twin is CUUR0000SA0.
+
+      NOT catalog-verified — but CORROBORATED: July 2026 reads 332.813 here and
+      Polygon's `fed/v1/inflation` reports 332.813 for the same month. A second
+      vendor landing on the same value is the strongest evidence this feature
+      has for any of its three ids, and it still is not BLS saying what the
+      series is. See the header.
+    */
     seriesId: 'CUSR0000SA0',
     adjustment: 'SA',
     unit: 'index',
     believedToBe: 'CPI-U, all items, US city average, seasonally adjusted',
   },
   PPI: {
-    // Producer Price Index, final demand.
-    // NOT catalog-verified — see the header. NSA twin is WPUFD4.
+    /*
+      Producer Price Index, final demand. NSA twin is WPUFD4.
+
+      NOT catalog-verified and NOT corroborated. The CPI cross-check says
+      nothing about this one — it is a different survey with its own id space,
+      and agreeing about consumer prices is not evidence about producer prices.
+    */
     seriesId: 'WPSFD4',
     adjustment: 'SA',
     unit: 'index',
@@ -108,9 +145,12 @@ export const BLS_SERIES: Partial<Record<MarketEventKind, BlsSeriesBinding>> = {
     /*
       Total nonfarm employment, in thousands.
 
-      NOT catalog-verified, and this is the one that matters: CES0500000001 is
-      TOTAL PRIVATE nonfarm employment — about 23 million people fewer — and
-      both return plausible-looking numbers. The NSA twin is CEU0000000001.
+      NOT catalog-verified and NOT corroborated, and this is the one that
+      matters: CES0500000001 is TOTAL PRIVATE nonfarm employment — about 23
+      million people fewer — and both return plausible-looking numbers. The
+      CPI cross-check is no help here at all; a vendor agreeing about consumer
+      prices cannot tell you whether an employment id is total or
+      total-private. The NSA twin is CEU0000000001.
     */
     seriesId: 'CES0000000001',
     adjustment: 'SA',

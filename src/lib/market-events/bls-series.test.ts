@@ -8,6 +8,7 @@ import {
   CHANGE_UNIT_LABEL_TH,
   UNIT_LABEL_TH,
 } from './bls-series';
+import { FIGURES_CATALOG_VERIFIED } from './figures';
 
 /**
  * ONE TABLE, ONE ADJUSTMENT, AND A DEBT THAT CANNOT BE WALKED PAST.
@@ -86,45 +87,104 @@ describe('the BLS series table', () => {
 
 /**
  * ===========================================================================
- * THE UNPAID DEBT, AS A FAILING TEST
+ * THE UNPAID DEBT, AND WHY IT DOES NOT FAIL THE SUITE
  * ===========================================================================
  * The ids in `bls-series.ts` were never confirmed by BLS. `catalog: true`
- * returns the agency's own `series_title` and is served only to a registered
- * key; the key available when the figures were generated was rejected, so the
- * data was fetched anonymously — which returns values and footnotes and no
- * titles.
+ * returns the agency's own `series_title` and v2 serves it only to a registered
+ * key; three keys in a row were rejected by BLS, so the figures were fetched
+ * anonymously — values and footnotes, no titles.
  *
- * THIS TEST IS RED ON PURPOSE and it is meant to stay red until somebody does
- * the work. A comment saying "verify this later" is a note anybody can walk
- * past; a red suite is not. The cost is deliberate: the next push is blocked
- * until the ids are confirmed, which is exactly the forcing function this debt
- * deserves — the wrong id here is 23 million people.
+ * This test used to be red for exactly that reason, and that was the wrong
+ * shape. A red suite is a forcing function only when somebody can act on it.
+ * Nobody here can make BLS accept a key, so the red never turned green by
+ * anybody doing the right thing; it just sat there blocking every deploy and
+ * teaching the team that a red suite is something you route around. A signal
+ * everybody learns to ignore is worse than no signal.
+ *
+ * So the rule is about MEANS, not about state:
+ *
+ *   unverified, and no means to verify   -> PASS. A known, recorded limitation.
+ *   unverified, but the means are there  -> FAIL. That is somebody not doing it.
+ *   verified                             -> PASS, and the data file has to agree.
+ *
+ * ===========================================================================
+ * WHAT "THE MEANS ARE THERE" IS MEASURED BY, AND WHAT THAT MISSES
+ * ===========================================================================
+ * `process.env.BLS_API_KEY`, and nothing else. The honest measure would be
+ * "does a catalog request succeed", and that is exactly what this must not do:
+ * a unit test that opens a socket fails on a train, fails when BLS is down, and
+ * turns an offline suite into a weather report.
+ *
+ * The proxy is deliberately loose and here is where it is loose:
+ *
+ *  - It reads the PROCESS env, not `.env.local`. `vitest` does not load that
+ *    file, so a key sitting on a developer's disk does not trip this. It trips
+ *    in an environment that deliberately hands the key to the test runner —
+ *    which is the environment where verification is actually possible.
+ *  - A key being present does not mean BLS accepts it. Every key this project
+ *    has tried was present and rejected. So a false red is possible, and the
+ *    message says how to clear it in one line.
+ *
+ * Both directions of that are on purpose. This is a nudge that fires where the
+ * work can be done, not a proof that it was.
  */
 describe('the catalog verification debt', () => {
-  it('is settled — run the probe and confirm every series_title', () => {
+  /*
+   * Trimmed, because an empty-but-set variable is how a CI config says "no key"
+   * and reading that as "a key exists" would fail the build over a blank
+   * string.
+   */
+  const keyInEnv = (process.env.BLS_API_KEY ?? '').trim();
+  const meansToVerify = keyInEnv.length > 0;
+
+  it('is unsettled only while there is no way to settle it', () => {
+    if (CATALOG_VERIFIED) return;
+
     expect(
-      CATALOG_VERIFIED,
+      meansToVerify,
       [
         '',
-        'The BLS series ids have NOT been confirmed against the agency.',
+        'A BLS_API_KEY is in the environment, but CATALOG_VERIFIED is still false.',
         '',
-        'They were chosen from memory and the data was fetched anonymously,',
-        'because v2 serves `catalog: true` only to a registered key and the key',
-        'available at the time was rejected by BLS.',
+        'The debt was acceptable while nobody could pay it. With a key present,',
+        'somebody can — so this is now a thing that was not done rather than a',
+        'thing that could not be done.',
         '',
-        'CES0000000001 is the dangerous one: CES0500000001 is total PRIVATE',
-        'nonfarm employment, about 23 million people fewer, and both return',
-        'numbers that look entirely plausible in this panel.',
+        'CES0000000001 is why it matters: CES0500000001 is total PRIVATE nonfarm',
+        'employment, about 23 million people fewer, and both return numbers that',
+        'look entirely plausible in this panel. The Polygon cross-check on CPI',
+        'says nothing about it.',
         '',
-        'To settle this:',
-        '  1. put a working BLS_API_KEY in .env.local',
-        '  2. npm run probe:bls-series',
-        '  3. check each series_title against `believedToBe` in bls-series.ts',
-        '  4. set CATALOG_VERIFIED = true, and catalogVerified: true in',
-        '     src/data/market-event-figures.json',
+        'Settle it:',
+        '  1. npm run probe:bls-series',
+        '  2. check each series_title against `believedToBe` in bls-series.ts',
+        '  3. set CATALOG_VERIFIED = true',
+        '  4. npm run backfill:event-figures   (rewrites catalogVerified in the',
+        '     data file from the constant)',
         '',
-        'Until then the figures on the calendar are unverified.',
+        'If the key is present but BLS rejects it — which has happened three',
+        'times on this project — unset BLS_API_KEY for the test run. That is the',
+        'honest state: no means, so no obligation.',
       ].join('\n'),
+    ).toBe(false);
+  });
+
+  /*
+   * THE FLAG AND THE SHIPPED DATA HAVE TO AGREE.
+   *
+   * Flipping the constant without regenerating would leave the calendar showing
+   * numbers fetched anonymously under a claim that they were verified, which is
+   * a worse state than the unverified one because it is no longer visible. The
+   * backfill writes `catalogVerified` from this constant, so the two can only
+   * disagree if somebody edited one by hand.
+   */
+  it('does not claim verification the shipped figures do not carry', () => {
+    if (!CATALOG_VERIFIED) return;
+    expect(
+      FIGURES_CATALOG_VERIFIED,
+      'CATALOG_VERIFIED is true but src/data/market-event-figures.json still says'
+      + ' catalogVerified: false. Run `npm run backfill:event-figures` so the'
+      + ' shipped numbers come from a verified run.',
     ).toBe(true);
   });
 });
