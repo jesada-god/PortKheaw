@@ -367,8 +367,14 @@ describe('the asset cell carries the mark and the shape of the day', () => {
   /*
     A single point is not a line, and drawing a flat rule across the cell would
     say "did not move" — a claim about the market, where the truth is an absence
-    of data. The watchlist and portfolio paths still hardcode `sparkline: []`,
-    so this is a state the band will meet.
+    of data.
+
+    THE WATCHLIST NO LONGER HARDCODES `sparkline: []`: `loadWatchlistPrices`
+    fetches the same 5-minute regular-session series this band draws. The state
+    is still reachable and still worth pinning — a symbol whose candles fail
+    comes back as an empty array by design, `unavailablePrice` returns one for
+    anything that could not be read at all, and the portfolio path never asks
+    for a series in the first place.
   */
   it('draws nothing at all rather than a flat rule when there is no series', () => {
     const [item] = assetCards().filter((card) => card.symbol === 'SPY');
