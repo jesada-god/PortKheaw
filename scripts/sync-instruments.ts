@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { InstrumentSyncCounts, MarketInstrumentInput } from '../src/lib/instruments/types.ts';
 import { planInstrumentSync, redactInstrumentSyncError } from '../src/lib/instruments/sync-plan.ts';
-import { loadInstrumentSnapshot, PRIMARY_INSTRUMENT_PROVIDER, toProviderFailure } from '../src/lib/instruments/providers.ts';
+import { loadInstrumentSnapshot, toProviderFailure } from '../src/lib/instruments/providers.ts';
 import { executeInstrumentSync } from '../src/lib/instruments/sync-runner.ts';
 
 const BATCH_SIZE = 500;
@@ -22,6 +22,43 @@ function safeFailure(error: unknown): StructuredFailure {
   };
 }
 
+/**
+ * THE PROVIDER A ROW IS STAMPED WITH IS THE ONE THAT SERVED IT.
+ *
+ * ===========================================================================
+ * WHAT THIS FIXES
+ * ===========================================================================
+ * Both stages below used to pass `PRIMARY_INSTRUMENT_PROVIDER` — the constant
+ * `'alpha-vantage'` — to the database, whichever provider had actually
+ * answered. A run that fell back to Nasdaq Trader wrote 12,636 rows every one
+ * of which claimed to come from Alpha Vantage, and the sync's own log said
+ * `providerUsed: nasdaq-trader` on the line above. The log told the truth and
+ * the table did not.
+ *
+ * That is worse than a missing field. A missing provider is visibly unknown; a
+ * wrong one is confidently misleading, and it makes "which rows came from the
+ * fallback" unanswerable — which is exactly the question somebody asks when
+ * they find a column the fallback does not populate.
+ *
+ * ===========================================================================
+ * NULL IS NOT AN ATTRIBUTION
+ * ===========================================================================
+ * `providerUsed` is null when BOTH providers failed. The snapshot is then
+ * empty and incomplete, and there is no honest name to write on a run — so
+ * this refuses rather than falling back to the primary's name, which is the
+ * habit that produced the defect in the first place.
+ */
+function syncProvider(providerUsed: string | null): string {
+  if (!providerUsed) {
+    throw failure(
+      'sync-provider-unknown',
+      'No instrument provider answered, so there is nothing to attribute a sync run to',
+      false,
+    );
+  }
+  return providerUsed;
+}
+
 async function dryRunCounts(rows: MarketInstrumentInput[], failed: number): Promise<InstrumentSyncCounts> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -29,9 +66,22 @@ async function dryRunCounts(rows: MarketInstrumentInput[], failed: number): Prom
   const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   const existing: MarketInstrumentInput[] = [];
   for (let from = 0; ; from += 1000) {
+    /*
+      EVERY ROW, NOT THE ONES ONE PROVIDER OWNS.
+
+      This used to filter `.eq('provider', PRIMARY_INSTRUMENT_PROVIDER)`, which
+      was only ever right because every row carried that one value — including
+      the ones that did not come from it. Now that a row records who actually
+      served it the table can hold a mix, and a preview that looked at one
+      provider's rows would report the other provider's rows as new inserts.
+
+      The sync replaces the whole instrument universe on every run, so the
+      honest diff target is the whole table. Nothing else writes to it: the
+      logo backfill updates metadata on existing rows and never inserts.
+    */
     const { data, error } = await client.from('market_instruments')
       .select('provider_symbol,symbol,name,exchange,asset_type,currency,country,status,ipo_date,delisting_date')
-      .eq('provider', PRIMARY_INSTRUMENT_PROVIDER).range(from, from + 999);
+      .range(from, from + 999);
     if (error) {
       if (error.code === '42P01' || error.code === 'PGRST205') return { inserted: rows.length, updated: 0, skipped: 0, failed };
       throw failure('database-read-failed', error.message, false);
@@ -42,12 +92,17 @@ async function dryRunCounts(rows: MarketInstrumentInput[], failed: number): Prom
   return planInstrumentSync(existing, rows, failed);
 }
 
-async function persist(rows: MarketInstrumentInput[], failed: number, idempotencyKey: string): Promise<InstrumentSyncCounts> {
+async function persist(
+  rows: MarketInstrumentInput[],
+  failed: number,
+  idempotencyKey: string,
+  providerUsed: string | null,
+): Promise<InstrumentSyncCounts> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) throw failure('sync-not-configured', 'NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for a real sync', false);
   const client = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: runId, error: beginError } = await client.rpc('begin_market_instrument_sync', { input_provider: PRIMARY_INSTRUMENT_PROVIDER, input_idempotency_key: idempotencyKey });
+  const { data: runId, error: beginError } = await client.rpc('begin_market_instrument_sync', { input_provider: syncProvider(providerUsed), input_idempotency_key: idempotencyKey });
   if (beginError || !runId) throw failure('sync-run-create-failed', beginError?.message ?? 'Could not create sync run', false);
   try {
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
@@ -77,7 +132,7 @@ async function main() {
   const idempotencyKey = new Date().toISOString().slice(0, 10);
   const execution = await executeInstrumentSync(snapshot, dryRun, {
     preview: dryRunCounts,
-    persist: (rows, failed) => persist(rows, failed, idempotencyKey),
+    persist: (rows, failed) => persist(rows, failed, idempotencyKey, snapshot.providerUsed),
   });
   process.stdout.write(`${JSON.stringify({
     event: 'instrument_sync_complete',

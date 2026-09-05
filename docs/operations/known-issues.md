@@ -8,6 +8,70 @@ Remove an entry when it is fixed — this file is for live issues only.
 
 ---
 
+## `market_instruments.provider` is unreliable on rows written before 2026-09-05
+
+**Status:** open, and **not fixable in place** · **Severity:** low for readers,
+material for anybody auditing where data came from · **Observed:** 2026-09-05,
+dev project `vhhjdzcjczqmvjrgrrom`
+
+### What was wrong
+
+`scripts/sync-instruments.ts` passed the constant `PRIMARY_INSTRUMENT_PROVIDER`
+— `'alpha-vantage'` — to `begin_market_instrument_sync` on every run, whichever
+provider had actually answered. The seeding run on the dev project fell back to
+Nasdaq Trader and wrote **12,636 rows all stamped `alpha-vantage`**, while the
+sync's own log line said:
+
+```
+{"event":"instrument_sync_complete","providerUsed":"nasdaq-trader",...}
+```
+
+The log told the truth and the table did not.
+
+**Fixed forward** — the script now writes `snapshot.providerUsed`, refuses to
+attribute a run when no provider answered, and previews against the whole table
+rather than one provider's rows. `src/lib/instruments/sync-attribution.test.ts`
+holds all three.
+
+### Why the existing rows cannot be corrected
+
+**There is no record of which provider served which row.** The column is the
+only per-row provenance the schema has, every row carries the same wrong value,
+and the sync run history records the same constant. Nothing in the database or
+the logs distinguishes a row that came from Alpha Vantage from one that came
+from Nasdaq Trader.
+
+Rewriting them would mean guessing. A guess that happened to be right would be
+indistinguishable from the wrong value it replaced, and a guess that was wrong
+would be a second false record laid over the first — with the added harm that
+it would look freshly written and therefore trustworthy.
+
+So the rows are left as they are, and this entry is the record that they mean
+nothing.
+
+### What to do instead
+
+- **Treat `provider` as unknown on any row whose `last_synced_at` predates the
+  next full sync.** It is not missing, it is wrong, and it is wrong in one
+  specific direction: it says `alpha-vantage` regardless.
+- **A full re-sync fixes it**, because the sync replaces the whole universe and
+  every row it writes now carries the provider that served it. On dev that is
+  `npm run backfill`-free and costs nothing — the Nasdaq Trader fallback needs
+  no API key.
+- **Production has not been touched** and is not part of this fix. Its rows
+  carry the same wrong value for the same reason; correcting them is the
+  owner's call and needs the same full re-sync, not an UPDATE.
+
+### Ruled out
+
+| Idea | Why not |
+|---|---|
+| Infer the provider from row shape | Both parsers produce the same columns. `name`, `exchange` and `asset_type` are identical for AAPL under either source — checked against production. |
+| Infer from `ipo_date` being null | Null on **every** row in both projects, from both providers. Carries no signal. |
+| Read it off the sync run history | The run rows were written with the same constant. Same defect, same lie. |
+
+---
+
 ## Intermittent React #418 on `/tools/what-if`
 
 **Status:** open · **Severity:** low (recoverable; React re-renders the subtree
