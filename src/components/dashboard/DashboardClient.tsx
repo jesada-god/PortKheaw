@@ -1224,10 +1224,18 @@ function WatchlistSection({
           card is 88px where a stacked one needed 128px, so five holdings come
           out SHORTER here than they were in two lines of three.
 
-          Below `sm` the row folds back to a stack, because three columns in
-          375px is the smudge again. Nothing is hidden at any width — every
-          card still draws every field it has, in the same order, off the same
-          `OverviewPrice`.
+          Below `sm` the three columns fold to TWO ROWS rather than to a
+          stack. Three columns in 375px is the smudge again, but one column is
+          a card that spends its whole height on four left-aligned lines and
+          leaves the right half empty. So: identity across the top, and under
+          it the two things a reader actually compares — the figures on the
+          left, the shape of the day on the right at 42% of the card, which is
+          the narrowest a line can be and still be read as a direction.
+
+          The price and the line share ONE baseline row, never stack: a card
+          that put the graph under the number would be two cards tall for one
+          holding. Nothing is hidden at any width — every card still draws
+          every field it has, in the same order, off the same `OverviewPrice`.
         */
         <div className="grid grid-cols-1 gap-3">
           {visible.map((item) => (
@@ -1243,10 +1251,10 @@ function WatchlistSection({
                 `min-h` rather than a fixed height: a card carrying an
                 after-hours line is taller than one without it.
               */
-              className="grid min-h-[88px] min-w-0 grid-cols-1 items-start gap-3 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] active:bg-[var(--surface-selected)] sm:grid-cols-[minmax(0,1fr)_minmax(5rem,12rem)_auto] sm:items-center sm:gap-4"
+              className="grid min-h-[88px] min-w-0 grid-cols-[minmax(0,1fr)_42%] items-start gap-x-3 gap-y-2 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] active:bg-[var(--surface-selected)] sm:grid-cols-[minmax(0,1fr)_minmax(5rem,12rem)_auto] sm:items-center sm:gap-4"
             >
               {/* WHAT IT IS — and, under it, how sure the page is of the number. */}
-              <span className="flex min-w-0 flex-col gap-1">
+              <span className="col-span-2 flex min-w-0 flex-col gap-1 sm:col-span-1">
                 <span className="flex min-w-0 items-center gap-2">
                   <InstrumentLogo
                     symbol={item.symbol}
@@ -1289,7 +1297,7 @@ function WatchlistSection({
                 its box when there is no series: a row that grew a line as
                 prices landed would move every card under it.
               */}
-              <span className="block min-w-0">
+              <span className="col-start-2 row-start-2 block min-w-0 self-center sm:col-start-auto sm:row-start-auto">
                 <MiniLine
                   values={item.sparkline}
                   changePercent={item.changePercent}
@@ -1298,9 +1306,10 @@ function WatchlistSection({
               </span>
               {/*
                 WHAT IT IS WORTH, right-aligned from `sm` so the figures of
-                every card share one edge and read as a column. Stacked and
-                left-aligned below it, where a right edge would put the
-                percentage under the fold on a narrow phone.
+                every card share one edge and read as a column. Below it they
+                sit left in the bottom row beside the line, wrapping rather
+                than truncating: a right edge on a phone would push the
+                percentage away from the name it belongs to.
 
                 THE PERCENTAGE IS THE ONLY THING ON THE CARD ALLOWED A FILL.
                 Its tint is `--positive-soft` / `--negative-soft` — the 12%
@@ -1311,7 +1320,7 @@ function WatchlistSection({
                 the number does not make; the line to the left takes the same
                 three-way, so the two cannot disagree.
               */}
-              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 sm:flex-col sm:items-end sm:justify-self-end sm:text-right">
+              <span className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 self-center sm:col-start-auto sm:row-start-auto sm:flex-col sm:items-end sm:justify-self-end sm:text-right">
                 <span className="block whitespace-nowrap text-sm font-bold tabular-nums text-[var(--text)]">
                   {item.price === null ? 'ข้อมูลยังไม่พร้อม' : `${formatNumber(item.price)} ${item.currency}`}
                 </span>
