@@ -29,13 +29,24 @@
  * this feature has to make once and defend — see `bls-series.ts`.
  *
  * ===========================================================================
- * THE KEY NEVER REACHES THE OUTPUT
+ * THE KEY NEVER REACHES THE OUTPUT, BY ANY PATH
  * ===========================================================================
  * BLS ECHOES THE KEY BACK inside its own rejection message — "The
  * key:<32 hex> provided by the User is invalid" — so a probe that prints
  * `message` verbatim prints the secret into a terminal, a CI log and anything
- * scraping either. `redact` below removes it from every line before it is
- * shown. That is not hypothetical: it happened on the first run of this file.
+ * scraping either. That is not hypothetical: it happened on the first run of
+ * this file.
+ *
+ * Redacting at each `console.log` was the first fix and it was not enough,
+ * because it only covers the lines somebody REMEMBERED to wrap. The request
+ * body carries the key, so a thrown fetch error, an unhandled rejection, a
+ * stack trace quoting the payload, or a `console.log` added later by somebody
+ * who has not read this header would all print it again.
+ *
+ * So the redaction is installed at the EXITS instead: `console.log`,
+ * `console.error`, `console.warn` and the two process-level handlers are all
+ * wrapped before the key is read. Nothing this script can print escapes it,
+ * including output written by code that knows nothing about the key.
  *
  * `--anonymous` makes the same request with no key at all. v2 answers
  * unregistered callers with a smaller allowance and no catalog, which is
@@ -65,21 +76,63 @@ const CANDIDATES: ReadonlyArray<{
 
 const anonymous = process.argv.includes('--anonymous');
 const key = process.env.BLS_API_KEY;
-if (!key && !anonymous) {
-  console.error('BLS_API_KEY is not set. Add it to .env.local and rerun.');
-  process.exit(2);
-}
 
 /**
  * Anything that looks like the key, gone — the configured one by value, and
  * any other 32-hex run by shape, so a message quoting a DIFFERENT key is not
  * printed either.
  */
-function redact(text: string): string {
-  const withoutOurs = key ? text.split(key).join('<redacted>') : text;
-  return withoutOurs.replace(/\b[0-9a-f]{32}\b/gi, '<redacted>');
+function redact(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const withoutOurs = key ? value.split(key).join('<redacted>') : value;
+    return withoutOurs.replace(/\b[0-9a-f]{32}\b/gi, '<redacted>');
+  }
+  if (value instanceof Error) {
+    /*
+      A rebuilt Error rather than a mutated one: `message` and `stack` are the
+      two places a fetch failure quotes the request, and both are read-only on
+      some runtimes.
+    */
+    const copy = new Error(redact(value.message) as string);
+    copy.stack = typeof value.stack === 'string' ? redact(value.stack) as string : undefined;
+    return copy;
+  }
+  if (Array.isArray(value)) return value.map(redact);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v)]));
+  }
+  return value;
 }
 
+/*
+ * INSTALLED BEFORE ANYTHING ELSE RUNS. Every console exit and both process-level
+ * handlers go through `redact`, so output from code that has never heard of the
+ * key — a thrown fetch error, a stack trace, a line added here next year — is
+ * covered without anybody having to remember.
+ */
+for (const channel of ['log', 'error', 'warn'] as const) {
+  const original = console[channel].bind(console);
+  console[channel] = (...parts: unknown[]) => original(...parts.map(redact));
+}
+process.on('uncaughtException', (error) => {
+  console.error('uncaught:', redact(error));
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandled rejection:', redact(reason));
+  process.exit(1);
+});
+
+if (!key && !anonymous) {
+  console.error('BLS_API_KEY is not set. Add it to .env.local and rerun.');
+  process.exit(2);
+}
+
+/*
+  Wrapped so a transport failure — DNS, TLS, a proxy rewriting the body — is
+  reported through the redacting console rather than as an unhandled rejection
+  that some runtimes print before the handler above can run.
+*/
 const response = await fetch(API, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -111,7 +164,7 @@ const payload = await response.json() as {
 
 console.log(`mode: ${anonymous ? 'anonymous (no key)' : 'registered key'}`);
 console.log(`status: ${payload.status}`);
-for (const line of payload.message ?? []) console.log(`  message: ${redact(line)}`);
+for (const line of payload.message ?? []) console.log(`  message: ${line}`);
 
 if (payload.status !== 'REQUEST_SUCCEEDED') {
   console.error('\nThe key or the request was rejected. Nothing below is trustworthy.');
