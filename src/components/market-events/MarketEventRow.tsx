@@ -1,4 +1,5 @@
 import type { FeedItem } from '@/src/lib/market-events/feed';
+import type { EventFigureView } from '@/src/lib/market-events/figures';
 import type { EventReactionView } from '@/src/lib/market-events/reactions';
 import type { MarketEventImportance } from '@/src/lib/market-events/types';
 
@@ -72,6 +73,7 @@ export const IMPORTANCE_WASH_STYLE: Record<MarketEventImportance, string> = {
 export function MarketEventRow({
   item,
   reaction = null,
+  figure = null,
   testIdPrefix = 'market-events',
 }: {
   item: FeedItem;
@@ -89,6 +91,20 @@ export function MarketEventRow({
    * question nobody on that list asked.
    */
   reaction?: EventReactionView | null;
+  /**
+   * What this release actually published, and what it published the month
+   * before — or null.
+   *
+   * NULL RENDERS NOTHING, for the same reason `reaction` does, and it is the
+   * common case rather than an edge one: the calendar runs months ahead of what
+   * BLS has published, so a release that has not happened has no figure. A dash
+   * there would read as a failure instead of as a future date.
+   *
+   * Only CPI, PPI and NFP can ever carry one. The calendar's other four kinds
+   * come from DOL, the BEA and the Federal Reserve, which this feature does not
+   * read — see `docs/market-events-figures.md`.
+   */
+  figure?: EventFigureView | null;
   /**
    * Why this is a prop: the panel and the feed can both be on screen showing
    * the same day, and two elements answering to `market-events-item-cpi` would
@@ -118,6 +134,7 @@ export function MarketEventRow({
             </>
           )}
         </span>
+        {figure && <FigureBlock figure={figure} testId={`${testIdPrefix}-figure-${item.id}`} />}
         {reaction && <ReactionBlock reaction={reaction} testId={`${testIdPrefix}-reaction-${item.id}`} />}
       </span>
       <span
@@ -127,6 +144,102 @@ export function MarketEventRow({
         {item.importanceLabelTh}
       </span>
     </li>
+  );
+}
+
+/**
+ * WHAT THE RELEASE PUBLISHED, AND WHAT IT PUBLISHED THE MONTH BEFORE.
+ *
+ * ===========================================================================
+ * EVERY NUMBER CARRIES ITS MONTH AND ITS UNIT
+ * ===========================================================================
+ * "332.813" is a digit string. "ส.ค. 2569 · ดัชนี 332.813" is a fact somebody
+ * can check against the agency. Both readings print both, because the whole
+ * point of putting two months side by side is that a reader can tell which is
+ * which — and the change between them prints its own unit too, since an index
+ * moves in points and a headcount moves in people.
+ *
+ * ===========================================================================
+ * A NUMBER THAT WILL BE REVISED SAYS SO, ON THE ROW
+ * ===========================================================================
+ * BLS marks NFP "preliminary" and PPI "subject to monthly revisions up to four
+ * months after original publication". A reader who writes today's figure down
+ * and checks the same cell in December will find a different number, so the
+ * warning is rendered rather than tucked into a tooltip — and the agency's own
+ * wording is kept underneath it, because "preliminary" and "revisable for four
+ * months" are different promises.
+ *
+ * ===========================================================================
+ * NO FORECAST, ANYWHERE
+ * ===========================================================================
+ * There is no consensus estimate in this codebase, so there is nothing here to
+ * beat or miss. `EVENT_FIGURE_MUST_NOT_SAY` bans the vocabulary that would
+ * imply otherwise and the tests assert it over what this renders.
+ */
+function FigureBlock({ figure, testId }: { figure: EventFigureView; testId: string }) {
+  return (
+    <span className="mt-1.5 block" data-testid={testId}>
+      <span className="block text-[11px] font-medium leading-4 text-[var(--text-secondary)]">
+        {figure.headingTh}
+      </span>
+      <span className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <Reading reading={figure.latest} strong testId={`${testId}-latest`} />
+        {figure.previous && (
+          <>
+            <span aria-hidden="true" className="text-[10px] text-[var(--text-muted)]">·</span>
+            <Reading reading={figure.previous} testId={`${testId}-previous`} />
+          </>
+        )}
+        {figure.changeLabel && (
+          <span
+            className="text-[11px] tabular-nums text-[var(--text-secondary)]"
+            data-testid={`${testId}-change`}
+          >
+            ({figure.changeLabel})
+          </span>
+        )}
+      </span>
+      {figure.preliminaryNoteTh && (
+        <span className="mt-1 block" data-testid={`${testId}-preliminary`}>
+          <span className="inline-block rounded-full bg-[var(--warning-soft)] px-2 py-0.5 text-[10px] leading-4 text-[var(--warning)]">
+            {figure.preliminaryNoteTh}
+          </span>
+          {/*
+            BLS's own sentence, under the short warning. The badge is what a
+            reader takes in at a glance; this is what tells them for how long.
+          */}
+          {figure.latest.footnotesTh.length > 0 && (
+            <span className="mt-0.5 block text-[10px] leading-4 text-[var(--text-muted)]">
+              {figure.latest.footnotesTh.join(' · ')}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** One month: its label, then its value with the unit that makes it readable. */
+function Reading({
+  reading,
+  strong = false,
+  testId,
+}: {
+  reading: EventFigureView['latest'];
+  strong?: boolean;
+  testId: string;
+}) {
+  return (
+    <span className="whitespace-nowrap text-[11px] leading-4" data-testid={testId}>
+      <span className="text-[var(--text-muted)]">{reading.periodLabelTh}</span>
+      {' · '}
+      <span className="text-[var(--text-muted)]">{reading.unitLabelTh}</span>{' '}
+      <span
+        className={`tabular-nums ${strong ? 'font-semibold text-[var(--text)]' : 'text-[var(--text-secondary)]'}`}
+      >
+        {reading.valueLabel}
+      </span>
+    </span>
   );
 }
 

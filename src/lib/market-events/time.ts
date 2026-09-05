@@ -170,6 +170,9 @@ const THAI_MONTH = new Intl.DateTimeFormat(THAI, {
 const THAI_SHORT_DAY = new Intl.DateTimeFormat(THAI, {
   timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric',
 });
+const THAI_SHORT_MONTH = new Intl.DateTimeFormat(THAI, {
+  timeZone: 'UTC', month: 'short', year: 'numeric',
+});
 
 /*
  * The pattern for every label below: a day KEY is turned back into a UTC
@@ -204,6 +207,19 @@ export function thaiShortDayLabel(dayKey: string): string {
 /** "กันยายน 2569" — the calendar card's month heading. */
 export function thaiMonthLabel(monthKey: string): string {
   return THAI_MONTH.format(utcMidnight(`${monthKey}-01`));
+}
+
+/**
+ * "ส.ค. 2569" — the compact month, for a figure sitting inside a table row.
+ *
+ * The long form is the calendar's own heading and has room to be long. A
+ * published figure prints its reference month BESIDE a number, twice, on a
+ * 375px row, and "สิงหาคม 2569" twice does not leave the numbers anywhere to
+ * be. Same vocabulary and the same Buddhist year as every other label here,
+ * because it is the same formatter with one option changed.
+ */
+export function thaiShortMonthLabel(monthKey: string): string {
+  return THAI_SHORT_MONTH.format(utcMidnight(`${monthKey}-01`));
 }
 
 /*

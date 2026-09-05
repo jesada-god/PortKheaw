@@ -395,6 +395,7 @@ function SelectedDayPanel({ view }: { view: MarketEventsMonthView }) {
               key={item.id}
               item={item}
               reaction={item.reaction}
+              figure={item.figure}
               testIdPrefix="market-events-panel"
             />
           ))}

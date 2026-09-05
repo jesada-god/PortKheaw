@@ -73,7 +73,8 @@
     "inspect:daily-snapshot": "node --import=tsx --env-file-if-exists=.env.test scripts/inspect-daily-snapshot.ts",
     "qa:overview-calendar-slot": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/overview-calendar-slot-qa.mts",
     "qa:events-calendar-theme": "node --import=tsx --env-file-if-exists=.env.local scripts/qa/market-events-calendar-theme-qa.mts",
-    "probe:bls-series": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-bls-series.mts"
+    "probe:bls-series": "node --import=tsx --env-file-if-exists=.env.local scripts/probe-bls-series.mts",
+    "backfill:event-figures": "node --import=tsx --env-file-if-exists=.env.local scripts/backfill-event-figures.mts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

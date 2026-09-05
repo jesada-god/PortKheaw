@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { EVENT_FIGURE_MUST_NOT_SAY } from '@/src/lib/presentation/banned-copy';
+/*
+ * The ids come from the table rather than being retyped here. `bls-series.test.ts`
+ * fails if any file outside that table names one, and a fixture is a file — a
+ * test carrying its own copy is exactly the second source that check exists to
+ * prevent, and it would go stale the day the adjustment changes.
+ */
+import { BLS_SERIES } from './bls-series';
 import {
   canCarryFigure,
   figureSentenceTh,
@@ -43,9 +50,9 @@ const observation = (over: Partial<FigureRow['latest']> = {}): FigureRow['latest
 const CPI_ROW: FigureRow = {
   eventId: 'cpi-2026-09-11',
   kind: 'CPI',
-  seriesId: 'CUSR0000SA0',
-  adjustment: 'SA',
-  unit: 'index',
+  seriesId: BLS_SERIES.CPI!.seriesId,
+  adjustment: BLS_SERIES.CPI!.adjustment,
+  unit: BLS_SERIES.CPI!.unit,
   latest: observation(),
   previous: observation({
     period: 'M07',
@@ -58,9 +65,9 @@ const CPI_ROW: FigureRow = {
 const NFP_ROW: FigureRow = {
   eventId: 'nfp-2026-09-04',
   kind: 'NFP',
-  seriesId: 'CES0000000001',
-  adjustment: 'SA',
-  unit: 'thousands-of-persons',
+  seriesId: BLS_SERIES.NFP!.seriesId,
+  adjustment: BLS_SERIES.NFP!.adjustment,
+  unit: BLS_SERIES.NFP!.unit,
   latest: observation({ value: 159075, footnotes: ['preliminary'] }),
   previous: observation({
     period: 'M07',
