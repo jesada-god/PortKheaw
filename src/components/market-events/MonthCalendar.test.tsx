@@ -5,11 +5,14 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CARD_MUST_NOT_SAY,
+  EVENT_FIGURE_MUST_NOT_SAY,
   EVENT_REACTION_MUST_NOT_SAY,
   NEVER_SAY,
 } from '@/src/lib/presentation/banned-copy';
 import { buildMarketEventsMonthView } from '@/src/lib/market-events/month-view';
 import type { ReactionRow } from '@/src/lib/market-events/reactions';
+import type { FigureRow } from '@/src/lib/market-events/figures';
+import { BLS_SERIES } from '@/src/lib/market-events/bls-series';
 import type { ReleaseTiming } from '@/src/lib/market-events/release-timing';
 import type { MarketEvent } from '@/src/lib/market-events/types';
 import { MonthCalendar } from './MonthCalendar';
@@ -105,9 +108,52 @@ const REACTIONS: Record<ReleaseTiming, ReactionRow[]> = {
   afterClose: [],
 };
 
+/*
+ * The published numbers for the December CPI row, as a fixture.
+ *
+ * The shipped file holds one real figure — August's NFP — and the calendar in
+ * this test is December, so nothing would render without this. The ids come
+ * from the table for the reason `figures.test.ts` sets out.
+ */
+const FIGURES: FigureRow[] = [
+  {
+    eventId: 'cpi-dec',
+    kind: 'CPI',
+    seriesId: BLS_SERIES.CPI!.seriesId,
+    adjustment: BLS_SERIES.CPI!.adjustment,
+    unit: BLS_SERIES.CPI!.unit,
+    latest: {
+      year: 2026, period: 'M11', periodLabel: 'November 2026',
+      periodLabelTh: 'พ.ย. 2569', value: 334.512, footnotes: [],
+    },
+    previous: {
+      year: 2026, period: 'M10', periodLabel: 'October 2026',
+      periodLabelTh: 'ต.ค. 2569', value: 333.918, footnotes: [],
+    },
+  },
+  {
+    eventId: 'fomc-dec',
+    kind: 'NFP',
+    seriesId: BLS_SERIES.NFP!.seriesId,
+    adjustment: BLS_SERIES.NFP!.adjustment,
+    unit: BLS_SERIES.NFP!.unit,
+    latest: {
+      year: 2026, period: 'M11', periodLabel: 'November 2026',
+      periodLabelTh: 'พ.ย. 2569', value: 159075,
+      footnotes: ['preliminary'],
+    },
+    previous: null,
+  },
+];
+
 function render(
   now: string,
-  params: { monthParam?: string; dayParam?: string; reactionBuckets?: Record<ReleaseTiming, ReactionRow[]> } = {},
+  params: {
+    monthParam?: string;
+    dayParam?: string;
+    reactionBuckets?: Record<ReleaseTiming, ReactionRow[]>;
+    figureRows?: FigureRow[];
+  } = {},
   events: MarketEvent[] = EVENTS,
 ) {
   const view = buildMarketEventsMonthView({ now, events, ...params });
@@ -618,6 +664,68 @@ describe('the weekday headings', () => {
     render('2026-11-10T04:00:00.000Z');
     expect(headings()?.outerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(headings()?.outerHTML).not.toMatch(/rgb\(|hsl\(/);
+  });
+});
+
+/*
+ * ===========================================================================
+ * THE PUBLISHED NUMBERS, UNDER THE ROW THEY BELONG TO
+ * ===========================================================================
+ * The panel is where a reader who tapped a date finds out what the release
+ * actually said. Two levels, the month each is about, and the unit that makes
+ * them readable — a number without its unit is a digit string, and two months
+ * without their labels cannot be told apart.
+ */
+describe('the published figures in the day panel', () => {
+  const figureBlock = (eventId: string) =>
+    at(`[data-testid="market-events-panel-figure-${eventId}"]`);
+
+  it('prints both months, each with its unit, and the change between them', () => {
+    render('2026-12-10T04:00:00.000Z', { figureRows: FIGURES });
+    const block = figureBlock('cpi-dec');
+    expect(block).not.toBeNull();
+    expect(block?.textContent).toContain('ตัวเลขที่ประกาศ');
+    expect(block?.textContent).toContain('พ.ย. 2569');
+    expect(block?.textContent).toContain('334.512');
+    expect(block?.textContent).toContain('ต.ค. 2569');
+    expect(block?.textContent).toContain('333.918');
+    // The unit, on both readings, and the change with its own.
+    expect(block?.textContent).toContain('ดัชนี');
+    expect(block?.textContent).toContain('+0.594%');
+  });
+
+  /*
+   * A DASH IS NOT AN ANSWER. Most releases on this calendar have not happened,
+   * so the absent case is the usual one and it has to render nothing at all —
+   * no heading, no placeholder, nothing for a reader to interpret.
+   */
+  it('renders nothing at all for a release with no published figure', () => {
+    render('2026-12-10T04:00:00.000Z', { figureRows: [] });
+    expect(figureBlock('cpi-dec')).toBeNull();
+    expect(text()).not.toContain('ตัวเลขที่ประกาศ');
+    // And no stray dash anywhere the block would have been.
+    const panel = at('[data-testid="market-events-day-panel"]');
+    expect(panel?.textContent).not.toMatch(/—\s*$/);
+  });
+
+  it('flags a preliminary number and keeps the agency wording under it', () => {
+    render('2026-12-10T04:00:00.000Z', { figureRows: FIGURES });
+    const badge = at('[data-testid="market-events-panel-figure-fomc-dec-preliminary"]');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toContain('จะถูกแก้');
+    expect(badge?.textContent).toContain('preliminary');
+  });
+
+  it('flags nothing when the number is final', () => {
+    render('2026-12-10T04:00:00.000Z', { figureRows: FIGURES });
+    expect(at('[data-testid="market-events-panel-figure-cpi-dec-preliminary"]')).toBeNull();
+  });
+
+  it('says none of the words a published figure is not allowed to imply', () => {
+    render('2026-12-10T04:00:00.000Z', { figureRows: FIGURES });
+    for (const phrase of EVENT_FIGURE_MUST_NOT_SAY) {
+      expect(text(), `the panel must not say "${phrase}"`).not.toContain(phrase);
+    }
   });
 });
 

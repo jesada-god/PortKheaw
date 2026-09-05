@@ -6,6 +6,7 @@ import {
 } from './calendar';
 import { IMPORTANCE_LABEL_TH, toFeedItem, type FeedItem } from './feed';
 import { reactionsFor, type EventReactionView, type ReactionRow } from './reactions';
+import { figuresFor, type EventFigureView, type FigureRow } from './figures';
 import type { ReleaseTiming } from './release-timing';
 import { buildMonthGrid, WEEKDAY_HEADINGS_TH } from './month-grid';
 import {
@@ -130,6 +131,14 @@ export interface MonthViewCell {
 export type SelectedDayItem = FeedItem & {
   /** Null when this release has no recorded history — the block then renders nothing. */
   reaction: EventReactionView | null;
+  /**
+   * What the release published, and what it published the month before, or
+   * null — which is the usual answer, because the calendar runs months ahead of
+   * the data. Built on the SERVER like everything else in this view: the file
+   * behind it is a static import and a component asking for it would carry the
+   * whole thing into the browser bundle.
+   */
+  figure: EventFigureView | null;
 };
 
 export interface SelectedDayView {
@@ -212,6 +221,7 @@ export function buildMarketEventsMonthView({
   dayParam,
   events = MARKET_EVENTS,
   reactionBuckets,
+  figureRows,
 }: {
   now: string | Date;
   /** Raw `?m=`, untrusted. */
@@ -225,6 +235,12 @@ export function buildMarketEventsMonthView({
    * the shipped file is empty until releases are backfilled.
    */
   reactionBuckets?: Record<ReleaseTiming, readonly ReactionRow[]>;
+  /**
+   * Overrides the shipped figures file. Every caller in the product omits it;
+   * it exists so a test and the 375px capture can show the block on a release
+   * whose numbers are not published yet.
+   */
+  figureRows?: readonly FigureRow[];
 }): MarketEventsMonthView | null {
   const todayKey = bangkokDayKey(now);
   if (!todayKey) return null;
@@ -260,7 +276,7 @@ export function buildMarketEventsMonthView({
     prevMonthKey: range && monthKey > range.firstMonthKey ? addMonths(monthKey, -1) : null,
     nextMonthKey: range && monthKey < range.lastMonthKey ? addMonths(monthKey, 1) : null,
     selected: selectedDayKey
-      ? toSelectedDay(selectedDayKey, findCell(grid, selectedDayKey), todayKey, reactionBuckets)
+      ? toSelectedDay(selectedDayKey, findCell(grid, selectedDayKey), todayKey, reactionBuckets, figureRows)
       : null,
   };
 }
@@ -359,6 +375,7 @@ function toSelectedDay(
   cell: ReturnType<typeof buildMonthGrid>['weeks'][number][number] | null,
   todayKey: string,
   reactionBuckets?: Record<ReleaseTiming, readonly ReactionRow[]>,
+  figureRows?: readonly FigureRow[],
 ): SelectedDayView {
   const events = cell?.events ?? [];
   const relative = dayKey === todayKey
@@ -380,6 +397,7 @@ function toSelectedDay(
     items: events.map((event) => ({
       ...toFeedItem(event, dayKey),
       reaction: reactionsFor(event, reactionBuckets ? { buckets: reactionBuckets } : {}),
+      figure: figuresFor(event, figureRows ? { rows: figureRows } : {}),
     })),
   };
 }

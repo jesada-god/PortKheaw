@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "_provenance": {
+    "source": "BLS",
+    "api": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+    "access": "anonymous",
+    "catalogVerified": false,
+    "fetchedAt": "2026-09-05T04:58:12.375Z",
+    "series": [
+      {
+        "kind": "NFP",
+        "seriesId": "CES0000000001",
+        "adjustment": "SA"
+      },
+      {
+        "kind": "PPI",
+        "seriesId": "WPSFD4",
+        "adjustment": "SA"
+      },
+      {
+        "kind": "CPI",
+        "seriesId": "CUSR0000SA0",
+        "adjustment": "SA"
+      }
+    ]
+  },
+  "figures": [
+    {
+      "eventId": "nfp-2026-09-04",
+      "kind": "NFP",
+      "seriesId": "CES0000000001",
+      "adjustment": "SA",
+      "unit": "thousands-of-persons",
+      "latest": {
+        "year": 2026,
+        "period": "M08",
+        "periodLabel": "August 2026",
+        "periodLabelTh": "ส.ค. 2569",
+        "value": 159075,
+        "footnotes": [
+          "preliminary"
+        ]
+      },
+      "previous": {
+        "year": 2026,
+        "period": "M07",
+        "periodLabel": "July 2026",
+        "periodLabelTh": "ก.ค. 2569",
+        "value": 158913,
+        "footnotes": [
+          "preliminary"
+        ]
+      }
+    }
+  ]
+}
