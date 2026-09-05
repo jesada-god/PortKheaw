@@ -209,6 +209,19 @@ async function loadPriceUncached(
       asOf: secondary.asOf,
     } : null,
     freshness: model.main.freshness,
+    /*
+      EMPTY HERE IS A DEFAULT, not a claim that there is no series.
+
+      This function makes one price out of a quote, a session and an extended
+      quote. The day's shape is a separate provider call, so the callers that
+      want it ask for it BESIDE this one and merge it in — `loadMarketIndices`
+      and `loadWatchlistPrices` both do, off the same `sparkline` helper.
+
+      Keeping it out of what `priceCache` stores is the point: this value is
+      held for thirty seconds and the candle series has its own sixty-second
+      policy underneath. Baking one into the other would age the line by the
+      wrong clock.
+    */
     sparkline: [],
   };
   const rejected = new Set(snapshot.flags);
@@ -555,16 +568,33 @@ export async function loadWatchlistPrices(
   }
   const metadata = await getInstrumentPresentationMetadata(visible);
   const resolved = await getMarketDataGateway().resolveInstruments(visible);
-  const loaded = await mapWithConcurrency(
-    visible,
-    4,
-    (symbol) => loadOverviewPrice(
-      metadata.get(symbol)!,
-      now,
-      resolved.get(symbol),
-    ),
-  );
-  return loaded.map((item) => item.display);
+  /*
+    THE SHAPE OF THE DAY, FETCHED THE WAY THE MARKET BAND FETCHES IT.
+
+    Price and series are asked for together per symbol under the same
+    concurrency cap of four, exactly as `loadMarketIndices` does for an equity
+    proxy — one helper, one call shape, so the two surfaces cannot drift into
+    fetching different windows and both calling the result "today".
+
+    NO CACHE LAYER IS ADDED HERE, deliberately. `sparkline` goes through the
+    candle service, which holds an intraday key fresh for sixty seconds and
+    single-flights concurrent callers, so a watchlist symbol that is also a
+    market proxy (SPY, QQQ, DIA) costs nothing extra on a page that already
+    drew the band above. A second layer here would only put a second expiry
+    clock over the same bytes.
+
+    `force` still invalidates the PRICE cache alone. A retry is a reader asking
+    for a fresh quote; the day's shape is the same day either way, and
+    re-fetching it would spend a provider call per symbol to redraw an
+    identical line.
+  */
+  return mapWithConcurrency(visible, 4, async (symbol) => {
+    const [loaded, points] = await Promise.all([
+      loadOverviewPrice(metadata.get(symbol)!, now, resolved.get(symbol)),
+      sparkline(symbol),
+    ]);
+    return { ...loaded.display, sparkline: points };
+  });
 }
 
 export async function loadPortfolioPrices(

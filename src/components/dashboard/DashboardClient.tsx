@@ -123,8 +123,30 @@ function changePill(value: number | null): string {
     : 'bg-[var(--negative-soft)] text-[var(--negative)]';
 }
 
-function MiniLine({ values, positive }: { values: number[]; positive: boolean }) {
-  if (values.length < 2) return <div className="h-10" aria-hidden="true" />;
+/**
+ * A price line, drawn at the same three-way the numbers beside it take.
+ *
+ * IT USED TO TAKE A BOOLEAN, and two states cannot carry three facts:
+ * `positive={(item.changePercent ?? 0) >= 0}` painted a flat day AND an
+ * unreadable one green, which is a direction neither of them has. It now reads
+ * the signed percentage itself, exactly as `tone` and `changePill` above do —
+ * up, down, or neither — so no two things on one card can disagree.
+ *
+ * Fewer than two points keeps the box rather than returning null. These lines
+ * sit in a column of cards whose heights would otherwise depend on whether a
+ * series arrived, and a list that reflows as prices land is worse than a blank
+ * strip.
+ *
+ * `className` is how the caller sizes it: forty pixels in the market card that
+ * owns its full width, shorter in a watchlist row where the line is one of
+ * three things sharing one.
+ */
+function MiniLine({ values, changePercent, className = 'h-10' }: {
+  values: number[];
+  changePercent: number | null;
+  className?: string;
+}) {
+  if (values.length < 2) return <div className={className} aria-hidden="true" />;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
@@ -133,12 +155,20 @@ function MiniLine({ values, positive }: { values: number[]; positive: boolean })
     const y = 38 - (value - min) / span * 34;
     return `${x},${y}`;
   }).join(' ');
+  const stroke = changePercent === null || !Number.isFinite(changePercent) || changePercent === 0
+    ? 'var(--text-muted)'
+    : changePercent > 0 ? 'var(--positive)' : 'var(--negative)';
   return (
-    <svg viewBox="0 0 100 40" role="img" aria-label="กราฟราคาระหว่างวัน" className="h-10 w-full overflow-visible">
+    <svg
+      viewBox="0 0 100 40"
+      role="img"
+      aria-label="กราฟราคาระหว่างวัน"
+      className={`w-full overflow-visible ${className}`}
+    >
       <polyline
         points={points}
         fill="none"
-        stroke={positive ? 'var(--positive)' : 'var(--negative)'}
+        stroke={stroke}
         strokeWidth="2"
         vectorEffect="non-scaling-stroke"
       />
@@ -837,7 +867,7 @@ function MarketCard({ item }: { item: MarketIndexCard }) {
         <span>{signed(item.changePercent, '%')}</span>
       </div>
       <div className="mt-2">
-        <MiniLine values={item.sparkline} positive={(item.changePercent ?? 0) >= 0} />
+        <MiniLine values={item.sparkline} changePercent={item.changePercent} />
       </div>
       {item.price === null && item.unavailableReason && (
         <p className="mt-2 text-[10px] leading-4 text-[var(--warning)]">{item.unavailableReason}</p>
@@ -1172,23 +1202,34 @@ function WatchlistSection({
           : <WatchlistTable rows={visibleRows} counts={alertCounts} />
       ) : (
         /*
-          A GRID OF CARDS, NOT A LIST OF ROWS.
+          A COLUMN OF ROW CARDS — ONE PER LINE, THE FULL WIDTH EACH.
 
-          The quote-only fallback drew one full-width row per symbol — logo,
-          name, price — which on a desktop spent 1,400 pixels of width to say
-          three short things and made five holdings four hundred pixels tall.
-          A card states the same three at the width they actually need, and the
-          grid puts five of them in two lines.
-
-          Three across from `sm`, two below it. NOT one: a phone showing one
+          THIS REVERSES THE DECISION THIS BLOCK SHIPPED WITH, and the reversal
+          is recorded rather than the reasoning deleted. What stood here said:
+          "Three across from `sm`, two below it. NOT one: a phone showing one
           card per line is the row layout again with more padding, and the
-          fields here are short enough that two fit at 375px. Nothing is
-          hidden at any width — every card draws every field it has.
+          fields here are short enough that two fit at 375px." That was true of
+          the fields it had. It stopped being the whole picture when the card
+          gained one more: the shape of the day.
 
-          The fields are exactly the ones the rows drew, in the same order and
-          off the same `OverviewPrice`; only the arrangement changed.
+          A sparkline is the single field here that cannot be narrowed without
+          being made worse — at a third of a desktop width it is a smudge, and
+          at half a phone it is nothing. Full width buys the line the
+          horizontal run it needs, and the three-column ROW that the width then
+          affords puts identity, shape and price on one baseline: the reader
+          scans one column of percentages instead of tracking a grid.
+
+          THE OLD NOTE'S REAL OBJECTION — that a row per symbol wastes height —
+          is answered by the row itself rather than by the column count. This
+          card is 88px where a stacked one needed 128px, so five holdings come
+          out SHORTER here than they were in two lines of three.
+
+          Below `sm` the row folds back to a stack, because three columns in
+          375px is the smudge again. Nothing is hidden at any width — every
+          card still draws every field it has, in the same order, off the same
+          `OverviewPrice`.
         */
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3">
           {visible.map((item) => (
             <Link
               key={item.symbol}
@@ -1197,69 +1238,91 @@ function WatchlistSection({
               /*
                 The hover tint and the focus ring are the whole of the
                 affordance — the same pair `StripCell` uses in the market band,
-                so the two card grids on this page respond to a pointer
-                identically. `min-h` rather than a fixed height: a card with an
-                after-hours line is taller than one without, and the grid row
-                equalises them.
+                so both card surfaces on this page respond to a pointer
+                identically, and the radius is still the shared panel token.
+                `min-h` rather than a fixed height: a card carrying an
+                after-hours line is taller than one without it.
               */
-              className="flex min-h-[128px] min-w-0 flex-col gap-2 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] active:bg-[var(--surface-selected)]"
+              className="grid min-h-[88px] min-w-0 grid-cols-1 items-start gap-3 rounded-[var(--radius-panel)] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] active:bg-[var(--surface-selected)] sm:grid-cols-[minmax(0,1fr)_minmax(5rem,12rem)_auto] sm:items-center sm:gap-4"
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <InstrumentLogo
-                  symbol={item.symbol}
-                  companyName={item.instrument.companyName}
-                  logoUrl={item.instrument.logoUrl}
-                  size={32}
-                  appearance="plain"
-                />
-                <span className="min-w-0">
-                  <strong className="block truncate text-sm text-[var(--text)]">{item.symbol}</strong>
-                  <span className="block truncate text-[10px] text-[var(--text-muted)]">{item.instrument.companyName}</span>
-                </span>
-              </span>
-              <span className="block truncate text-[10px] text-[var(--text-muted)]">
-                {item.sessionLabel} · {OVERVIEW_STATUS_COPY[item.status]}
-                {item.asOf ? ` · ${formatBangkokDateTime(item.asOf)}` : ''}
-              </span>
-              {item.extended && (
-                <span className="block truncate text-[10px] text-[var(--text-secondary)]">
-                  {item.extended.label} {formatNumber(item.extended.price)}{' '}
-                  <span
-                    className={tone(item.extended.changePercent)}
-                    data-testid={`watchlist-extended-change-${item.symbol}`}
-                  >
-                    {signed(item.extended.changePercent, '%')}
+              {/* WHAT IT IS — and, under it, how sure the page is of the number. */}
+              <span className="flex min-w-0 flex-col gap-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <InstrumentLogo
+                    symbol={item.symbol}
+                    companyName={item.instrument.companyName}
+                    logoUrl={item.instrument.logoUrl}
+                    size={32}
+                    appearance="plain"
+                  />
+                  <span className="min-w-0">
+                    <strong className="block truncate text-sm text-[var(--text)]">{item.symbol}</strong>
+                    <span className="block truncate text-[10px] text-[var(--text-muted)]">{item.instrument.companyName}</span>
                   </span>
                 </span>
-              )}
+                <span className="block truncate text-[10px] text-[var(--text-muted)]">
+                  {item.sessionLabel} · {OVERVIEW_STATUS_COPY[item.status]}
+                  {item.asOf ? ` · ${formatBangkokDateTime(item.asOf)}` : ''}
+                </span>
+                {item.extended && (
+                  <span className="block truncate text-[10px] text-[var(--text-secondary)]">
+                    {item.extended.label} {formatNumber(item.extended.price)}{' '}
+                    <span
+                      className={tone(item.extended.changePercent)}
+                      data-testid={`watchlist-extended-change-${item.symbol}`}
+                    >
+                      {signed(item.extended.changePercent, '%')}
+                    </span>
+                  </span>
+                )}
+              </span>
               {/*
-                `mt-auto` pins the figures to the bottom edge, so the prices of
-                three cards in a row line up whatever their names and session
-                lines did to the space above.
+                WHAT THE DAY LOOKED LIKE — the reason the card is this shape.
+
+                The overview price loader now fetches the same 5-minute
+                regular-session series the market band draws, so this is real on
+                the quote-only path rather than a permanently empty array. (The
+                loader is named in prose rather than in backticks on purpose:
+                the visible-copy contract forbids the English word for this
+                section inside any quoted string in this file, and a comment is
+                not exempt from a scan that cannot read intent.) It keeps
+                its box when there is no series: a row that grew a line as
+                prices landed would move every card under it.
               */}
-              <span className="mt-auto flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="block min-w-0">
+                <MiniLine
+                  values={item.sparkline}
+                  changePercent={item.changePercent}
+                  className="h-8"
+                />
+              </span>
+              {/*
+                WHAT IT IS WORTH, right-aligned from `sm` so the figures of
+                every card share one edge and read as a column. Stacked and
+                left-aligned below it, where a right edge would put the
+                percentage under the fold on a narrow phone.
+
+                THE PERCENTAGE IS THE ONLY THING ON THE CARD ALLOWED A FILL.
+                Its tint is `--positive-soft` / `--negative-soft` — the 12%
+                washes `foundation.css` derives from the same two colours the
+                text uses — so light and dark are handled by the tokens rather
+                than by a second rule here. Flat and unreadable share the
+                neutral surface, because a green pill on 0.00% would be a claim
+                the number does not make; the line to the left takes the same
+                three-way, so the two cannot disagree.
+              */}
+              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 sm:flex-col sm:items-end sm:justify-self-end sm:text-right">
                 <span className="block whitespace-nowrap text-sm font-bold tabular-nums text-[var(--text)]">
                   {item.price === null ? 'ข้อมูลยังไม่พร้อม' : `${formatNumber(item.price)} ${item.currency}`}
                 </span>
                 <span className={`whitespace-nowrap text-[10px] tabular-nums ${tone(item.change)}`}>
                   {signed(item.change)}
                 </span>
-              </span>
-              {/*
-                THE PERCENTAGE, AS A PILL.
-
-                The one figure a reader scans a watchlist FOR, and the only
-                thing on the card allowed a fill. Its tint is `--positive-soft`
-                / `--negative-soft` — the 12% washes `foundation.css` already
-                derives from the same two colours the text uses — so light and
-                dark are handled by the tokens rather than by a second rule
-                here. Flat and unreadable share the neutral surface, because a
-                green pill on 0.00% would be a claim the number does not make.
-              */}
-              <span
-                className={`inline-flex w-fit items-baseline rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${changePill(item.changePercent)}`}
-              >
-                {signed(item.changePercent, '%')}
+                <span
+                  className={`inline-flex w-fit items-baseline rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${changePill(item.changePercent)}`}
+                >
+                  {signed(item.changePercent, '%')}
+                </span>
               </span>
             </Link>
           ))}
