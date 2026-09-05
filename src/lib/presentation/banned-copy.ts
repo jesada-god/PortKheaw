@@ -111,6 +111,36 @@ export const NEVER_SAY = [
  * `eslint.config.mjs`, and asserted over rendered output in
  * `reactions.test.ts` and `MonthCalendar.test.tsx`.
  */
+/**
+ * THE MACRO FIGURE LIST — held to the numbers under a calendar row.
+ *
+ * The figures panel prints what a release actually published: a level, the
+ * level before it, and the month each belongs to. Every one of them is a
+ * measurement somebody can look up. The phrases here are the ones that would
+ * turn that into something the product did not measure.
+ *
+ * "ผิดคาด" and "ตรงคาด" are the pair this list exists for. Both compare the
+ * published number against a FORECAST, and this feature has no forecasts —
+ * there is no consensus estimate anywhere in this codebase, deliberately, and
+ * a panel that said a number missed expectations would be inventing the
+ * expectation it missed.
+ *
+ * "มักจะ" and "เฉลี่ย" generalise. Two months is two months; averaging them, or
+ * calling either one typical, implies they are samples of a repeatable quantity
+ * this product has characterised. It has not.
+ *
+ * Scoped to this feature, like the two lists above it. "เฉลี่ย" is a perfectly
+ * ordinary word on a portfolio page that actually computes an average, and
+ * banning it product-wide would be a ban on the arithmetic rather than on the
+ * claim.
+ */
+export const EVENT_FIGURE_MUST_NOT_SAY = [
+  // Compares against a forecast this product does not have.
+  'ผิดคาด', 'ตรงคาด',
+  // Turns two observations into a tendency.
+  'มักจะ', 'เฉลี่ย',
+] as const;
+
 export const EVENT_REACTION_MUST_NOT_SAY = [
   // Attributes the movement to the release.
   'ส่งผลให้', 'ทำให้ราคา', 'กระตุ้นให้', 'ตอบสนองต่อ', 'ปฏิกิริยา',

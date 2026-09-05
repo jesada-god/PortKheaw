@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "_provenance": {
+    "source": "BLS",
+    "api": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+    "access": "anonymous",
+    "catalogVerified": false,
+    "fetchedAt": "",
+    "series": []
+  },
+  "figures": []
+}
