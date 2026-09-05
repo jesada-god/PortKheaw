@@ -74,7 +74,14 @@ describe('the BLS series table', () => {
 
     expect(offenders, 'a series id must be written in bls-series.ts and nowhere else')
       .toEqual([]);
-  });
+    /*
+      Thirty seconds because this reads every .ts and .tsx under src/ and app/.
+      It takes about two on its own and timed out at the default five when the
+      full suite was running beside it — a flake that says nothing about the
+      code, which is the worst kind of red to leave in a suite that already has
+      one deliberate one.
+    */
+  }, 30_000);
 });
 
 /**
