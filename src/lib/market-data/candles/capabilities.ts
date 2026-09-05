@@ -25,6 +25,16 @@ function capability(
   return { interval, supportedRanges, native, ...(aggregationSources ? { aggregationSources } : {}), ...(maxLookbackDays ? { maxLookbackDays } : {}) };
 }
 
+/**
+ * WHAT FMP'S CANDLE ENDPOINTS COULD DO, KEPT AS A SHAPE RATHER THAN A WIRING.
+ *
+ * The provider that used this was never instantiated anywhere and has been
+ * deleted. The table stays because `candles/service.test.ts` builds its
+ * "daily-only provider" fixture out of it, and because it records what the
+ * intraday half would cost: every `INTRADAY_*` row here is served by
+ * `/stable/historical-chart`, which the current plan answers with 402
+ * Restricted Endpoint. Anybody wiring FMP candles back in needs that first.
+ */
 export const FMP_CANDLE_CAPABILITIES: ProviderCapabilities = {
   adjustedHistorical: false,
   extendedHours: false,
