@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -24,9 +24,16 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 // `git ls-files` rather than a directory walk: it is the set actually shipped,
 // so `node_modules`, `.next` and untracked scratch files cannot fail the run.
+//
+// FILTERED TO WHAT IS STILL ON DISK, because `git ls-files` reads the INDEX:
+// a file deleted in the working tree but not yet staged is still listed, and
+// opening it threw ENOENT and failed this entire suite during an unrelated
+// refactor that had removed a script. A hostname test has no business going
+// red because somebody is mid-deletion elsewhere.
 const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
   .split('\0')
-  .filter(Boolean);
+  .filter(Boolean)
+  .filter((path) => existsSync(resolve(path)));
 
 const sourceFiles = tracked.filter((path) => (
   /\.(ts|tsx|mjs|js)$/.test(path)
