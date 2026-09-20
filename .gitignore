@@ -21,3 +21,9 @@ supabase/.temp/
 # bars, tens of megabytes, refetchable with `--refresh`. It is not a gate and
 # nothing is compared against it, so it does not belong in history.
 __golden__/corpus/
+
+# Scratch output from local verification runs — vitest JSON reports, one-off
+# probe scripts. Regenerated on demand and sometimes large; none of it is a
+# gate, and a committed report is a measurement of one machine on one day
+# presented as a fact about the repository.
+.tmp/

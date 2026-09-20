@@ -232,7 +232,20 @@ describe('reason copy', () => {
     'no-defensible-target', 'structure-volume-unconfirmed',
   ];
 
-  it('knows every reason id the frozen corpus actually produces', { timeout: 30_000 }, () => {
+  /*
+   * 30s was measured against an idle machine and is why this test failed twice
+   * in a row on a suite that had no defect in it.
+   *
+   * The replay costs ~28.9s run on its own; inside a full `vitest run` it was
+   * measured at 41.1s, because 615 files are competing for the same cores. A
+   * bound set from the isolated number is a bound that only holds when nothing
+   * else is running, which is never true in CI.
+   *
+   * 120s is ~4x the isolated cost and ~3x the contended one. It is still a real
+   * bound — a hang is caught — but it is no longer a measurement of how busy the
+   * machine was.
+   */
+  it('knows every reason id the frozen corpus actually produces', { timeout: 120_000 }, () => {
     const seen = [...goldenIds()].sort();
     expect(seen.length, 'the corpus produced no reasons at all').toBeGreaterThan(5);
     const unlisted = seen.filter((id) => !(ENGINE_REASON_IDS as readonly string[]).includes(id));
