@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `label_history` resolves `scope`, `key`, `date`, `raw_label` and
 -- `held_label`. NOT covered: the CHECK constraints and the RLS policies —

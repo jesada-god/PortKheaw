@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `overview_alert_rules` resolves `id`, `user_id`, `symbol`, `kind`,
 -- `threshold`, `enabled`, `created_at`, `updated_at` — read from the endpoint's

@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `watchlist_items.pinned` and `user_settings.overview_watchlist_id`
 -- both resolve and both answer 200.

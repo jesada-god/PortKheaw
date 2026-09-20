@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `market_signal_history.raw_state` resolves, as does the table it
 -- alters (`202608180001_market_signal_history.sql`, also applied). NOT covered:

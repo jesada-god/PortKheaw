@@ -36,6 +36,16 @@ export interface UpcomingExpiryInput {
 export function alertDistancePercent(input: UpcomingAlertInput): number | null {
   if (!input.enabled) return null;
   if (!Number.isFinite(input.targetValue) || input.targetValue <= 0) return null;
+  /*
+    An `earnings` alert has no distance. Its target is a number of DAYS, and
+    falling through to the price branch below would subtract a day count from a
+    price and report the result as a percentage — a number that reads like an
+    answer and is not one.
+
+    It needs no row here either: the report it is watching for is already in this
+    feed, dated, from the calendar itself. `earningsEvent` draws it.
+  */
+  if (input.condition === 'earnings') return null;
   if (input.condition === 'percent_change_up' || input.condition === 'percent_change_down') {
     if (input.changePercent === null || !Number.isFinite(input.changePercent)) return null;
     const travelled = input.condition === 'percent_change_up' ? input.changePercent : -input.changePercent;

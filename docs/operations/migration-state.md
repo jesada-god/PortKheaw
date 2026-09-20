@@ -3,10 +3,18 @@
 What is known about which migrations production has run, and what is not
 knowable at all. This file records the state; it does not propose changes to it.
 
-Last confirmed **2026-08-31** — that is the date of the PostgREST probe every
+Last confirmed **2026-09-20** — that is the date of the PostgREST probe every
 `VERIFIED:` header cites, and `supabase/migration-order.test.ts` requires this
 date and those to agree. The corrections below it dated 2026-09-03 are
 reconciliations of stale prose against those headers, not new probes.
+
+The 2026-09-20 probe re-resolved every relation and column the applied headers
+name — `market_signal_history.raw_state`, `options_signal_history`,
+`daily_snapshot`, `label_history`, `watchlists`, `watchlist_items.pinned`,
+`user_settings.overview_watchlist_id`, `overview_alert_rules.last_fired_at`,
+`overview_alert_hits` — and the five alert RPC paths in the endpoint's OpenAPI
+definition. It also COUNTED the two overview alert tables: both empty, which is
+what `202609200001` rests on.
 
 ## Production keeps no record of what it has run
 
@@ -92,9 +100,34 @@ this schema from zero and observed the result.
 
 Three files:
 
-1. `202608310003_overview_alert_rule_kind_parity.sql`
-2. `202608310004_purge_account_data_overview_alerts.sql`
+1. `202608310004_purge_account_data_overview_alerts.sql`
+2. `202609200001_unify_alert_rules.sql`
 3. `202609200002_instrument_identity_without_provider.sql`
+
+**All three have been run.** Not against production — against the
+development project on 2026-09-20, `202608310004` inside a transaction that was
+rolled back (`npm run db:validate`, below) and the other two applied outright by
+`npm run db:apply`. So "not yet applied" above means *production has not run
+them*, which is the only thing this document has ever tracked; it no longer also
+means nobody anywhere has executed the SQL.
+
+That distinction used to be the sharpest edge here. Every `STATUS: NOT YET
+APPLIED` file was SQL whose first execution would be against production, by
+hand, with a deploy waiting — so a mistyped `drop function` signature or a CHECK
+that an existing row fails was found at the worst possible moment.
+`npm run db:validate <file>` removes that: it runs the file's body on dev inside
+a transaction it rolls back, and answers "does this execute?" without applying
+anything. It does **not** answer "is this correct", and it can only see dev's
+schema — a statement naming something only dev has still passes.
+
+What the 2026-09-20 run observed for `202609200001`, beyond that it executes:
+one condition CHECK survives and it admits `earnings`;
+`trigger_price_alert_service` takes ten arguments and `trigger_price_alert` is
+gone; both overview alert tables and all three of their functions are gone; an
+`earnings` alert inserts, does not fire at 30 days or on an unknown report date,
+fires at 5 days with `earningsDays` in the notification metadata, and does not
+fire again while it stays true; and a price alert's re-crossing inside its
+`cooldown_minutes` is held — the column nothing had read since `202608020001`.
 
 `202609200002` is the one with a deadline. Until it is applied,
 `market_instruments` is keyed on `(provider, provider_symbol)` while
@@ -108,29 +141,50 @@ is applied.**
 
 Every other file in `supabase/migrations/` is applied — including the three
 `overview_alert_*` files that this section listed as pending until 2026-09-03.
-`overview_alert_rules` and `overview_alert_hits` both resolve now; the section
-was stale, and `supabase/migration-order.test.ts` reads this list against the
-`STATUS:` headers so it cannot go stale again silently.
 
-**Neither of the two can be probed.** `310003` replaces one function and
-`310004` replaces two, and PostgREST reports relations and columns, never
-function bodies. Their headers say so themselves and say what WAS probed
-instead: for `310004`, every table it adds to or removes from the purge lists.
-So "not yet applied" here means "written, never run", not "run and observed
-absent" — which is the strongest thing that can be said about a function from
-outside the database, and the reason the file headers carry the evidence
-sentence rather than only a status.
+There was a fourth pending file, `202608310003_overview_alert_rule_kind_parity.sql`.
+It is **deleted**, not applied and not skipped. It repaired
+`create_overview_alert_rule` so the writer would accept `kind = 'earnings'`, and
+`202609200001` drops that function along with the whole second alert system, so
+applying it afterwards would recreate a function against a table that no longer
+exists. The defect it described is worth remembering rather than losing with the
+file: a CHECK was widened to five values and the function that inserts rows was
+left on four, so a kind could be stored, evaluated, cooled down and recorded —
+and created by nobody, for a month, with nothing detecting it. The replacement
+guard is in `src/lib/alerts/types.ts`, where the schema's condition union and the
+domain's are pinned to each other with two mutually exclusive assignments that
+fail the BUILD rather than a reader's save.
 
-The order is required: `310004` does not depend on `310003`, but they were
-written in that order and the runners cannot skip.
+**`310004` and `200001` cannot be fully probed.** `310004` replaces two
+functions and `200001` replaces one and drops four, and PostgREST reports
+relations, columns and RPC paths — never function bodies, CHECK constraints or
+grants. Their headers say so themselves and say what WAS probed instead. So "not
+yet applied" here means "written, never run", not "run and observed absent",
+which is the strongest thing that can be said about a function body from outside
+the database.
 
-What follows from `310003` being unapplied is behavioural and worth stating
-where somebody will look for it: `create_overview_alert_rule` refuses
-`kind = 'earnings'`, so one of the five kinds the column, the hits table, the
-evaluator and the 24-hour cooldown all handle cannot be created. From `310004`:
-`purge_account_data` does not delete `overview_alert_rules`,
-`overview_alert_hits` or `user_release_note_state`, so an account deletion
-leaves those rows behind.
+The order is required: none of the three depends on another, but the runners
+apply in filename order and cannot skip.
+
+What follows from each being unapplied, stated where somebody will look for it:
+
+- **`310004`** — `purge_account_data` does not delete `user_release_note_state`,
+  so an account deletion leaves those rows behind. They cascade from
+  `auth.users`, so the rows do go; it is the residual-data MEASUREMENT that is
+  wrong, and that measurement is what gates deleting the auth user.
+- **`200001`** — `price_alerts.condition` still refuses `'earnings'`, so the
+  condition now offered on `/alerts` is saved by nobody: the action maps the
+  resulting `23514` to "ระบบยังไม่รองรับเงื่อนไขนี้" rather than to a retry. The
+  other four conditions are unaffected. The sweep also calls
+  `trigger_price_alert_service` with ten arguments while production still has
+  the nine-argument function, so **no price alert fires until this is applied**
+  — apply it with the deploy, not after it. That failure is loud rather than
+  silent, which is why no compatibility shim was written for it: PostgREST
+  answers `PGRST202`, `runBackgroundAlerts` throws, `/api/cron/alerts` returns
+  503 and the `alert_evaluation_runs` row for the window is left `failed`. An
+  operator sees a red cron every fifteen minutes, not a quiet absence of
+  notifications.
+- **`200002`** — see the deadline above.
 
 ## The header contract
 

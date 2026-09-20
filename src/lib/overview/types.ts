@@ -291,13 +291,13 @@ export interface OverviewDashboardData {
   /** The merged macro + upcoming list. Absent when `PHASE2_EVENTS` is off. */
   events?: import('./events-feed').OverviewEventsView | null;
   /**
-   * How many alert rules each symbol has.
+   * How many enabled alerts each symbol has, from `price_alerts` — the same
+   * alerts the reader manages on `/alerts` and the same ones the sweep fires.
    *
    * ABSENT MEANS UNREADABLE, and the row must then draw no alert element at all
-   * — not a zero, not a dash. `overview_alert_rules` IS applied
-   * (`202608300001`), so what arrives today is an empty object rather than the
-   * absence this comment used to describe: the read works and every reader has
-   * zero rules, because nothing in the product creates one yet.
+   * — not a zero, not a dash. A symbol with no alerts is simply missing from the
+   * object, which the row draws nothing for too; the difference is that only the
+   * absent OBJECT is "we could not check".
    */
   alertCountBySymbol?: Record<string, number> | null;
   /**

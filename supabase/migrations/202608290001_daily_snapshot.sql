@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `daily_snapshot` resolves `symbol`, `date`, `close`, `prev_close`
 -- and `source`. NOT covered: `daily_snapshot_date_idx`, the CHECK constraints

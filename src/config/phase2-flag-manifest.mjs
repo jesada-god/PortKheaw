@@ -193,15 +193,21 @@ export const PHASE2_FLAGS = [
     /*
       No section of its own. The count is decoration on watchlist rows, and
       `watchlist` is in both arrays — so nothing is unreachable here, but nothing
-      is visible without a signed-in reader who owns rules either.
+      is visible without a signed-in reader who owns alerts either.
+
+      IT GATES ONLY THE RENDER NOW. It used to gate a second sweep on the cron
+      tick as well, over a parallel alert table; `202609200001` merged that into
+      `price_alerts`, so the alerts themselves fire whatever this flag says — as
+      they always have — and this decides only whether the watchlist row shows
+      how many there are.
     */
     sectionKey: 'watchlist',
     requires: [],
     forbids: [],
     requiresAuth: true,
     markers: [],
-    note: 'Draws no section. Signed out it changes nothing on the page at all; '
-      + 'its evidence is overview_alert_hits after a pg_cron tick.',
+    note: 'Draws no section and costs no query — the count comes from the '
+      + 'price_alerts rows the page already read. Signed out it changes nothing.',
   },
   {
     flag: 'market-events-card',

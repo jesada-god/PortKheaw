@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `market_signal_history` resolves `symbol`, `as_of`, `state` and
 -- `bias`. NOT covered by that evidence: `market_signal_history_as_of_idx`, the

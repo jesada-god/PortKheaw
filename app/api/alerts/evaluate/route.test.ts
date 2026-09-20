@@ -1,20 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/*
+  This route ACCEPTS, it does not evaluate.
+
+  It used to mock `@/src/lib/alerts/evaluation` and assert the evaluator was
+  never called — a guard against browser-driven polling coming back. That module
+  is deleted (`202609200001` dropped the RPC behind it), so the guard is now that
+  the route imports nothing capable of evaluating at all, which the assertion
+  below states directly against the response.
+*/
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
-  evaluateEnabledAlerts: vi.fn(),
-  getMarketDataProvider: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/src/lib/supabase/server', () => ({
   createClient: mocks.createClient,
-}));
-vi.mock('@/src/lib/alerts/evaluation', () => ({
-  evaluateEnabledAlerts: mocks.evaluateEnabledAlerts,
-}));
-vi.mock('@/src/lib/market-data', () => ({
-  getMarketDataProvider: mocks.getMarketDataProvider,
 }));
 
 import { POST } from './route';
@@ -30,12 +31,6 @@ function authClient(result: unknown) {
 describe('POST /api/alerts/evaluate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getMarketDataProvider.mockReturnValue({});
-    mocks.evaluateEnabledAlerts.mockResolvedValue({
-      evaluated: 1,
-      triggered: 0,
-      unavailable: [],
-    });
   });
 
   it('authenticates the cookie-bound user without starting browser-driven polling', async () => {
@@ -55,7 +50,6 @@ describe('POST /api/alerts/evaluate', () => {
         message: 'ระบบจะตรวจราคาเป้าหมายตามรอบอัตโนมัติ',
       },
     });
-    expect(mocks.evaluateEnabledAlerts).not.toHaveBeenCalled();
   });
 
   it('returns 401 and a structured safe log for an invalid session', async () => {
@@ -75,7 +69,6 @@ describe('POST /api/alerts/evaluate', () => {
     const entry = JSON.parse(String(log.mock.calls[0]?.[0]));
 
     expect(response.status).toBe(401);
-    expect(mocks.evaluateEnabledAlerts).not.toHaveBeenCalled();
     expect(entry).toEqual({
       event: 'alert_evaluation_auth_failed',
       message: 'Invalid Refresh Token',
@@ -98,6 +91,5 @@ describe('POST /api/alerts/evaluate', () => {
     const response = await POST();
 
     expect(response.status).toBe(401);
-    expect(mocks.evaluateEnabledAlerts).not.toHaveBeenCalled();
   });
 });
