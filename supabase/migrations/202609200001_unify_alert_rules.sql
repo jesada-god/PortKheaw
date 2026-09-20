@@ -7,7 +7,7 @@ begin;
 --
 -- STATUS: NOT YET APPLIED
 -- VERIFIED: 2026-09-20, by PostgREST probe against production.
--- QUEUE: 202608310004, 202609200001, 202609200002
+-- QUEUE: 202608310004, 202609200001, 202609200002, 202609200003, 202609200004
 --
 -- Evidence, for the state this file changes rather than for the file itself:
 -- `price_alerts` resolves `condition`, `cooldown_minutes` and `was_matching`;

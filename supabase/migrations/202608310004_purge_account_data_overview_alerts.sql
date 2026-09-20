@@ -6,7 +6,7 @@ begin;
 --
 -- STATUS: NOT YET APPLIED
 -- VERIFIED: 2026-09-20, by PostgREST probe against production.
--- QUEUE: 202608310004, 202609200001, 202609200002
+-- QUEUE: 202608310004, 202609200001, 202609200002, 202609200003, 202609200004
 --
 -- Evidence: this file replaces two functions, and PostgREST reports relations
 -- and columns, never function bodies — so nothing about its state is observable

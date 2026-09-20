@@ -828,6 +828,19 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_fx_rates']['Insert']>;
         Relationships: [];
       };
+      /**
+       * The shared company-profile snapshot — see
+       * `202609200003_company_profile_snapshot.sql`. `payload` is a
+       * `CompanyProfile` as `companyProfileSchema` parses it; the repository
+       * re-validates it on read rather than trusting the column type, because
+       * `Json` says nothing about shape.
+       */
+      market_instrument_profiles: {
+        Row: { symbol: string; payload: Json; provider: string; source_hash: string; fetched_at: string; schema_version: number; created_at: string; updated_at: string };
+        Insert: { symbol: string; payload: Json; provider: string; source_hash: string; fetched_at: string; schema_version: number; created_at?: string; updated_at?: string };
+        Update: Partial<Database['public']['Tables']['market_instrument_profiles']['Insert']>;
+        Relationships: [];
+      };
       analytics_fundamentals_lkg: {
         Row: {
           symbol: string; dataset: string; financial_periods: Json; snapshot: Json;

@@ -98,18 +98,38 @@ this schema from zero and observed the result.
 
 ## Not yet applied
 
-Three files:
+Five files:
 
 1. `202608310004_purge_account_data_overview_alerts.sql`
 2. `202609200001_unify_alert_rules.sql`
 3. `202609200002_instrument_identity_without_provider.sql`
+4. `202609200003_company_profile_snapshot.sql`
+5. `202609200004_company_profile_translation_cache.sql`
 
-**All three have been run.** Not against production — against the
+**The first three have been run.** Not against production — against the
 development project on 2026-09-20, `202608310004` inside a transaction that was
 rolled back (`npm run db:validate`, below) and the other two applied outright by
 `npm run db:apply`. So "not yet applied" above means *production has not run
 them*, which is the only thing this document has ever tracked; it no longer also
 means nobody anywhere has executed the SQL.
+
+**Files 4 and 5 have NOT been run against either hosted project — not
+production and not dev.** They were applied on 2026-09-20 to a throwaway
+in-process Postgres (pglite), twice each, and their columns, RLS state,
+policies, grants and CHECK constraints were read back; a lowercase symbol and a
+`target_language` outside the allowlist were both refused, and a re-translate
+upsert left one row carrying the new text. That establishes the files execute
+and produce the shape they claim. It establishes nothing about how they behave
+against a schema that already has data in it, which for these two is a small
+risk — both are `create table if not exists` of tables no project has, and
+neither alters or drops anything that exists.
+
+They are additive and the code that reads them fails open: with the tables
+absent, `CompanyProfileService` and `CompanyProfileTranslationService` both fall
+back to the provider chain they used before, so **the deploy may land before the
+migration without breaking anything**. Until they are applied, the cost
+reduction they exist for simply does not happen — the profile and translation
+caches stay per-instance, as they were.
 
 That distinction used to be the sharpest edge here. Every `STATUS: NOT YET
 APPLIED` file was SQL whose first execution would be against production, by
