@@ -7,6 +7,13 @@ import { searchParamsSchema } from '@/src/lib/market-data/validation';
 const SEARCH_LOGO_WARM_LIMIT = 5;
 
 export async function GET(request: NextRequest) {
+  /*
+   * `sharedCache`: the instrument list is the same for everybody and this
+   * endpoint backs `/search`, which is public. Nothing in the body depends on
+   * who is asking, so a shared cache is free throughput rather than a leak.
+   * Public caching is opt-in as of the cache-header change — see
+   * `applyFreshnessCacheHeaders` for why the default had to flip.
+   */
   return marketDataResponse(async () => {
     const { q, assetType, includeDelisted, limit } = searchParamsSchema.parse({
       q: request.nextUrl.searchParams.get('q') ?? '',
@@ -48,5 +55,5 @@ export async function GET(request: NextRequest) {
       });
     }
     return result;
-  });
+  }, { sharedCache: true });
 }

@@ -18,8 +18,69 @@ const unavailableFreshness = {
   maxAgeSeconds: null,
 };
 
+
+/**
+ * Whether an answer may be kept by a cache this product does not control.
+ *
+ * ===========================================================================
+ * WHY THIS IS OPT-IN
+ * ===========================================================================
+ * Every helper in this file used to answer `public, s-maxage=...` whenever the
+ * payload carried a freshness window — which is to say, by default. That was
+ * right for the handful of endpoints whose body is the same for everybody, and
+ * silently wrong for every other kind: a response shaped by a reader's plan, or
+ * one that only exists because they hold a session, must never sit in a shared
+ * cache where the next caller can be handed it.
+ *
+ * It survived because the routes that shape by plan each remembered to call
+ * `withEntitledCacheHeaders` afterwards and overwrite the header. That is a
+ * rule enforced by everyone remembering it, and the split in
+ * `api-access.ts` has just added authenticated routes that have no such habit —
+ * `/api/market/industry/{slug}/chart` was answering `public, s-maxage=60`
+ * behind a session check the day it got one.
+ *
+ * So the default is now the safe one. A route that genuinely serves identical
+ * bytes to an anonymous internet says so, in one word, at its call site.
+ *
+ * `Vary: Cookie` goes on the private answers rather than the public ones: it is
+ * the declaration that the session is an input, and it is what stops a cache
+ * that ignores `private` from keying two different readers together.
+ */
+function applyFreshnessCacheHeaders(
+  response: NextResponse,
+  freshness: { maxAgeSeconds: number | null; staleWhileRevalidateSeconds?: number },
+  sharedCache: boolean,
+): void {
+  if (freshness.maxAgeSeconds === null) return;
+  const staleWhileRevalidate = freshness.staleWhileRevalidateSeconds
+    ?? freshness.maxAgeSeconds * 2;
+  if (sharedCache) {
+    response.headers.set(
+      'Cache-Control',
+      `public, s-maxage=${freshness.maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`,
+    );
+    return;
+  }
+  response.headers.set(
+    'Cache-Control',
+    `private, max-age=${freshness.maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`,
+  );
+  const vary = response.headers.get('Vary');
+  response.headers.set('Vary', vary && !vary.includes('Cookie') ? `${vary}, Cookie` : 'Cookie');
+}
+
+/**
+ * Declared by a route that serves the same bytes to everybody, signed in or
+ * not. The only members are the endpoints the public pages — `/stock/{symbol}`
+ * and `/search` — depend on; see `api-access.ts` for the rule that decides it.
+ */
+export interface MarketResponseOptions {
+  sharedCache?: boolean;
+}
+
 export async function marketDataResponse<T>(
   operation: () => Promise<ProviderResult<T>>,
+  options: MarketResponseOptions = {},
 ): Promise<NextResponse<MarketDataEnvelope<T>>> {
   try {
     const result = await operation();
@@ -31,14 +92,7 @@ export async function marketDataResponse<T>(
         freshness: result.freshness,
       },
     });
-    if (result.freshness.maxAgeSeconds !== null) {
-      const staleWhileRevalidate = result.freshness.staleWhileRevalidateSeconds
-        ?? result.freshness.maxAgeSeconds * 2;
-      response.headers.set(
-        'Cache-Control',
-        `public, s-maxage=${result.freshness.maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`,
-      );
-    }
+    applyFreshnessCacheHeaders(response, result.freshness, options.sharedCache === true);
     return response;
   } catch (cause) {
     const error = cause instanceof ZodError
@@ -75,7 +129,7 @@ export async function marketDataResponse<T>(
 
 export async function observedMarketDataResponse<T>(
   request: Pick<NextRequest, 'headers'>,
-  context: { route: string; symbol: string | null },
+  context: { route: string; symbol: string | null } & MarketResponseOptions,
   operation: () => Promise<ProviderResult<T>>,
 ): Promise<NextResponse<MarketDataEnvelope<T>>> {
   const startedAt = Date.now();
@@ -87,7 +141,7 @@ export async function observedMarketDataResponse<T>(
   const response = await marketDataResponse(async () => {
     resolution.value = await operation();
     return resolution.value;
-  });
+  }, { sharedCache: context.sharedCache });
   const result = resolution.value;
   const freshnessStatus = result?.freshness.status;
   const cacheStatus = freshnessStatus === 'cached' || freshnessStatus === 'stale'
@@ -108,6 +162,7 @@ export async function observedMarketDataResponse<T>(
 
 export async function companyProfileMarketDataResponse(
   operation: () => Promise<CompanyProfileResult>,
+  options: MarketResponseOptions = {},
 ): Promise<NextResponse> {
   try {
     const result = await operation();
@@ -125,14 +180,7 @@ export async function companyProfileMarketDataResponse(
         freshness: result.freshness,
       },
     });
-    if (result.freshness.maxAgeSeconds !== null) {
-      const staleWhileRevalidate = result.freshness.staleWhileRevalidateSeconds
-        ?? result.freshness.maxAgeSeconds * 2;
-      response.headers.set(
-        'Cache-Control',
-        `public, s-maxage=${result.freshness.maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`,
-      );
-    }
+    applyFreshnessCacheHeaders(response, result.freshness, options.sharedCache === true);
     if (result.retryAfterSeconds > 0) {
       response.headers.set('Retry-After', String(result.retryAfterSeconds));
     }
@@ -180,6 +228,7 @@ export async function companyProfileMarketDataResponse(
 
 export async function historicalMarketDataResponse(
   operation: () => Promise<ProviderResult<HistoricalPrices>>,
+  options: MarketResponseOptions = {},
 ): Promise<NextResponse<MarketDataEnvelope<HistoricalPrices | HistoricalUnavailableData>>> {
   try {
     const result = await operation();
@@ -191,11 +240,7 @@ export async function historicalMarketDataResponse(
         freshness: result.freshness,
       },
     });
-    if (result.freshness.maxAgeSeconds !== null) {
-      const staleWhileRevalidate = result.freshness.staleWhileRevalidateSeconds
-        ?? result.freshness.maxAgeSeconds * 2;
-      response.headers.set('Cache-Control', `public, s-maxage=${result.freshness.maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`);
-    }
+    applyFreshnessCacheHeaders(response, result.freshness, options.sharedCache === true);
     return response;
   } catch (cause) {
     const error = cause instanceof ZodError
