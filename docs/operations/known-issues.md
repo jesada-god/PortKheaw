@@ -54,13 +54,46 @@ nothing.
 - **Treat `provider` as unknown on any row whose `last_synced_at` predates the
   next full sync.** It is not missing, it is wrong, and it is wrong in one
   specific direction: it says `alpha-vantage` regardless.
-- **A full re-sync fixes it**, because the sync replaces the whole universe and
-  every row it writes now carries the provider that served it. On dev that is
-  `npm run backfill`-free and costs nothing — the Nasdaq Trader fallback needs
-  no API key.
+- **A full re-sync fixes it — but only after `202609200002` is applied.** ⚠️
+  Read the next section before running one anywhere. The sync writes the
+  provider that served it now, and until that migration lands the table is keyed
+  on `(provider, provider_symbol)`, so a run that falls back does not replace
+  the universe: it inserts a second one beside it.
 - **Production has not been touched** and is not part of this fix. Its rows
   carry the same wrong value for the same reason; correcting them is the
-  owner's call and needs the same full re-sync, not an UPDATE.
+  owner's call and needs the same full re-sync, not an UPDATE — again, only
+  after `202609200002` is applied.
+
+### ⚠️ Do not re-sync before `202609200002` is applied
+
+This is the part that bites.
+
+`market_instruments` is keyed on `(provider, provider_symbol)`, and every join
+and deactivation in `finalize_market_instrument_sync` is scoped
+`where i.provider = run_record.provider`. The table is partitioned by vendor:
+each provider owns a private copy of the instrument universe.
+
+That was invisible while the sync wrote one constant provider string. It became
+visible the moment the sync started telling the truth. On 2026-09-05 the dev
+re-sync fell back to Nasdaq Trader and **inserted a second full universe** —
+12,636 new rows beside the 12,636 already there, 25,272 total, every symbol
+twice, search returning AAPL twice. The duplicates were deleted by hand
+afterwards and dev is back to 12,636 rows, all `nasdaq-trader`.
+
+**Production has not forked**, checked 2026-09-20 by read-only probe: 12,506
+rows, all `alpha-vantage`, none duplicated. It has simply not been re-synced
+since the attribution changed. It will fork on its first fallback run.
+
+`supabase/migrations/202609200002_instrument_identity_without_provider.sql`
+fixes the cause: `provider_symbol` alone becomes the key, `provider` becomes an
+ordinary column recording who last served the row, and finalize replaces the
+whole universe whichever vendor answered. It also collapses any existing
+duplicates, keeping the most recently synced row per symbol.
+
+`src/lib/instruments/sync-identity.test.ts` reads the migrations and fails if a
+later one re-keys on the vendor or puts the provider scope back into finalize —
+which is what the regression would look like: a harmless-reading rewrite of the
+finalize body that silently re-forks the table.
 
 ### Ruled out
 

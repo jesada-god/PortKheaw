@@ -90,10 +90,21 @@ this schema from zero and observed the result.
 
 ## Not yet applied
 
-Two files:
+Three files:
 
 1. `202608310003_overview_alert_rule_kind_parity.sql`
 2. `202608310004_purge_account_data_overview_alerts.sql`
+3. `202609200002_instrument_identity_without_provider.sql`
+
+`202609200002` is the one with a deadline. Until it is applied,
+`market_instruments` is keyed on `(provider, provider_symbol)` while
+`scripts/sync-instruments.ts` records the provider that actually served a run —
+so the first sync that falls back to Nasdaq Trader inserts a SECOND full
+instrument universe beside the first instead of replacing it. Dev did this on
+2026-09-05 and reached 25,272 rows with every symbol duplicated. Production has
+not been re-synced since and has not forked, but it will on its first fallback
+run. **Do not run `npm run sync:instruments` against production until this file
+is applied.**
 
 Every other file in `supabase/migrations/` is applied — including the three
 `overview_alert_*` files that this section listed as pending until 2026-09-03.
