@@ -45,7 +45,7 @@ export default async function SubscriptionPage() {
   if (!supabase) {
     return (
       <>
-        <Header title="แพ็กเกจของคุณ" />
+        <Header title="แพ็กเกจของคุณ" backFallbackHref="/settings" />
         <div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div>
       </>
     );
@@ -220,7 +220,7 @@ export default async function SubscriptionPage() {
 
   return (
     <div className="min-w-0">
-      <Header title="แพ็กเกจของคุณ" subtitle="ดูสิทธิ์ปัจจุบัน และเลือกแพ็กเกจที่เหมาะกับพอร์ตของคุณ" />
+      <Header title="แพ็กเกจของคุณ" subtitle="ดูสิทธิ์ปัจจุบัน และเลือกแพ็กเกจที่เหมาะกับพอร์ตของคุณ" backFallbackHref="/settings" />
       <main className="mx-auto flex max-w-5xl min-w-0 flex-col gap-8 p-4 md:p-8">
         {/* Renders nothing. It observes the provider's checkout return so this
             page never has to read a query parameter. */}
