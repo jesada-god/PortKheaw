@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guardAuthenticatedMarketRoute } from '@/src/lib/market-data/api-access';
 import { getFxRate } from '@/src/lib/market-data/fx/service';
 import { currencySchema, fxApiEnvelopeSchema } from '@/src/lib/market-data/fx/types';
 
+/**
+ * USD/THB, for the portfolio and the simulator.
+ *
+ * Both callers now sit behind a session — `/portfolio` always did, `/tools/*`
+ * does as of the public/authenticated split — so this endpoint has no
+ * signed-out caller left and stops being reachable without one. It already
+ * answered `private`, so nothing about caching changes.
+ */
 export async function GET(request: NextRequest) {
+  const access = await guardAuthenticatedMarketRoute(request, 'fx-rate');
+  if (access.refusal) return access.refusal;
+
   const base = currencySchema.safeParse(request.nextUrl.searchParams.get('base'));
   const quote = currencySchema.safeParse(request.nextUrl.searchParams.get('quote'));
   if (!base.success || !quote.success) return NextResponse.json({ data: null, error: 'รองรับเฉพาะ USD และ THB' }, { status: 400 });

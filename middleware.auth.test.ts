@@ -67,10 +67,43 @@ describe('protected routes', () => {
     expect(locationOf(await get('/portfolio', { signedIn: true }))).toBeNull();
   });
 
+  /*
+   * The two pages that stayed public when the product split its surface: the
+   * ones people share links to and the ones worth indexing. Everything else
+   * needs a session, including the dashboard.
+   */
   it('leaves the public market pages alone in both states', async () => {
-    for (const path of ['/', '/stock/AAPL', '/search']) {
+    for (const path of ['/stock/AAPL', '/search', '/stock/AAPL?tab=News']) {
       expect(locationOf(await get(path))).toBeNull();
       expect(locationOf(await get(path, { signedIn: true }))).toBeNull();
+    }
+  });
+
+  it('sends a signed-out visitor from the dashboard to sign-in, and back afterwards', async () => {
+    const location = locationOf(await get('/'))!;
+    expect(location.pathname).toBe('/auth/sign-in');
+    // The return path has to survive, or the split turns the dashboard into a
+    // page you can never land on from a bookmark.
+    expect(location.searchParams.get('next')).toBe('/');
+    expect(locationOf(await get('/', { signedIn: true }))).toBeNull();
+  });
+
+  it('protects the pages that moved behind the session, exactly and nested', async () => {
+    for (const path of ['/industry', '/industry/semiconductors', '/tools', '/tools/monte-carlo']) {
+      expect(locationOf(await get(path))?.pathname).toBe('/auth/sign-in');
+      expect(locationOf(await get(path, { signedIn: true }))).toBeNull();
+    }
+  });
+
+  /*
+   * The `/` rule is an EXACT match, and this is what says so. Were it a prefix
+   * rule it would match every URL in the product, and the two public pages
+   * above would be protected by accident — the bug the separate
+   * `PROTECTED_EXACT_PATHS` list exists to make impossible.
+   */
+  it('does not let the dashboard rule swallow every other path', async () => {
+    for (const path of ['/stock/AAPL', '/search', '/pricing', '/support', '/terms']) {
+      expect(locationOf(await get(path))).toBeNull();
     }
   });
 });

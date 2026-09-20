@@ -12,8 +12,30 @@
  * `/support` is deliberately absent: the FAQ and the direct contact channels
  * must stay readable by somebody who cannot sign in, which is exactly the reader
  * most likely to need them.
+ *
+ * `/industry` and `/tools` joined the list when the product decided which of
+ * its pages a signed-out visitor may read. `/stock/{symbol}` and `/search`
+ * stayed public — they are the pages people share links to and the ones a
+ * search engine can usefully index — and everything else now needs a session.
+ * The API surface follows the same split; see `market-data/api-access.ts`,
+ * which derives which endpoints are public from which PAGES are.
  */
-export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/upcoming', '/admin'] as const;
+export const PROTECTED_PATHS = ['/portfolio', '/watchlist', '/alerts', '/notifications', '/settings', '/profile', '/upcoming', '/admin', '/industry', '/tools'] as const;
+
+/**
+ * Paths protected as an EXACT match, with no prefix rule.
+ *
+ * `/` is the dashboard and is the only member. It has to be here rather than in
+ * the list above because that list matches `${path}/` as a prefix, and the
+ * prefix of `/` is every URL in the product — which would protect `/stock/AAPL`
+ * and `/search` too, and quietly undo the split this separation exists to
+ * express.
+ *
+ * `isProtectedPath` already answers true on an exact match, so adding `/` there
+ * would have worked by accident. A rule that is correct by accident is a rule
+ * the next person deletes, so it is written out.
+ */
+export const PROTECTED_EXACT_PATHS = ['/'] as const;
 
 /**
  * Sending someone back to a page that starts an authentication attempt is how
@@ -55,6 +77,7 @@ export const AUTH_FORM_PATHS = [
 ] as const;
 
 export function isProtectedPath(pathname: string): boolean {
+  if ((PROTECTED_EXACT_PATHS as readonly string[]).includes(pathname)) return true;
   return PROTECTED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 

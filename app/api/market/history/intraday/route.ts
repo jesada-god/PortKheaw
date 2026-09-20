@@ -1,13 +1,23 @@
 import type { NextRequest } from 'next/server';
 import { getIntradayMarketDataService } from '@/src/lib/market-data/intraday';
+import { guardOrphanMarketRoute } from '@/src/lib/market-data/api-access';
 import { observedMarketDataResponse } from '@/src/lib/market-data/route';
 import { intradayQuerySchema } from '@/src/lib/market-data/validation';
-import { checkMarketDataRateLimit } from '@/src/lib/market-data/api-rate-limit';
-import { NextResponse } from 'next/server';
 
+/**
+ * No browser caller in this repository. The two `providers/*\/intraday.ts`
+ * matches for this path are the `route:` LABEL passed to provider-request
+ * logging, not a fetch of this endpoint — the intraday series the stock page
+ * draws comes through `/api/market/candles`.
+ *
+ * Gated and logged rather than deleted — see `guardOrphanMarketRoute`. The
+ * address-keyed limiter is replaced by the account-keyed one for the same
+ * reason as everywhere else in this change.
+ */
 export async function GET(request: NextRequest) {
-  const rate = checkMarketDataRateLimit(request, 'intraday-history');
-  if (!rate.allowed) return NextResponse.json({ data: null, error: { code: 'rate-limited', message: 'Public market-data request limit exceeded', retryable: true, retryAfterSeconds: rate.retryAfterSeconds }, meta: { provider: null, timestamp: new Date().toISOString(), freshness: { status: 'unavailable', asOf: null, maxAgeSeconds: null } } }, { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds), 'Cache-Control': 'no-store' } });
+  const access = await guardOrphanMarketRoute(request, '/api/market/history/intraday');
+  if (access.refusal) return access.refusal;
+
   const response = await observedMarketDataResponse(request, { route: '/api/market/history/intraday', symbol: request.nextUrl.searchParams.get('symbol') }, async () => {
     const query = intradayQuerySchema.parse({
       symbol: request.nextUrl.searchParams.get('symbol'),

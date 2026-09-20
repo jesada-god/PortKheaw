@@ -13,8 +13,19 @@ import { MAINTENANCE_PATH } from '@/src/lib/maintenance/maintenance-gate';
  * strip. It is a prop rather than an import because only the root layout can
  * resolve it, and it must not turn this client component into a server one.
  */
-export default function MainLayout({ children, banner, announcement }: {
+export default function MainLayout({ children, banner, announcement, authenticated }: {
   children: ReactNode;
+  /**
+   * Whether this request carries a session, resolved once on the server in the
+   * root layout and passed down.
+   *
+   * Only the dock reads it, and only to decide which destinations to offer — a
+   * signed-out reader on the public stock page is shown what they can actually
+   * use instead of four buttons that bounce to a login form. It travels as a
+   * prop because this is a client component and must not go looking for a
+   * session itself.
+   */
+  authenticated: boolean;
   banner?: ReactNode;
   /**
    * The server-resolved "what's new" popup, passed for the same reason `banner`
@@ -71,7 +82,7 @@ export default function MainLayout({ children, banner, announcement }: {
       <OfflineNotice />
       <div className="mx-auto w-full max-w-[1600px] flex-1">{children}</div>
     </main>
-    <FloatingDock />
+    <FloatingDock authenticated={authenticated} />
     {announcement}
   </div>;
 }

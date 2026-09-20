@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
-import { isNavItemActive, primaryNavItems, type PrimaryNavItem } from '@/src/config/navigation';
+import {
+  anonymousNavItems, isNavItemActive, primaryNavItems, type PrimaryNavItem,
+} from '@/src/config/navigation';
 import { useMediaQuery } from '@/src/hooks/useMediaQuery';
 import { useReducedMotion } from '@/src/hooks/useReducedMotion';
 import {
@@ -112,9 +114,31 @@ function DockItem({
   );
 }
 
-export default function FloatingDock() {
+export default function FloatingDock({ authenticated }: {
+  /**
+   * Resolved on the server, in the root layout, from the session it already
+   * reads for the entitlement — never fetched here.
+   *
+   * It arrives as a prop rather than being discovered in an effect for two
+   * reasons. A `fetch` in the dock would put a session round trip on every
+   * page in the product for a decision the server already made. And a value
+   * that starts `false` and flips after mount is a hydration mismatch: the
+   * server would render two items, the first client render five, and React
+   * would discard the markup it was handed.
+   */
+  authenticated: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
+  /*
+   * The destinations this dock is actually offering.
+   *
+   * Everything below reads THIS, never `primaryNavItems` — the render, the
+   * drag-release lookup and the slot geometry all have to agree on the same
+   * list, and a stale direct reference in any one of them would make a
+   * long-press land on the wrong destination.
+   */
+  const navItems = authenticated ? primaryNavItems : anonymousNavItems(pathname);
   const pointerX = useMotionValue(POINTER_AWAY);
   const pointerDevice = useMediaQuery(MAGNIFY_QUERY);
   const reducedMotion = useReducedMotion();
@@ -287,7 +311,7 @@ export default function FloatingDock() {
     endPress();
     // Released off the dock — the reader backed out, so nothing happens.
     if (index === null) return;
-    router.push(primaryNavItems[index].href);
+    router.push(navItems[index].href);
   };
 
   /* Scrolling, a system gesture, or the pointer being taken away. All of them
@@ -330,7 +354,7 @@ export default function FloatingDock() {
       onContextMenu={(event) => { if (press.current?.engaged) event.preventDefault(); }}
     >
       <ul className="dock__list">
-        {primaryNavItems.map((item, index) => {
+        {navItems.map((item, index) => {
           const active = isNavItemActive(pathname, item.href);
           return (
             /*
@@ -359,7 +383,7 @@ export default function FloatingDock() {
       */}
       {pressedIndex !== null && (
         <span ref={tipRef} className="dock__drag-tip" aria-hidden="true">
-          {primaryNavItems[pressedIndex].name}
+          {navItems[pressedIndex].name}
         </span>
       )}
     </nav>

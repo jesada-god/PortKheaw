@@ -130,6 +130,7 @@ export default async function RootLayout({children}: {children: React.ReactNode}
             trialOffer={entitlement.trialOffer}
           >
             <MainLayout
+              authenticated={entitlement.authenticated}
               banner={<AdminPreviewBanner entitlement={entitlement} />}
               announcement={entitlement.authenticated ? <ReleaseAnnouncementGate /> : null}
             >
