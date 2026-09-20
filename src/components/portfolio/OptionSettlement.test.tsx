@@ -277,6 +277,63 @@ describe('ใช้สิทธิ์', () => {
     expect(createPortfolioTransactionAction).not.toHaveBeenCalled();
   });
 
+  /*
+   * The idempotency key, which is the difference between "this settlement" and
+   * "this click".
+   *
+   * The ledger deduplicates on `(portfolio_id, idempotency_key)`, so the key
+   * decides whether a repeated submit is collapsed or written twice. It used
+   * to be minted inside the submit handler — a fresh UUID per click, which is
+   * the same as having no constraint at all.
+   */
+  it('reuses one key across retries of the same settlement', async () => {
+    settleOptionPositionAction.mockResolvedValue({ ok: false, code: 'database', message: 'บันทึกไม่สำเร็จ' });
+    await render({ sharesBySymbol: { ASTS: 100 } });
+    click(one('[data-testid="option-action-exercise"]'));
+
+    const submit = async () => act(async () => {
+      one('[data-testid="option-settlement-form-exercise"]')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await submit();
+    await submit();
+
+    expect(settleOptionPositionAction).toHaveBeenCalledTimes(2);
+    const [first] = settleOptionPositionAction.mock.calls[0] as [{ idempotencyKey: string }];
+    const [second] = settleOptionPositionAction.mock.calls[1] as [{ idempotencyKey: string }];
+    expect(first.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+    /*
+     * The same key both times. A retry after a failure — including a "failure"
+     * that was really a lost response to a write that did land — is one
+     * settlement, and the database is what enforces that.
+     */
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+  });
+
+  it('mints a new key when the reader opens the dialog again', async () => {
+    settleOptionPositionAction.mockResolvedValue({ ok: true, plan: {} });
+    await render({ positions: [position({ contracts: 2 })], sharesBySymbol: { ASTS: 500 } });
+
+    const settleOnce = async () => {
+      click(one('[data-testid="option-action-exercise"]'));
+      await act(async () => {
+        one('[data-testid="option-settlement-form-exercise"]')
+          ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+    };
+    await settleOnce();
+    await settleOnce();
+
+    const [first] = settleOptionPositionAction.mock.calls[0] as [{ idempotencyKey: string }];
+    const [second] = settleOptionPositionAction.mock.calls[1] as [{ idempotencyKey: string }];
+    /*
+     * A different key, or the second settlement would be silently swallowed by
+     * the deduplication meant to protect the first. Opening the dialog again
+     * is a new intention and has to be able to write.
+     */
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
   it('refuses more contracts than are open, before the server is asked', async () => {
     await render({ positions: [position({ contracts: 2 })], sharesBySymbol: { ASTS: 500 } });
     click(one('[data-testid="option-action-exercise"]'));

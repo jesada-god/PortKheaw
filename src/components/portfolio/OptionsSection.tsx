@@ -145,7 +145,32 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
    * confirmation over the position that was clicked, so nothing about the
    * contract is retyped and nothing about it can be mistyped.
    */
-  const [settlement, setSettlement] = useState<{ action: OptionSettlementAction; position: OptionPositionSummary } | null>(null);
+  /**
+   * The settlement being composed, and the key that makes submitting it safe
+   * to repeat.
+   *
+   * `idempotencyKey` is minted HERE — when the dialog opens — and not in the
+   * submit handler, which is where it used to be. A key created per submit is
+   * a new key on every click, so the `(portfolio_id, idempotency_key)` unique
+   * constraint the database enforces never fires and a double-click settles
+   * twice. A key created per MOUNT would be the opposite mistake: this section
+   * is mounted for the life of the page, so every settlement a reader ever
+   * made would collide with the first one.
+   *
+   * Per dialog opening is the unit that matches what a reader means by "this
+   * settlement". A failed attempt keeps the same key, so retrying after an
+   * error — including an error that was really a lost response to a write that
+   * did land — is deduplicated rather than duplicated. Closing and reopening
+   * mints a new one, because that is a new intention.
+   *
+   * `OptionPortfolioSheet` reaches the same place by mounting per open; this
+   * dialog is always mounted, so the key rides on the state instead.
+   */
+  const [settlement, setSettlement] = useState<{
+    action: OptionSettlementAction;
+    position: OptionPositionSummary;
+    idempotencyKey: string;
+  } | null>(null);
   const [settlementError, setSettlementError] = useState('');
   const money = (value: number | null) => value === null ? '—' : formatPortfolioMoney(value, currency, usdThbRate, showBalances);
   const signed = (value: number | null) => value === null ? '—' : signedMoney(value, currency, usdThbRate, showBalances);
@@ -289,7 +314,7 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
         occurredAt: submission.occurredAt,
         timezone,
         note: submission.note,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: settlement.idempotencyKey,
       });
       if (!result.ok) {
         setSettlementError(result.message);
@@ -409,7 +434,10 @@ export function OptionsSection({ portfolio, portfolios, positions, targets, cash
               money={money}
               signed={signed}
               onAction={(type) => openCreate(position, type)}
-              onSettle={(action) => { setSettlementError(''); setSettlement({ action, position }); }}
+              onSettle={(action) => {
+                setSettlementError('');
+                setSettlement({ action, position, idempotencyKey: crypto.randomUUID() });
+              }}
               onEdit={openEdit}
               onDelete={setDeleting}
               onTarget={() => openTarget(position)}
