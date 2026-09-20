@@ -841,6 +841,18 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_instrument_profiles']['Insert']>;
         Relationships: [];
       };
+      /**
+       * The shared Thai translation of a company profile — see
+       * `202609200004_company_profile_translation_cache.sql`. `source_hash` is
+       * taken from the profile the SERVER read, never from a request body, and
+       * is what decides whether a stored translation still applies.
+       */
+      market_instrument_profile_translations: {
+        Row: { symbol: string; target_language: 'th'; source_hash: string; translated_text: string; provider: string; model: string; fetched_at: string; created_at: string; updated_at: string };
+        Insert: { symbol: string; target_language: 'th'; source_hash: string; translated_text: string; provider: string; model: string; fetched_at: string; created_at?: string; updated_at?: string };
+        Update: Partial<Database['public']['Tables']['market_instrument_profile_translations']['Insert']>;
+        Relationships: [];
+      };
       analytics_fundamentals_lkg: {
         Row: {
           symbol: string; dataset: string; financial_periods: Json; snapshot: Json;

@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { serverEnv } from '@/src/config/env/server';
 import { SharedRequestCache } from '@/src/lib/shared-request-cache';
+import { recordProviderCall } from '@/src/lib/monitoring/provider-call-meter';
+import {
+  createProfileTranslationRepository,
+  type ProfileTranslationRecord,
+  type ProfileTranslationRepository,
+} from './translation-repository';
 import {
   companyProfileTranslationDataSchema,
   companyProfileTranslationRequestSchema,
@@ -44,7 +50,7 @@ type GeminiFetch = (
 export interface GeminiTranslationOptions {
   apiKey: string;
   model: string;
-  input: CompanyProfileTranslationRequest;
+  input: CompanyProfileTranslationJob;
   fetchImpl?: GeminiFetch;
 }
 
@@ -78,7 +84,31 @@ export class CompanyProfileTranslationError extends Error {
   }
 }
 
-type TranslationOperation = (input: CompanyProfileTranslationRequest) => Promise<string>;
+/**
+ * What is actually sent to the model: a symbol for context and the paragraph to
+ * translate.
+ *
+ * Separate from `CompanyProfileTranslationRequest` because the two are no
+ * longer the same thing. The REQUEST names a company; the JOB carries text the
+ * server read for itself. Collapsing them back into one type is what would let
+ * caller-supplied prose reach the model again.
+ */
+export interface CompanyProfileTranslationJob {
+  symbol: string;
+  sourceText: string;
+}
+
+type TranslationOperation = (job: CompanyProfileTranslationJob) => Promise<string>;
+
+/**
+ * Where the text to translate comes from.
+ *
+ * A seam rather than a direct import so the service stays testable without a
+ * provider or a database, and so the dependency runs one way: translation knows
+ * it needs a description for a symbol, and nothing about how profiles are
+ * fetched, cached or fallen back.
+ */
+export type CompanyProfileSourceReader = (symbol: string) => Promise<string | null>;
 
 function retryAfterSeconds(response: Response): number | undefined {
   const value = response.headers.get('retry-after');
@@ -221,33 +251,194 @@ export async function translateWithGemini({
   );
 }
 
+/**
+ * The hash a stored translation is matched against.
+ *
+ * It is taken over the DESCRIPTION the server read, not over the whole profile.
+ * Both are server-derived, so both satisfy the rule that nothing a caller sent
+ * can influence the key — but the whole profile also carries market
+ * capitalisation and employee counts, which move constantly and have nothing to
+ * do with the paragraph. Hashing those would re-translate the entire market
+ * every time a number ticked, which is the bill this cache exists to stop.
+ */
+export function translationSourceHash(sourceText: string): string {
+  return createHash('sha256').update(sourceText, 'utf8').digest('hex');
+}
+
 export class CompanyProfileTranslationService {
   constructor(
     private readonly operation: TranslationOperation,
     private readonly requestCache = new SharedRequestCache(),
+    /** Reads the paragraph to translate. Required — nothing else may supply it. */
+    private readonly readSource: CompanyProfileSourceReader = async () => null,
+    /** The shared store. `null` on a deployment with no service-role key. */
+    private readonly repository: ProfileTranslationRepository | null = null,
+    private readonly model = 'unknown',
+    private readonly now: () => number = Date.now,
   ) {}
 
+  /**
+   * Translate a company's description into Thai, calling the model only when
+   * nothing already holds the answer.
+   *
+   * ==========================================================================
+   * THE ORDER, WHICH IS THE COST CONTROL
+   * ==========================================================================
+   *   1. Read the profile FOR the symbol. The text is never taken from the
+   *      request — see `companyProfileTranslationRequestSchema` for why that
+   *      one change is what makes every layer below it able to work.
+   *   2. Hash what was read.
+   *   3. Ask the shared store for a translation carrying that hash. A hit costs
+   *      one indexed select and no model call, for every reader on every
+   *      instance, for as long as the description does not change.
+   *   4. Only then, the model — and the result is written back so the next
+   *      reader anywhere gets step 3.
+   *
+   * The in-process cache wraps all of it as a short memo and a single-flight,
+   * so a burst of readers opening the same page costs one store read between
+   * them rather than one each.
+   */
   async translate(rawInput: unknown) {
     const input = companyProfileTranslationRequestSchema.parse(rawInput);
-    const sourceHash = createHash('sha256').update(input.sourceText, 'utf8').digest('hex');
-    const key = `company-profile-translation:${input.symbol}:${input.targetLanguage}:${sourceHash}`;
+    const key = `company-profile-translation:${input.symbol}:${input.targetLanguage}`;
     const result = await this.requestCache.resolve(
       key,
-      async () => companyProfileTranslationDataSchema.parse({
-        ...input,
-        sourceHash,
-        translatedText: validateTranslationOutput(await this.operation(input)),
-      }),
+      () => this.resolveTranslation(input),
       {
-        freshMs: 30 * 24 * 60 * 60_000,
-        staleMs: 90 * 24 * 60 * 60_000,
+        /*
+         * Minutes, not a month. The month-long window here used to be the only
+         * cache there was; now the shared table holds the answer durably and
+         * this layer only has to collapse concurrent readers. Keeping it long
+         * would pin a translation in one instance's memory long after the
+         * description — and the stored translation — had been replaced.
+         */
+        freshMs: 5 * 60_000,
+        staleMs: 15 * 60_000,
         errorMs: 0,
       },
     );
     return {
-      data: result.value,
-      cached: result.state !== 'fresh',
+      data: result.value.data,
+      cached: result.state !== 'fresh' || result.value.servedFromStore,
     };
+  }
+
+  private async resolveTranslation(input: CompanyProfileTranslationRequest) {
+    const sourceText = (await this.readSource(input.symbol))?.trim() || null;
+    if (!sourceText) {
+      /*
+       * No description to translate. This is a 400 rather than a model call
+       * with an empty prompt: the reader's card shows the English profile (or
+       * nothing, if there is no profile), which is the correct outcome and
+       * costs nothing.
+       */
+      throw new CompanyProfileTranslationError(
+        'invalid-request',
+        'No company description is available to translate',
+      );
+    }
+    const sourceHash = translationSourceHash(sourceText);
+
+    const stored = await this.readStored(input.symbol, input.targetLanguage);
+    // A stored row whose hash does not match describes a description that no
+    // longer exists. It is a miss, not a hit — this is the line that makes
+    // "profile changed, so re-translate" actually true.
+    if (stored && stored.sourceHash === sourceHash) {
+      recordProviderCall({
+        provider: 'gemini',
+        operation: 'company-profile-translation',
+        source: 'db-snapshot',
+        outcome: 'success',
+      });
+      return {
+        servedFromStore: true,
+        data: companyProfileTranslationDataSchema.parse({
+          symbol: input.symbol,
+          targetLanguage: input.targetLanguage,
+          sourceText,
+          sourceHash,
+          translatedText: stored.translatedText,
+        }),
+      };
+    }
+
+    const startedAt = this.now();
+    let translatedText: string;
+    try {
+      translatedText = validateTranslationOutput(
+        await this.operation({ symbol: input.symbol, sourceText }),
+      );
+    } catch (cause) {
+      recordProviderCall({
+        provider: 'gemini',
+        operation: 'company-profile-translation',
+        source: 'provider',
+        outcome: 'error',
+        durationMs: this.now() - startedAt,
+      });
+      throw cause;
+    }
+    recordProviderCall({
+      provider: 'gemini',
+      operation: 'company-profile-translation',
+      source: 'provider',
+      outcome: 'success',
+      durationMs: this.now() - startedAt,
+    });
+
+    await this.writeStored({
+      symbol: input.symbol,
+      targetLanguage: input.targetLanguage,
+      sourceHash,
+      translatedText,
+      provider: 'gemini',
+      model: this.model,
+      fetchedAt: new Date(this.now()).toISOString(),
+    });
+
+    return {
+      servedFromStore: false,
+      data: companyProfileTranslationDataSchema.parse({
+        symbol: input.symbol,
+        targetLanguage: input.targetLanguage,
+        sourceText,
+        sourceHash,
+        translatedText,
+      }),
+    };
+  }
+
+  /*
+   * Both store calls fail open, for the same reason the profile snapshot's do:
+   * a cache that can take the feature down is worse than no cache. A read
+   * failure costs one model call; a write failure costs one model call per
+   * reader until it is fixed, and is logged loudly enough to be noticed.
+   */
+  private async readStored(symbol: string, targetLanguage: 'th') {
+    if (!this.repository) return null;
+    try {
+      return await this.repository.get(symbol, targetLanguage);
+    } catch (cause) {
+      console.warn(JSON.stringify({
+        event: 'profile_translation_cache_read_failed',
+        symbol,
+        message: cause instanceof Error ? cause.message : 'unknown',
+      }));
+      return null;
+    }
+  }
+
+  private async writeStored(record: ProfileTranslationRecord): Promise<void> {
+    if (!this.repository) return;
+    try {
+      await this.repository.upsert(record);
+    } catch (cause) {
+      console.warn(JSON.stringify({
+        event: 'profile_translation_cache_write_failed',
+        symbol: record.symbol,
+        message: cause instanceof Error ? cause.message : 'unknown',
+      }));
+    }
   }
 }
 
@@ -267,8 +458,28 @@ export function getCompanyProfileTranslationService(): CompanyProfileTranslation
   if (!configuredService || configuredIdentity !== identity) {
     configuredIdentity = identity;
     configuredService = new CompanyProfileTranslationService(
-      (input) => translateWithGemini({ apiKey, model, input }),
+      (job) => translateWithGemini({ apiKey, model, input: job }),
       cache,
+      /*
+       * The source of truth for what gets translated, imported lazily.
+       *
+       * Lazy because the profile service pulls in the provider chain and the
+       * Supabase client, and this module is also loaded by code paths that
+       * only need `validateTranslationOutput`. A top-level import would make
+       * every one of them pay for the whole market-data graph.
+       *
+       * It goes through `getCompanyProfileService()` rather than the provider
+       * directly, so a translation reads the SAME snapshot the profile card
+       * does: the description being translated is the description on screen,
+       * and a translation costs a database read rather than an FMP call.
+       */
+      async (symbol) => {
+        const { getCompanyProfileService } = await import('@/src/lib/market-data');
+        const profile = await getCompanyProfileService().getCompanyProfile(symbol);
+        return profile.data.description;
+      },
+      createProfileTranslationRepository(),
+      model,
     );
   }
   return configuredService;

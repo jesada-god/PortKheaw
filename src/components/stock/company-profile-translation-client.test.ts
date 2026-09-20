@@ -103,4 +103,55 @@ describe('Company Profile translation client', () => {
     await expect(client.request(input, new AbortController().signal)).resolves.toContain('Rocket Lab');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('sends only the symbol and language, never the paragraph', () => {
+    const fetcher = vi.fn().mockResolvedValue(response('Rocket Lab ให้บริการปล่อยจรวด'));
+    const client = new CompanyProfileTranslationClient(fetcher);
+
+    void client.request(input, new AbortController().signal);
+
+    /*
+     * The cost fix, asserted at the wire rather than inferred from the type.
+     * `sourceText` is still an input to this client — it keys the per-tab
+     * cache — so a refactor could reintroduce it into the body without any
+     * type error. This is the line that would catch that.
+     */
+    return vi.waitFor(() => {
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1].body))).toEqual({
+        symbol: 'RKLB',
+        targetLanguage: 'th',
+      });
+    });
+  });
+
+  it('rejects rather than throwing when a stale tab posts the retired contract', async () => {
+    /*
+     * A tab opened before this deploy still runs the old bundle, which sends
+     * `sourceText`. The request schema is `.strict()`, so the server answers
+     * 400 `invalid-request` — and the only thing that matters is what that
+     * does to the reader.
+     *
+     * It has to arrive here as a normal rejected promise carrying the server's
+     * message, because that is what `CompanyProfileCard` catches to set
+     * `translationFailed`, which is what makes `resolvedDescription` fall back
+     * to the English paragraph. Anything that escaped as an unhandled throw
+     * would take the card — and with it the page — down over a paragraph.
+     */
+    const staleContractRefusal = new Response(JSON.stringify({
+      data: null,
+      error: {
+        code: 'invalid-request',
+        message: 'Invalid translation request',
+        retryable: false,
+      },
+      meta: { cached: false, timestamp: '2026-07-20T00:00:00.000Z' },
+    }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+
+    const client = new CompanyProfileTranslationClient(vi.fn().mockResolvedValue(staleContractRefusal));
+
+    await expect(client.request(input, new AbortController().signal)).rejects.toThrow(
+      'Invalid translation request',
+    );
+  });
 });
