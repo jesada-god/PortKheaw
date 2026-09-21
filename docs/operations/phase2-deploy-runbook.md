@@ -63,9 +63,33 @@ prove it.
 | | Migration | When | Why |
 |---|---|---|---|
 | **A** | `202609200001_unify_alert_rules.sql` | **with the deploy** | the code does NOT fail open — see below |
-| **A** | `202609200002_instrument_identity_without_provider.sql` | **with the deploy** | `5084605` ships the code that assumes it |
+| ~~A~~ | ~~`202609200002_instrument_identity_without_provider.sql`~~ | **already applied** 2026-09-21 ~16:05Z | see below |
 | **B** | `202609200003_company_profile_snapshot.sql` | 24h after | fails open, and the wait buys the baseline |
 | **B** | `202609200004_company_profile_translation_cache.sql` | 24h after | same |
+
+**`202609200002` was applied to production ahead of the window**, by hand, on
+2026-09-21 at approximately 16:05Z — before its code (`5084605`) had shipped.
+It was verified immediately afterwards and the result is benign:
+
+```
+market_instruments total     12,506  (unchanged — the dedupe step removed 0 rows)
+provider = alpha-vantage     12,506
+provider = nasdaq-trader          0
+status = active              12,506   delisted 0
+provider_symbol              12,506 rows / 12,506 distinct
+/api/market/search           still 200 for apple, nvda, rklb
+```
+
+Running ahead of its code is safe here for one specific reason:
+`finalize_market_instrument_sync`, the only thing the migration rewrites, has
+exactly one caller — `scripts/sync-instruments.ts`, which is run BY HAND and has
+no scheduler. Nothing has called the new version yet. Reads of
+`market_instruments` are plain selects and do not see the constraint at all.
+
+The standing instruction is unchanged in substance and now has the opposite
+reason: **do not run `npm run sync:instruments` against production until
+`5084605` is live.** Before, the code would have forked the table; now, the code
+is older than the function it would call.
 
 **Group A is not optional and not deferrable.** `202609200001` replaces
 `trigger_price_alert_service` with a ten-argument version;
@@ -267,12 +291,16 @@ only, and [`db-target.ts`](../../src/lib/dev/db-target.ts) refuses a production
 URL, because `supabase/.temp/` on this repository is linked to production and a
 bare `supabase db push` would go there silently.
 
-In the **production** SQL editor, in filename order, one run each:
+In the **production** SQL editor, one run:
 
 1. `supabase/migrations/202609200001_unify_alert_rules.sql`
-2. `supabase/migrations/202609200002_instrument_identity_without_provider.sql`
 
-Both are wrapped in `begin; … commit;`, so each is atomic on its own.
+It is wrapped in `begin; … commit;`, so it is atomic on its own.
+
+`202609200002` is **not** in this list any more: it was applied ahead of the
+window on 2026-09-21 and verified — see §0. Running it again would be harmless
+(`drop constraint if exists`, `create or replace function`, and a dedupe that
+now matches nothing) but there is no reason to.
 
 ---
 

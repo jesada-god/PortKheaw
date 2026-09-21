@@ -98,7 +98,7 @@ this schema from zero and observed the result.
 
 ## Not yet applied
 
-Five files:
+Five files, and one of them is no longer pending on production:
 
 1. `202608310004_purge_account_data_overview_alerts.sql`
 2. `202609200001_unify_alert_rules.sql`
@@ -106,7 +106,45 @@ Five files:
 4. `202609200003_company_profile_snapshot.sql`
 5. `202609200004_company_profile_translation_cache.sql`
 
-**The first three have been run.** Not against production — against the
+### `202609200002` is listed above but is no longer pending on production
+
+It was applied by hand in the SQL editor on 2026-09-21 at approximately 16:05Z,
+ahead of the deploy window it was scheduled for. It stays in the list because
+this section mirrors what the `STATUS` HEADERS say, and that header still reads
+`NOT YET APPLIED` — which is now wrong.
+
+The header is deliberately left alone for one release: every unapplied header in
+this directory must cite the same verification date, and correcting this one on
+its own would break that agreement between files. Correct all of them together
+when the Phase 2 window closes.
+
+What the apply was verified to have done, read back through PostgREST with the
+service role:
+
+```
+market_instruments total     12,506   unchanged — the dedupe step removed 0 rows
+provider = alpha-vantage     12,506
+provider = nasdaq-trader          0
+status = active              12,506   delisted 0
+provider_symbol              12,506 rows / 12,506 distinct
+/api/market/search           still 200 for apple, nvda, rklb
+```
+
+The dedupe removing nothing is the expected result and the one worth recording:
+production was single-provider, so the fork this migration repairs had not
+happened there. The constraint definition itself was NOT read — PostgREST
+reports relations, columns and RPC paths, never `pg_constraint` — so
+"no duplicate `provider_symbol`" is consistent with `unique (provider_symbol)`
+being in force rather than proof of it.
+
+It ran ahead of its code (`5084605`, not yet deployed) and that is safe for one
+reason: `finalize_market_instrument_sync` has exactly one caller,
+`scripts/sync-instruments.ts`, which is manual and has no scheduler, so the
+rewritten function has not been called. **Do not run `npm run sync:instruments`
+against production until `5084605` is live** — the same instruction as before,
+now for the opposite reason.
+
+**The first two of the five have been run on dev.** Not against production — against the
 development project on 2026-09-20, `202608310004` inside a transaction that was
 rolled back (`npm run db:validate`, below) and the other two applied outright by
 `npm run db:apply`. So "not yet applied" above means *production has not run
