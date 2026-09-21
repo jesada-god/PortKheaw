@@ -81,6 +81,8 @@ describe('Supabase auth host stays env-driven', () => {
       'src/lib/instruments/search.ts',
       'src/lib/market-data/fx/repository.ts',
       'src/lib/market-data/gateway/symbol-resolver.ts',
+      'src/lib/market-data/profile-snapshot-repository.ts',
+      'src/lib/translation/translation-repository.ts',
       'middleware.ts',
     ];
 
