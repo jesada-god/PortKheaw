@@ -113,16 +113,27 @@ rolled back (`npm run db:validate`, below) and the other two applied outright by
 them*, which is the only thing this document has ever tracked; it no longer also
 means nobody anywhere has executed the SQL.
 
-**Files 4 and 5 have NOT been run against either hosted project — not
-production and not dev.** They were applied on 2026-09-20 to a throwaway
-in-process Postgres (pglite), twice each, and their columns, RLS state,
-policies, grants and CHECK constraints were read back; a lowercase symbol and a
-`target_language` outside the allowlist were both refused, and a re-translate
-upsert left one row carrying the new text. That establishes the files execute
-and produce the shape they claim. It establishes nothing about how they behave
-against a schema that already has data in it, which for these two is a small
-risk — both are `create table if not exists` of tables no project has, and
-neither alters or drops anything that exists.
+**Files 4 and 5 have been run against dev, not production.** They were applied
+there on 2026-09-21 by `npm run db:apply`, and a second run reported nothing
+pending — the ledger holds one row each and the files are re-runnable.
+
+Read back from dev afterwards, which is the part the earlier pglite run could
+not answer. pglite has no `anon`, `authenticated` or `service_role`, so it
+proved the files execute and produce the columns they claim and nothing about
+who can read them. On dev both tables report RLS enabled, one SELECT policy for
+`authenticated`, and — the line that matters — **no privilege at all for `anon`
+or `PUBLIC`**. Both tables are empty, as expected of a cache nothing has
+written to yet.
+
+One honest correction to the migration text: `grant select, insert, update ...
+to service_role` is a no-op on a hosted project. Supabase's default privileges
+already grant ALL on new tables to that role, so dev reports
+`DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE` for it. The grant
+reads narrower than what is in force. This is not a hole — `service_role` is
+the server's own key and is omnipotent by design — and `market_fx_rates` and
+`analytics_fundamentals_lkg` have exactly the same shape, so it is the existing
+pattern rather than a new looseness. The `revoke` half is what was doing real
+work, and it did it.
 
 They are additive and the code that reads them fails open: with the tables
 absent, `CompanyProfileService` and `CompanyProfileTranslationService` both fall
