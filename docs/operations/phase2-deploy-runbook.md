@@ -334,7 +334,14 @@ for p in "/" "/industry/semiconductors" "/tools" "/tools/monte-carlo"; do
 done
 ```
 
-Each must redirect to `/auth/sign-in?next=<the path asked for>`, URL-encoded.
+Each must answer **307** with a `Location` of
+`/auth/sign-in?next=<the path asked for>`, URL-encoded.
+
+307, not 302: the redirect comes from middleware, and Next.js preserves the
+method. A 302 would be the wrong answer here — it lets a browser turn a POST
+into a GET and follow it into a page render, which is the bypass the
+maintenance and assurance gates avoid for the same reason.
+
 Check `next` specifically: without it a bookmark to `/` becomes a page nobody
 can land on after signing in.
 
@@ -385,10 +392,22 @@ curl -sI "$HOST/api/market/profile/AAPL" | grep -i '^cache-control\|^vary'
 curl -sI "$HOST/api/market/fx?base=USD&quote=THB" | grep -i '^cache-control\|^vary'
 ```
 
-`profile` should say `public, s-maxage=…` — it opted in deliberately. `fx`
-should say `private` **and** `Vary: Cookie`. `public` on `fx` means a shared
-cache can hand one reader's 200 to a caller with no session, which is the
-authentication undone by a header — §8 rollback trigger.
+`fx` must say `private` **and** `Vary: Cookie`. `public` on `fx` means a
+shared cache can hand one reader's 200 to a caller with no session, which is
+the authentication undone by a header — §11 rollback trigger. This is the one
+that matters.
+
+**`profile` will read `Cache-Control: public` with no `s-maxage`, and that is
+correct.** Vercel consumes `s-maxage` for its own edge cache and rewrites the
+client-facing header, so the value the route sets is not the value you see.
+Production answers the same way today, before any of this shipped. The evidence
+that shared caching is working is the CDN's own headers, not `s-maxage`:
+
+```bash
+curl -sI "$HOST/api/market/profile/AAPL" | grep -iE '^x-vercel-cache|^age|^cache-control'
+```
+
+A second request should show `X-Vercel-Cache: HIT` and a non-zero `Age`.
 
 The write endpoint that gained a session requirement — expect **404**,
 deliberately not 401, so an unauthenticated caller does not learn it exists:
@@ -437,6 +456,89 @@ four weeks for:
 Nothing in that window means the four can be deleted with evidence rather than a
 guess. Something means the `route` field names which one, and something outside
 this repository depends on it.
+
+---
+
+## 7b. What preview already answered — compare production against this
+
+The same build was deployed to a preview on 2026-09-21 and checked through a
+Protection Bypass header, so the numbers below are measured, not predicted.
+Production should match the middle column. Where it does not, that difference
+is the finding.
+
+Preview ran against the PRODUCTION database (its `NEXT_PUBLIC_SUPABASE_URL`
+names `jjmenqktnabmajpqxzhr`, confirmed from the CSP `connect-src` it serves),
+so every check was a GET. Nothing was written and no model was called.
+
+### Pages
+
+| Path | production before (`82fdac8`) | preview (`abe83cb`) |
+|---|---|---|
+| `/search` | 200 | 200 |
+| `/stock/AAPL` | 200 | 200 |
+| `/` | 200 | **307** → `/auth/sign-in?next=%2F` |
+| `/industry/semiconductors` | 200 | **307** → `?next=%2Findustry%2Fsemiconductors` |
+| `/tools` | 200 | **307** → `?next=%2Ftools` |
+| `/tools/monte-carlo` | — | **307** → `?next=%2Ftools%2Fmonte-carlo` |
+
+The first two staying 200 is as much the point as the other four changing.
+
+### API
+
+All four newly authenticated routes answered **401** with
+`{"code":"unauthenticated"}`. All four orphans answered **401**. Six of the
+eight public routes answered 200.
+
+**The two that did not are pre-existing and are NOT regressions.** Both answer
+identically on production today, at `82fdac8`, before any of this shipped:
+
+| Endpoint | Both | Body |
+|---|---|---|
+| `/api/market/candles?symbol=AAPL&interval=5m&range=1d` | **501** | `unsupported: No configured provider supports this timeframe/range/adjustment combination` |
+| `/api/analytics/key-statistics/AAPL` | **404** | `feature-disabled: Key Statistics feature is disabled` |
+
+Do not spend the window diagnosing them. What would be a real failure is either
+of them answering **401**, which would mean the split caught a public route.
+
+### Cache headers
+
+`fx` answered `Cache-Control: private, no-store` with `Vary: Cookie`.
+`profile`, `history` and `search` answered `Cache-Control: public`, with
+`X-Vercel-Cache: HIT` and `Age: 14` on a repeat — see the note in §7 about why
+`s-maxage` is not visible.
+
+### Dock
+
+Read out of the server-rendered HTML rather than a browser, which is faster and
+leaves a quotable artefact:
+
+```bash
+curl -s -H "..." "$HOST/stock/AAPL" | grep -oE '<a[^>]*dock__item[^>]*>'
+```
+
+Preview returned exactly two anchors on each public page:
+
+```
+/stock/AAPL
+  <a aria-label="ค้นหา"      class="dock__item" href="/search">
+  <a aria-label="เข้าสู่ระบบ" class="dock__item" href="/auth/sign-in?next=%2Fstock%2FAAPL">
+
+/search
+  <a aria-label="ค้นหา"      aria-current="page" data-active="true" href="/search">
+  <a aria-label="เข้าสู่ระบบ" class="dock__item" href="/auth/sign-in?next=%2Fsearch">
+```
+
+Note the active item carries `aria-current="page"` and `data-active="true"`,
+which a rigid grep will miss — count `dock__item` rather than matching a fixed
+attribute order, or you will report one button where there are two.
+
+### What preview could NOT answer
+
+Its database is production's, so every write was skipped: no
+`POST /api/translate/company-profile` (it calls a paid model),
+no `POST /api/instruments/logo-invalidate`, no `/api/cron/alerts`. The
+signed-in dock, the translation round trip and the alert path are first
+exercised on production, in §6 and §7.
 
 ---
 
