@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export default async function ProfilePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  if (!supabase) return <><Header title="โปรไฟล์" /><div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div></>;
+  if (!supabase) return <><Header title="โปรไฟล์" backHref="/" /><div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div></>;
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/sign-in?next=/profile');
@@ -52,7 +52,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
 
   return (
     <div>
-      <Header title="โปรไฟล์" />
+      <Header title="โปรไฟล์" backHref="/" />
       <div className="mx-auto min-w-0 max-w-2xl space-y-6 p-4 md:p-8">
         <AuthMessage error={error} />
 
@@ -102,7 +102,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
 
         <div className="min-w-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-elevated)]">
           <Link href="/settings" className="flex min-h-14 items-center justify-between border-b border-[var(--border)] p-4 motion-safe:transition-colors hover:bg-[var(--surface-hover)]"><span className="flex items-center gap-3 text-[var(--text-secondary)]"><Settings size={20} className="text-[var(--text-muted)]" />การตั้งค่าแอป</span><ChevronRight size={16} className="text-[var(--text-muted)]" /></Link>
-          <Link href="/alerts" className="flex min-h-14 items-center justify-between border-b border-[var(--border)] p-4 motion-safe:transition-colors hover:bg-[var(--surface-hover)]"><span className="flex items-center gap-3 text-[var(--text-secondary)]"><BellRing size={20} className="text-[var(--text-muted)]" />การแจ้งเตือนราคา</span><ChevronRight size={16} className="text-[var(--text-muted)]" /></Link>
+          <Link href="/alerts" className="flex min-h-14 items-center justify-between border-b border-[var(--border)] p-4 motion-safe:transition-colors hover:bg-[var(--surface-hover)]"><span className="flex items-center gap-3 text-[var(--text-secondary)]"><BellRing size={20} className="text-[var(--text-muted)]" />การแจ้งเตือน</span><ChevronRight size={16} className="text-[var(--text-muted)]" /></Link>
           {/* The old "Authenticated" chip said the same thing as this row and
               competed with the plan badge for the same spot beside the name, so
               it is now only this quieter, secondary statement. */}

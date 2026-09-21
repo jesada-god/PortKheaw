@@ -9,7 +9,7 @@
  *
  *   MarketRegime    src/config/market-status.ts   'RISK_ON' | 'NEUTRAL' | 'RISK_OFF'
  *   MarketEvent     src/lib/market-events/types.ts  nine fields, zod-derived
- *   AlertRule       src/lib/alerts/logic.ts        two fields, argument of conditionMatches
+ *   AlertCondition  src/lib/alerts/types.ts        the five conditions an alert may ask for
  *   MarketSnapshot  src/lib/market-data/market-snapshot.ts  (CanonicalMarketSnapshot)
  *
  * TypeScript does not warn when two modules export the same name, so the way

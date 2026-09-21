@@ -4,15 +4,42 @@ import { serverEnv } from '@/src/config/env/server';
 import { createAdminClient } from '@/src/lib/supabase/admin';
 import { runBackgroundAlerts } from '@/src/lib/alerts/background';
 import { deliverPendingPushes } from '@/src/lib/push/service';
-import { phase2AlertsEnabled } from '@/src/config/features';
-import { createOvAlertServiceStore } from '@/src/lib/market-overview/alerts/service-store';
-import { runOvAlertSweep } from '@/src/lib/market-overview/alerts/run';
-import { ovAlertSweepQuotes } from '@/src/lib/market-overview/alerts/sweep-quotes';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/src/types/database';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+/**
+ * THE ALERT TICK. ONE PASS OVER ONE TABLE.
+ *
+ * ===========================================================================
+ * WHERE THE SCHEDULE COMES FROM, AND WHY IT IS NOT IN vercel.json
+ * ===========================================================================
+ * This route is scheduled from Supabase pg_cron: the job
+ * `portkheaw-background-notifications` in
+ * `202608020003_supabase_notification_cron.sql` calls it every fifteen minutes.
+ * `vercel.json` deliberately does not list it, and
+ * `src/lib/market-data/daily-snapshot-run.test.ts` pins that — two schedulers on
+ * one endpoint double-fire the pass, each invisible from the other's dashboard.
+ *
+ * See `docs/operations/alert-sweep-schedule.md` for the UTC-versus-ET arithmetic
+ * and why a fifteen-minute cadence is immune to the DST mistake a daily one is
+ * not.
+ *
+ * ===========================================================================
+ * THERE USED TO BE A SECOND SWEEP HERE
+ * ===========================================================================
+ * `runOverviewAlertSweep` rode this same tick, behind `PHASE2_ALERTS`, reading
+ * `overview_alert_rules` and writing `overview_alert_hits` — a parallel alert
+ * system over the same four comparisons, with its own cooldown, its own
+ * evaluator and no interface to create a rule with. `202609200001` merged its
+ * one real capability (`earnings`) into `price_alerts` and dropped it.
+ *
+ * What it needed — a try/catch so a section of the Overview could not fail a run
+ * that had already written Inbox items, and a `duplicateRun` check so a
+ * double-invoked cron swept once — is gone with it. Both properties still hold,
+ * and now they hold because there is one pass rather than because a second one
+ * was carefully fenced off from the first.
+ */
 
 function authorized(request: NextRequest): boolean {
   const expected = serverEnv.CRON_SECRET;
@@ -22,80 +49,16 @@ function authorized(request: NextRequest): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-/**
- * The Overview alert sweep, riding this tick.
- *
- * ===========================================================================
- * IT CANNOT TAKE THE NOTIFICATION PASS WITH IT
- * ===========================================================================
- * Every failure resolves to a summary rather than a throw. The pass above it
- * writes Inbox items somebody is watching a market for; this writes rows on a
- * card. A sweep that could fail the request would let the second cost the
- * first, and the two have nothing to do with each other.
- *
- * ===========================================================================
- * IT RUNS ONCE PER WINDOW, NOT ONCE PER INVOCATION
- * ===========================================================================
- * `runBackgroundAlerts` already owns the duplicate guard: it inserts into
- * `alert_evaluation_runs` keyed by a fifteen-minute window and reports
- * `duplicateRun` when a second invocation lands in the same one. The sweep
- * honours that answer instead of inventing a second guard — two mechanisms for
- * "has this window already run" is how they come to disagree.
- *
- * So a duplicate tick sweeps nothing. The cooldown would have absorbed most of
- * it anyway, but "most" is not the property worth relying on.
- */
-async function runOverviewAlertSweep(
-  client: SupabaseClient<Database>,
-  skip: boolean,
-) {
-  if (!phase2AlertsEnabled()) return { ran: false, reason: 'disabled' as const };
-  if (skip) return { ran: false, reason: 'duplicate-window' as const };
-  try {
-    const summary = await runOvAlertSweep({
-      store: createOvAlertServiceStore(client),
-      loadQuotes: ovAlertSweepQuotes(),
-    });
-    return {
-      ran: true,
-      owners: summary.owners,
-      evaluated: summary.evaluated,
-      recorded: summary.recorded,
-      failed: summary.failed,
-      errors: summary.errors.length,
-    };
-  } catch {
-    /*
-      The sweep itself died — the rules could not be read at all. This comment
-      used to name unapplied migrations as the likely cause; `202608300001` and
-      `202608310001` are applied, so that is no longer it, and the remaining
-      causes are the ordinary ones: the provider quote load failing, or the
-      database being unreachable.
-
-      Reported, never thrown, either way: the notification pass above has
-      already succeeded by this point and must not be turned into a failed run
-      by a section of the Overview.
-    */
-    return { ran: false, reason: 'failed' as const };
-  }
-}
-
 export async function GET(request: NextRequest) {
   if (!authorized(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const client = createAdminClient();
   if (!client) return NextResponse.json({ error: 'Background alerts are not configured' }, { status: 503 });
   try {
     const notifications = await runBackgroundAlerts(client);
-    /*
-      After the pass, never beside it. The sweep reads prices through the same
-      cache the pass just warmed, and running them concurrently would race two
-      writers onto the same rows for no gain — this tick has fifteen minutes.
-    */
-    const overviewAlerts = await runOverviewAlertSweep(client, notifications.duplicateRun);
     try {
       const push = await deliverPendingPushes(client);
       return NextResponse.json({
-        data: { ...notifications, overviewAlerts, push, pushUnavailable: false },
+        data: { ...notifications, push, pushUnavailable: false },
       });
     } catch {
       // Inbox creation is the source of truth. A delivery-provider or outbox
@@ -104,7 +67,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         data: {
           ...notifications,
-          overviewAlerts,
           push: null,
           pushUnavailable: true,
         },

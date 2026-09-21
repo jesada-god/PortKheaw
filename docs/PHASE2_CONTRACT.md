@@ -489,16 +489,19 @@ RPC ที่เกี่ยวข้อง (จาก database.ts): `get_or_cre
 
 ### Migration
 
-- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202608310004_purge_account_data_overview_alerts.sql`
+- **ล่าสุดในโฟลเดอร์**: `supabase/migrations/202609200002_instrument_identity_without_provider.sql`
 - ห้าไฟล์ที่เคยเขียนว่า `NOT YET APPLIED` — `202608180001`, `202608210001`, `202608290001`,
   `202608290002`, `202608290003` — **apply ไปแล้วทั้งหมด** ยืนยัน 2026-08-31 ด้วย PostgREST probe
   หัวไฟล์แก้เป็น `-- STATUS: APPLIED` แล้ว
 - `202608300001`, `202608310001`, `202608310002` ก็ **apply แล้ว** เช่นกัน (หัวไฟล์ทั้งสาม
   เขียน `-- STATUS: APPLIED` ยืนยัน 2026-08-31) — ย่อหน้านี้เคยเขียนว่ายังค้าง ซึ่งค้างเก่า
   แก้ 2026-09-03
-- migration ที่ยัง **ค้างจริง** เหลือสองไฟล์ ต้อง apply ตามลำดับนี้เท่านั้น:
-  - `202608310003_overview_alert_rule_kind_parity.sql`
+- migration ที่ยัง **ค้างจริง** เหลือสามไฟล์ ต้อง apply ตามลำดับนี้เท่านั้น:
   - `202608310004_purge_account_data_overview_alerts.sql`
+  - `202609200001_unify_alert_rules.sql`
+  - `202609200002_instrument_identity_without_provider.sql`
+- `202608310003_overview_alert_rule_kind_parity.sql` **ถูกลบทิ้ง** ไม่ใช่ apply และไม่ใช่ข้าม —
+  `202609200001` drop ฟังก์ชันที่ไฟล์นั้นซ่อม ดู §5.5
 - รายการค้างข้างบนนี้ **ไม่ใช่** สำเนาที่เชื่อถือได้ — ตัวจริงคือหัวไฟล์
   `-- STATUS:` ซึ่ง `supabase/migration-order.test.ts` คุมอยู่ พร้อมกับรายการใน
   `docs/operations/migration-state.md`
@@ -972,6 +975,29 @@ Phase 2 มีธงอยู่แล้ว 6 ตัวและมี rollout 
   "หุ้นของผู้อ่านเอง" เรียงตามตัวอักษร cap 8 ตัว พร้อม `total` — ไม่มี ranking ไม่มี sector map
 
 ## 5.5 Alerts (override ข้อ 4)
+
+> **ยกเลิกทั้งหัวข้อแล้ว — `202609200001_unify_alert_rules.sql` (2026-09-20)**
+>
+> หัวข้อนี้ออกแบบ `overview_alert_rules` เป็นระบบ alert **ตัวที่สอง** แยกจาก
+> `price_alerts` เหตุผลตอนนั้นถูกต้อง: ของใหม่ประเมินตอนอ่านหน้า ไม่เขียน ไม่ส่ง
+> จึงไม่มีอะไรต้อง cooldown และการเอาไปใส่ `price_alerts` จะลาก rule ทุกแถวเข้า
+> sweep แจ้งเตือนโดยที่ feature ไม่ได้ต้องการ
+>
+> แต่ `202608310001` ให้ scheduler, hit table, cooldown และ `last_fired_at` กับมัน
+> ตั้งแต่วันรุ่งขึ้น — ตอนนั้นสองระบบกลายเป็นระบบเดียวกัน และความต่างที่เหลือจริง ๆ
+> มีอย่างเดียวคือ kind `earnings` ซึ่งเป็น **เงื่อนไข** ไม่ใช่ระบบ
+>
+> ผลคือคำศัพท์ห้าชุดสองสำเนา drift กันภายในวันเดียว (`earnings` อยู่ใน CHECK แต่ไม่อยู่ใน
+> writer นานหนึ่งเดือนโดยไม่มีอะไรจับได้) และ `overview_alert_rules` ว่างเปล่าตลอดอายุ
+> เพราะไม่มี UI สร้าง rule เลย
+>
+> **ของจริงตอนนี้**: `price_alerts` ตัวเดียว รับ 5 เงื่อนไขรวม `earnings`, ตัดสินใน
+> `trigger_price_alert_service` (SQL, row lock, transaction เดียวกับที่เขียน Inbox),
+> ใช้ crossing edge (`was_matching`) + `cooldown_minutes` ของผู้อ่านเอง, ส่ง
+> notification + web push ตามเดิม UI อยู่ที่ `/alerts` badge นับจำนวนอยู่บน watchlist
+> ดู `docs/operations/alert-sweep-schedule.md`
+>
+> ข้อความด้านล่างเก็บไว้เป็นบันทึกว่าตัดสินใจอะไรไว้ตอนไหน ไม่ใช่คำอธิบายโค้ดปัจจุบัน
 
 - **ไม่ reuse `conditionMatches` / `describeCondition`** จาก `src/lib/alerts/logic.ts`
   เพราะการเรียกมันต้องแปลง `OvAlertKind` → `AlertCondition` ซึ่งคือ crossing กับ

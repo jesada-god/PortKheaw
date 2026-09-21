@@ -28,7 +28,6 @@ const blank: AlertFormValues = {
   cooldownMinutes: '60',
   enabled: true,
 };
-const targetValueError = 'กรุณาใส่ราคาเป้าหมายที่มากกว่า 0';
 const decimalPattern = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
 
 export function parsePositiveDecimal(raw: string): number | null {
@@ -41,7 +40,35 @@ export function parsePositiveDecimal(raw: string): number | null {
 const conditionOptions: Array<{ value: AlertCondition; label: string }> = [
   { value: 'above', label: 'ราคาสูงกว่า/เท่ากับ' }, { value: 'below', label: 'ราคาต่ำกว่า/เท่ากับ' },
   { value: 'percent_change_up', label: 'เปอร์เซ็นต์เพิ่มขึ้น' }, { value: 'percent_change_down', label: 'เปอร์เซ็นต์ลดลง' },
+  { value: 'earnings', label: 'ใกล้ประกาศผลประกอบการ' },
 ];
+
+/**
+ * What the value field asks for, and how a bad answer reads.
+ *
+ * Driven off `ALERT_UNIT` rather than off the condition name, so the field and
+ * the evaluator cannot disagree about whether a number is a price, a percentage
+ * or a day count — the same table the notification wording reads.
+ *
+ * `earnings` is the one that is not a free decimal: the calendar resolves to
+ * whole days, so "ภายใน 2.5 วัน" would compare a precise number against a
+ * rounded one and behave differently from how it reads. The database says the
+ * same thing in `price_alerts_earnings_target_check`; this says it before the
+ * reader has to find out from a failed save.
+ */
+const valueField: Readonly<Record<AlertCondition, { label: string; placeholder: string; error: string }>> = {
+  above: { label: 'ราคาเป้าหมาย', placeholder: 'เช่น 150.50', error: 'กรุณาใส่ราคาเป้าหมายที่มากกว่า 0' },
+  below: { label: 'ราคาเป้าหมาย', placeholder: 'เช่น 150.50', error: 'กรุณาใส่ราคาเป้าหมายที่มากกว่า 0' },
+  percent_change_up: { label: 'เปอร์เซ็นต์ (ใส่ค่าบวก)', placeholder: 'เช่น 5', error: 'กรุณาใส่เปอร์เซ็นต์ที่มากกว่า 0' },
+  percent_change_down: { label: 'เปอร์เซ็นต์ (ใส่ค่าบวก)', placeholder: 'เช่น 5', error: 'กรุณาใส่เปอร์เซ็นต์ที่มากกว่า 0' },
+  earnings: { label: 'ภายในกี่วัน', placeholder: 'เช่น 7', error: 'กรุณาใส่จำนวนวันเต็มระหว่าง 1 ถึง 365' },
+};
+
+/** A whole number of days, as the schema and the calendar both require. */
+function parseEarningsDays(raw: string): number | null {
+  const value = Number(raw.trim());
+  return Number.isInteger(value) && value >= 1 && value <= 365 ? value : null;
+}
 const dateTime = (value: string | null) => value ? new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' }).format(new Date(value)) : 'ยังไม่เคย';
 
 export function AlertsClient({ initialAlerts }: { initialAlerts: PriceAlert[] }) {
@@ -75,9 +102,11 @@ export function AlertsClient({ initialAlerts }: { initialAlerts: PriceAlert[] })
     event.preventDefault();
     if (submittingRef.current) return;
 
-    const targetValue = parsePositiveDecimal(form.targetValue);
+    const targetValue = form.condition === 'earnings'
+      ? parseEarningsDays(form.targetValue)
+      : parsePositiveDecimal(form.targetValue);
     if (targetValue === null) {
-      setFormError(targetValueError);
+      setFormError(valueField[form.condition].error);
       return;
     }
     const cooldownMinutes = Number(form.cooldownMinutes);
@@ -126,11 +155,21 @@ export function AlertsClient({ initialAlerts }: { initialAlerts: PriceAlert[] })
     const result = await deleteAlertAction(alert.id); if (!result.ok) { addToast({ title: 'ลบไม่สำเร็จ', message: result.message, type: 'error' }); return; }
     setAlerts((current) => current.filter((item) => item.id !== alert.id)); addToast({ title: 'ลบ Alert แล้ว', type: 'success' });
   }); }
+  /*
+    `/api/alerts/evaluate` ACCEPTS, it does not evaluate. It answers 202 with
+    `{ scheduled, message }` and the sweep does the work on its own tick.
+
+    This used to report `payload.data.evaluated` and `payload.data.triggered`,
+    fields that route stopped returning when the evaluation moved to the
+    scheduler — so the toast read "ตรวจ undefined รายการ · แจ้งเตือนใหม่
+    undefined รายการ" on every press. It now says what actually happened, which
+    is that the request was accepted.
+  */
   async function evaluate() {
     setEvaluating(true); try { const response = await requestAlertEvaluation(); const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? 'Evaluation failed');
       window.dispatchEvent(new Event('notifications-updated'));
-      addToast({ title: 'ตรวจสอบ Alerts แล้ว', message: `ตรวจ ${payload.data.evaluated} รายการ · แจ้งเตือนใหม่ ${payload.data.triggered} รายการ`, type: 'success' });
+      addToast({ title: 'ส่งคำขอตรวจแล้ว', message: typeof payload?.data?.message === 'string' ? payload.data.message : 'ระบบจะตรวจตามรอบอัตโนมัติ', type: 'success' });
     } catch (error) { addToast({ title: 'ตรวจสอบไม่สำเร็จ', message: error instanceof Error ? error.message : undefined, type: 'error' }); }
     finally { setEvaluating(false); }
   }
@@ -140,13 +179,25 @@ export function AlertsClient({ initialAlerts }: { initialAlerts: PriceAlert[] })
     && form.cooldownMinutes.trim() !== '';
 
   return <div className="space-y-5">
-    <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-      <strong className="block text-amber-300">ไม่ใช่ Background Real-time Alert</strong>
-      ระบบตรวจเงื่อนไขเมื่อคุณเปิด/รีเฟรชแอป หรือกด “ตรวจสอบตอนนี้” เท่านั้น ไม่มีการตรวจสอบต่อเนื่องเมื่อปิดแอป
+    {/*
+      This panel used to say the opposite — "ระบบตรวจเงื่อนไขเมื่อคุณเปิด/รีเฟรชแอป
+      ... ไม่มีการตรวจสอบต่อเนื่องเมื่อปิดแอป". That stopped being true when the
+      scheduled sweep landed: pg_cron calls `/api/cron/alerts` every fifteen
+      minutes, with the app closed, and pushes to a subscribed device.
+
+      What IS still a limit is stated instead, because it is the one that
+      surprises people: the sweep only judges a reading it accepts, and outside a
+      trading session there is none, so an alert cannot fire on a market that is
+      shut.
+    */}
+    <section className="rounded-2xl border border-slate-700 bg-[#151B28] p-4 text-sm text-slate-300">
+      <strong className="block text-white">ตรวจอัตโนมัติทุก 15 นาที</strong>
+      ระบบตรวจให้เองเบื้องหลังแม้ปิดแอป และส่งแจ้งเตือนเข้าอุปกรณ์ที่เปิดรับไว้ · ตรวจเฉพาะช่วงที่ตลาดเปิด
+      และแจ้งครั้งเดียวต่อการข้ามเงื่อนไขหนึ่งครั้ง
     </section>
     <div className="flex flex-wrap justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">Price Alerts</h2><p className="text-xs text-slate-500">{alerts.length} รายการ</p></div>
       <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto"><Button className="min-w-0 px-2 sm:px-4" variant="outline" onClick={evaluate} isLoading={evaluating}><RefreshCw size={16} className="mr-2 flex-none" /><span className="truncate">ตรวจสอบตอนนี้</span></Button><Button className="min-w-0 px-2 sm:px-4" onClick={() => showForm()}><Plus size={16} className="mr-2 flex-none" /><span className="truncate">สร้าง Alert</span></Button></div></div>
-    {alerts.length === 0 ? <EmptyState className="panel" icon={BellRing} title="ยังไม่มี Price Alert" description="สร้างเงื่อนไขจากราคาหรือเปอร์เซ็นต์การเปลี่ยนแปลงได้จากปุ่มด้านบน" /> :
+    {alerts.length === 0 ? <EmptyState className="panel" icon={BellRing} title="ยังไม่มี Price Alert" description="สร้างเงื่อนไขจากราคา เปอร์เซ็นต์การเปลี่ยนแปลง หรือวันประกาศผลประกอบการ ได้จากปุ่มด้านบน" /> :
       <div className="space-y-3">{alerts.map((alert) => <article key={alert.id} className={`rounded-2xl border p-4 sm:p-5 ${alert.enabled ? 'border-slate-700 bg-[#151B28]' : 'border-slate-800 bg-slate-900/50 opacity-70'}`}>
         <div className="flex flex-wrap items-start gap-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="text-lg font-bold text-white">{alert.symbol}</h3><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${alert.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700 text-slate-400'}`}>{alert.enabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}</span></div>
           <p className="text-sm text-slate-300">{describeCondition(alert.condition, alert.targetValue)}</p><p className="mt-2 text-xs text-slate-500">Cooldown {alert.cooldownMinutes} นาที · ตรวจล่าสุด {dateTime(alert.lastEvaluatedAt)} · Trigger ล่าสุด {dateTime(alert.lastTriggeredAt)}</p></div>
@@ -168,17 +219,24 @@ export function AlertsClient({ initialAlerts }: { initialAlerts: PriceAlert[] })
       </div>}
     ><form id={formId} onSubmit={submit} className="min-w-0 space-y-4" noValidate>
       <label className="block text-sm text-slate-300">Symbol<Input ref={symbolInputRef} value={form.symbol} disabled={Boolean(editing) || submitting} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} placeholder="เช่น AAPL" required autoComplete="off" className="mt-1" /></label>
-      <label className="block text-sm text-slate-300">เงื่อนไข<select value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value as AlertCondition })} className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-[#151B28] px-3 text-sm text-white">{conditionOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-      <label className="block text-sm text-slate-300">{form.condition.startsWith('percent') ? 'เปอร์เซ็นต์ (ใส่ค่าบวก)' : 'ราคาเป้าหมาย'}<Input
+      {/*
+        Changing the condition CLEARS the value, because it changes what the
+        value means. A 150.50 typed as a price is not a number of days, and
+        carrying it across would either be rejected on save or — worse, if it
+        happened to be a whole number — saved as an alert the reader did not
+        write.
+      */}
+      <label className="block text-sm text-slate-300">เงื่อนไข<select value={form.condition} onChange={(e) => { setForm({ ...form, condition: e.target.value as AlertCondition, targetValue: '' }); setFormError(''); }} className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-[#151B28] px-3 text-sm text-white">{conditionOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+      <label className="block text-sm text-slate-300">{valueField[form.condition].label}<Input
         type="text"
-        inputMode="decimal"
+        inputMode={form.condition === 'earnings' ? 'numeric' : 'decimal'}
         value={form.targetValue}
         disabled={submitting}
         onChange={(e) => { setForm({ ...form, targetValue: e.target.value }); setFormError(''); }}
-        placeholder="เช่น 150.50"
+        placeholder={valueField[form.condition].placeholder}
         required
         autoComplete="off"
-        aria-invalid={formError === targetValueError}
+        aria-invalid={formError === valueField[form.condition].error}
         aria-describedby={formError ? `${formId}-error` : undefined}
         className="mt-1"
       /></label>

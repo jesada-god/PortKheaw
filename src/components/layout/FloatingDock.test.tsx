@@ -41,9 +41,14 @@ function stubMatchMedia(matches: boolean) {
   })));
 }
 
-async function render(path: string) {
+/**
+ * Signed in unless a case says otherwise: that is the state every existing
+ * gesture and geometry case was written against, and it must keep behaving
+ * exactly as it did.
+ */
+async function render(path: string, authenticated = true) {
   pathname.current = path;
-  await act(async () => root.render(<FloatingDock />));
+  await act(async () => root.render(<FloatingDock authenticated={authenticated} />));
 }
 
 const links = () => Array.from(container.querySelectorAll('a'));
@@ -491,7 +496,11 @@ describe('the shell it replaces', () => {
   const shell = read('src/components/layout/MainLayout.tsx');
 
   it('renders the dock and nothing of the navigation it replaced', () => {
-    expect(shell).toContain('<FloatingDock />');
+    // The session state is passed in rather than discovered: the dock decides
+    // which destinations to offer from it, and a client component that went
+    // looking for a session itself would both cost a round trip per page and
+    // hydrate against markup the server rendered differently.
+    expect(shell).toContain('<FloatingDock authenticated={authenticated} />');
     expect(shell).not.toContain('Sidebar');
     expect(shell).not.toContain('BottomNav');
     for (const path of ['src/components/layout/Sidebar.tsx', 'src/components/layout/BottomNav.tsx']) {
@@ -576,5 +585,77 @@ describe('dock placement and content clearance', () => {
     // Bounded, so a long Thai name cannot stretch it past the capsule it is
     // clamped inside.
     expect(body).toContain('max-width: min(60vw, 240px);');
+  });
+});
+
+/**
+ * What the dock offers a reader with no session.
+ *
+ * `/stock/{symbol}` stayed public so a link from a search engine or a chat
+ * lands somewhere real. Four of the five primary destinations now need a
+ * session, and this is what stops that reader meeting four buttons that bounce
+ * them to a login form.
+ */
+describe('FloatingDock without a session', () => {
+  it('offers search and a way in, and nothing that would bounce', async () => {
+    await render('/stock/AAPL', false);
+
+    const hrefs = links().map((link) => link.getAttribute('href'));
+    expect(hrefs).toHaveLength(2);
+    expect(hrefs[0]).toBe('/search');
+    expect(hrefs[1]).toMatch(/^\/auth\/sign-in\?next=/);
+    // Named for the reader, not merely present: the accessible name is what a
+    // screen reader announces and what the drag tooltip shows.
+    expect(links().map((link) => link.getAttribute('aria-label'))).toEqual(['ค้นหา', 'เข้าสู่ระบบ']);
+  });
+
+  it('returns the reader to the page they were reading', async () => {
+    await render('/stock/RKLB', false);
+
+    const signIn = links()[1].getAttribute('href')!;
+    expect(new URL(signIn, 'https://portkheaw.app').searchParams.get('next')).toBe('/stock/RKLB');
+  });
+
+  it('encodes a path that would otherwise break the query string', async () => {
+    await render('/stock/BRK.B', false);
+
+    // Read back through URL rather than compared as a string: what matters is
+    // that the server parses out the original path, not how it was spelled.
+    const signIn = links()[1].getAttribute('href')!;
+    expect(new URL(signIn, 'https://portkheaw.app').searchParams.get('next')).toBe('/stock/BRK.B');
+  });
+
+  it('keeps the capsule, so there is always somewhere to go', async () => {
+    await render('/stock/AAPL', false);
+    expect(dockEl()).not.toBeNull();
+    expect(slots()).toHaveLength(2);
+  });
+
+  it('changes nothing at all for a signed-in reader', async () => {
+    await render('/', true);
+
+    expect(links().map((link) => link.getAttribute('href')))
+      .toEqual(primaryNavItems.map((item) => item.href));
+    expect(slots()).toHaveLength(5);
+  });
+
+  it('sends a long-press release to the anonymous destination under it', async () => {
+    vi.useFakeTimers();
+    await render('/stock/AAPL', false);
+
+    /*
+     * The drag path looks its destination up by slot INDEX. If it had kept
+     * reading `primaryNavItems`, releasing over slot 1 of a two-slot dock
+     * would navigate to /watchlist — a page this reader cannot open — and no
+     * type error would have said so.
+     */
+    const dock = dockEl();
+    layOutDock();
+    await fire(dock, pointer('pointerdown', slotCenter(1)));
+    await act(async () => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+    await fire(dock, pointer('pointerup', slotCenter(1)));
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(String(push.mock.calls[0][0])).toMatch(/^\/auth\/sign-in\?next=/);
   });
 });

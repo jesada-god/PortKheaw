@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Applied 2026-08-19; the VERIFIED line is when that was last confirmed, not
 -- when it happened. Evidence: `options_signal_history` resolves `symbol`,

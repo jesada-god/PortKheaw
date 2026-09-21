@@ -1,12 +1,15 @@
-# When the overview alert sweep runs, and why it is not in `vercel.json`
+# When the alert sweep runs, and why it is not in `vercel.json`
 
 ## The short answer
 
 It runs from **Supabase pg_cron**, every **15 minutes**, via the job
 `portkheaw-background-notifications` defined in
 [`202608020003_supabase_notification_cron.sql`](../../supabase/migrations/202608020003_supabase_notification_cron.sql),
-which calls `GET /api/cron/alerts`. The overview sweep rides that schedule; it
-does not ask for a second one.
+which calls `GET /api/cron/alerts`.
+
+There is **one** sweep on that tick. A second one used to ride it — over
+`overview_alert_rules`, behind `PHASE2_ALERTS` — and `202609200001` merged it
+into `price_alerts`; see [`migration-state.md`](migration-state.md).
 
 **`vercel.json` must not list `/api/cron/alerts`.**
 [`daily-snapshot-run.test.ts`](../../src/lib/market-data/daily-snapshot-run.test.ts)
@@ -52,11 +55,22 @@ because there is no window.
 | `21:00` | 17:00 — after-hours | 16:00 — close | The completed session |
 | `03:00` | 23:00 — closed | 22:00 — closed | Nothing new; the sweep is a no-op |
 
-None of these rows is a failure. The sweep evaluates against whatever the shared
-day-change rule reports for the session it is in, and the cooldown — 4 hours for
-price and move kinds, 24 for earnings — is what stops a rule that stays true
-across many of these runs from writing a row each time. See
-[`cooldown.ts`](../../src/lib/market-overview/alerts/cooldown.ts).
+None of these rows is a failure — but the last one is worth reading carefully,
+because it is the limit readers actually notice. The sweep judges an alert only
+against a reading it ACCEPTS, and
+[`targetObservation`](../../src/lib/alerts/observation.ts) accepts nothing
+outside a regular, pre-market or after-hours session. **An alert cannot fire on a
+market that is shut**, whatever the cadence.
+
+What stops an alert that stays true across many of these runs from notifying
+each time is two things, both in `trigger_price_alert_service`:
+
+- `was_matching` — the CROSSING edge. A threshold that is still crossed on the
+  next tick is not a second event. This is also what makes `earnings` workable:
+  "reports within 7 days" is true for seven days running and is said once.
+- `cooldown_minutes` — the reader's own floor between two notifications for one
+  alert, for the case the edge does not cover: a price sitting ON the threshold
+  genuinely re-crosses it every few minutes.
 
 ---
 
@@ -80,18 +94,18 @@ next to it.
 
 ## Wiring status
 
-`runOvAlertSweep` in
-[`src/lib/market-overview/alerts/run.ts`](../../src/lib/market-overview/alerts/run.ts)
-is complete and tested, and **is called by the route** —
-`runOverviewAlertSweep` in `app/api/cron/alerts/route.ts` invokes it once per
-tick, behind `PHASE2_ALERTS` and behind the duplicate-window guard.
+`runBackgroundAlerts` in
+[`src/lib/alerts/background.ts`](../../src/lib/alerts/background.ts) reads
+`price_alerts` with the service role, up to 20 per tick, and hands each accepted
+reading to `trigger_price_alert_service`. That function — not TypeScript —
+decides every match, stamps the row and writes the Inbox item, in one transaction
+under a row lock.
 
-The tables it reads and writes are applied: `202608300001`, `202608310001` and
-`202608310002` are all live. Both statements in this paragraph used to say the
-opposite and were stale — see
-[`migration-state.md`](migration-state.md).
+`PHASE2_ALERTS` does **not** gate any of this and never should: it gates the
+count badge on a watchlist row and nothing else. Alerts fire with the flag off.
 
-What is still pending is `202608310003`, which is why
-`create_overview_alert_rule` refuses `earnings`. That blocks a KIND of rule, not
-the sweep. In practice the sweep evaluates nothing today for a different reason
-entirely: no interface creates a rule, so there are none to sweep.
+**`202609200001` must be applied before this code is deployed.** The sweep calls
+`trigger_price_alert_service` with ten arguments; a production that still has the
+nine-argument version answers `PGRST202` and the whole run fails — loudly, as a
+red cron and a `failed` row in `alert_evaluation_runs`, but no alert fires until
+it is applied.

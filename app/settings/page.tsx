@@ -24,7 +24,7 @@ export default async function SettingsPage({ searchParams }: {
   const supabase = await createClient();
   if (!supabase) {
     return <>
-      <Header title="การตั้งค่า" />
+      <Header title="การตั้งค่า" backHref="/" />
       <div className="mx-auto max-w-2xl p-4 md:p-8"><ConfigurationRequired /></div>
     </>;
   }
@@ -52,7 +52,7 @@ export default async function SettingsPage({ searchParams }: {
   const message = typeof params.message === 'string' ? params.message : undefined;
 
   return <div>
-    <Header title="การตั้งค่า" subtitle="เลือกการแสดงผลและการแจ้งเตือนที่เหมาะกับคุณ" />
+    <Header title="การตั้งค่า" subtitle="เลือกการแสดงผลและการแจ้งเตือนที่เหมาะกับคุณ" backHref="/" />
     <main className="mx-auto max-w-2xl space-y-8 p-4 md:p-8">
       {/* The one route into the subscription centre. The dock's five primary
           destinations are unchanged — a plan page is something a reader visits

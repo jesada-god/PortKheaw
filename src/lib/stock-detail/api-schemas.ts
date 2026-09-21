@@ -27,9 +27,35 @@ export const profileEnvelopeSchema = marketEnvelopeSchema(companyProfileSchema).
 });
 export const historyEnvelopeSchema = marketEnvelopeSchema(historicalPricesSchema);
 
+/**
+ * What a caller may ask to have translated: a symbol, and a language from a
+ * closed set.
+ *
+ * ===========================================================================
+ * `sourceText` IS GONE, AND THAT IS THE POINT
+ * ===========================================================================
+ * The request used to carry the paragraph to translate. That made the text —
+ * and therefore the cache key derived from it — attacker-controlled: change one
+ * character, get a new hash, miss every cache that could ever exist, and spend
+ * another model call. No amount of caching downstream could bound the bill,
+ * because the input space was "any string up to 6,000 characters" rather than
+ * "the companies that exist".
+ *
+ * The server now reads the profile itself for the symbol asked for. The input
+ * space is the instrument universe, which is finite and already enumerated in
+ * `market_instruments`, so the translation cache can actually hold.
+ *
+ * `.strict()` is load-bearing here rather than tidy: it makes a client that
+ * still sends `sourceText` fail loudly at the boundary instead of having the
+ * field silently ignored while both sides believe it matters.
+ *
+ * `targetLanguage` stays a literal rather than widening to an enum. One value
+ * is the tightest allowlist there is, and adding a second is a product change
+ * with its own prompt, its own output validation and its own tests — not a
+ * schema edit.
+ */
 export const companyProfileTranslationRequestSchema = z.object({
   symbol: symbolSchema,
-  sourceText: z.string().trim().min(1).max(6_000),
   targetLanguage: z.literal('th'),
 }).strict();
 

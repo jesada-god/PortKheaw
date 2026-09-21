@@ -3,7 +3,8 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '@/src/types/database';
-import { loadPortfolioPrices } from '@/src/lib/overview/service';
+import { loadPortfolioPrices, mapWithConcurrency } from '@/src/lib/overview/service';
+import { loadEarningsSchedule } from '@/src/lib/analytics/earnings/service';
 import { calculatePortfolio } from '@/src/lib/portfolio/calculations';
 import { aggregatePortfolioSummaries } from '@/src/lib/portfolio/aggregate';
 import { loadPortfoliosForUser } from '@/src/lib/portfolio/repository';
@@ -17,10 +18,12 @@ import { runBillingReconciliation } from '@/src/lib/billing/reconciliation-run';
 import { adminReconciliationFailedNotification } from '@/src/lib/notifications/account-events';
 import { notifyAdmins } from '@/src/lib/notifications/dispatch';
 import { captureServerError } from '@/src/lib/monitoring/report';
-import { targetObservation } from './observation';
+import { targetObservation, type TargetObservation } from './observation';
 import { describeCondition } from './logic';
 
 const ALERT_BATCH_SIZE = 20;
+/** Matches the concurrency the rest of the earnings loading uses. */
+const EARNINGS_CONCURRENCY = 3;
 const SUMMARY_BATCH_SIZE = 50;
 const MIN_EVALUATION_INTERVAL_MS = 15 * 60_000;
 const SCHEDULE_WINDOW_MS = 15 * 60_000;
@@ -31,6 +34,77 @@ function windowStart(now: Date): string {
 
 function crossingKey(alertId: string, observedAt: string, session: string): string {
   return createHash('sha256').update(`${alertId}:${observedAt}:${session}`).digest('hex');
+}
+
+type PriceAlertRow = Database['public']['Tables']['price_alerts']['Row'];
+
+/**
+ * Days to the next scheduled report, for the symbols an `earnings` alert names.
+ *
+ * ONLY FOR THOSE SYMBOLS. The calendar is a provider call per symbol and the
+ * primary provider's key allows twenty-five requests a day in total, so a tick
+ * where nobody holds an earnings alert must cost nothing — which is why this
+ * reads the ALERTS rather than taking the symbol list the prices were loaded
+ * with. `loadEarningsSchedule` serves a date fetched within the last 24 hours
+ * without calling anybody, so a steady state of a few earnings alerts costs one
+ * request a day each.
+ *
+ * A symbol the calendar cannot answer for maps to NULL, and
+ * `trigger_price_alert_service` reads null as silence rather than as "not soon".
+ * Never absent-means-zero: a missing key and a null are the same answer here,
+ * and both of them are "we do not know".
+ */
+async function loadAlertEarningsDays(
+  alerts: readonly PriceAlertRow[],
+): Promise<Map<string, number | null>> {
+  const wanted = [...new Set(
+    alerts.filter((alert) => alert.condition === 'earnings').map((alert) => alert.symbol),
+  )];
+  const days = new Map<string, number | null>();
+  if (wanted.length === 0) return days;
+  const loaded = await mapWithConcurrency(wanted, EARNINGS_CONCURRENCY, async (symbol) => {
+    try {
+      const schedule = await loadEarningsSchedule(symbol);
+      return [
+        symbol,
+        schedule.status === 'available' ? schedule.daysToEarnings : null,
+      ] as const;
+    } catch {
+      /* A calendar that could not answer is silence, not a distant date. */
+      return [symbol, null] as const;
+    }
+  });
+  for (const [symbol, value] of loaded) days.set(symbol, value);
+  return days;
+}
+
+/**
+ * What the Inbox item says.
+ *
+ * Split on the condition because "ถึงราคาเป้าหมายแล้ว" is a lie about an
+ * earnings alert — that one crossed a DATE, and the price beside it is
+ * incidental. Both forms state the rule first and the reading second, so a
+ * reader can check one against the other.
+ */
+function alertNotification(
+  alert: PriceAlertRow,
+  observation: TargetObservation,
+  earningsDays: number | null,
+): { title: string; message: string } {
+  const condition = describeCondition(alert.condition, Number(alert.target_value));
+  if (alert.condition === 'earnings') {
+    const left = earningsDays === null
+      ? 'ยังไม่ทราบวันประกาศ'
+      : earningsDays === 0 ? 'ประกาศวันนี้' : `อีก ${earningsDays} วัน`;
+    return {
+      title: `${alert.symbol} ใกล้ประกาศผลประกอบการ`,
+      message: `${condition} · ${left}`,
+    };
+  }
+  return {
+    title: `${alert.symbol} ถึงราคาเป้าหมายแล้ว`,
+    message: `${condition} · ราคาที่ตรวจพบ ${observation.price.toLocaleString('th-TH')}`,
+  };
 }
 
 function money(value: number): string {
@@ -305,6 +379,13 @@ export async function runBackgroundAlerts(
 
     const symbols = [...new Set((alerts ?? []).map((alert) => alert.symbol))];
     const canonicalPrices = await loadPortfolioPrices(symbols, now);
+    /*
+      Read once for the whole batch, not once per alert: two readers watching
+      NVDA's report date are one calendar lookup, and the alternative would make
+      the provider bill scale with how many people happen to watch the same
+      stock. Costs nothing at all when no earnings alert is in the batch.
+    */
+    const earningsDays = await loadAlertEarningsDays(alerts ?? []);
     for (const alert of alerts ?? []) {
       const display = canonicalPrices.get(alert.symbol)?.display;
       const observation = display ? targetObservation(display) : null;
@@ -315,18 +396,28 @@ export async function runBackgroundAlerts(
           .eq('id', alert.id);
         continue;
       }
-      const condition = describeCondition(alert.condition, Number(alert.target_value));
+      const observedEarningsDays = alert.condition === 'earnings'
+        ? earningsDays.get(alert.symbol) ?? null
+        : null;
+      const wording = alertNotification(alert, observation, observedEarningsDays);
       const { data: notificationId, error: triggerError } = await client.rpc(
         'trigger_price_alert_service',
         {
           alert_id: alert.id,
           observed_price: observation.price,
           observed_change_percent: observation.changePercent,
+          /*
+            A READING, not a decision. Whether this count satisfies the alert is
+            settled in SQL, under the row lock, in the same transaction that
+            stamps `was_matching` — deciding it here would make this a second
+            evaluator over a table that already has one.
+          */
+          observed_earnings_days: observedEarningsDays,
           observed_at: observation.observedAt,
           observed_session: observation.session,
           observed_source: observation.source,
-          notification_title: `${alert.symbol} ถึงราคาเป้าหมายแล้ว`,
-          notification_message: `${condition} · ราคาที่ตรวจพบ ${observation.price.toLocaleString('th-TH')}`,
+          notification_title: wording.title,
+          notification_message: wording.message,
           input_idempotency_key: crossingKey(
             alert.id,
             observation.observedAt,

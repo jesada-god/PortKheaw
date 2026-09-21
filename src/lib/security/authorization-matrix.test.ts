@@ -20,7 +20,9 @@ import {
 } from '@/src/lib/security/lockdown';
 import { decideMaintenance } from '@/src/lib/maintenance/maintenance-gate';
 import { abuseClassForPath } from '@/src/lib/security/abuse-policy';
-import { isAdminConsolePath, isProtectedPath, PROTECTED_PATHS } from '@/src/lib/auth/paths';
+import {
+  isAdminConsolePath, isProtectedPath, PROTECTED_EXACT_PATHS, PROTECTED_PATHS,
+} from '@/src/lib/auth/paths';
 import type { SubscriptionTier } from '@/src/lib/subscription/subscription-types';
 
 /**
@@ -85,10 +87,36 @@ describe('anonymous is not a user', () => {
       // `/upcoming` reads the account's own expiries and price alerts, so it
       // belongs to the same set as the pages those facts come from.
       '/upcoming', '/admin',
+      /*
+       * `/industry` and `/tools` are here for a different reason from the rest.
+       * They hold no account data — they are behind a session because the
+       * product decided which pages a signed-out visitor may read, and kept
+       * only the two worth sharing and indexing. The distinction is worth
+       * keeping visible: removing one of THESE costs provider quota, removing
+       * one of the entries above exposes somebody's portfolio.
+       */
+      '/industry', '/tools',
     ]);
     for (const path of [...PROTECTED_PATHS, '/admin/security', '/portfolio/anything', '/settings/subscription']) {
       expect(`${path}: ${isProtectedPath(path)}`).toBe(`${path}: true`);
     }
+  });
+
+  /*
+   * The dashboard, which is protected by exact match rather than by prefix.
+   *
+   * It is asserted here, beside the set above, because the two lists together
+   * are the whole answer to "what does a signed-out visitor get" — and reading
+   * only `PROTECTED_PATHS` would say the dashboard is open when it is not.
+   */
+  it('requires a session for the dashboard, and only for the dashboard', () => {
+    expect([...PROTECTED_EXACT_PATHS]).toEqual(['/']);
+    expect(isProtectedPath('/')).toBe(true);
+    // The two pages deliberately left public. If the `/` rule were ever written
+    // as a prefix, both of these would flip to true and nothing else would say
+    // the acquisition funnel had been closed.
+    expect(isProtectedPath('/stock/AAPL')).toBe(false);
+    expect(isProtectedPath('/search')).toBe(false);
   });
 });
 

@@ -9,13 +9,27 @@ import { symbolSchema } from '@/src/lib/market-data/validation';
 import { getInstrumentStatus } from '@/src/lib/instruments/status';
 
 const alertIdSchema = z.uuid();
+/**
+ * The same five conditions the column admits, with the one bound that is not
+ * the column's.
+ *
+ * `earnings` measures `targetValue` in WHOLE DAYS — the calendar resolves to
+ * days, so a fractional threshold would compare a precise number against a
+ * rounded one. `price_alerts_earnings_target_check` says so in the database
+ * too; this says it here so the reader gets a sentence instead of a constraint
+ * violation.
+ */
 const alertInputSchema = z.object({
   symbol: symbolSchema,
-  condition: z.enum(['above', 'below', 'percent_change_up', 'percent_change_down']),
+  condition: z.enum(['above', 'below', 'percent_change_up', 'percent_change_down', 'earnings']),
   targetValue: z.number().finite().positive().max(1_000_000_000),
   cooldownMinutes: z.number().int().min(1).max(10080),
   enabled: z.boolean(),
-});
+}).refine(
+  (input) => input.condition !== 'earnings'
+    || (Number.isInteger(input.targetValue) && input.targetValue >= 1 && input.targetValue <= 365),
+  { path: ['targetValue'], message: 'earnings alerts count whole days, 1 to 365' },
+);
 export type AlertInput = z.infer<typeof alertInputSchema>;
 
 async function context() {
@@ -28,6 +42,19 @@ async function context() {
 function failure(error: unknown): AlertActionResult {
   const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
   if (code === '42501' || code.startsWith('PGRST')) return { ok: false, code: 'unauthorized', message: 'คุณไม่มีสิทธิ์แก้ไข Price Alert นี้' };
+  /*
+    23514 is the column's CHECK refusing the row, and there is one way for a
+    reader to reach it with input this action has already validated: the
+    deployment is running ahead of its database and `202609200001` — the
+    migration that widens `price_alerts_condition_check` to admit `earnings` —
+    has not been applied yet.
+
+    Named rather than folded into the generic database failure, because the two
+    call for different actions: "try again" is useless advice for a schema that
+    will keep refusing, and an operator reading this message knows immediately
+    which migration is missing.
+  */
+  if (code === '23514') return { ok: false, code: 'unsupported', message: 'ระบบยังไม่รองรับเงื่อนไขนี้ กรุณาแจ้งผู้ดูแลให้อัปเดตฐานข้อมูล' };
   return { ok: false, code: 'database', message: 'บันทึก Price Alert ไม่สำเร็จ กรุณาลองอีกครั้ง' };
 }
 

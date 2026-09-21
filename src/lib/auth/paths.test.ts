@@ -41,6 +41,31 @@ describe('isProtectedPath', () => {
     expect(isProtectedPath('/portfolio-insights')).toBe(false);
     expect(isProtectedPath('/settings-help')).toBe(false);
   });
+
+  it('protects the dashboard as an exact path and nothing beneath it', () => {
+    expect(isProtectedPath('/')).toBe(true);
+    /*
+     * The whole reason `/` lives in its own list. If it were a prefix rule,
+     * every one of these would be protected, and the two pages the product
+     * deliberately kept public would stop being public without anybody
+     * changing a decision.
+     */
+    for (const path of ['/stock/AAPL', '/search', '/pricing', '/support', '/terms', '/maintenance']) {
+      expect(isProtectedPath(path)).toBe(false);
+    }
+  });
+
+  it('protects the pages that moved behind the session', () => {
+    for (const path of ['/industry', '/industry/semiconductors', '/tools', '/tools/monte-carlo', '/tools/what-if']) {
+      expect(isProtectedPath(path)).toBe(true);
+    }
+  });
+
+  it('keeps the two share-and-index pages public', () => {
+    for (const path of ['/stock/AAPL', '/stock/RKLB', '/search']) {
+      expect(isProtectedPath(path)).toBe(false);
+    }
+  });
 });
 
 describe('auth route classification', () => {

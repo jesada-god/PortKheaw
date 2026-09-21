@@ -38,7 +38,7 @@ import {
   phase2WhatChangedEnabled,
   watchlistV2Enabled,
 } from '@/src/config/features';
-import { loadOvAlertCountsBySymbol } from '@/src/lib/market-overview/alerts/supabase-store';
+import { alertCountsBySymbol } from '@/src/lib/alerts/logic';
 import {
   loadOvMarketSnapshot,
   ovMarketSnapshotView,
@@ -56,6 +56,7 @@ import type { WatchlistRecord } from '@/src/lib/watchlist/types';
 import type { WatchlistView } from '@/src/lib/watchlist/service';
 import { loadMarketStatus, loadMarketStatusWithHistory } from '@/src/lib/market-status/service';
 import { AlertsRepository } from '@/src/lib/alerts/repository';
+import type { PriceAlert } from '@/src/lib/alerts/types';
 import { buildUpcomingFeed, UPCOMING_CARD_LIMIT, type UpcomingAlertInput } from '@/src/lib/upcoming/build';
 import { loadUpcomingEarnings, upcomingEarningsSymbols } from '@/src/lib/upcoming/service';
 import { resolveOnboardingView, type OnboardingView } from '@/src/lib/onboarding/onboarding';
@@ -315,9 +316,24 @@ export default async function Home() {
    * calendar costs anything new — capped, deadlined and cached inside its own
    * service. A signed-out visitor has none of these, so nothing is asked for.
    */
-  const alerts = client && user
-    ? await new AlertsRepository(client, user.id).list().catch(() => [])
-    : [];
+  /*
+   * READ ONCE, USED TWICE — the Upcoming feed below and the Watchlist alert
+   * badge further down both want this reader's alerts, and a second query for
+   * the count would read the same rows through the same index on every render.
+   *
+   * The failure is carried rather than flattened. `.catch(() => [])` was fine
+   * for Upcoming, which says nothing about an alert it cannot see, and is wrong
+   * for the badge: "you have no alerts" and "we could not check" must not draw
+   * the same thing, because only one of them is a statement about the reader's
+   * own settings.
+   */
+  const alertsRead = client && user
+    ? await new AlertsRepository(client, user.id).list().then(
+      (rows) => ({ ok: true, rows }),
+      () => ({ ok: false, rows: [] as PriceAlert[] }),
+    )
+    : { ok: true, rows: [] as PriceAlert[] };
+  const alerts = alertsRead.rows;
   const quoteBySymbol = new Map<string, { price: number | null; changePercent: number | null }>([
     ...[...portfolioPriceMap].map(([symbol, loaded]) => [
       symbol,
@@ -428,24 +444,22 @@ export default async function Home() {
   /*
    * How many alerts each symbol has, or null when that cannot be read.
    *
-   * `overview_alert_rules` is applied (`202608300001`), so the read succeeds and
-   * the answer today is `{}` — read fine, this reader has no rules — rather than
-   * the `null` this comment used to claim. Every reader has none because nothing
-   * creates one: there is no interface for it, and `create_overview_alert_rule`
-   * has no caller outside its own module.
+   * COUNTED FROM THE ROWS ALREADY READ — `alertsRead` above — so the badge costs
+   * no query at all. It used to read a second table, `overview_alert_rules`,
+   * which was the other half of a parallel alert system that no interface could
+   * create a rule in; `202609200001` merged it into `price_alerts`, and these
+   * are now the same alerts the reader manages on `/alerts` and the same ones
+   * the sweep fires.
    *
-   * Either way the Watchlist row draws no alert element, which is why the stale
-   * claim was invisible. It must stay that way for opposite reasons: `{}` means
-   * "you have no alerts", `null` means "we could not check", and the three
-   * outcomes the loader distinguishes are in `alerts/supabase-store.ts`. An
-   * unreadable count is NOT an empty object — a reader with two alerts on NVDA
-   * and a reader whose table cannot be read must not be shown the same thing,
-   * and "0" would tell the second one something false about their own settings.
+   * `{}` and `null` must stay different. `{}` means "you have no alerts"; `null`
+   * means "we could not check". The row draws nothing for either, but only one
+   * of them is a claim about the reader's own settings, and a "0" on a symbol
+   * whose count failed to load would be a false one.
    *
-   * One indexed read, scoped to the reader by RLS, and only when the flag is on.
+   * Still behind the flag, which now gates only this render.
    */
-  const alertCountBySymbol = phase2AlertsEnabled() && client && user
-    ? await loadOvAlertCountsBySymbol(client)
+  const alertCountBySymbol = phase2AlertsEnabled()
+    ? (alertsRead.ok ? alertCountsBySymbol(alerts) : null)
     : null;
 
   after(async () => {

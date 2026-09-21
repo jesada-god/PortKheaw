@@ -25,10 +25,10 @@ import type { WatchlistRow } from '@/src/lib/watchlist/rows';
  * ===========================================================================
  * THE ALERT COUNT IS ABSENT, NOT ZERO
  * ===========================================================================
- * `counts` is undefined whenever the alert rules could not be read at all. That
- * is NOT the common case: `overview_alert_rules` is applied (`202608300001`) and
- * the read succeeds, so what normally arrives is an empty object — this comment
- * claimed the opposite until 2026-09-03 and was stale.
+ * `counts` is undefined whenever the reader's alerts could not be read at all.
+ * That is NOT the common case: the count is derived from the `price_alerts` rows
+ * the Overview has already read for its Upcoming feed, so what normally arrives
+ * is an object — empty for a reader with no alerts.
  *
  * The rendered result is the same either way, which is exactly why the drift
  * went unseen, and it is not a reason to collapse the two. An unreadable count

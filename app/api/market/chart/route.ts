@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NextRequest } from 'next/server';
 import { candleIntervalSchema, candleRangeSchema, candleSessionSchema } from '@/src/lib/market-data/candles/contracts';
+import { guardOrphanMarketRoute } from '@/src/lib/market-data/api-access';
 import { isCompatibleSelection } from '@/src/lib/market-data/gateway/capabilities';
 import { getMarketDataGateway } from '@/src/lib/market-data/gateway/service';
 import { gatewayRouteResponse } from '@/src/lib/market-data/gateway/route';
@@ -21,7 +22,16 @@ const chartQuerySchema = z.object({
   }
 });
 
+/**
+ * No caller in this repository, and retired on purpose: `Phase11MarketUi.contract.test.ts`
+ * asserts the chart UI must NOT request this route. Gated and logged rather
+ * than deleted so the removal can cite production evidence — see
+ * `guardOrphanMarketRoute`.
+ */
 export async function GET(request: NextRequest) {
+  const access = await guardOrphanMarketRoute(request, '/api/market/chart');
+  if (access.refusal) return access.refusal;
+
   return gatewayRouteResponse(request, async () => {
     const query = chartQuerySchema.parse({
       symbol: request.nextUrl.searchParams.get('symbol'),

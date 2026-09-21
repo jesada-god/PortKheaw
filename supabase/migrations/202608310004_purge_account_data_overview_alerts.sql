@@ -5,14 +5,33 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: NOT YET APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
--- QUEUE: 202608310003, 202608310004
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
+-- QUEUE: 202608310004, 202609200001, 202609200002, 202609200003, 202609200004
 --
 -- Evidence: this file replaces two functions, and PostgREST reports relations
 -- and columns, never function bodies — so nothing about its state is observable
 -- from outside. Every table it adds or removes from the lists WAS probed:
--- `overview_alert_rules`, `overview_alert_hits` and `user_release_note_state`
--- all resolve; `notification_preferences` answers PGRST205.
+-- `user_release_note_state` resolves; `notification_preferences` answers
+-- PGRST205.
+--
+-- ---------------------------------------------------------------------------
+-- AMENDED BEFORE IT WAS EVER APPLIED
+-- ---------------------------------------------------------------------------
+-- This file was written to add THREE tables to the purge lists:
+-- `overview_alert_rules`, `overview_alert_hits` and `user_release_note_state`.
+-- `202609200001` then merged the two alert systems and DROPPED the first two, so
+-- adding them to a list of tables the deletion path must clear would be adding
+-- two names that match nothing — the exact shape this file removes
+-- `notification_preferences` for.
+--
+-- Amended rather than rewritten as a fourth migration because it has not run
+-- anywhere: there is no applied history for the edit to contradict. The
+-- reasoning it gives for `user_release_note_state`, for the removal of
+-- `notification_preferences` and for keeping `account_lifecycle` OFF the list is
+-- untouched, and those are the whole of what it now does.
+--
+-- EITHER ORDER WORKS against `202609200001`: applied first it names only tables
+-- that exist, applied after it still names only tables that exist.
 --
 -- ---------------------------------------------------------------------------
 -- WHAT WAS WRONG
@@ -22,17 +41,18 @@ begin;
 -- still holds: a convention would let a future table opt itself into a deletion
 -- path silently, and the value of a list is that adding to it is a visible act.
 --
--- The cost of that choice is this file. Three tables were added to the schema
--- after the lists were last written and neither list learned about them:
+-- The cost of that choice is this file. A table was added to the schema after
+-- the lists were last written and neither list learned about it:
 --
---     overview_alert_rules        202608300001
---     overview_alert_hits         202608310001
 --     user_release_note_state     202608070003
 --
--- All three are `user_id ... references auth.users(id) on delete cascade`, so
--- none of them BLOCKS a deletion the way `portfolio_transactions` did — they
--- vanish when the auth user does. This is therefore not a repeat of the
--- `on delete restrict` defect and no account is stuck because of it.
+-- (Two more were, and were dropped again by `202609200001` before this ever
+-- ran. See the amendment note above.)
+--
+-- It is `user_id ... references auth.users(id) on delete cascade`, so it does
+-- not BLOCK a deletion the way `portfolio_transactions` did — it vanishes when
+-- the auth user does. This is therefore not a repeat of the `on delete restrict`
+-- defect and no account is stuck because of it.
 --
 -- What it does break is the MEASUREMENT. `account_residual_data_count` is the
 -- proof of completeness the reconciler checks before it deletes an auth user:
@@ -40,7 +60,7 @@ begin;
 --     `data_purged` is a claim about the past; `account_residual_data_count` is
 --     a measurement of the present, and it must read zero first.
 --
--- A measurement that does not look at three of the tables holding the account's
+-- A measurement that does not look at one of the tables holding the account's
 -- rows reads zero while they are still there. The reconciler then deletes the
 -- auth user, the cascade removes them, and the outcome is correct — by luck,
 -- through a mechanism the count knows nothing about, and only for as long as
@@ -120,18 +140,6 @@ declare
     ['option_simulations', 'user_id'],
     ['stock_plans', 'user_id'],
     ['price_alerts', 'user_id'],
-    /*
-      The Overview alert pair, added here.
-
-      HITS BEFORE RULES, and it is not arbitrary even though both are keyed on
-      `user_id` and either order would work today. `overview_alert_hits.rule_id`
-      references `overview_alert_rules` — removing the parent first would clear
-      the children by cascade rather than by this list, which is the same
-      "it works for a reason the list does not state" that this migration exists
-      to end. Deleted in the order they depend.
-    */
-    ['overview_alert_hits', 'user_id'],
-    ['overview_alert_rules', 'user_id'],
     ['notifications', 'user_id'],
     ['queued_notifications', 'user_id'],
     ['push_deliveries', 'user_id'],
@@ -255,8 +263,6 @@ declare
     ['option_simulations', 'user_id'],
     ['stock_plans', 'user_id'],
     ['price_alerts', 'user_id'],
-    ['overview_alert_hits', 'user_id'],
-    ['overview_alert_rules', 'user_id'],
     ['notifications', 'user_id'],
     ['queued_notifications', 'user_id'],
     ['push_deliveries', 'user_id'],
@@ -329,9 +335,9 @@ commit;
 -- reads nothing, writes nothing and alters no table. Restoring the previous
 -- pair from `202608280001` verbatim puts the database back exactly.
 --
--- What reverting COSTS is the measurement, not the deletion. The three tables
--- added here all cascade from `auth.users`, so a reverted purge still ends with
--- their rows gone — it simply goes back to `account_residual_data_count`
+-- What reverting COSTS is the measurement, not the deletion. The table added
+-- here cascades from `auth.users`, so a reverted purge still ends with its
+-- rows gone — it simply goes back to `account_residual_data_count`
 -- reporting zero while they are still present, which is the state this file
 -- exists to end.
 --

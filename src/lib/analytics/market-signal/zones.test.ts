@@ -404,7 +404,22 @@ describe('label precedence when both phases are on', () => {
     expect(result.confidence).toBeLessThan(both('IREN').gate!.confidenceFactors.base);
   });
 
-  it('never publishes STRONG while the evidence conflicts', () => {
+  /*
+   * A corpus replay, not a unit test, and the timeout says so.
+   *
+   * It runs the full signal engine over every symbol in `__golden__` twice (once
+   * per phase flag), which takes ~4.6s on an idle machine — 357ms inside the
+   * 5s default. That margin is not a margin: under `vitest run` the whole suite
+   * shares the CPU with 615 other files, and the same work has crossed the line
+   * and failed a run that had nothing wrong with it. A replay that is allowed
+   * only 5s is a coin flip reported as a regression.
+   *
+   * 60s is chosen to be an order of magnitude above the real cost, so this
+   * refuses only a genuine hang. The bound stays on this test rather than moving
+   * to `testTimeout` in the config, because every other test in this file is a
+   * few milliseconds and should keep failing fast.
+   */
+  it('never publishes STRONG while the evidence conflicts', { timeout: 60_000 }, () => {
     SYMBOLS.forEach((symbol) => {
       const result = both(symbol);
       if (result.gate?.conflicts.length) {

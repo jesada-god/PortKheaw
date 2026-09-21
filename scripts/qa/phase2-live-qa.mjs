@@ -16,29 +16,24 @@
  * ===========================================================================
  * IT WRITES NOTHING, AND IT SWITCHES NOTHING
  * ===========================================================================
- * Every request is a GET: the Overview document, and — for `alerts` — two
- * counting reads against PostgREST. It cannot turn a flag on or off; the flags
- * live in Vercel's environment and this never touches it. Turning them on is a
- * person's job, on purpose.
- *
- * The one thing it needs a key for is the `alerts` check, which counts rows in
- * `overview_alert_hits`. It uses the ANON key and `Prefer: count=exact`, so it
- * reads a count through RLS and never a row: no reader's alert history is
- * fetched in order to check that the sweep ran.
+ * Every request is a GET of the Overview document. It cannot turn a flag on or
+ * off; the flags live in Vercel's environment and this never touches it.
+ * Turning them on is a person's job, on purpose.
  *
  * ===========================================================================
  * WHAT "PASS" MEANS FOR EACH FLAG
  * ===========================================================================
  * A flag is responsible for the markers it makes appear and for nothing else.
- * `PHASE2_ALERTS` is the exception in both directions: signed out it changes
- * NOTHING on the page — the alert count is per reader — so its page check is
- * that the Overview is unharmed, and its real evidence is a row appearing in
- * `overview_alert_hits` after a pg_cron tick.
+ * `PHASE2_ALERTS` is the exception: signed out it changes NOTHING on the page —
+ * the alert count badge is per reader and behind RLS — so its page check is only
+ * that the Overview is unharmed, and the run reports it as NOT VERIFIED rather
+ * than borrowing a green from checks that would pass either way. Verifying the
+ * badge itself needs a signed-in account that owns an alert.
  *
  *   node scripts/qa/phase2-live-qa.mjs --flag events
  *   node scripts/qa/phase2-live-qa.mjs --flag market-snapshot
  *   node scripts/qa/phase2-live-qa.mjs --flag what-changed
- *   node scripts/qa/phase2-live-qa.mjs --flag alerts --wait-for-tick
+ *   node scripts/qa/phase2-live-qa.mjs --flag alerts
  *   node scripts/qa/phase2-live-qa.mjs --flag baseline    # FIRST, before any flag
  *
  * Or through npm:
@@ -62,7 +57,6 @@ const BASE = (arg('base', 'https://portkheaw.vercel.app')).replace(/\/$/, '');
 const FLAG = arg('flag');
 const SAMPLES = Number(arg('samples', '7'));
 const OUT = resolve(arg('out', '.qa/artifacts/phase2-live'));
-const WAIT_FOR_TICK = has('wait-for-tick');
 const BROWSER = process.env.QA_BROWSER_PATH
   ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
@@ -240,44 +234,6 @@ async function timeDocument() {
   };
 }
 
-/**
- * Rows in `overview_alert_hits`, counted through RLS with the anon key.
- *
- * `Prefer: count=exact` with `Range: 0-0` returns the total in a header and at
- * most one row in the body, which is discarded. Signed out, RLS scopes the
- * SELECT to nothing, so this counts what an anonymous caller may see — which is
- * the honest limit and is stated in the result rather than worked around.
- */
-async function countHits() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !key) return { ok: false, reason: 'no NEXT_PUBLIC_SUPABASE_* in the environment' };
-
-  const response = await fetch(`${url}/rest/v1/overview_alert_hits?select=id`, {
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      Prefer: 'count=exact',
-      Range: '0-0',
-    },
-  });
-  const range = response.headers.get('content-range');
-  if (!response.ok && response.status !== 206) {
-    return { ok: false, reason: `HTTP ${response.status}`, range };
-  }
-  const total = Number(String(range ?? '').split('/')[1]);
-  return { ok: Number.isFinite(total), total, range };
-}
-
-/** The next quarter-hour boundary the pg_cron schedule fires on, plus a margin. */
-function msUntilNextTick(margin = 75_000) {
-  const now = new Date();
-  const next = new Date(now);
-  next.setUTCMinutes(Math.floor(now.getUTCMinutes() / 15) * 15 + 15, 0, 0);
-  return (next.getTime() - now.getTime()) + margin;
-}
-
 async function main() {
   const baseline = readBaseline();
   console.log(`Flag     : ${FLAG}  (${SPEC.env})`);
@@ -434,42 +390,29 @@ async function main() {
 
   /* ------------------------------------------------------- alerts only */
   if (SPEC.checkHits) {
-    console.log('\noverview_alert_hits');
-    const before = await countHits();
-    report.hitsBefore = before;
-    if (!before.ok) {
-      check('the hit count could be read', false, before.reason);
-    } else {
-      console.log(`  before: ${before.total} row(s) visible to anon`);
-      if (!WAIT_FOR_TICK) {
-        console.log('  --wait-for-tick not given; not waiting for the sweep.');
-        console.log('  Re-run with --wait-for-tick after the flag is on to see a tick land.');
-        /*
-          The page checks above pass whether this flag is on or off — signed out
-          it changes nothing visible — so without the tick this run has not
-          actually verified PHASE2_ALERTS at all. Say so, rather than let a green
-          verdict imply otherwise.
-        */
-        unverified.push(
-          'PHASE2_ALERTS was not verified: the page looks identical either way, '
-          + 'and the sweep evidence needs --wait-for-tick',
-        );
-      } else {
-        const waitMs = msUntilNextTick();
-        console.log(`  waiting ${Math.round(waitMs / 1000)}s for the next quarter-hour tick...`);
-        await new Promise((done) => { setTimeout(done, waitMs); });
-        const after = await countHits();
-        report.hitsAfter = after;
-        console.log(`  after:  ${after.total} row(s) visible to anon`);
-        check(
-          'the sweep wrote at least one hit',
-          after.ok && after.total > before.total,
-          `${before.total} -> ${after.total}. `
-          + 'Zero is also what a tick with no MATCHING rule looks like — check '
-          + 'alert_evaluation_runs for the window before calling this a failure.',
-        );
-      }
-    }
+    /*
+      THERE IS NO LONGER A TABLE TO COUNT.
+
+      This used to count rows in `overview_alert_hits` after a pg_cron tick,
+      because `PHASE2_ALERTS` gated a second alert sweep that wrote them.
+      `202609200001` merged that system into `price_alerts`, and what the flag
+      gates now is ONE RENDER: the count badge on a watchlist row.
+
+      Alert delivery is no longer flag-dependent at all — the sweep fires every
+      fifteen minutes with the flag off, as it always has, and its evidence is a
+      `notifications` row for the reader who owns the alert. That is per reader
+      and behind RLS, so an anonymous script cannot see it and must not pretend
+      to: this now says what it did not check instead of counting a table that
+      would answer PGRST205.
+    */
+    console.log('\nalert count badge');
+    console.log('  the flag gates a per-reader badge; signed out it changes nothing.');
+    unverified.push(
+      'PHASE2_ALERTS was not verified: the badge is per reader and behind RLS, '
+      + 'so it needs a signed-in check with an account that owns an alert. '
+      + 'Alert DELIVERY is not gated by this flag and is verified by the '
+      + 'notifications row the sweep writes.',
+    );
   }
 
   return finish();

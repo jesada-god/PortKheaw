@@ -43,7 +43,7 @@ arrays in `section-order.ts`.
 | `PHASE2_WHAT_CHANGED` | Shows the renamed change feed | No. Renames items the watchlist detectors already produce — a mapping with a dedupe, no request, no clock, no history read | **None** — `whatChanged` is in both order arrays | **Yes** — built from the reader's own watchlist | None |
 | `PHASE2_EVENTS` | **Nothing, in any combination.** It still builds the merged list; no order array walks the `events` key any more | No, and it buys nothing either | **Unreachable.** `events` is in neither order array — the Overview draws the month grid (`marketEvents`) in that slot. See below | No | None |
 | `MARKET_EVENTS_CARD` | Draws the ปฏิทินเศรษฐกิจ month grid on the Overview, and makes `/market-events` exist at all — the route `notFound()`s while it is off | No. The calendar is a static JSON import; the route adds one portfolio row read, to count holdings | **None** — `marketEvents` is in both order arrays | No | None |
-| `PHASE2_ALERTS` | Two separate things — see below | One indexed row read per render | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | `202608300001`, `202608310001`, `202608310002` — **all applied**. `202608310003` (`earnings` rules) and `202608310004` (account-deletion purge) — **not applied** |
+| `PHASE2_ALERTS` | Adds the alert-count badge to watchlist rows. **Nothing else** — see below | No. Counted from the `price_alerts` rows the page already reads for its Upcoming feed | **None** — the count decorates `watchlist`, in both order arrays | **Yes** — the count is per reader | None of its own. `202609200001` is required by the SWEEP, which this flag does not gate |
 
 `PHASE2_MARKET_SNAPSHOT` and the watchlist-view pair are read *before* their
 promises are constructed, so with a flag off the work is never started rather
@@ -103,14 +103,22 @@ which has no `'events'` key at all.
 - **The calendar moves rather than leaving.** V1 draws the month grid last; V2
   draws it after the watchlist. It is the same card either way.
 
-### `PHASE2_ALERTS` gates two things, and only one of them is a render
+### `PHASE2_ALERTS` gates one render, and it used to gate more
 
-1. **A read-time count** on the Overview — one row read per render, harmless.
-2. **The scheduled sweep.** `/api/cron/alerts` checks `phase2AlertsEnabled()`
-   before sweeping, so this flag is what starts alert rules being evaluated and
-   `overview_alert_hits` rows being written.
+It now decides exactly one thing: whether a watchlist row shows how many alerts
+the reader has on that symbol. It costs no query — the count is derived from the
+`price_alerts` rows [`app/page.tsx`](../../app/page.tsx) has already read for the
+Upcoming feed.
 
-That second one is not on `vercel.json` and turning it on does not need to be.
+It used to also gate a **second scheduled sweep**, over `overview_alert_rules`,
+writing `overview_alert_hits`. `202609200001` merged that system into
+`price_alerts` and dropped it, so:
+
+- **turning this flag on no longer starts anything evaluating**, and
+- **turning it off no longer stops any alert firing.**
+
+Price alerts have always fired regardless of it, and still do.
+
 `/api/cron/alerts` is scheduled by **pg_cron**, from
 `202608020004_notification_cron_vercel_alias.sql`, and **it is already running
 every fifteen minutes**. Verified from `alert_evaluation_runs` on 2026-08-31:
@@ -121,7 +129,7 @@ every fifteen minutes**. Verified from `alert_evaluation_runs` on 2026-08-31:
 2026-08-31T08:45Z  completed  evaluated 4  triggered 0  push_sent 0
 ```
 
-So `PHASE2_ALERTS=true` takes effect on the next tick, without anybody
+So `PHASE2_ALERTS=true` takes effect on the next RENDER, without anybody
 scheduling anything. There is nothing to switch on afterwards and nothing to
 switch off but the flag.
 
@@ -149,9 +157,10 @@ number and is not comparable to production over the internet.
    base flag. It needs a **signed-in reader with a watchlist**, so the script
    reports it as not verified and you confirm it by eye.
    `--flag what-changed`
-4. **`PHASE2_ALERTS`** — free to render, but it starts the sweep. Only after
-   `202608310003` is applied if you want `earnings` rules.
-   `--flag alerts --wait-for-tick`
+4. **`PHASE2_ALERTS`** — free, and it starts nothing. Signed out the page is
+   identical, so the script reports it as not verified and you confirm the badge
+   by eye with an account that owns an alert.
+   `--flag alerts`
 5. **`OVERVIEW_V2`, last and alone.** `PHASE2_EVENTS` is no longer part of this
    step — it reaches nothing, and pairing it here would attribute the base
    flag's changes to a switch that did none of them. What this step does is drop
@@ -168,25 +177,37 @@ another flag.
 
 ## Not ready
 
-### `earnings` alert rules cannot be created
+### `202609200001` must be applied with the deploy, not after it
 
-`202608310003` is written and **not applied**. Until it is,
-`create_overview_alert_rule` refuses `earnings`, which is one of the five kinds
-the feature is built around. The column, the hits table, the evaluator and the
-24-hour cooldown all handle it; only the writer refuses.
+This one is not a flag question and it is not optional. The sweep calls
+`trigger_price_alert_service` with ten arguments; production still has the
+nine-argument version until the migration runs, so **no price alert fires in
+between**. The failure is loud — `PGRST202`, a 503 from `/api/cron/alerts`, and a
+`failed` row in `alert_evaluation_runs` every fifteen minutes — but it is a full
+outage of the feature while it lasts.
 
-`PHASE2_ALERTS` is safe to turn on before that migration — the four price and
-percent kinds work — but the feature is a fifth short until it lands.
+`earnings` alerts also cannot be saved until it lands: the column's CHECK refuses
+the condition, and [`app/alerts/actions.ts`](../../app/alerts/actions.ts) maps the
+resulting `23514` to "ระบบยังไม่รองรับเงื่อนไขนี้" rather than to a retry.
 
-### Deleting an account leaves alert rows behind
+It has been **run** — on dev, applied; the SQL is not being executed for the
+first time against production. `npm run db:validate -- <file>` runs any pending
+migration on dev inside a transaction it rolls back, which is the cheap way to
+ask "does this execute?" before a production window opens.
+`src/lib/alerts/service-path.contract.test.ts` covers the other half: that the
+argument list the sweep sends still matches the one the migration declares, so
+this hazard can only ever be reintroduced by deploy order, never by a rename.
+
+### Deleting an account leaves release-note rows behind
 
 `202608310004` is written and **not applied**, so `purge_account_data` still
-carries a table list from before `overview_alert_rules`, `overview_alert_hits`
-and `user_release_note_state` existed, and deletes none of the three.
+carries a table list from before `user_release_note_state` existed and does not
+delete it.
 
-Not urgent today only because nothing can create a rule — there is no interface
-for it, so those two tables are empty. It becomes a real gap the moment one
-lands, and it should land before that does.
+The rows do go — the table cascades from `auth.users`. What is wrong is
+`account_residual_data_count`, the measurement that gates deleting the auth user:
+it reads zero while those rows are still present, so it is right by luck rather
+than by looking.
 
 ### Breadth: `% above the 50-day / 200-day` is null and stays null
 
@@ -203,22 +224,20 @@ the same reason, without the type saying so.
 
 No flag changes this and none of the four is waiting on it.
 
-### The sweep is verified on dev, never on production data
+### The alert sweep is exercised on production data, and always has been
 
-`npm run verify:ov-alert-sweep` ran against the dev project on 2026-08-31 and
-passed every claim, with all five migrations applied there:
+`overview_alert_rules` held **0** rows in every environment for its whole life —
+nothing in the product could create one — so the sweep that read it was never
+exercised on a real reader's rule. `npm run verify:ov-alert-sweep` proved its
+hit/stamp pair atomic against the dev project on 2026-08-31, and that is the only
+thing it ever proved about real use. Both the script and the table are gone with
+`202609200001`.
 
-- all five kinds create through `create_overview_alert_rule`, `earnings`
-  included — the claim `202608310003` exists to make true;
-- after a sweep, no rule carries a stamp without a hit and no hit exists without
-  a stamp, and every `last_fired_at` equals its own hit's `observed_at`;
-- an immediate second sweep recorded nothing and moved no stamp, with
-  `evaluated: 5` — it looked at every rule and chose not to write;
-- `percent_down`, given a threshold it could not pass, did not fire.
+The surviving system does not have that gap. `price_alerts` holds real rows and
+`alert_evaluation_runs` shows them being evaluated every fifteen minutes; the
+sample above is four alerts on a tick.
 
-That is the first time the hit/stamp pair has been observed as atomic in
-Postgres rather than modelled by a double.
-
-**What is still unproven** is behaviour on production data: production holds
-**0** `overview_alert_rules`, so nothing has swept a real reader's rule. The
-first real exercise will be the tick after `PHASE2_ALERTS` goes on.
+What is **not** yet exercised anywhere is the `earnings` condition, for the
+ordinary reason that nobody has created one yet — the condition reached the UI in
+the same change that created it. Its first real exercise will be the first tick
+after somebody saves one, against a database with `202609200001` applied.

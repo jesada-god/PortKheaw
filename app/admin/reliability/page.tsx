@@ -126,7 +126,7 @@ export default async function AdminReliabilityPage() {
 
   return (
     <div className="min-w-0">
-      <Header title="ความพร้อมของระบบ" subtitle="สถานะของแอป ข้อมูลตลาด งานเบื้องหลัง และการชำระเงิน" />
+      <Header title="ความพร้อมของระบบ" subtitle="สถานะของแอป ข้อมูลตลาด งานเบื้องหลัง และการชำระเงิน" backFallbackHref="/admin" />
       <main className="mx-auto w-full max-w-3xl space-y-4 p-3 sm:p-4 md:p-6">
         <section
           className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4"

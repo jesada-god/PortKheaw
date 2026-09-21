@@ -10,24 +10,25 @@ export type AdminPreviewMode = 'actual' | 'basic' | 'pro' | 'elite' | 'elite_tri
 /** How loudly a release note is presented. Never a reason to block a reader. */
 export type ReleaseImportance = 'normal' | 'important';
 /**
- * The five comparisons an overview alert rule may ask for.
+ * The five comparisons one alert may ask for.
  *
- * This is the SCHEMA's copy of the set — it must equal
- * `overview_alert_rules_kind_check`, `overview_alert_hits.kind`'s check, and
- * whichever kinds `create_overview_alert_rule` accepts. Those three disagreed
- * once: `202608310001` widened both CHECKs to admit `earnings` and left the
- * function on four, so an `earnings` rule could be stored and evaluated but
- * never created. `202608310003` is the repair.
+ * This is the SCHEMA's copy of the set: it must equal
+ * `price_alerts_condition_check` and the branches
+ * `trigger_price_alert_service` compares. `src/lib/alerts/types.ts` holds the
+ * domain copy, `AlertCondition`, and pins the two together with a pair of
+ * mutually exclusive assignments — adding a condition to one and not the other
+ * makes one of them `never` and the build stops.
  *
- * `src/lib/market-overview/alerts/types.ts` holds the domain copy, `OvAlertKind`,
- * and asserts at compile time that the two are the same union in both
- * directions. Widening one without the other stops the build.
+ * There used to be a SECOND set, `OverviewAlertKind`, naming the same five
+ * comparisons under different words for a second alert table. The two drifted
+ * within a day of each other and cost the product a whole kind. `202609200001`
+ * merged the tables; this is the only set now.
  */
-export type OverviewAlertKind =
-  | 'price_above'
-  | 'price_below'
-  | 'percent_up'
-  | 'percent_down'
+export type AlertConditionValue =
+  | 'above'
+  | 'below'
+  | 'percent_change_up'
+  | 'percent_change_down'
   | 'earnings';
 export type BillingProvider = 'stripe';
 export type BillingProviderMode = 'test' | 'live' | 'legacy_unknown';
@@ -827,6 +828,31 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['market_fx_rates']['Insert']>;
         Relationships: [];
       };
+      /**
+       * The shared company-profile snapshot — see
+       * `202609200003_company_profile_snapshot.sql`. `payload` is a
+       * `CompanyProfile` as `companyProfileSchema` parses it; the repository
+       * re-validates it on read rather than trusting the column type, because
+       * `Json` says nothing about shape.
+       */
+      market_instrument_profiles: {
+        Row: { symbol: string; payload: Json; provider: string; source_hash: string; fetched_at: string; schema_version: number; created_at: string; updated_at: string };
+        Insert: { symbol: string; payload: Json; provider: string; source_hash: string; fetched_at: string; schema_version: number; created_at?: string; updated_at?: string };
+        Update: Partial<Database['public']['Tables']['market_instrument_profiles']['Insert']>;
+        Relationships: [];
+      };
+      /**
+       * The shared Thai translation of a company profile — see
+       * `202609200004_company_profile_translation_cache.sql`. `source_hash` is
+       * taken from the profile the SERVER read, never from a request body, and
+       * is what decides whether a stored translation still applies.
+       */
+      market_instrument_profile_translations: {
+        Row: { symbol: string; target_language: 'th'; source_hash: string; translated_text: string; provider: string; model: string; fetched_at: string; created_at: string; updated_at: string };
+        Insert: { symbol: string; target_language: 'th'; source_hash: string; translated_text: string; provider: string; model: string; fetched_at: string; created_at?: string; updated_at?: string };
+        Update: Partial<Database['public']['Tables']['market_instrument_profile_translations']['Insert']>;
+        Relationships: [];
+      };
       analytics_fundamentals_lkg: {
         Row: {
           symbol: string; dataset: string; financial_periods: Json; snapshot: Json;
@@ -906,9 +932,9 @@ export interface Database {
         Relationships: [];
       };
       price_alerts: {
-        Row: { id: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; was_matching: boolean; last_observed_price: string | null; last_observed_session: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source: string | null; last_observed_at: string | null; created_at: string; updated_at: string };
-        Insert: { id?: string; user_id: string; symbol: string; condition: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; created_at?: string; updated_at?: string };
-        Update: { symbol?: string; condition?: 'above' | 'below' | 'percent_change_up' | 'percent_change_down'; target_value?: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; updated_at?: string };
+        Row: { id: string; user_id: string; symbol: string; condition: AlertConditionValue; target_value: string; enabled: boolean; cooldown_minutes: number; last_evaluated_at: string | null; last_triggered_at: string | null; was_matching: boolean; last_observed_price: string | null; last_observed_session: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source: string | null; last_observed_at: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; symbol: string; condition: AlertConditionValue; target_value: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; created_at?: string; updated_at?: string };
+        Update: { symbol?: string; condition?: AlertConditionValue; target_value?: string; enabled?: boolean; cooldown_minutes?: number; last_evaluated_at?: string | null; last_triggered_at?: string | null; was_matching?: boolean; last_observed_price?: string | null; last_observed_session?: 'regular' | 'pre-market' | 'after-hours' | null; last_observed_source?: string | null; last_observed_at?: string | null; updated_at?: string };
         Relationships: [];
       };
       notifications: {
@@ -1084,79 +1110,6 @@ export interface Database {
           inputs?: Record<string, unknown>; recorded_at?: string;
         };
         Update: Partial<Database['public']['Tables']['options_signal_history']['Insert']>;
-        Relationships: [];
-      };
-      /**
-       * The reader's own overview thresholds. `202608300001`, plus the
-       * `last_fired_at` column `202608310001` adds.
-       *
-       * `threshold` is `string` and not `number`, matching `price_alerts.
-       * target_value` above and for the same reason: PostgREST serialises
-       * `numeric` as a JSON string rather than lose precision, so a `number`
-       * here would be a type that never matches what arrives. `Insert` accepts
-       * either, because PostgREST parses both on the way in and a caller
-       * holding a `number` should not have to stringify it to satisfy a type.
-       *
-       * `kind` is not the five-value `OvAlertKind` union: `202608310001` widened
-       * the column's CHECK to admit `earnings`, but `create_overview_alert_rule`
-       * still refuses it, so the set the column permits and the set the writer
-       * permits differ. `src/lib/market-overview/alerts/repository.ts` validates
-       * against `OV_ALERT_KINDS` on the way out of the row, which is where that
-       * disagreement is resolved.
-       */
-      overview_alert_rules: {
-        Row: {
-          id: string; user_id: string; symbol: string; kind: OverviewAlertKind;
-          threshold: string; enabled: boolean;
-          last_fired_at: string | null;
-          created_at: string; updated_at: string;
-        };
-        /**
-         * `user_id` is REQUIRED, and that is not a style choice.
-         *
-         * The column is `not null` with no default and no BEFORE INSERT trigger
-         * (`202608300001` line 53), so a direct insert that omits it raises
-         * 23502. Declaring it optional here would compile and fail at runtime,
-         * which is the exact class of lie this regeneration exists to remove.
-         */
-        Insert: {
-          id?: string; user_id: string; symbol: string; kind: OverviewAlertKind;
-          threshold: number | string; enabled?: boolean;
-          last_fired_at?: string | null;
-          created_at?: string; updated_at?: string;
-        };
-        Update: {
-          symbol?: string; kind?: OverviewAlertKind; threshold?: number | string;
-          enabled?: boolean; last_fired_at?: string | null; updated_at?: string;
-        };
-        Relationships: [];
-      };
-      /**
-       * What fired, when, and the reading that decided it. `202608310001`.
-       *
-       * `Insert` and `Update` exist for the type only — no client may write this
-       * table. Its RLS grants select and delete and nothing else, and the sole
-       * writer is `record_overview_alert_hit` / `_service`, which also stamps
-       * `overview_alert_rules.last_fired_at` in the same transaction.
-       */
-      overview_alert_hits: {
-        Row: {
-          id: string; rule_id: string; user_id: string;
-          symbol: string; kind: OverviewAlertKind;
-          observed_price: string;
-          observed_change_percent: string | null;
-          observed_earnings_days: number | null;
-          value_text: string; observed_at: string; created_at: string;
-        };
-        Insert: {
-          id?: string; rule_id: string; user_id: string;
-          symbol: string; kind: OverviewAlertKind;
-          observed_price: number | string;
-          observed_change_percent?: number | string | null;
-          observed_earnings_days?: number | null;
-          value_text: string; observed_at: string; created_at?: string;
-        };
-        Update: Partial<Database['public']['Tables']['overview_alert_hits']['Insert']>;
         Relationships: [];
       };
     };
@@ -1991,8 +1944,22 @@ export interface Database {
       stage_market_instruments: { Args: { input_run_id: string; input_rows: Json }; Returns: number };
       fail_market_instrument_sync: { Args: { input_run_id: string; input_error: Json }; Returns: undefined };
       finalize_market_instrument_sync: { Args: { input_run_id: string; input_failed_count?: number }; Returns: Array<{ inserted: number; updated: number; skipped: number; failed: number }> };
-      trigger_price_alert: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; notification_title: string; notification_message: string }; Returns: string | null };
-      trigger_price_alert_service: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_at: string; observed_session: string; observed_source: string; notification_title: string; notification_message: string; input_idempotency_key: string }; Returns: string | null };
+      /**
+       * The ONE evaluator. Decides every condition in SQL under a row lock, in
+       * the same transaction that stamps `was_matching` and writes the Inbox
+       * item. `202609200001`.
+       *
+       * `observed_earnings_days` is a READING and not a decision — whole days
+       * to the next scheduled report, or null for every symbol the calendar
+       * cannot answer for and every alert that never asked. Null is silence, not
+       * "not soon", so only the `earnings` condition consults it.
+       *
+       * The reader-scoped twin, `trigger_price_alert`, was dropped by the same
+       * migration: its caller went when `/api/alerts/evaluate` stopped
+       * evaluating, and a second copy of the condition list is what let the two
+       * alert systems drift apart in the first place.
+       */
+      trigger_price_alert_service: { Args: { alert_id: string; observed_price: number; observed_change_percent: number; observed_earnings_days: number | null; observed_at: string; observed_session: string; observed_source: string; notification_title: string; notification_message: string; input_idempotency_key: string }; Returns: string | null };
       enqueue_account_notification_service: { Args: { input_user_id: string; input_type: string; input_title: string; input_message: string; input_metadata: Json; input_idempotency_key: string; input_observed_at: string }; Returns: string };
       flush_queued_notifications_service: { Args: { input_now: string }; Returns: number };
       upsert_push_subscription: { Args: { input_endpoint: string; input_expiration_time: number | null; input_p256dh: string; input_auth: string; input_user_agent: string | null; input_device_label: string | null; input_now: string }; Returns: string };
@@ -2373,52 +2340,6 @@ export interface Database {
       acknowledge_release_note: {
         Args: { input_release_id: string };
         Returns: 'acknowledged' | 'not_found' | 'invalid_release';
-      };
-      /**
-       * Create one overview alert rule, under the per-account cap.
-       *
-       * The cap (50) and the count are taken under one advisory lock inside the
-       * function, so two parallel creates cannot both see forty-nine. A direct
-       * `insert` into `overview_alert_rules` is permitted by RLS and does NOT
-       * pass through here — see `202608300001` — so this is the path a reader
-       * action must use.
-       *
-       * Raises 23505 on a duplicate symbol+kind rather than swallowing it.
-       */
-      create_overview_alert_rule: {
-        Args: { input_symbol: string; input_kind: OverviewAlertKind; input_threshold: number };
-        Returns: string;
-      };
-      /**
-       * Write a hit and stamp the rule, in one transaction. Reader-scoped:
-       * resolves `auth.uid()` and raises 42501 when it is null, so a cron cannot
-       * call it. `202608310001`.
-       */
-      record_overview_alert_hit: {
-        Args: {
-          target_rule_id: string;
-          input_symbol: string;
-          input_kind: OverviewAlertKind;
-          input_observed_price: number;
-          input_observed_change_percent: number | null;
-          input_observed_earnings_days: number | null;
-          input_value_text: string;
-          input_observed_at: string;
-        };
-        Returns: string;
-      };
-      /**
-       * The service-role twin of the above, for the scheduled sweep. Derives the
-       * owner from the rule row instead of `auth.uid()`, and is granted to
-       * `service_role` alone. `202608310002`.
-       *
-       * Returns null when the rule was disabled or deleted between the read and
-       * the write, or when the unique index refused the observation as a
-       * duplicate. `runOvAlertSweep` reads null as "not written".
-       */
-      record_overview_alert_hit_service: {
-        Args: Database['public']['Functions']['record_overview_alert_hit']['Args'];
-        Returns: string | null;
       };
     };
     Enums: Record<string, never>;

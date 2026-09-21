@@ -53,18 +53,21 @@ export class AlertsRepository {
     return Boolean(data?.length);
   }
 
-  async markEvaluated(id: string, observedAt: string): Promise<void> {
-    const { error } = await this.client.from('price_alerts').update({ last_evaluated_at: observedAt })
-      .eq('id', id).eq('user_id', this.userId);
-    if (error) throw error;
-  }
+  /*
+    THERE IS NO `trigger` AND NO `markEvaluated` HERE, AND THAT IS THE POINT.
 
-  async trigger(id: string, price: number, changePercent: number | null, observedAt: string, title: string, message: string): Promise<string | null> {
-    const { data, error } = await this.client.rpc('trigger_price_alert', { alert_id: id, observed_price: price,
-      observed_change_percent: changePercent ?? 0, observed_at: observedAt, notification_title: title, notification_message: message });
-    if (error) throw error;
-    return data;
-  }
+    Evaluating an alert is the scheduled sweep's job and nobody else's:
+    `runBackgroundAlerts` reads the batch with the service role and
+    `trigger_price_alert_service` decides the match, stamps the row and writes
+    the Inbox item in one transaction under a row lock. A reader-scoped trigger
+    used to sit here for a "ตรวจสอบตอนนี้" button that evaluated alerts inside a
+    browser request; that path is gone, and `202609200001` dropped the function
+    behind it.
+
+    This class is the reader's CRUD over their own rules. Adding a second way to
+    fire one would be a second evaluator, which is exactly how the product came
+    to have two alert systems that disagreed about what an alert means.
+  */
 }
 
 export class NotificationsRepository {

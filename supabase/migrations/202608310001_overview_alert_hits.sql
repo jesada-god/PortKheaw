@@ -5,7 +5,7 @@ begin;
 -- ===========================================================================
 --
 -- STATUS: APPLIED
--- VERIFIED: 2026-08-31, by PostgREST probe against production.
+-- VERIFIED: 2026-09-20, by PostgREST probe against production.
 --
 -- Evidence: `overview_alert_hits` resolves all eleven columns, and
 -- `overview_alert_rules.last_fired_at` — the column this file adds to the table
